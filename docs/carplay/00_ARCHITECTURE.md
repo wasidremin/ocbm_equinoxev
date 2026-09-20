@@ -281,7 +281,19 @@ Host side: claim IF 0 (macOS/Linux libusb, Android `UsbManager`), transfer on th
 **No AOA control handshake (51/52/53)** is needed — claim and go. It is a **raw byte pipe**; all
 framing is application-defined (this is where OCBM lives).
 
-#### Composite gadget: tested, does NOT work — ADB and OCBM cannot coexist on this kernel
+#### Composite gadget: `accessory,adb` does NOT work — `accessory,mass_storage` DOES
+
+> **Scope correction (2026-09-20).** The finding below is about **`adb`** specifically. The same
+> kernel presents **`accessory,mass_storage`** fine: `1314:2d00`, IF0 `0xFF` bulk `0x81/0x01`
+> (OCBM, `HELLO_ACK`), IF1 `0x08` bulk `0x82/0x02` (8 MiB FAT on `/dev/loop1`), `/dev/usb_accessory`
+> intact, `CONFIGURED`, across a cold boot. That is stock Carlinkit's `UdiskMode=1`, which GM VCU
+> radios (Equinox EV et al.) require before they surface the dongle at all. It is flag-gated
+> (`/script/ocbm_udisk`, `ccpa/rootfs/script/ocbm_udisk.sh`); the LUN node is the UDC's own
+> `…/ci_hdrc.1/gadget/lun0/file`, not anything under `/sys/class/android_usb_accessory`. Two
+> consequences for hosts: (1) there are now **two** bulk pairs — claim the class-`0xFF` interface,
+> never class `0x08`; (2) `insmod` raises D+ with zero configurations, so anything slow (image build)
+> must run **before** insmod or a host will read `no configurations` and abandon the port. Write-up:
+> `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §5.
 
 **Tested live 2026-08-17 on the CCPA over the OCBM link.** The question was whether the legacy gadget
 could present `accessory` + `adb` together, so a host could speak OCBM and drive `adb shell` on the

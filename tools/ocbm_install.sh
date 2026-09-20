@@ -84,6 +84,13 @@ mkdir -p "$RUN_DIR"
 say()  { printf '[ocbm] %s\n' "$*"; }
 warn() { printf '[ocbm] !! %s\n' "$*" >&2; }
 die()  { printf '[ocbm] ABORT: %s\n' "$*" >&2; exit 1; }
+
+host_md5() {
+  if command -v md5sum >/dev/null 2>&1; then md5sum "$1" | cut -d' ' -f1
+  else md5 -q "$1"
+  fi
+}
+
 # --------------------------------------------------------------------------------------
 # Transport. SSH FIRST, telnet only as a fallback.
 #
@@ -133,6 +140,14 @@ ask() {  # $1 = prompt; returns 0 for yes
   case "$a" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
+usb_accessory_present() {
+  case "$(uname -s)" in
+    Darwin) ioreg -p IOUSB -w0 -l 2>/dev/null | grep -q '"idProduct" = 11520' ;;
+    Linux)  lsusb -d 1314:2d00 >/dev/null 2>&1 ;;
+    *)      return 1 ;;
+  esac
+}
+
 wait_ncm() {  # wait for the NCM control channel to answer
   local deadline=$(( SECONDS + ${1:-260} ))
   VIA=""                       # re-probe: sshd and telnetd come up at different points in boot
@@ -149,6 +164,7 @@ wait_ncm() {  # wait for the NCM control channel to answer
 manifest() {
   echo "$ARM/ocbmd|/usr/sbin/ocbmd|755"
   echo "$REPO/ccpa/rootfs/script/ocbm_boot.sh|/script/ocbm_boot.sh|755"
+  echo "$REPO/ccpa/rootfs/script/ocbm_udisk.sh|/script/ocbm_udisk.sh|755"
   echo "$REPO/tools/run_ocbmd.sh|/script/run_ocbmd.sh|755"
   if [ "$FULL" = 1 ]; then
     # The radio seam MUST ship with session_supervisor.sh, because the supervisor's four radio
@@ -188,7 +204,7 @@ manifest() {
 push_file() {  # $1 local  $2 remote  $3 mode
   local local_f="$1" remote="$2" mode="$3" want got
   [ -f "$local_f" ] || die "missing artifact: $local_f"
-  want=$(md5 -q "$local_f")
+  want=$(host_md5 "$local_f")
   detect_transport || die "no control channel at $BOX"
   if [ "$VIA" = ssh ]; then
     # scp, NOT `scp -O`. The box has no `scp` binary, which is what -O (legacy scp protocol)
@@ -200,6 +216,37 @@ push_file() {  # $1 local  $2 remote  $3 mode
         || die "transfer of $remote failed (scp and cat both)"
     fi
   else
+    if [ "$(wc -c < "$local_f" | tr -d ' ')" -gt 262144 ] && command -v nc >/dev/null 2>&1; then
+      # Large base64 pushes temporarily consume both the encoded payload and the decoded file
+      # on the small jffs2 rootfs. Stream large files over the NCM link instead, using the same
+      # listener pattern as ncm_base_install.sh's telnet pull path. The .new suffix preserves
+      # the install's atomic-rename guarantee, and the MD5 check below still decides whether
+      # anything becomes live.
+      boxq "pkill -f 'nc -l -p 9899'; :" || true
+      box "(busybox nc -l -p 9899 > $remote.new 2>/dev/null &) ; sleep 1; echo listening" >/dev/null
+      if nc -w 120 "$BOX" 9899 < "$local_f" >/dev/null 2>&1; then
+        # The host socket can close just before the background box shell has closed and
+        # flushed the destination file. Poll the checksum briefly instead of treating that
+        # normal handoff race as a failed transfer.
+        local i=0
+        got=""
+        while [ "$i" -lt 30 ]; do
+          got=$(box "md5sum $remote.new 2>/dev/null | cut -c1-32" | tr -d ' \r\n') || got=""
+          [ "$got" = "$want" ] && break
+          sleep 1
+          i=$((i + 1))
+        done
+        if [ "$got" = "$want" ]; then
+          box "chmod $mode $remote.new && mv $remote.new $remote && sync" >/dev/null
+          say "  placed $remote ($(wc -c < "$local_f" | tr -d ' ') bytes, md5 $want)"
+          return 0
+        fi
+        warn "NCM nc transfer of $remote did not verify (box '$got' != host '$want'); cleaning up"
+      else
+        warn "NCM nc transfer of $remote failed; cleaning up"
+      fi
+      box "rm -f $remote.new; pkill -f 'nc -l -p 9899' 2>/dev/null || true" >/dev/null 2>&1 || true
+    fi
     python3 "$BOXSH" --host "$BOX" --mode "$mode" put "$local_f" "$remote.new" >/dev/null \
       || die "telnet transfer of $remote failed"
   fi
@@ -258,7 +305,7 @@ phase_verify() {
   local checks="$RUN_DIR/verify_payload.sh"
   { echo '#!/bin/sh'
     while IFS='|' read -r l r m; do
-      printf 'check %s %s %s\n' "$r" "$(md5 -q "$l")" "$m"
+      printf 'check %s %s %s\n' "$r" "$(host_md5 "$l")" "$m"
     done < <(manifest)
   } > "$checks.args"
   { cat <<'EOS'
@@ -370,7 +417,7 @@ EOS
   # "device 1314 not found" while the box side is perfectly healthy.
   local i=0 seen=0
   while [ $i -lt 40 ]; do
-    if ioreg -p IOUSB -w0 -l 2>/dev/null | grep -q '"idProduct" = 11520'; then seen=1; break; fi
+    if usb_accessory_present; then seen=1; break; fi
     sleep 3; i=$((i+1))
   done
   [ "$seen" = 1 ] && say "  accessory enumerated (0x1314:0x2d00)" \

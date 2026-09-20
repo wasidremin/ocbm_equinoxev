@@ -95,11 +95,20 @@ fn open(vid: u16, pid: u16) -> Link {
             std::process::exit(1);
         });
 
-    // Pick the interface that actually carries the bulk IN+OUT pair (not always IF0).
+    // Pick the interface that actually carries the OCBM bulk IN+OUT pair (not always IF0).
+    // The box may be a composite (`accessory,mass_storage` — the GM-EV uDisk experiment,
+    // ccpa/rootfs/script/ocbm_udisk.sh): mass storage ALSO has a bulk pair, on IF1. Prefer the
+    // vendor-specific (0xFF) interface; never claim a mass-storage (class 8) one. Before
+    // 2026-09-20 this took the LAST bulk pair and silently talked HELLO at the disk.
     let (mut ifnum, mut ep_in, mut ep_out) = (0u8, 0x81u8, 0x01u8);
     if let Ok(cfg) = dev.active_config_descriptor() {
+        let mut best_is_vendor = false;
+        let mut found = false;
         for iface in cfg.interfaces() {
             for desc in iface.descriptors() {
+                if desc.class_code() == 0x08 {
+                    continue;
+                }
                 let (mut bin, mut bout) = (None, None);
                 for ep in desc.endpoint_descriptors() {
                     if ep.transfer_type() == TransferType::Bulk {
@@ -110,9 +119,14 @@ fn open(vid: u16, pid: u16) -> Link {
                     }
                 }
                 if let (Some(i), Some(o)) = (bin, bout) {
-                    ifnum = desc.interface_number();
-                    ep_in = i;
-                    ep_out = o;
+                    let is_vendor = desc.class_code() == 0xff;
+                    if !found || (is_vendor && !best_is_vendor) {
+                        ifnum = desc.interface_number();
+                        ep_in = i;
+                        ep_out = o;
+                        best_is_vendor = is_vendor;
+                        found = true;
+                    }
                 }
             }
         }

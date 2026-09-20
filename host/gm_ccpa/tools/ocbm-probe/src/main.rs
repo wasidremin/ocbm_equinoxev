@@ -79,11 +79,18 @@ fn open() -> Link {
             std::process::exit(1);
         });
 
-    // Walk the interfaces for the bulk IN+OUT pair rather than assuming IF0/0x81/0x01.
+    // Walk the interfaces for the OCBM bulk IN+OUT pair rather than assuming IF0/0x81/0x01.
+    // Prefer vendor-specific (0xFF); skip mass storage (class 8) — the uDisk composite has a
+    // bulk pair there too (ccpa/rootfs/script/ocbm_udisk.sh).
     let (mut ifnum, mut ep_in, mut ep_out) = (0u8, 0x81u8, 0x01u8);
     if let Ok(cfg) = dev.active_config_descriptor() {
+        let mut best_is_vendor = false;
+        let mut found = false;
         for iface in cfg.interfaces() {
             for desc in iface.descriptors() {
+                if desc.class_code() == 0x08 {
+                    continue;
+                }
                 let (mut bin, mut bout) = (None, None);
                 for ep in desc.endpoint_descriptors() {
                     if ep.transfer_type() == TransferType::Bulk {
@@ -94,9 +101,14 @@ fn open() -> Link {
                     }
                 }
                 if let (Some(i), Some(o)) = (bin, bout) {
-                    ifnum = desc.interface_number();
-                    ep_in = i;
-                    ep_out = o;
+                    let is_vendor = desc.class_code() == 0xff;
+                    if !found || (is_vendor && !best_is_vendor) {
+                        ifnum = desc.interface_number();
+                        ep_in = i;
+                        ep_out = o;
+                        best_is_vendor = is_vendor;
+                        found = true;
+                    }
                 }
             }
         }

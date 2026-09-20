@@ -29,6 +29,11 @@ touch /tmp/UDiskPassThroughMode
   fi
   # stage + load the gadget modules (copy_to_tmp may not have run yet)
   [ -e /tmp/g_android_accessory.ko ] || { [ -e /script/ko.tar.gz ] && tar -xzf /script/ko.tar.gz -C /tmp 2>/dev/null; }
+  # uDisk composite (flag-gated, see below): build the FAT image + loop device BEFORE the gadget
+  # module loads. insmod raises D+ with zero configurations and the host starts reading
+  # descriptors within ~100 ms; anything slow between insmod and enable=1 is a window the host
+  # can fall into and abandon the port (measured 2026-09-20, ocbm_udisk.sh header).
+  [ -e /script/ocbm_udisk ] && [ -x /script/ocbm_udisk.sh ] && /script/ocbm_udisk.sh prepare >> "$L" 2>&1
   grep -q storage_common /proc/modules || insmod /tmp/storage_common.ko 2>/dev/null
   grep -q g_android_accessory /proc/modules || insmod /tmp/g_android_accessory.ko 2>/dev/null
   # ZLP after a wMaxPacketSize-multiple accessory write. Off by default (accZLP=N, measured
@@ -49,8 +54,31 @@ touch /tmp/UDiskPassThroughMode
   # usb_device_filter.xml + runtime allowlist, or Android never matches USB_DEVICE_ATTACHED and they
   # lose the implicit permission grant. See docs/carplay/00_ARCHITECTURE.md.
   echo 2d00 > "$A/idProduct"                # stable OCBM accessory PID (see comment above)
-  echo accessory > "$A/functions"; echo 1 > "$A/enable"
+  # Default: pure accessory. Opt-in Equinox/GM experiment: /script/ocbm_udisk arms
+  # accessory,mass_storage (stock UdiskMode) while keeping PID 0x2d00. See
+  # host/gm_ccpa/docs/14_LESSONS_LEARNED.md §5 and /script/ocbm_udisk.sh.
+  # IMPORTANT: a live `on` that drops the host link before verification can leave the
+  # persistent flag set. apply clears the flag on accessory-node loss; this fallback
+  # is the second safety net so a bad composite cannot brick the next boot's USB.
+  if [ -e /script/ocbm_udisk ] && [ -x /script/ocbm_udisk.sh ]; then
+    /script/ocbm_udisk.sh apply >> "$L" 2>&1 || {
+      echo "[ocbm-boot] udisk apply failed — falling back to pure accessory, clearing flag" >> "$L"
+      rm -f /script/ocbm_udisk
+      echo 0 > "$A/enable"
+      echo accessory > "$A/functions"; echo 1 > "$A/enable"
+    }
+  else
+    echo accessory > "$A/functions"; echo 1 > "$A/enable"
+  fi
   i=0; while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+  # If the composite left us CONFIGURED-looking but with no accessory node, force pure.
+  if [ ! -e /dev/usb_accessory ]; then
+    echo "[ocbm-boot] /dev/usb_accessory missing after arm — forcing pure accessory" >> "$L"
+    rm -f /script/ocbm_udisk
+    echo 0 > "$A/enable"
+    echo accessory > "$A/functions"; echo 1 > "$A/enable"
+    i=0; while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+  fi
   /usr/sbin/ocbmd >> /tmp/box.log 2>&1 &
   OCBMD=$!
   # Session supervisor: idle-waits on host presence; a host-app SUBSCRIBE drives projection + ARM
