@@ -1,6 +1,6 @@
 # SESSION HANDOFF — gm_ccpa (resume here)
 
-**Last updated: 2026-09-10.** This is the "where we left off" doc, kept short on purpose (see
+**Last updated: 2026-09-15.** This is the "where we left off" doc, kept short on purpose (see
 [Document policy](#document-policy) below). For what the system **is**, read
 [`04_SYSTEM_MODEL.md`](04_SYSTEM_MODEL.md) — canonical, outranks every architecture blurb elsewhere.
 Then [`05_SESSION_FLOW.md`](05_SESSION_FLOW.md) (wire-level session buildup, read §8 before writing any
@@ -14,6 +14,21 @@ on 2026-09-08 — see §9). The `evidence/` archive is NOT under this root: it l
 checkout at `~/Documents/carlink/old/gm_ccpa/evidence/`. Every bare `evidence/...` path in this doc set
 resolves there.
 
+
+## START HERE (2026-09-20): Equinox EV needs the uDisk composite — box is armed, bench-proven, not yet driven
+
+The Silverado proof (`12_OBSERVED_FLOW.md`) is unchanged. The Equinox EV (`burmese_orange`, Android 14,
+user 12) is a **GM VCU** radio: it refuses a *pure* accessory gadget (stock `1520` or OCBM `2d00`) but
+enumerates the stock `accessory,mass_storage` composite — device-proven by Equinox EV / Silverado EV /
+Sierra EV owners on stock firmware. The "USB24915P is iPhone-only" theory from 2026-09-15 is refuted.
+The composite is re-implemented for OCBM (`ocbm_udisk.sh`, flag `/script/ocbm_udisk`, keeps `2d00` +
+HELLO) and proven on the bench across a cold boot. Next drive: plug in, look for `1314:2d00 ifaces=2` and
+the Allow dialog. Write-up: [`14_LESSONS_LEARNED.md`](14_LESSONS_LEARNED.md) §1/§5. Platform map, per-vehicle
+field reports, stock uDisk internals and the XDA/GitHub source index:
+[`../../../docs/host/02_GM_AAOS_FIELD_REFERENCE.md`](../../../docs/host/02_GM_AAOS_FIELD_REFERENCE.md).
+Do not treat Equinox USB as the Silverado dangling-handler bug.
+
+---
 
 ## START HERE (2026-09-10): a full session was captured, and the truck is running OLD code
 
@@ -148,8 +163,8 @@ What landed:
 - **`CT_PAIR_CONFIRM` responder.** Unused under `pairing: just_works` (the box still auto-accepts), but
   since 2026-09-03 the box no longer auto-accepts in numeric-comparison mode — it waits 55 s for this
   and gives up. Without it, switching pairing modes is impossible.
-- **Package squat reverted**: `android.car.usb.handler` -> `zeno.gmccpa`, and
-  `UsbHostManagementActivity` -> `zeno.gmccpa.UsbAttachActivity`. Owner's call. **Corrected
+- **Package squat reverted**: `android.car.usb.handler` -> `wasidremin.gmccpa`, and
+  `UsbHostManagementActivity` -> `wasidremin.gmccpa.UsbAttachActivity`. Owner's call. **Corrected
   2026-09-10: the squat never delivered what it was for.** This entry used to say "the silent
   per-UID USB grant is gone", implying the squat had been providing one. It was not — the app still
   needed the user to grant permission for the adapter, so nothing was lost by reverting. The
@@ -198,8 +213,8 @@ restored-session path put the box's mirrors and the supervisor's transitions in 
 
 ## OcbmProto.kt is app-owned again (forked 2026-09-11; was a symlink 2026-08-31 .. 2026-09-11)
 
-`netprobe_app/app/src/main/java/zeno/gmccpa/ocbm/OcbmProto.kt` is a regular file in `package
-zeno.gmccpa.ocbm`. From 2026-08-31 it was a relative symlink into
+`netprobe_app/app/src/main/java/wasidremin/gmccpa/ocbm/OcbmProto.kt` is a regular file in `package
+wasidremin.gmccpa.ocbm`. From 2026-08-31 it was a relative symlink into
 `ccpa_custom/host/CarlinkAndroid/app/src/main/kotlin/com/carlink/ocbm/OcbmProto.kt` ("edit the protocol
 once, in the main project"), which made sense when gm_ccpa was a separate checkout and did not once it
 was in-tree: CarlinkAndroid is dormant and behind the current OCBM protocol, and this app and the macOS
@@ -211,7 +226,7 @@ deliberate edit here. Consequences for anyone working here:
   this file by default (no root argument — it rejects one) and `tools/test.sh` Tier-0 runs it.
 - Same-package now, so `OcbmFraming`, `OcbmProbe` and `OcbmClient` no longer import it; the consumers
   outside the package (`logging/SessionSummary`, `MainActivity`, `SessionSupervisor`,
-  `UsbAttachActivity`) import `zeno.gmccpa.ocbm.Ocbm`.
+  `UsbAttachActivity`) import `wasidremin.gmccpa.ocbm.Ocbm`.
 - `BH_REQUIRED_BRIDGE` moved OUT of the protocol file into `SessionSupervisor.kt`, where it belongs:
   it is this deployment's policy (no `BH_WLAN_AP` required in the bridge role), not protocol.
 - The shared file is a superset of what this app previously had — verified with kotlinc + javap on the
@@ -227,7 +242,7 @@ deliberate edit here. Consequences for anyone working here:
 
 ## 0. What this is
 
-A **wireless-only CarPlay receiver** running as an unprivileged Android app (`zeno.gmccpa`)
+A **wireless-only CarPlay receiver** running as an unprivileged Android app (`wasidremin.gmccpa`)
 on a **2024 Silverado GM Info 3.7 head unit** (`gminfo37`, Y181, Android 12 / API 32, x86_64). The
 iPhone streams CarPlay (H.264/HEVC + AAC audio, touch) **directly over the vehicle's own 5 GHz WiFi
 hotspot** to the app — the iPhone is never wired to anything. A **Carlinkit CPC200-CCPA** adapter, on
@@ -243,7 +258,7 @@ raises no access point, terminates no AirPlay traffic, and carries no media.
   2026-08-05.** The next truck visit is a verification visit, not a build visit (§4).
 - **Per-purpose audio routing (Siri/call/alert/nav + mic uplink) is BUILT**, not merely designed —
   `AacPlayer.kt`, `VoiceRouter.kt` and `MicUplink.kt` exist and are wired into `CarPlayActivity`
-  (`netprobe_app/app/src/main/java/zeno/gmccpa/av/`). `13_AUDIO_ROUTING.md` said "DESIGN ONLY, nothing
+  (`netprobe_app/app/src/main/java/wasidremin/gmccpa/av/`). `13_AUDIO_ROUTING.md` said "DESIGN ONLY, nothing
   implemented" — that was stale by several commits and has been corrected. **Owner-confirmed on the
   truck 2026-09-04:** media, Siri, call, nav routing and the mic uplink all work; only the **alert**
   sink and the **duck-and-return** interplay remain unexercised (plus the active 10–20 s media-silence
@@ -297,9 +312,9 @@ now `ASSISTANT_HOLD_MS + 1` sweep period. `reclaimFocus()` covers the separate *
 
    **FIXED 2026-09-09 — `LogCapture.kt` no longer names the reverted squat package.** *(Was: OPEN
    DEFECT 2026-09-09.)* The package-squat revert (§ above) landed in the manifest and
-   `build.gradle` (`applicationId zeno.gmccpa`) on 2026-09-08 but not in the Kotlin. The pre-fix file
+   `build.gradle` (`applicationId wasidremin.gmccpa`) on 2026-09-08 but not in the Kotlin. The pre-fix file
    is byte-exact at commit `b049810`
-   (`git show b049810:host/gm_ccpa/netprobe_app/app/src/main/java/zeno/gmccpa/logging/LogCapture.kt`):
+   (`git show b049810:host/gm_ccpa/netprobe_app/app/src/main/java/wasidremin/gmccpa/logging/LogCapture.kt`):
    `GRANT_CMD` (`@b049810 :163`) and `FORCE_STOP_CMD` (`:166`) still hard-coded
    `android.car.usb.handler`, and those two constants were what the app printed to the operator as
    remediation when scope degraded (`:572`, `:608-609`) and stamped into the `degraded :` line of
@@ -313,10 +328,10 @@ now `ASSISTANT_HOLD_MS + 1` sweep period. `reclaimFocus()` covers the separate *
    literal**, so it cannot drift at the next rename: the two `const val`s are now
    `LogCapture.grantCmd(ctx)` / `LogCapture.forceStopCmd(ctx)`
    (`fun grantCmd` / `fun forceStopCmd` in
-   `netprobe_app/app/src/main/java/zeno/gmccpa/logging/LogCapture.kt`, built from `ctx.packageName`),
+   `netprobe_app/app/src/main/java/wasidremin/gmccpa/logging/LogCapture.kt`, built from `ctx.packageName`),
    with all call sites updated (`verifyScope()`, `resolveScope()`, and the `degraded :` line of
    `header()`) and `header()`'s `app :` line now printing `applicationId ${ctx.packageName}`.
-   `MainActivity.kt`'s KDoc `am start` example now says `zeno.gmccpa/zeno.gmccpa.MainActivity`. `BuildConfig.APPLICATION_ID` was deliberately NOT used:
+   `MainActivity.kt`'s KDoc `am start` example now says `wasidremin.gmccpa/wasidremin.gmccpa.MainActivity`. `BuildConfig.APPLICATION_ID` was deliberately NOT used:
    the canonical build (`tools/build_apk.sh`) is a raw `kotlinc` compile that generates no
    BuildConfig, and the module does not set `buildFeatures { buildConfig true }`. **The operator can
    copy-paste what the app prints again.** Remaining `android.car.usb.handler` hits in the tree are
@@ -355,12 +370,12 @@ further action.
   **per host**, both adverts targeted the platform hostname `Android.local`, and GM won by registering
   at boot (we start ~51 s later). Fixed by a second mDNS advert on a hostname we own
   (`gmccpa-rx.local`, `MdnsResponder.kt`) — detail in `12_OBSERVED_FLOW.md` Failure Point 3.
-- **The app installs as `zeno.gmccpa`** (labelled "GM CCPA"). The package squat on the GM USB
-  fixed-handler name (`android.car.usb.handler`) was reverted (2026-09-08) — TRUCK-VERIFIED; `zeno.gmccpa`
+- **The app installs as `wasidremin.gmccpa`** (labelled "GM CCPA"). The package squat on the GM USB
+  fixed-handler name (`android.car.usb.handler`) was reverted (2026-09-08) — TRUCK-VERIFIED; `wasidremin.gmccpa`
   is now the app's real installed package, not just the source-code package. The app goes through the
   ordinary attach resolver and its one-time permission dialog — as it effectively did under the squat
   too, since **the squat did not actually remove the permission requirement** (owner, 2026-09-10). `am`/`appops`/`pm
-  grant`/`force-stop`/`uninstall`/`dumpsys package` all take `zeno.gmccpa`. Install to
+  grant`/`force-stop`/`uninstall`/`dumpsys package` all take `wasidremin.gmccpa`. Install to
   **user 10** (a user-0 install does not get the attach dialog / `ACTION_USB_DEVICE_ATTACHED` routing):
   `adb install -i com.android.vending -r -g --user 10 <apk>`.
   A re-packaged app is a **new** app to the platform — first install starts with an empty `filesDir`
@@ -388,7 +403,9 @@ further action.
 
 ## 4. Document policy
 
-**Hard cap: 10 files in `docs/`, enforced by `tools/test.sh` (`DOC_MAX=10`). Currently 9.**
+**Hard cap: 10 files in `docs/`, enforced by `tools/test.sh` (`DOC_MAX=10`). Currently 10.**
+[`14_LESSONS_LEARNED.md`](14_LESSONS_LEARNED.md) is the last slot. Correct it in place; merge
+before adding an eleventh.
 
 Cut from 15 to 10 on 2026-08-31. `ccpa_custom` has no cap and holds 65 documents; on 2026-08-28 a
 superseded section there routed a fix to a script nothing calls. Models skim, and a stale paragraph in
@@ -465,7 +482,7 @@ shim, a separate HEVC renderer (the salvage app is H.264-only PCM).
 
 - **Test truck (`gminfo37`):** ADB over USB when the Mac is plugged in (serial `CJUD4R4f1b5fd0`).
 - **`zeno.carlink`** on the unit is a **separate, unrelated app** (stock-Carlinkit-firmware product,
-  `carlink_native_personal`). Do not confuse it with this project's `zeno.gmccpa`.
+  `carlink_native_personal`). Do not confuse it with this project's `wasidremin.gmccpa`.
 - **`uart_cmd.sh` signature:** `uart_cmd.sh OUTFILE SECONDS 'command'`. Send one or two short commands
   per call — long compound commands over UART get truncated/garbled. **This means
   `ccpa_custom/scratchpad/uart_cmd.sh` specifically** — a different, incompatible `uart_cmd.sh` also
@@ -483,7 +500,7 @@ shim, a separate HEVC renderer (the salvage app is H.264-only PCM).
   no "latest" symlink — it prints the exact path and a ready-made `adb install` line instead
   (the symlink was removed 2026-09-10: pinned `versionCode` + a link surviving a failed build meant
   `-r` could silently install stale code on the truck). **Renamed from `netprobe-debug-*` on 2026-09-10** — the app stopped
-  being "NetProbe" in 2026-08 and installs as `zeno.gmccpa` / "GM CCPA", so the artifact name was the
+  being "NetProbe" in 2026-08 and installs as `wasidremin.gmccpa` / "GM CCPA", so the artifact name was the
   last place the old identity survived. The frozen golden build keeps its historical name (below):
   it is a real file in the archive, not a generated one. `apk/` is gitignored here and starts empty on a fresh clone. The
   frozen golden build `netprobe-debug-v4.0.apk` (tag `baseline-2026-08-05-working`) lives only in the

@@ -49,6 +49,7 @@ Rules that keep it that way:
 |---|---|
 | [00_MACOS_HOST_APP.md](host/00_MACOS_HOST_APP.md) | the shipping macOS app |
 | [01_ANDROID_AND_AAOS.md](host/01_ANDROID_AND_AAOS.md) | the Android projection app and AAOS integration |
+| [02_GM_AAOS_FIELD_REFERENCE.md](host/02_GM_AAOS_FIELD_REFERENCE.md) | GM platform map (gminfo37 vs VCU), per-vehicle field reports, stock uDisk mechanics, Tachi91/XDA source index |
 
 ## ops/ — running, verifying and governing the work
 
