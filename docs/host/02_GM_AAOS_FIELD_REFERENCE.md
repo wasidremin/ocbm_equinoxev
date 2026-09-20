@@ -1,5 +1,7 @@
 # GM AAOS field reference — platforms, vehicles, uDisk, and what the community has already proven
 
+> **STATUS:** CURRENT · single owner for external GM-platform evidence (XDA thread, lvalen91 repos, per-vehicle reports). Created 2026-09-20. Correct this file in place — do not add a sibling.
+
 **Purpose.** Everything we had to dig out of the XDA *Carlink* thread and Tachi91's GitHub on
 2026-09-20, in one place, with links, so nobody has to re-read 26 forum pages or re-clone five repos
 to answer "does the dongle work on vehicle X" or "why does GM say USB not supported". Correct this
