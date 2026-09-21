@@ -14,7 +14,7 @@ rejection, wireless video framing) that were fully resolved and are kept here as
 
 Target: `gm/full_gminfo37_gb/gminfo37:12/W231E-Y181.3.2-SIHM22B-499.3/231:user/release-keys`,
 Android 12 / API 32, SELinux Enforcing, verified-boot green, `ro.debuggable=0`, GAS build (Play Store +
-GMS present). Installs as package `zeno.gmccpa`; source classes remain `zeno.gmccpa.*`
+GMS present). Installs as package `wasidremin.gmccpa`; source classes remain `wasidremin.gmccpa.*`
 (`netprobe_app/app/build.gradle:16,20`).
 
 ---
@@ -107,6 +107,17 @@ readings and shapes the whole design.
 > logs `OemIptablesHook: OEM iptable hook installed` at boot — a GM-native hook beyond the two static
 > rule files — not needed to explain this case, but a reminder that even both static files together
 > are not guaranteed to be the full runtime picture on this platform.
+>
+> **Confirmed the hard way on the Equinox EV (VCU, `ap_br_swlan0`), 2026-09-21.** Phone on the hotspot
+> at `10.101.54.244/24`, gateway `.242`; 20+ `GET /ctrl-int/1/connect` → `200 OK` across three
+> sessions, phone queried our hostname (`A` + `NSEC`), and **never dialled `:7011`**. From the phone,
+> Safari to `http://10.101.54.242:7011/info` and `http://gmccpa-rx.local:7011/info` both hung to
+> timeout — the SYN-drop signature of the IPv4 default-DROP. Cause on our side: `MdnsResponder`
+> published **A only** with an NSEC asserting "no AAAA", so iOS had no IPv6 route to us and used the
+> one address GM drops. The Silverado only ever worked because the phone happened to take the
+> link-local path. Fix: the responder now publishes the hotspot interface's `fe80::` as an AAAA
+> alongside the A (NSEC only when there is no link-local address). Untested in-car at the time of
+> writing; if the VCU's `ip6tables` names a different bridge than `br0` this will not be enough.
 
 ---
 
@@ -141,7 +152,7 @@ readings and shapes the whole design.
 > `com.android.vending`, `com.gm.hmi.connection`, `com.gm.updater` and others look uninstalled when
 > the only thing established is that they are not on user 0. Use `pm list packages --user 10` (and
 > `--user 0`) explicitly, or `dumpsys package <pkg>` and read the per-`User N: installed=` lines, as
-> `pkg_detail.txt` does correctly for `zeno.gmccpa`. Fix the recon script before the next capture.
+> `pkg_detail.txt` does correctly for `wasidremin.gmccpa`. Fix the recon script before the next capture.
 
 ---
 
@@ -255,7 +266,7 @@ dead-link detect (Java sockets can't express it; `android.system.Os.setsockoptIn
 not implement it), and per-connection `build_info(&load_device_config())` (this project ships a static
 `/info` asset instead). Live code sites: the doc comment above `Java_zeno_gmccpa_pair_NativeCore_nativeTouch`
 and the `build_info` comment block in `JNI_OnLoad` (both `native/carplay-jni/src/lib.rs`), and the
-`NOT YET IMPLEMENTED` block in `netprobe_app/app/src/main/java/zeno/gmccpa/CarPlayRx.kt` (search
+`NOT YET IMPLEMENTED` block in `netprobe_app/app/src/main/java/wasidremin/gmccpa/CarPlayRx.kt` (search
 `arm_keepalive`).
 
 **Scope corrected 2026-09-09.** These are gaps in THIS app only, not in the reference. The native
