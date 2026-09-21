@@ -15,3 +15,6 @@
 # Xcode-bundled agent skills — regenerate with:
 #   xcrun agent skills export --output-dir "$PWD/.claude/skills" --replace-existing
 .claude/skills/
+
+# Google Play publisher service-account key (tools/build_aab.sh --publish). Never commit.
+play-service-account.json
