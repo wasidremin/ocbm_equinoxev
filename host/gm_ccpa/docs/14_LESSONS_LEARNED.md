@@ -117,7 +117,14 @@ OCBM conversion **removed** that on purpose (`ocbm_boot.sh` forces `functions=ac
 
 Host-side consequences, fixed the same day: anything that “walks interfaces for the bulk pair” now finds **two** pairs. `ocbm-host` and `ocbm-probe` took the *last* one and spoke HELLO at the SCSI endpoints (`no HELLO_ACK`); the app’s `UsbBulkTransport` took the *first* (right by ordering luck). All three now prefer class `0xFF` and never claim class `0x08` — the kernel’s `usb-storage` owns it, and yanking it would remove the very disk GM enumerated us for.
 
-**Equinox procedure:** box already armed (`ocbm_udisk.sh status` → `flag=ARMED`, `functions=accessory,mass_storage`). Plug into the data port. Expect either a one-time “USB device not recognized” or nothing, then `USB_DEVICE_ATTACHED` → Allow dialog (Razorfin saw the toast once because stock arms uDisk on the *second* pass; we arm before the first enumeration, RWerksman’s “Solution 3”). Upload logs; `deviceList` must now list `1314:2d00 ifaces=2`. GM may also show a USB-media source for the 8 MB `APK` volume — that is the price. `ocbm_udisk.sh off` restores pure accessory.
+**Equinox result (2026-09-21 01:02 UTC, first in-car try, app `4.0+usb-inventory` versionCode 20) — the composite enumerates and OCBM runs end to end on the VCU radio.** Box booted with the car (`[ocbm-boot] armed functions=accessory,mass_storage class=0 pid=2d00 state=CONFIGURED`, `uptime_s=36` at HELLO). App found `/dev/bus/usb/001/006 vid=0x1314 pid=0x2d00`, `requestPermission()` → Allow dialog → permission held after **4.0 s**, claimed **`iface=0 class=0xff IN=0x81 OUT=0x01 mps=512`** (GM orders the vendor interface first, so the first-pair build worked by the same ordering luck as on Linux), `HELLO_ACK` in 2 ms, MFi cert 945 B + RSA-1024 signature in 1.7 s, `CT_SUBSCRIBE` → `SEV_HOST_PRESENT` in 9 ms, `BOX_HEALTH 0x40 → 0x50 → 0x51 [HCI|btd|rootfs-ok]` in 10 s, `HCI bring-up OK dev=hci0 name=CarLink-6754`, discoverable, SDP serving Wireless iAPv2 / HFP / HSP. Vehicle hotspot creds (`myChevrolet 32D4`, ch 36) pushed in the SUBSCRIBE. The capture ends before any phone paired, so Bluetooth pairing → hotspot handoff → CarPlay connect on this vehicle is the next thing to prove, not USB.
+
+Two things the same capture exposed, both ours:
+
+1. **`USB_DEVICE_ATTACHED` still did not reach `UsbAttachActivity`** (no `attach ctx` line; session `origin=launch perm_trampoline=none`). The app had been up since 17:24 UTC, its 10 min attach wait had aborted at 20:20 (`usb-claim FAILED … last state: absent`), and when the dongle booted at 01:01:42 nothing re-linked until the driver pressed **Restart Session** at 01:02:03. Until the app re-polls `deviceList` after that abort (or GM delivers the attach intent), **every drive needs a Restart Session press** once the app has been open more than 10 min. Open item, see §7.
+2. **False STALLED 45 s later.** `SEV_HOST_PRESENT` moved the phase to ARMED at +9 ms, then the command thread's `onBoxLinked()` landed 4 ms after and regressed it to BOX_LINKED; the restart deadline then reported “the adapter never confirmed the host present — no radio bring-up” against a box that was discoverable. UI showed FAILED with everything healthy. Fixed in `SessionSupervisor.onBoxLinked` (never regress a phase the box already advanced) and the ARMED verdict now says “pair (first time) or reconnect” rather than assuming a prior session. Ships in the next build (> versionCode 20).
+
+GM did **not** toast “USB device not recognized” in this capture (no evidence either way from the app side; the driver should say). Whether the 8 MB `APK` volume shows as a USB-media source on the HU is likewise a driver observation. `ocbm_udisk.sh off` restores pure accessory.
 
 ---
 
@@ -134,14 +141,15 @@ Host-side consequences, fixed the same day: anything that “walks interfaces fo
 
 | Layer | Server / emulator | Equinox EV |
 |---|---|---|
-| Box enumerates `1314:2d00`, OCBM HELLO/MFi/SUBSCRIBE | yes | pure accessory: never appears in `UsbManager` |
-| `accessory,mass_storage` composite, `2d00`, HELLO + FAT volume, across reboot | yes (2026-09-20) | **not yet tried** — next drive |
-| IW416 `hci0` after subscribe | yes (`BOX_HEALTH 0x51`) | not reached |
-| Allow / Always-open dialog | emulator: yes | never shown |
-| Vehicle hotspot + inverted receiver | Silverado: proven | not reached; receiver still advertises on `wlan0`/`br0` |
+| Box enumerates `1314:2d00`, OCBM HELLO/MFi/SUBSCRIBE | yes | pure accessory: never appears in `UsbManager`. **Composite: yes (2026-09-21)** |
+| `accessory,mass_storage` composite, `2d00`, HELLO + FAT volume, across reboot | yes (2026-09-20) | **yes (2026-09-21)** — `iface=0 class=0xff`, HELLO_ACK 2 ms, MFi proven |
+| IW416 `hci0` after subscribe | yes (`BOX_HEALTH 0x51`) | **yes** — `0x51` 10 s after SUBSCRIBE, `CarLink-6754` discoverable |
+| Allow / Always-open dialog | emulator: yes | **Allow: yes** (4 s, via `requestPermission()` from Restart Session). Attach intent: still never delivered |
+| Vehicle hotspot + inverted receiver | Silverado: proven | creds pushed (`myChevrolet 32D4` ch 36); receiver up on `wlan0`/`br0`; **no phone paired yet in the capture** |
 
 **Still open on Equinox, in order:**
 
-1. **uDisk composite (lesson 5 / E1) — bench-proven, box is armed.** Plug into the Equinox, upload logs, look for `1314:2d00 ifaces=2` in `deviceList` and the Allow dialog. This is the same descriptor shape stock users have working on that vehicle.
-2. Ship the `UsbBulkTransport` vendor-interface preference (versionCode > 20) before or with that drive so the app cannot pick the SCSI pair if GM orders interfaces differently.
-3. Only if the composite is still invisible on the Equinox: **power from that jack, control not over USB bulk** — persist vehicle-hotspot creds from a bench subscribe, join the car LAN, OCBM/MFi over TCP. Not started, and no longer the leading hypothesis.
+1. **Pair the iPhone.** With the app past `box linked`/`armed` (Restart Session if needed), pair to `CarLink-6754` from the iPhone's Bluetooth settings, then upload. Expect `BT_PHASE` progression → `BTP_WIFI_HANDOFF` → inbound `_carplay-ctrl` connect. This is the Silverado flow on a VCU radio; nothing about it has been tried here.
+2. **Auto-relink after the 10 min attach abort.** GM never delivers `USB_DEVICE_ATTACHED` to us and the dongle boots ~35 s after the car does, so an app opened earlier sits on `usb-claim FAILED` until the driver presses Restart Session. Poll `deviceList` for `1314:2d00` at a low rate after the abort (or never abort while the activity is foreground) and re-run the link when it appears. Not implemented.
+3. Ship the `UsbBulkTransport` vendor-interface preference + the `onBoxLinked` no-regress fix (versionCode > 20). GM happened to order the vendor interface first, so the shipped build worked; do not rely on it.
+4. ~~Power from that jack, control over TCP~~ — **retired**: USB bulk is reachable on the VCU with the composite.

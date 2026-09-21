@@ -61,7 +61,8 @@ Standing GM risk he names (p.25): the CCPA only works because GM "hadn't blocked
 | '24 Silverado EV RST (RWerksman) | VCU | CFW + uDisk auto-arm | Works on first plug with §4 "Solution 3". Multiple adapters. | [p.26](https://xdaforums.com/t/carlink.4774308/page-26), Mar 12 2026 |
 | 2026 GMC Sierra EV (kossoo) | VCU | CFW | Works on first start every time; **hit-or-miss reconnect after a 5–20 min stop** (sits at "connecting"); fine again after a long off period. Unanswered in thread. | p.26, Sep 2026 |
 | 2025 Escalade IQ Sport II (BazTST) | VCU | stock | Worked first time (Siri, Waze, Music, calls), then "USB NOT SUPPORTED" on the second start until uDisk toggled. | p.26, Jan 11 2026 |
-| **Our Equinox EV** (`burmese_orange`, user 12) | VCU | **OCBM pure accessory `2d00`** | Never appears in `deviceList`, hours of `usb-claim FAILED`. **Consistent with every other VCU report for a non-composite gadget.** Composite not yet driven. | `14_LESSONS_LEARNED.md` §1 |
+| **Our Equinox EV** (`burmese_orange`, user 12) | VCU | **OCBM pure accessory `2d00`** | Never appears in `deviceList`, hours of `usb-claim FAILED`. **Consistent with every other VCU report for a non-composite gadget.** | `14_LESSONS_LEARNED.md` §1 |
+| **Our Equinox EV** (same unit) | VCU | **OCBM `accessory,mass_storage` composite, `2d00`** (`ocbm_udisk.sh`) | **Works (2026-09-21).** Enumerates, Allow dialog in 4 s, OCBM `iface=0 class=0xff` HELLO_ACK 2 ms, MFi proven, SUBSCRIBE → HOST_PRESENT, `hci0` up as `CarLink-6754` 10 s later. First OCBM data point on a VCU radio. `USB_DEVICE_ATTACHED` still not delivered — driver used Restart Session. Phone pairing not yet tried. | `14_LESSONS_LEARNED.md` §5 |
 
 Pattern: **every VCU vehicle needed the composite; every gminfo37 vehicle did not.** Nobody in the thread has an OCBM box on a VCU radio yet — we are first.
 
@@ -190,8 +191,10 @@ for any of this; dongle AP is `192.168.43.1`, telnet port 23.
 
 ## 8. Open questions to take back to the thread (after the Equinox drive)
 
-1. Does an OCBM (`2d00`) composite enumerate on a VCU radio the same way stock `1520` does? — we will
-   be the first data point; post `deviceList` either way.
+1. ~~Does an OCBM (`2d00`) composite enumerate on a VCU radio the same way stock `1520` does?~~ **Answered
+   2026-09-21: yes.** `1314:2d00` with IF0 vendor/OCBM + IF1 mass storage claimed on our Equinox EV, Allow
+   dialog, full OCBM handshake, BT up (§5 row). Worth posting: the PID does not have to be `1520`; the
+   composite shape is what the VCU wants. Still unknown: whether GM shows the 8 MB `APK` volume as a media source.
 2. kossoo's Sierra EV reconnect flakiness after short stops — does our `session_supervisor` show the
    same pattern (radio keeps the old BT bond / hotspot state)?
 3. Whether GM's "USB not supported" handler fires on the composite at all when it is armed *before*

@@ -15,15 +15,18 @@ checkout at `~/Documents/carlink/old/gm_ccpa/evidence/`. Every bare `evidence/..
 resolves there.
 
 
-## START HERE (2026-09-20): Equinox EV needs the uDisk composite — box is armed, bench-proven, not yet driven
+## START HERE (2026-09-21): the uDisk composite WORKS on the Equinox EV — USB is solved, pairing is next
 
 The Silverado proof (`12_OBSERVED_FLOW.md`) is unchanged. The Equinox EV (`burmese_orange`, Android 14,
 user 12) is a **GM VCU** radio: it refuses a *pure* accessory gadget (stock `1520` or OCBM `2d00`) but
-enumerates the stock `accessory,mass_storage` composite — device-proven by Equinox EV / Silverado EV /
-Sierra EV owners on stock firmware. The "USB24915P is iPhone-only" theory from 2026-09-15 is refuted.
-The composite is re-implemented for OCBM (`ocbm_udisk.sh`, flag `/script/ocbm_udisk`, keeps `2d00` +
-HELLO) and proven on the bench across a cold boot. Next drive: plug in, look for `1314:2d00 ifaces=2` and
-the Allow dialog. Write-up: [`14_LESSONS_LEARNED.md`](14_LESSONS_LEARNED.md) §1/§5. Platform map, per-vehicle
+enumerates the `accessory,mass_storage` composite. **In-car 2026-09-21 01:02 UTC:** the OCBM composite
+(`ocbm_udisk.sh`, flag `/script/ocbm_udisk`, still `2d00`) was claimed at `iface=0 class=0xff`, Allow
+dialog in 4 s, HELLO_ACK 2 ms, MFi proven, SUBSCRIBE → HOST_PRESENT, `BOX_HEALTH 0x51`, `CarLink-6754`
+discoverable. No phone paired in that capture — **pair the iPhone next**. Two app defects the capture
+exposed: GM still never delivers `USB_DEVICE_ATTACHED`, and the 10 min attach wait aborts with no re-poll,
+so each drive currently needs a Restart Session press (open); and a phase-ordering race made the
+supervisor report a false STALLED/FAILED 45 s in (fixed in `SessionSupervisor.onBoxLinked`, unshipped —
+next build must be versionCode > 20). Write-up: [`14_LESSONS_LEARNED.md`](14_LESSONS_LEARNED.md) §5/§7. Platform map, per-vehicle
 field reports, stock uDisk internals and the XDA/GitHub source index:
 [`../../../docs/host/02_GM_AAOS_FIELD_REFERENCE.md`](../../../docs/host/02_GM_AAOS_FIELD_REFERENCE.md).
 Do not treat Equinox USB as the Silverado dangling-handler bug.
