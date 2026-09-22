@@ -116,8 +116,10 @@ readings and shapes the whole design.
 > published **A only** with an NSEC asserting "no AAAA", so iOS had no IPv6 route to us and used the
 > one address GM drops. The Silverado only ever worked because the phone happened to take the
 > link-local path. Fix: the responder now publishes the hotspot interface's `fe80::` as an AAAA
-> alongside the A (NSEC only when there is no link-local address). Untested in-car at the time of
-> writing; if the VCU's `ip6tables` names a different bridge than `br0` this will not be enough.
+> alongside the A (NSEC only when there is no link-local address). Publishing both left iOS the
+> dropped IPv4 address in the same answer, and a black-holed SYN is not a failover. versionCode 31
+> (`4.0+aaaa-only`) withholds the A whenever a link-local address exists and answers an A query with
+> a TTL-0 withdrawal plus the AAAA.
 
 ---
 
