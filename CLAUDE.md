@@ -30,6 +30,13 @@ feature/topic branch, do not leave work parked on one, and do not ask which bran
 review mechanism — it is just work that the mirror does not carry and that the next session has to
 rediscover. A 70-commit branch sat unmerged for exactly that reason (2026-09-08).
 
+**Do not push to lvalen91.** `origin` is `https://github.com/lvalen91/ocbm.git`. That GitHub
+account is lvalen91 (local trees sometimes spell it `ivalen91`, as in
+`tmp_carlink_native_ivalen91_update`). This checkout does not publish there: do not `git push`,
+do not open a pull request, and do not retry a refused push with another credential. Fetch and
+read are fine. The GM app leaves through the Play internal track
+(`host/gm_ccpa/tools/build_aab.sh --publish`), not through that remote. (2026-09-22)
+
 **Build artifacts and caches never live under `~/Documents`.** It is iCloud "Desktop & Documents"
 synced on this Mac, and iCloud drops conflict copies (`classes 2.jar`, `Foo$Bar 2.dex`) into build
 trees, which toolchains then eat as real inputs — nondeterministic duplicate-class failures that a

@@ -18,7 +18,7 @@ this file is the *external* evidence and the platform map that write-up rests on
 | **Tachi91** (XDA) = **lvalen91** (GitHub) | Author of the Carlink app, the CCPA custom firmware, the alternate web UI, OCBM. Drives a **2024 Silverado ICE (`gminfo37`, AAOS 12, last Y181 update)**. Has **no EV** — cannot test uDisk himself. | [github.com/lvalen91](https://github.com/lvalen91) |
 | XDA thread *Carlink* | The user community; ~26 pages, Jan 2026 →. Vehicle reports, uDisk workarounds, Tachi91's design statements. | [xdaforums.com/t/carlink.4774308](https://xdaforums.com/t/carlink.4774308/) — the useful pages are [24](https://xdaforums.com/t/carlink.4774308/page-24), [25](https://xdaforums.com/t/carlink.4774308/page-25), [26](https://xdaforums.com/t/carlink.4774308/page-26) |
 | `lvalen91/carlink` | The Android/AAOS app (Kotlin). Stock Carlinkit protocol + OCBM. README has the GM platform notes (cluster icons, VCU vs gminfo37). | [github.com/lvalen91/carlink](https://github.com/lvalen91/carlink) |
-| `lvalen91/ocbm` | Upstream of **this repo** — the open-source CCPA firmware replacement. | [github.com/lvalen91/ocbm](https://github.com/lvalen91/ocbm) |
+| `lvalen91/ocbm` | Public history this checkout was cloned from — the open-source CCPA firmware replacement. **Read-only from here.** | [github.com/lvalen91/ocbm](https://github.com/lvalen91/ocbm) |
 | `lvalen91/CPC200-CCPA_resources` | Conversion landing page, docs, **live stock script snapshots** (`custom/scripts/live_snapshot_2026-06-29/`), custom firmware. | [github.com/lvalen91/CPC200-CCPA_resources](https://github.com/lvalen91/CPC200-CCPA_resources) |
 | `lvalen91/CPC200-CCPA-Firmware-Dump` | The stock rootfs, RE notes, the alternate web UI (`web_interface/new_website/`), custom firmware `custom_firmware/2025.10.15.1127` (the telnet-root CFW RWerksman's guide requires). | [github.com/lvalen91/CPC200-CCPA-Firmware-Dump](https://github.com/lvalen91/CPC200-CCPA-Firmware-Dump) |
 | `lvalen91/carplayd` | Pi-side wireless CarPlay using a CCPA in NCM mode purely as the MFi oracle (`CARPLAY_MFI_ADDR` path). | [github.com/lvalen91/carplayd](https://github.com/lvalen91/carplayd) |
@@ -29,6 +29,12 @@ this file is the *external* evidence and the platform map that write-up rests on
 | **Lurker1126** / mossyhub | *openautolink* — wireless Android Auto for AAOS, sidesteps USB entirely. Reverse-engineered the AA EV energy model. | [github.com/mossyhub/openautolink](https://github.com/mossyhub/openautolink) |
 
 Local clones (throwaway, re-clone as needed): `git clone --depth 1 https://github.com/lvalen91/<repo>` into `/tmp`.
+
+**This checkout does not push to lvalen91** (2026-09-22). `origin` is `github.com/lvalen91/ocbm`
+for history only. The owner of this machine does not publish commits, branches, or pull requests
+to any lvalen91 repo — `wasidremin` has no write access, and a push there is the wrong destination
+even if a credential someday has it. Local directory names sometimes spell the account `ivalen91`.
+Read and clone freely. The GM app ships on the Play internal track, not by pushing that remote.
 
 ---
 
