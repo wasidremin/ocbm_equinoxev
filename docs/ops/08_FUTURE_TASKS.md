@@ -8,6 +8,15 @@ Owner-directed work items that are neither an open defect nor a verification gap
 state it starts from and what "done" means. When a task lands, replace its body with a one-line
 pointer to the doc that now owns the result — do not leave a stale plan beside a shipped feature.
 
+**CarPlay SDK plan (2026-09-22):** T6–T11 are the Communication Plug-in features this tree will
+implement itself. The measured session of 2026-08-02 already negotiated `hevc`, `altScreen`,
+`viewAreas`, `cornerMasks`, `iAPChannel`, and `sessionManagement`
+(`host/gm_ccpa/docs/05_SESSION_FLOW.md`). These six are the ones that did not, and that an Equinox
+session would actually gain. They are receiver work (`crates/`, `ccpa/`): the GM app freeze
+(`host/gm_ccpa/docs/11_HARDENING_PLAN.md`) still means the Kotlin app adapts to the box, so none of
+these land as an app-only patch. They are visible on a drive only when `carplayd` is the session.
+Adapter Wi-Fi terminates CarPlay inside the dongle firmware, and that firmware is outside this list.
+
 ## T1. Settings redesign — projection-aware, vehicle-centric (raised 2026-09-04; IMPLEMENTED 2026-09-04)
 
 > **State (2026-09-04):** built the same day under the design contract
@@ -144,4 +153,119 @@ route is active. Unknowns: whether a session without a route shows anything on t
 whether input is expected on that display (`InstrumentClusterInput`), and focus behaviour between
 the two displays. **Done means** the phone's map renders in a second window while the main display
 keeps projecting, recorded with the phone-side lines.
+
+## T6. Car GPS into Maps — iAP2 LocationInformation (raised 2026-09-22)
+
+**Why.** Maps is using the phone's own fix. The plug-in expects the accessory to send `0xFFFB`
+LocationInformation after the phone sends `0xFFFA` / `0xFFFC`. The payload is NMEA-0183 (`GPRMC`,
+`GPGGA`, and the rest) plus Apple's `PASCD` when the car has speed.
+
+**State.** `crates/vendor/metadata/src/location.rs` parses only. Identify param 22
+(`LocationInformationComponent`) has no caller (`docs/carplay/05_METADATA_AND_CONTROLS.md` §2.1).
+The direction is the opposite of Now Playing: param 6 carries `0xFFFB` and param 7 carries the
+Start/Stop pair. `features::Feature` cannot express that shape, and Mechanism B step (3) in
+`docs/carplay/04_CAPABILITIES_AND_CONFIG.md` has those ids backwards. Correct that paragraph before
+any declaration. The wireless Identify stays on its pinned id list until growth there is
+re-validated; this arms on the wired receiver Identify only.
+
+**Done means.** A receiver-path session declares param 22 together with `0xFFFB` / `0xFFFA` /
+`0xFFFC`, the phone subscribes, a logged `0xFFFB` carries a real fix, and `accessoryd` accepts the
+Identify (no `0x1D03`).
+
+## T7. EV vehicle status — range and charge (raised 2026-09-22)
+
+**Why.** The Equinox is electric. Maps will not treat it as one until Identify says so and a status
+update follows. `spec.rs` already has `EngineType::Electric` and `SupportedChargingConnectors`.
+
+**State.** The compiled baseline is `EngineType=Gasoline` unless a pushed identity overrides it
+(`message.rs`, `VehicleIdentity::baseline()`). Param 21 is reachable only through
+`build_ident_info_with` when the app pushes `vehicleStatus:`, and only on a non-wireless arm.
+`features.rs` declares none of `0xA100` / `0xA101` / `0xA102`, so enabling the component today
+advertises a capability the messages never service. `message.rs` (the param 21/22 block) says to
+leave `vehicleStatus:` off on hardware until that declaration lands. Same direction trap as T6:
+`0xA101` is accessory-sourced.
+
+**Done means.** Pushed identity is Electric, with the connector the car actually has. Param 21 and
+the three message ids are declared together. A `0xA101` VehicleStatusUpdate carries range, and
+charge state when the car provides it, and `accessoryd` accepts the Identify.
+
+## T8. MainBuffered audio, phase B (raised 2026-09-22)
+
+**Why.** Music rides MainHighAudio (stream type 102), realtime UDP. MainBuffered is the TCP media
+path: the head unit holds up to a two-minute buffer fed faster than realtime, so a short link loss
+does not drop playback. The codec does not change (`docs/carplay/04_CAPABILITIES_AND_CONFIG.md`,
+`enablesMainBufferedAudio`).
+
+**State.** Phase A is done and wired-device-proven: `/info` can carry `mainBufferedInfo` and SETUP
+can echo `"mainBuffered"` when the app sets the toggle. The app default is off, because advertising
+a stream the box then refuses silences media. Phase B is the stream itself. SETUP phase 2 still
+omits it (`session.rs`, "Still unimplemented and therefore omitted": AuxOutAudio, AuxInAudio,
+MainBuffered). Confirm the stream-type number and the `mainBufferedInfo` dictionary against
+`CarPlaySDK.framework` before writing that arm. This plane is also what T11 needs.
+
+**Done means.** With the toggle on, iOS opens a MainBuffered stream and music plays through it. With
+the toggle off, the session bytes match today.
+
+## T9. UI context — which CarPlay app is showing (raised 2026-09-22)
+
+**Why.** The car cannot tell Maps from Now Playing. The wire is `/info`
+`uiContextLastOnDisplayURLs` / `uiContextNowOnDisplayURLs` plus the `changeUIContext` command
+(`docs/carplay/03_SDK_GROUND_TRUTH.md` §9).
+
+**State.** `enablesUIContext` is not parsed; serde drops it. The 2026-08-02 session did not
+negotiate `uiContext`. Build order is the corner-masks arc: parse the key, emit `/info`, echo the
+token in SETUP `enabledFeatures`, then handle the command.
+
+**Done means.** A session log shows `uiContext` surviving the feature intersection, and a URL change
+reaches the host when the driver switches CarPlay apps.
+
+## T10. Focus transfer between CarPlay and the head unit (raised 2026-09-22)
+
+**Why.** Input focus has to move between CarPlay and the head unit's own UI when both are on screen.
+`accessoryAcquireFocus`, `accessoryGiveFocus`, and `deviceOfferFocus` are the commands. Screen
+ownership is a different feature and already works (`changeModes` / `modesChanged`).
+
+**State.** `enablesFocusTransfer` is parsed. A per-view-area `viewAreaSupportsFocusTransfer` flag
+can be advertised. `"focusTransfer"` is not echoed in `enabledFeatures`, and none of the three
+runtime commands are handled (`docs/carplay/04_CAPABILITIES_AND_CONFIG.md` capability row 1). The
+2026-08-02 session did not negotiate it.
+
+**Done means.** With the app toggle on, `focusTransfer` survives SETUP, and a focus offer from the
+phone is answered with the session still up.
+
+## T11. Enhanced Siri — car mic, always on (raised 2026-09-22)
+
+**Why.** Button Siri already works (`requestSiri`, mic uplink on `CH_MIC`, stream type 100).
+Enhanced Siri is the wake-word path: `enhancedSiriInfo` in `/info`, a dedicated downlink AuxOut
+(106) and uplink AuxIn (107), an always-on mic, and the two detectors the plug-in requires
+(keyword and voice activity) before iOS checks the hit again
+(`docs/carplay/03_SDK_GROUND_TRUTH.md` §7).
+
+**State.** `enablesEnhancedSiri` is serde-ignored. `enhancedSiriInfo` is absent from `crates/` and
+`ccpa/`. The SETUP arm that omits MainBuffered also omits AuxIn and AuxOut, so T8's audio plane
+comes first. The mic DSP and the two detectors do not exist on the box.
+
+**Done means.** With the toggle on, a wake word on the car mic starts Siri, the reply plays on
+AuxOut, and media keeps running. With the toggle off, button Siri is unchanged.
+
+## Left off this plan
+
+Kept here so a later session does not promote them into tasks.
+
+- **Already served.** HEVC, touch, corner masks, view areas (including `updateViewArea`,
+  device-proven 2026-09-07), alt screen on the Mac host, button Siri, route guidance at the
+  `proven` metadata tier, `changeModes`, `uiAppearanceUpdate`, `mapAppearanceUpdate`. Hiding the
+  Equinox's GM bars is a window-insets problem, already in the app
+  (`host/gm_ccpa/docs/00_HANDOFF.md`). A view area is not that mechanism.
+- **Already a defect.** `stopSession` and the session-reason fields stay in
+  [`04_OPEN_ITEMS.md`](04_OPEN_ITEMS.md). They are not copied here.
+- **No wire to build against.** DCX has no CarPlaySDK feature string. File transfer's `/info`
+  dictionary shape is unknown. UI sync needs the CarPlayClusterControl UUID, which is unrecovered,
+  and cluster hardware this car has not exposed to the app.
+- **Entitlement.** Full-screen video playback (`enablesVideoPlayback`, `lunaConfig`) requires Apple
+  to grant `com.apple.developer.carplay-video`.
+- **Wrong panel.** Knob, d-pad, and touchpad descriptors are for other head units. The Equinox is
+  a touchscreen.
+- **No surface yet.** A second CarPlay video stream on the Equinox cluster waits until the VCU
+  gives this app a cluster surface. Alt screen already renders in the Mac app.
 

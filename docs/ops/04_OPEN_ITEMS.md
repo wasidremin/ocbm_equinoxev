@@ -1,6 +1,10 @@
 # Open items and roadmap
 
 > **STATUS:** CURRENT · single owner for this topic. Consolidated 2026-08-31 from pre-consolidation docs OPEN, 06; the originals are in git history and in the 2026-08-31 backup. Correct this file in place — do not add a sibling.
+>
+> **CarPlay SDK plan (2026-09-22)** lives in [`08_FUTURE_TASKS.md`](08_FUTURE_TASKS.md) as T6–T11
+> (location, EV status, MainBuffered audio, UI context, focus transfer, Enhanced Siri). This file
+> stays the defect index.
 
 Every known-open item in one place, plus the ordered roadmap. An item leaves this file only when it is closed with evidence.
 
