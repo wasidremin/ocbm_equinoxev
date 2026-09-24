@@ -6,6 +6,7 @@ import wasidremin.gmccpa.ProbeLog
 import wasidremin.gmccpa.av.AacPlayer
 import wasidremin.gmccpa.av.BPlist
 import wasidremin.gmccpa.av.CarPlayActivity
+import wasidremin.gmccpa.av.CarPlayMediaBrowserService
 import wasidremin.gmccpa.av.HevcRenderer
 import wasidremin.gmccpa.av.MetadataSeam
 import wasidremin.gmccpa.av.MicUplink
@@ -141,6 +142,7 @@ object AdapterSession {
             router = null
             lanes = armed
             val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            CarPlayMediaBrowserService.ensureStarted(ctx)
             val p = AacPlayer(am).also { it.start(); it.prime() }
             val voice = VoiceRouter(
                 ctx,
@@ -179,6 +181,7 @@ object AdapterSession {
             when (BPlist.str(root, "type")) {
                 "modesChanged" -> onModes(root, payload.size)
                 "requestViewArea" -> CarPlayActivity.onAdapterViewArea(root)
+                "requestUI" -> CarPlayActivity.openSettingsFromIcon()
             }
         } else {
             CarPlayActivity.nowPlaying.dispatch(marker, payload)

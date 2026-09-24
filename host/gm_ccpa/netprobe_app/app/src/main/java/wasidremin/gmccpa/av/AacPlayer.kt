@@ -279,6 +279,20 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             return
         }
         requestFocus()
+        CarPlayMediaBrowserService.claimCarSource()
+    }
+
+    /**
+     * The car took permanent focus as the music stream opened, before this app was the selected
+     * source. Claim the source, then ask once. A second LOSS stands — repeating it is what tore
+     * the stream down on 2026-09-23.
+     */
+    private fun reclaimFocusOnce() {
+        if (!running.get() || wasidremin.gmccpa.AudioRoute.bluetooth) return
+        log.i("media focus lost — claiming the car source and requesting focus once")
+        CarPlayMediaBrowserService.claimCarSource()
+        abandonFocus("reclaiming media focus after the car took it")
+        requestFocus()
     }
 
     /**
@@ -421,6 +435,13 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             MediaTransportClock.focusLossAt = android.os.SystemClock.elapsedRealtime()
         }
         setFocusGain(gain)
+        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS &&
+            !wasidremin.gmccpa.AudioRoute.bluetooth &&
+            !focusReclaimed
+        ) {
+            focusReclaimed = true
+            android.os.Handler(android.os.Looper.getMainLooper()).post { reclaimFocusOnce() }
+        }
         synchronized(this@AacPlayer) {
             focusCallbackSeq = focusRequestSeq
             log.i("media focus ${focusName(focusState)} -> ${focusName(change)} (playback gain $gain, track stays in PLAY)")
@@ -539,6 +560,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     /** 1 while we hold focus at full level, [DUCK_GAIN] on CAN_DUCK, 0 on LOSS / LOSS_TRANSIENT. */
     private var focusGain = 1.0f
     private var duckGain = 1.0f
+    /** One reclaim per player. A LOSS on every frame used to fight the car and tear the stream down. */
+    private var focusReclaimed = false
 
     /** The ONLY way a built track becomes [track]. Publish FIRST, then re-derive gain and hold state
      *  from the shared flags: an edge that landed before the publish saw `track == null` and pushed

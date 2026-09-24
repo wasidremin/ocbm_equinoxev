@@ -107,6 +107,13 @@ class CarPlayActivity : Activity() {
             act.runOnUiThread { act.applyViewArea(idx) }
         }
 
+        /** The CarPlay home-screen tile. Brings settings forward and keeps the session up. */
+        fun openSettingsFromIcon() {
+            val act = live?.get()
+            if (act != null) act.runOnUiThread { act.openSettings() }
+            else DisplayPrefs.holdLauncher = true
+        }
+
         /**
          * The merged now-playing picture. PROCESS-wide, not per-Activity: the MediaSession that
          * publishes it lives in [CarPlayMediaBrowserService], whose lifetime AAOS controls (it is
@@ -241,7 +248,9 @@ class CarPlayActivity : Activity() {
         // The root stays full-bleed (2400x960) and is the coordinate space touch is normalised in —
         // see [onTouch]. Its background is what shows outside the active view area.
         root = android.widget.FrameLayout(this)
-        root.addView(surfaceView, android.widget.FrameLayout.LayoutParams(VideoFrame.width, VideoFrame.height, Gravity.TOP or Gravity.END))
+        root.addView(surfaceView, android.widget.FrameLayout.LayoutParams(VideoFrame.width, VideoFrame.height, Gravity.TOP or Gravity.START).apply {
+            marginStart = VideoFrame.railPx
+        })
         surfaceView.holder.setFixedSize(VideoFrame.width, VideoFrame.height)
         setContentView(root)
         applySystemUi()
@@ -375,13 +384,18 @@ class CarPlayActivity : Activity() {
     /** Place the surface 1:1 in the rectangle the phone was told to fill. Never stretch it. */
     private fun applyVideoFrame() {
         val lp = surfaceView.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return
-        val w = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.width else DISPLAY_W
-        val h = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.height else DISPLAY_H
-        val gravity = Gravity.TOP or Gravity.END
-        if (lp.width == w && lp.height == h && lp.gravity == gravity) return
+        val rail = VideoFrame.railPx > 0 && viewAreaIndex == 0
+        val w = if (rail) VideoFrame.width else DISPLAY_W
+        val h = if (rail) VideoFrame.height else DISPLAY_H
+        // Flush against the rail. Gravity END left a black column between the rail and the picture
+        // whenever the window was wider than 2400. Leftover pixels, if any, sit on the right.
+        val gravity = Gravity.TOP or Gravity.START
+        val inset = if (rail) VideoFrame.railPx else 0
+        if (lp.width == w && lp.height == h && lp.gravity == gravity && lp.marginStart == inset) return
         lp.width = w
         lp.height = h
         lp.gravity = gravity
+        lp.marginStart = inset
         surfaceView.layoutParams = lp
         surfaceView.holder.setFixedSize(w, h)
         log.i("video frame ${w}x$h rail ${if (w == DISPLAY_W) 0 else VideoFrame.railPx}")
@@ -967,6 +981,7 @@ class CarPlayActivity : Activity() {
         }
         when (type) {
             "modesChanged" -> onModesChanged(root, payload.size)
+            "requestUI" -> runOnUiThread { openSettings() }
             "requestViewArea" -> {
                 val idx = BPlist.int(root, "params", "viewAreaIndex")?.toInt() ?: return
                 if (idx !in VIEW_AREAS.indices) {

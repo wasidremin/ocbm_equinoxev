@@ -80,6 +80,13 @@ data class VehicleConfigSpec(
     /** Japan-market Maps restriction; off outside that market. */
     val limitedUiJapanMaps: Boolean = false,
     val limitedUiLongAlerts: Boolean = true,
+    /**
+     * CarPlay home-screen tile that returns to this app. Empty means the section is omitted, so the
+     * pinned document stays byte-identical. A partial size set is what renders as a blank tile.
+     */
+    val oemIconImages: List<OemIcon.Image> = emptyList(),
+    val oemIconLabel: String = "",
+    val oemIconVisible: Boolean = true,
 ) {
     init {
         require(maxFps == 30 || maxFps == 60) { "maxFPS must be 30 or 60; the box ignores anything else" }
@@ -106,6 +113,7 @@ object VehicleConfigYaml {
         videoStreams(b, s)
         accessoryConfig(b, s)
         limitedUiConfig(b, s)
+        oemIconConfig(b, s)
         audioAndMetadata(b, s)
         return b.toString()
     }
@@ -224,6 +232,23 @@ object VehicleConfigYaml {
         line("  musicLists: ${s.limitedUiMusicLists}")
         line("  japanMaps: ${s.limitedUiJapanMaps}")
         line("  longAlerts: ${s.limitedUiLongAlerts}")
+    }
+
+    /** Between `limitedUIConfig` and `audio`, matching the box struct. Omitted when there is no image. */
+    private fun oemIconConfig(
+        b: StringBuilder,
+        s: VehicleConfigSpec,
+    ) = with(b) {
+        if (s.oemIconImages.isEmpty()) return@with
+        line("oemIconConfig:")
+        line("  images:")
+        for (img in s.oemIconImages) {
+            line("    - width: ${img.width}")
+            line("      height: ${img.height}")
+            line("      imageBase64: \"${img.base64}\"")
+        }
+        if (s.oemIconLabel.isNotEmpty()) line("  label: \"${escape(s.oemIconLabel)}\"")
+        line("  visible: ${s.oemIconVisible}")
     }
 
     private fun audioAndMetadata(
@@ -408,7 +433,25 @@ object VehicleConfigYaml {
         // panel, produced by that emitter after the pin has passed — not a hand-edited copy.
         val doc = if (width == 2400 && height == 960) pinned
             else render(VehicleConfigSpec(name = "CarLink GM ${width}x${height}", width = width, height = height))
+        // After the pinned body so a 2400 session still starts with that document. serde matches
+        // keys by name, so the block does not have to sit between limitedUIConfig and audio.
+        val oemRaw = oemIconYaml(OemIcon.gear(), "Settings")
         val extra = "wifi_ap: true\nwifi_ssid: $ssid\nwifi_pass: $passphrase\nwifi_channel: ${AdapterWifi.CHANNEL}\n"
-        return (doc + extra).toByteArray(Charsets.UTF_8)
+        val oem = if ((doc.length + oemRaw.length + extra.length) > 60_000) "" else oemRaw
+        return (doc + oem + extra).toByteArray(Charsets.UTF_8)
+    }
+
+    private fun oemIconYaml(images: List<OemIcon.Image>, label: String): String {
+        if (images.isEmpty()) return ""
+        val b = StringBuilder()
+        b.append("oemIconConfig:\n  images:\n")
+        for (img in images) {
+            b.append("    - width: ${img.width}\n")
+            b.append("      height: ${img.height}\n")
+            b.append("      imageBase64: \"${img.base64}\"\n")
+        }
+        if (label.isNotEmpty()) b.append("  label: \"$label\"\n")
+        b.append("  visible: true\n")
+        return b.toString()
     }
 }

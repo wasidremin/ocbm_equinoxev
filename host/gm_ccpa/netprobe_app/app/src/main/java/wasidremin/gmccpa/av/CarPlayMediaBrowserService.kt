@@ -151,6 +151,18 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         fun claimCarSource() {
             live?.get()?.claimCarSource()
         }
+
+        /**
+         * Bring the service up ourselves. AAOS binds it on its own schedule, which on the
+         * 2026-09-24 drive was never — `claimCarSource` was a no-op and media focus was stolen
+         * the moment the music stream opened.
+         */
+        fun ensureStarted(ctx: android.content.Context) {
+            if (live?.get() != null) return
+            ctx.applicationContext.startService(
+                android.content.Intent(ctx, CarPlayMediaBrowserService::class.java)
+            )
+        }
     }
 
     override fun onCreate() {
