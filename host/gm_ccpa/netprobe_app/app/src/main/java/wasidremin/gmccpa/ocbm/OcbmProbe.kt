@@ -790,7 +790,7 @@ class OcbmProbe(context: Context) {
         }
         VideoFrame.capture(ctx, advertise = adapterWifi)
         if (VideoFrame.railPx > 0) {
-            log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px")
+            log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px, panel ${VideoFrame.panelPx}px")
         }
         c.subscribe(if (adapterWifi) {
             VehicleConfigYaml.renderAdapter(

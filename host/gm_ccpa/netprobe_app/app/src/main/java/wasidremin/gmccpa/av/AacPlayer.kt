@@ -119,6 +119,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         const val CONFIGURE_RETRY_MS = 5_000L
         /** 0.2, not 0.8: "duck by 20%" is ~2 dB and was reported by users as "does not duck at all". */
         const val DUCK_GAIN = 0.2f
+        /** Minimum gap between focus reclaims. Stops a LOSS-every-frame fight. */
+        const val RECLAIM_GAP_MS = 3_000L
         /**
          * Media AudioTrack depth, in audio time. See [buildTrack] for what it buys and what it costs.
          *
@@ -435,11 +437,16 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             MediaTransportClock.focusLossAt = android.os.SystemClock.elapsedRealtime()
         }
         setFocusGain(gain)
+        // Once per LOSS edge, and not again for a few seconds. The Equinox takes focus on every
+        // media SETUP. One reclaim got the first stream back (2026-09-24 11:36:46); the latch
+        // then ignored the next LOSS five seconds later, the second stream stayed at gain 0, and
+        // the phone tore it down. A LOSS on every frame still cannot loop: the gap is the guard.
+        val nowMs = android.os.SystemClock.elapsedRealtime()
         if (change == android.media.AudioManager.AUDIOFOCUS_LOSS &&
             !wasidremin.gmccpa.AudioRoute.bluetooth &&
-            !focusReclaimed
+            nowMs - lastReclaimAt >= RECLAIM_GAP_MS
         ) {
-            focusReclaimed = true
+            lastReclaimAt = nowMs
             android.os.Handler(android.os.Looper.getMainLooper()).post { reclaimFocusOnce() }
         }
         synchronized(this@AacPlayer) {
@@ -560,8 +567,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     /** 1 while we hold focus at full level, [DUCK_GAIN] on CAN_DUCK, 0 on LOSS / LOSS_TRANSIENT. */
     private var focusGain = 1.0f
     private var duckGain = 1.0f
-    /** One reclaim per player. A LOSS on every frame used to fight the car and tear the stream down. */
-    private var focusReclaimed = false
+    /** Last time a LOSS started a reclaim. A LOSS on every frame used to fight the car. */
+    private var lastReclaimAt = 0L
 
     /** The ONLY way a built track becomes [track]. Publish FIRST, then re-derive gain and hold state
      *  from the shared flags: an edge that landed before the publish saw `track == null` and pushed

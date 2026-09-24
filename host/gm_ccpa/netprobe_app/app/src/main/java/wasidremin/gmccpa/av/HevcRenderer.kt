@@ -79,8 +79,13 @@ class HevcRenderer(
          * `recv=0/s` for 10s then ~30s, last frame left on screen). Nothing in the decode loop
          * asks for an IDR when NO access units arrive — the keyframe request only fires on a
          * non-IRAP AU. Nudge once the picture has been still this long.
+         *
+         * 1.5s was short enough to fire on a live Spotify now-playing screen (2026-09-24,
+         * pid 4763): the box was still forwarding ~6 fps, the watchdog saw a 1.6s gap inside
+         * that, and ForceKeyFrame every 2s pinned the play glyph and the elapsed clock.
+         * A real stall is many seconds of nothing. This waits that long.
          */
-        const val STALL_KEYFRAME_MS = 1_500L
+        const val STALL_KEYFRAME_MS = 8_000L
         /** Decoder accepted input and produced nothing. Release it so the read loop can run again. */
         const val STALL_RESET_MS = 3_000L
         const val MAX_MESSAGE = 8 * 1024 * 1024     // desync guard on the seam length prefix

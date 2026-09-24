@@ -387,8 +387,8 @@ class CarPlayActivity : Activity() {
         val rail = VideoFrame.railPx > 0 && viewAreaIndex == 0
         val w = if (rail) VideoFrame.width else DISPLAY_W
         val h = if (rail) VideoFrame.height else DISPLAY_H
-        // Flush against the rail. Gravity END left a black column between the rail and the picture
-        // whenever the window was wider than 2400. Leftover pixels, if any, sit on the right.
+        // Flush against the rail. The advertised width is the measured window minus the rail, so
+        // this rectangle and the rail together are the whole window.
         val gravity = Gravity.TOP or Gravity.START
         val inset = if (rail) VideoFrame.railPx else 0
         if (lp.width == w && lp.height == h && lp.gravity == gravity && lp.marginStart == inset) return
