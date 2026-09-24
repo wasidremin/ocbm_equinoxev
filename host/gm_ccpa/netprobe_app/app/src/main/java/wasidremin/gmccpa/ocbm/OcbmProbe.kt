@@ -291,6 +291,10 @@ class OcbmProbe(context: Context) {
                 narrow.contains("name: \"CarLink GM 2280x960\"\n") &&
                 !narrow.contains("\n      width: 2400\n") &&
                 narrow.contains("\nwifi_ap: true\n"))
+        val wide = runCatching { VehicleConfigYaml.renderAdapter("adapterpass1", width = 2778) }.getOrNull()
+            ?.toString(Charsets.UTF_8) ?: ""
+        check("a panel wider than 2400 is advertised, not refused",
+            wide.contains("\n      width: 2778\n") && wide.contains("\nwifi_ap: true\n"))
 
         sink("")
         sink("SELF-TEST: $pass passed, $fail failed")

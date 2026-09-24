@@ -424,8 +424,11 @@ object VehicleConfigYaml {
         require(ssid == AdapterWifi.SSID_PLACEHOLDER || Regex("ccpa-[0-9a-f]{4}").matches(ssid)) {
             "adapter ssid must be the placeholder or ccpa-<4 hex>"
         }
-        require(width % 2 == 0 && height % 2 == 0 && width in 2..2400 && height in 2..960) {
-            "adapter video size must be a positive even size inside 2400x960"
+        // 2400 was the Silverado panel, not a protocol limit. The Equinox window measures wider
+        // (2914 on 2026-09-24, pid 14696). Capping there aborted subscribe before the phone was
+        // ever told a size, so CarPlay never started. 3840 is a 4K-wide ceiling, still even.
+        require(width % 2 == 0 && height % 2 == 0 && width in 2..3840 && height in 2..1600) {
+            "adapter video size must be a positive even size inside 3840x1600"
         }
         val pinned = render(VehicleConfigSpec())
         check(pinned == PINNED_DEFAULT) { "vehicle config drifted from the pinned document — refusing to subscribe" }
