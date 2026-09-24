@@ -510,6 +510,10 @@ class MainActivity : Activity() {
             }
         }
         setContentView(ui.root)
+        ui.root.viewTreeObserver.addOnGlobalLayoutListener {
+            val w = ui.root.width
+            if (w >= 640) wasidremin.gmccpa.VideoFrame.noteWindow(w)
+        }
         // BEFORE anything decides whether to start a session: the receiver and the OCBM probe are
         // process-scoped and may already be running from a previous Activity generation (see
         // SessionHolder). Re-attach them to THIS generation, or their callbacks keep driving a dead

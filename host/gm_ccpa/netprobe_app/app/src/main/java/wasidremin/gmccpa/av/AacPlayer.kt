@@ -437,10 +437,11 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             MediaTransportClock.focusLossAt = android.os.SystemClock.elapsedRealtime()
         }
         setFocusGain(gain)
-        // Once per LOSS edge, and not again for a few seconds. The Equinox takes focus on every
-        // media SETUP. One reclaim got the first stream back (2026-09-24 11:36:46); the latch
-        // then ignored the next LOSS five seconds later, the second stream stayed at gain 0, and
-        // the phone tore it down. A LOSS on every frame still cannot loop: the gap is the guard.
+        // A GAIN means the last reclaim worked, so the next LOSS is a new edge and may reclaim.
+        // On 2026-09-24 18:40:31 the car granted focus and took it back 70 ms later. The 3 s gap
+        // swallowed that second LOSS, the stream stayed at gain 0, and the phone tore it down
+        // before the first Spotify tap could be heard. A LOSS that never gets a GAIN still waits.
+        if (change == android.media.AudioManager.AUDIOFOCUS_GAIN) lastReclaimAt = 0L
         val nowMs = android.os.SystemClock.elapsedRealtime()
         if (change == android.media.AudioManager.AUDIOFOCUS_LOSS &&
             !wasidremin.gmccpa.AudioRoute.bluetooth &&

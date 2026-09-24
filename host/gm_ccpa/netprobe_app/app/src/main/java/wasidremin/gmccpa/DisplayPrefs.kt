@@ -1,8 +1,6 @@
 package wasidremin.gmccpa
 
 import android.content.Context
-import android.os.Build
-import android.view.WindowManager
 
 /**
  * How the CarPlay picture shares the panel with GM's own chrome.
@@ -88,6 +86,8 @@ object VideoFrame {
     /** Window width this session measured. [PANEL_W] until [capture] runs. */
     @Volatile var panelPx: Int = PANEL_W
         private set
+    /** Laid-out activity width. The other app reads this after the window is up. */
+    @Volatile private var laidOutWidth: Int = 0
 
     /**
      * Latch the size the next adapter subscribe will advertise.
@@ -104,8 +104,9 @@ object VideoFrame {
             panelPx = PANEL_W
             return
         }
-        // The Equinox window is wider than 2400. Subtracting the rail from 2400 and pinning the
-        // surface to the start left the extra pixels as a black column on the right (2026-09-24).
+        // The other Carlink app sizes from the activity window after layout, not from the
+        // maximum WindowMetrics. On this Equinox those disagree: the window lays out at 2479
+        // and currentWindowMetrics reports 2914, which encoded a picture past the right edge.
         val panel = measuredPanelWidth(ctx)
         val rail = railPixels(ctx)
         val w = (panel - rail).coerceAtLeast(2) and 1.inv()
@@ -122,15 +123,24 @@ object VideoFrame {
         railPx = panel - w
     }
 
-    /** Pixel width of the window the picture has to fill. Falls back to [PANEL_W]. */
+    /** Record the activity's laid-out width. [MainActivity] calls this once the decor has a size. */
+    fun noteWindow(width: Int) {
+        if (width >= 640) laidOutWidth = width
+    }
+
+    /**
+     * Pixel width of the window the picture has to fill.
+     *
+     * Prefer the laid-out activity, which is what the other app uses (`currentWindowMetrics`
+     * read from the activity after display mode is applied). The application WindowManager's
+     * current metrics on this head unit are the maximum bounds, 2914, and a picture that wide
+     * runs off the right of the 2479 window.
+     */
     fun measuredPanelWidth(ctx: Context): Int {
-        val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-        val px = if (wm != null && Build.VERSION.SDK_INT >= 30) {
-            wm.currentWindowMetrics.bounds.width()
-        } else {
-            ctx.resources.displayMetrics.widthPixels
-        }
-        return if (px >= 640) px else PANEL_W
+        val laid = laidOutWidth
+        if (laid >= 640) return laid
+        val px = ctx.resources.displayMetrics.widthPixels
+        return if (px in 640..2560) px else PANEL_W
     }
 
     /**

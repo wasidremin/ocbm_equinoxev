@@ -420,6 +420,14 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private fun armPause(what: String) {
         val now = SystemClock.elapsedRealtime()
         val armed = pauseArmedAt
+        // A stop with no pause beside it is the head unit, not the driver. On 2026-09-24 18:40:42
+        // that lone stop was forwarded as HID pause and the phone tore the stream down on the tap
+        // that had just started it. A real pause still arrives as onPause or a media key.
+        if (what == "stop" && (armed == 0L || now - armed >= 100)) {
+            log.i("transport: stop ignored — head unit echo")
+            pauseArmedAt = 0L
+            return
+        }
         if (what == "stop" && armed != 0L && now - armed < 100) {
             pauseArmedAt = 0L
             if (transportEcho(now)) log.i("transport: pause+stop ignored — head unit echo after play or focus loss")
