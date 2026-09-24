@@ -27,7 +27,10 @@ echo 1 >/sys/class/gpio/gpio6/value;
 echo 1 >/sys/class/gpio/gpio7/value;
 echo "[init_gpio] quick-charge gpio6/7 set"
 
-#Power LED ON
-#echo 2 > /sys/class/gpio/export;
-#echo out > /sys/class/gpio/gpio2/direction;
-#echo 0 >/sys/class/gpio/gpio2/value;
+# Power LED ON (gpio2 active-low). Stock does this from init_bluetooth_wifi.sh
+# after WiFi load; OCBM never runs that path at boot, so the LED stayed dark
+# while 1314:2d00 was up.
+[ -e /sys/class/gpio/gpio2 ] || echo 2 > /sys/class/gpio/export
+echo out > /sys/class/gpio/gpio2/direction
+echo 0 >/sys/class/gpio/gpio2/value
+echo "[init_gpio] power LED on (gpio2=0)"

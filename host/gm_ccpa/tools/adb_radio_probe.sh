@@ -11,7 +11,7 @@
 # Usage:
 #   ./adb_radio_probe.sh                 # probe the only/attached device
 #   ANDROID_SERIAL=<serial> ./adb_radio_probe.sh
-#   APP=zeno.gmccpa ./adb_radio_probe.sh    # also introspect a sideloaded app's grants
+#   APP=wasidremin.gmccpa ./adb_radio_probe.sh    # also introspect a sideloaded app's grants
 #   USERS="0 10" ./adb_radio_probe.sh       # which Android users to enumerate packages for
 #
 # Packages are PER ANDROID USER. `pm list packages` with no --user reports the CALLING user, which
@@ -22,7 +22,7 @@
 
 set -u
 ADB="${ADB:-adb}"
-APP="${APP:-zeno.gmccpa}"
+APP="${APP:-wasidremin.gmccpa}"
 USERS="${USERS:-0 10}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT="$(cd "$(dirname "$0")" && pwd)/radio_probe_${STAMP}.txt"

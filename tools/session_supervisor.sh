@@ -831,9 +831,27 @@ apply_host_wifi_creds() {
   # subsequent tick. That drives concurrent radio bring-ups and then the flap detector, escalating
   # to ocbmd restarts and real reboots. Observed live before this was caught.
   _s=$(cfg_value wifi_ssid)
-  [ -n "$_s" ] || return 0
   _p=$(cfg_value wifi_pass)
   _c=$(cfg_value wifi_channel)
+  _ssid_src=host
+  if wifi_ap_enabled; then
+    # Box-AP role: the beacon is ccpa-<4hex>, decided once by radio_hal's box_name() and written
+    # to /etc/carplay_ident, then copied to /etc/wifi_name by radio_ap_up.sh. The YAML wifi_ssid
+    # is only a non-empty placeholder so THIS function still runs on a supervisor that returns
+    # when the SSID is empty — it is not a network name. Writing it here after hostapd is already
+    # up leaves 0x5703 naming a network that is not on the air (wifi_ap_on then returns early and
+    # never reaches the rename). The phone stays on the vehicle hotspot. Equinox 2026-09-22:
+    # 0x5703 ssid="ccpa" while the AP was ccpa-fe01.
+    _box=""
+    [ -s /etc/carplay_ident ] && _box=$(head -1 /etc/carplay_ident | tr -d '\r')
+    [ -n "$_box" ] || { [ -s /etc/wifi_name ] && _box=$(head -1 /etc/wifi_name | tr -d '\r'); }
+    if [ -n "$_box" ]; then _s=$_box; _ssid_src=box; fi
+    # Channel and passphrase still have to land when the box has not chosen a name yet.
+    # radio_ap_up.sh overwrites ssid= before hostapd starts on that first bring-up.
+    [ -n "$_s" ] || [ -n "$_p" ] || [ -n "$_c" ] || return 0
+  else
+    [ -n "$_s" ] || return 0
+  fi
   if [ ! -f /etc/hostapd.conf.stock ]; then
     cp /etc/hostapd.conf /etc/hostapd.conf.stock || {
       echo "[sup] WARN: could not snapshot /etc/hostapd.conf — not rewriting credentials"; return 0; }
@@ -841,13 +859,14 @@ apply_host_wifi_creds() {
   _tmp=/etc/hostapd.conf.new   # same filesystem, so the mv below is atomic (jffs2)
   # Rebuild rather than sed-substitute: an SSID or passphrase can contain regex/delimiter characters.
   # Only strip the keys we are actually going to replace, so an unsupplied channel keeps the stock one
-  # (hostapd of this vintage has no ACS and refuses to start with no channel).
-  _strip='^ssid='
+  # (hostapd of this vintage has no ACS and refuses to start with no channel). An empty SSID in the
+  # box-AP role (name not chosen yet) keeps the stock ssid line for radio_ap_up.sh to replace.
+  if [ -n "$_s" ]; then _strip='^ssid='; else _strip='^# nomatch-ssid$'; fi
   [ -n "$_p" ] && _strip="$_strip|^wpa_passphrase="
   [ -n "$_c" ] && _strip="$_strip|^channel="
   grep -vE "$_strip" /etc/hostapd.conf.stock > "$_tmp" 2>/dev/null || {
     echo "[sup] WARN: could not read the stock hostapd.conf — not rewriting credentials"; return 0; }
-  echo "ssid=$_s" >> "$_tmp"
+  [ -n "$_s" ] && echo "ssid=$_s" >> "$_tmp"
   if [ -n "$_p" ]; then
     echo "wpa_passphrase=$_p" >> "$_tmp"
     # read_hostapd_ap_config() reports Wpa2OrWpa3Personal only when a wpa=/wpa_key_mgmt= line is
@@ -857,7 +876,7 @@ apply_host_wifi_creds() {
   fi
   [ -n "$_c" ] && echo "channel=$_c" >> "$_tmp"
   mv "$_tmp" /etc/hostapd.conf && sync
-  echo "[sup] 0x5703 credentials <- host app: ssid='$_s' channel='${_c:-stock}' pass=$([ -n "$_p" ] && echo set || echo none)"
+  echo "[sup] 0x5703 credentials <- $_ssid_src: ssid='${_s:-stock}' channel='${_c:-stock}' pass=$([ -n "$_p" ] && echo set || echo none)"
 }
 
 wireless_up() {

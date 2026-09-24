@@ -284,7 +284,7 @@ authoritative and supersede the tier sections above. Identifiers are placeholder
 | 4.4 (part) | The reserved field is the only extension point | False — a version byte exists. The `0x13` precedent cited alongside it is real. |
 
 **Also corrected:** two reviewers reported the app absent from the head unit. They queried
-`zeno.gmccpa`, the source namespace. The install ID is the deliberate fixed-handler squat
+`wasidremin.gmccpa`, the source namespace. The install ID is the deliberate fixed-handler squat
 `android.car.usb.handler` — `dumpsys package` confirms `versionName=4.0`,
 `lastUpdateTime=2026-08-27 16:29:38`. The app is installed and current.
 

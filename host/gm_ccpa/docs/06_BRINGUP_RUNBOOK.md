@@ -89,10 +89,10 @@ adb install -r -g --user 10 apk/gmccpa-debug-<sha>.apk
 adb install -i com.android.vending -r -g --user 10 apk/gmccpa-debug-<sha>.apk
 ```
 
-The app installs as package `zeno.gmccpa` (the GM USB fixed-handler squat, `android.car.usb.handler`,
+The app installs as package `wasidremin.gmccpa` (the GM USB fixed-handler squat, `android.car.usb.handler`,
 was reverted 2026-09-08 — TRUCK-VERIFIED; this is now just the app's own package name). Every
 `am`/`pm`/`appops`/`dumpsys` command below targets that package name; source classes are still
-`zeno.gmccpa.*`, so activity components are `zeno.gmccpa/zeno.gmccpa.<Activity>`.
+`wasidremin.gmccpa.*`, so activity components are `wasidremin.gmccpa/wasidremin.gmccpa.<Activity>`.
 
 `--user 10` is mandatory: a user-0 install does not get the attach dialog and
 `ACTION_USB_DEVICE_ATTACHED` routing to fire. The ordinary attach resolver and its one-time
@@ -104,11 +104,11 @@ there is nothing to go back to.
 
 ```bash
 # framing + state machine, no hardware needed at all
-adb shell am start -n zeno.gmccpa/.MainActivity --es run ocbm_selftest
+adb shell am start -n wasidremin.gmccpa/.MainActivity --es run ocbm_selftest
 
 # the real link. NOTE the nested quotes: an SSID with a space is otherwise split by the remote
 # shell and every later --es extra is silently swallowed by `am`.
-adb shell "am start -n zeno.gmccpa/.MainActivity --es run ocbm_link \
+adb shell "am start -n wasidremin.gmccpa/.MainActivity --es run ocbm_link \
   --es ssid 'myChevrolet 32D4' --es pass '<passphrase>' --es chan '36'"
 
 adb logcat -d -s NETPROBE
@@ -415,7 +415,7 @@ adb logcat -G 16M                       # 64 KiB is ~2 s of A/V logging
 it changes on every uninstall/reinstall.
 
 ```bash
-APPID=$(adb shell dumpsys package zeno.gmccpa | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -1)
+APPID=$(adb shell dumpsys package wasidremin.gmccpa | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -1)
 SOCKUID=$((1000000 + APPID))     # user 10 => 10*100000 + appId; on user 0 it is just $APPID
 adb shell "cat /proc/net/tcp6" | awk -v u="$SOCKUID" '$8==u && $4=="01"'   # 01 = ESTABLISHED
 ```
@@ -444,9 +444,9 @@ adb logcat -G 16M                        # 64 KiB is ~2 s of A/V logging
 
 ### 1. Start the session (BT handoff + Wi-Fi receiver)
 ```bash
-adb shell am force-stop zeno.gmccpa
+adb shell am force-stop wasidremin.gmccpa
 adb logcat -c
-adb shell "am start -n zeno.gmccpa/.MainActivity --es run full \
+adb shell "am start -n wasidremin.gmccpa/.MainActivity --es run full \
            --es ssid 'myChevrolet 32D4' --es pass '123456789000'"
 ```
 Wait for both stream SETUPs before opening the UI:
@@ -458,7 +458,7 @@ adb logcat -d -s NETPROBE | grep -E "SETUP phase2"
 
 ### 2. Open the CarPlay screen
 ```bash
-adb shell am start -n zeno.gmccpa/.MainActivity --es run carplay_ui
+adb shell am start -n wasidremin.gmccpa/.MainActivity --es run carplay_ui
 ```
 Expect, within a second:
 ```
@@ -483,17 +483,17 @@ and the running counts it printed are in the `[hevc ]`/`[aac  ]` lines above.)
 
 ### 4. Restore the screen after anything backgrounds it
 ```bash
-adb shell am start -n zeno.gmccpa/.MainActivity --es run carplay_ui
+adb shell am start -n wasidremin.gmccpa/.MainActivity --es run carplay_ui
 ```
 Video returns in ~250 ms via the producer's re-dial + ForceKeyFrame. Audio is never interrupted.
 
-**Do NOT** try `am start -n zeno.gmccpa/zeno.gmccpa.av.CarPlayActivity` — it is
+**Do NOT** try `am start -n wasidremin.gmccpa/wasidremin.gmccpa.av.CarPlayActivity` — it is
 `exported="false"` and `adb shell` (uid 2000) lacks `START_ANY_ACTIVITY` on this user build:
 `SecurityException: … not exported from uid 1010123`. Always go through `MainActivity`.
 
 ### Verifying without logs (the socket table never lies)
 ```bash
-APPID=$(adb shell dumpsys package zeno.gmccpa | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -1)
+APPID=$(adb shell dumpsys package wasidremin.gmccpa | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -1)
 adb shell "cat /proc/net/tcp6" | awk -v u="$((1000000 + APPID))" '$8==u && $4=="01"'   # 01 = ESTABLISHED
 ```
 4–5 established sockets to the iPhone plus `POST /feedback` every 2 s = healthy session. Derive the uid
@@ -613,14 +613,14 @@ which is `signature|privileged|development` — it can never be obtained by decl
 `pm grant` rejects a permission the package does not request.
 
 ```bash
-adb shell pm grant --user 10 zeno.gmccpa android.permission.READ_LOGS
-adb shell am force-stop zeno.gmccpa       # NOT optional — see below
+adb shell pm grant --user 10 wasidremin.gmccpa android.permission.READ_LOGS
+adb shell am force-stop wasidremin.gmccpa       # NOT optional — see below
 ```
 
 **The app's own on-screen/logcat suggestion is safe to copy again** (fixed 2026-09-09). It was not,
 between 2026-09-08 and 2026-09-09: `LogCapture.kt`'s `GRANT_CMD`/`FORCE_STOP_CMD` (pre-fix file
 byte-exact at commit `b049810` —
-`git show b049810:host/gm_ccpa/netprobe_app/app/src/main/java/zeno/gmccpa/logging/LogCapture.kt` —
+`git show b049810:host/gm_ccpa/netprobe_app/app/src/main/java/wasidremin/gmccpa/logging/LogCapture.kt` —
 constants at `:163`/`:166`, printed at `:572`, `:608-609`, and into the capture-file header's
 `degraded :` line at `:794`; the header's `app :` line at `:790` hard-coded the same literal directly)
 survived the package-squat revert with the dead package `android.car.usb.handler` hard-coded, so a
@@ -641,10 +641,10 @@ The grant survives reboots and `adb install -r`. It is lost only on a full unins
 
 ```bash
 # status: which scope actually took, which buffers opened, bytes on disk, lines dropped
-adb shell am start -n zeno.gmccpa/.MainActivity --es run capture_status
-adb shell am start -n zeno.gmccpa/.MainActivity --es run capture_whole_os
-adb shell am start -n zeno.gmccpa/.MainActivity --es run capture_own
-adb shell am start -n zeno.gmccpa/.MainActivity --es run export_log
+adb shell am start -n wasidremin.gmccpa/.MainActivity --es run capture_status
+adb shell am start -n wasidremin.gmccpa/.MainActivity --es run capture_whole_os
+adb shell am start -n wasidremin.gmccpa/.MainActivity --es run capture_own
+adb shell am start -n wasidremin.gmccpa/.MainActivity --es run export_log
 ```
 
 The launcher screen carries the same three on a secondary row: Log Scope, Log Status, Export Logs.

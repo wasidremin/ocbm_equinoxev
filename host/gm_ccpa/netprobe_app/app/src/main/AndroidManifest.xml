@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Install package is zeno.gmccpa, matching the source package.
+  Install package is wasidremin.gmccpa, matching the source package.
 
   It used to be android.car.usb.handler — a deliberate squat on the stock component GM points its
   config_UsbDeviceConnectionHandling_component at, on the theory that squatting the name would earn a
@@ -23,7 +23,7 @@
 
   Component android:name values stay FULLY QUALIFIED. They no longer have to be (a leading '.' would
   resolve correctly again), but they are unambiguous and it keeps the diff off every component line.
-  adb/am commands take zeno.gmccpa again — see README and docs/06.
+  adb/am commands take wasidremin.gmccpa again — see README and docs/06.
 -->
 <!-- NO versionCode/versionName here, deliberately (2026-09-11). `aapt2 link` honours its
      version-code/version-name flags only when the manifest declares NEITHER, so tools/build_apk.sh
@@ -32,7 +32,7 @@
      the device could say which build was installed and a stale APK installed `-r` over a newer one
      in silence. Re-adding them here does not override those flags, it disables them. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="zeno.gmccpa">
+    package="wasidremin.gmccpa">
 
     <!-- Network + discovery. All are normal/dangerous perms an ordinary app UID can hold;
          none are signature/privileged. Grant the dangerous ones via `adb shell pm grant` (see README). -->
@@ -51,7 +51,7 @@
          `development` flag means adb can grant it, and a permission can only be granted if the
          package DECLARES it — hence this line. One-time bench step, survives reboots and
          `install -r`, lost only on a full uninstall:
-           adb shell pm grant zeno.gmccpa android.permission.READ_LOGS
+           adb shell pm grant wasidremin.gmccpa android.permission.READ_LOGS
          Without it the logger still captures this app's own process (no permission needed); with
          it, it also captures GM's CarPlay receiver, wpa_supplicant and the USB stack — the parts
          of the USB-grant and Bluetooth faults that happen before our process exists. -->
@@ -83,24 +83,16 @@
          visible Activity or the USB-attached launch. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <!-- The session service also pins the process with types that do not need a runtime grant.
+         microphone alone is refused on a Play install (RECORD_AUDIO is not granted), and that
+         SecurityException is an uncaught crash the moment CarPlayActivity starts the service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
 
-    <!-- required=false so the same APK still installs on a phone/tablet for bench work. -->
-
-    <!-- targetSdk 30+ package-visibility filtering hides other apps' activities from resolveActivity,
-         so without this the SAF probe in LogExport reports "no DocumentsUI" on a unit that has one and
-         the export silently drops to the USB-volume rung. Declaring the intent we query for restores
-         visibility of just that one. AAOS may genuinely lack DocumentsUI — the ladder handles that —
-         but this makes the difference between "absent" and "invisible" a real answer. -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.CREATE_DOCUMENT"/>
-            <data android:mimeType="*/*"/>
-        </intent>
-    </queries>
-
-    <uses-feature android:name="android.hardware.type.automotive" android:required="false"/>
-    <!-- USB host mode: how the app claims the CCPA adapter at 0x1314:0x2d00 and speaks OCBM. -->
-    <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
+    <!-- AAOS-only Play distribution: the sister app's proven configuration requires this feature. -->
+    <uses-feature android:name="android.hardware.type.automotive" android:required="true"/>
+    <!-- OCBM adapter access is required for this app to function. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="true"/>
 
     <!-- allowBackup is OFF, and set explicitly because the default is true and Lint's AllowBackup
          check is silent at targetSdk >= 31, so nothing would ever have flagged the omission.
@@ -115,6 +107,7 @@
          without re-opening that decision. -->
     <application
         android:label="GM CCPA"
+        android:appCategory="audio"
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault">
@@ -132,7 +125,7 @@
              without UI. Before 2026-09-08 this was the fixed-handler squat
              (android.car.usb.handler.UsbHostManagementActivity) — see the manifest header. -->
         <activity
-            android:name="zeno.gmccpa.UsbAttachActivity"
+            android:name="wasidremin.gmccpa.UsbAttachActivity"
             android:exported="true"
             android:launchMode="singleInstance"
             android:taskAffinity=""
@@ -147,7 +140,7 @@
         </activity>
 
         <activity
-            android:name="zeno.gmccpa.MainActivity"
+            android:name="wasidremin.gmccpa.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
@@ -166,7 +159,7 @@
                  in the same app. -->
         </activity>
         <activity
-            android:name="zeno.gmccpa.av.CarPlayActivity"
+            android:name="wasidremin.gmccpa.av.CarPlayActivity"
             android:exported="false"
             android:launchMode="singleTop"
             android:taskAffinity=".carplay"
@@ -187,9 +180,9 @@
              visible — exactly the GM-dialog / reverse-camera / app-switch case this service
              exists for. Siri would hear silence, with no error anywhere. -->
         <service
-            android:name="zeno.gmccpa.av.CarPlaySessionService"
+            android:name="wasidremin.gmccpa.av.CarPlaySessionService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="mediaPlayback|connectedDevice|microphone" />
 
         <!-- AAOS media source registration.
              AAOS builds its source switcher by querying for services answering
@@ -198,7 +191,7 @@
              back to CarPlay except relaunching by hand. MUST be exported: the querying process is
              Media Center / CarLauncher, not us. -->
         <service
-            android:name="zeno.gmccpa.av.CarPlayMediaBrowserService"
+            android:name="wasidremin.gmccpa.av.CarPlayMediaBrowserService"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService" />
@@ -216,7 +209,7 @@
         <!-- Capture at boot. Fully qualified like every other component here, for consistency
              rather than necessity now that the applicationId matches the source package again. -->
         <receiver
-            android:name="zeno.gmccpa.logging.BootReceiver"
+            android:name="wasidremin.gmccpa.logging.BootReceiver"
             android:exported="true"
             android:directBootAware="false">
             <intent-filter>

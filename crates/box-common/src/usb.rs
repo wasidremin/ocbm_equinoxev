@@ -13,13 +13,13 @@ use std::os::unix::io::RawFd;
 
 pub const APPLE_VID: u16 = 0x05ac;
 
-// usbdevfs ioctls (asm-generic encoding, matches 32-bit ARM). musl's ioctl() takes the request as
-// `int`, so these are c_int (the 0xC010_5500-class values are just bit patterns).
-const USBDEVFS_CONTROL: libc::c_int = 0xC010_5500u32 as libc::c_int; // _IOWR('U',0,16)
-const USBDEVFS_BULK: libc::c_int = 0xC010_5502u32 as libc::c_int; // _IOWR('U',2,16)
-const USBDEVFS_CLAIMINTERFACE: libc::c_int = 0x8004_550Fu32 as libc::c_int; // _IOR('U',15,4)
-const USBDEVFS_RELEASEINTERFACE: libc::c_int = 0x8004_5510u32 as libc::c_int; // _IOR('U',16,4)
-const USBDEVFS_RESET: libc::c_int = 0x0000_5514u32 as libc::c_int; // _IO('U',20)
+// usbdevfs ioctl request values. `libc::ioctl` uses its platform-specific `Ioctl` type:
+// c_int on the 32-bit musl box and an unsigned long-sized type on current Linux hosts.
+const USBDEVFS_CONTROL: libc::Ioctl = 0xC010_5500u32 as libc::Ioctl; // _IOWR('U',0,16)
+const USBDEVFS_BULK: libc::Ioctl = 0xC010_5502u32 as libc::Ioctl; // _IOWR('U',2,16)
+const USBDEVFS_CLAIMINTERFACE: libc::Ioctl = 0x8004_550Fu32 as libc::Ioctl; // _IOR('U',15,4)
+const USBDEVFS_RELEASEINTERFACE: libc::Ioctl = 0x8004_5510u32 as libc::Ioctl; // _IOR('U',16,4)
+const USBDEVFS_RESET: libc::Ioctl = 0x0000_5514u32 as libc::Ioctl; // _IO('U',20)
 
 #[repr(C)]
 struct CtrlTransfer {

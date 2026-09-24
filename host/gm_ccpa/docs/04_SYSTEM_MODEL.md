@@ -27,7 +27,7 @@ they matter: the Realtek part must load its WLAN driver before Bluetooth will at
 `wlan0` exist (§2 below), and the two boxes derive different identities (`CarLink-626a` vs
 `CarLink-f867`), so a phone bonded to one holds no record for the other.
 
-The app installs under its own package name, `zeno.gmccpa` — the GM USB fixed-handler squat
+The app installs under its own package name, `wasidremin.gmccpa` — the GM USB fixed-handler squat
 (`android.car.usb.handler`) was reverted (2026-09-08) — TRUCK-VERIFIED. The app goes through the
 platform's normal USB-attach permission flow, one-time dialog included — and **that was true under
 the squat as well**: corrected 2026-09-10, the squat did NOT deliver the silent per-UID grant it was
@@ -203,7 +203,21 @@ owner's requirement is that the phone join the *vehicle's* SoftAP, not the adapt
 
 **Governing requirement: the Wi-Fi the iPhone joins must be the vehicle's SoftAP, not the adapter's.**
 With the phone on the vehicle SoftAP, the receiver must be reachable on `br0` / `192.168.5.0/24` — and
-the box has no route to that subnet.
+the box has no route to that subnet. This is the Silverado path and the default of the app.
+
+**Equinox exception (versionCode 33).** The VCU drops the phone's inbound TCP to the head unit on
+`ap_br_swlan0`, and the app cannot see or change that filter (versions 31 and 32). A persisted
+switch, **off by default**, makes the adapter raise its own AP on channel 149 (not 36, beside
+`myChevrolet32D4`). The network the phone is told is `ccpa-<4hex>` from `/etc/carplay_ident`,
+which is the name `radio_ap_up.sh` beacons. The app reads that file before every adapter
+subscribe and sends it as `wifi_ssid`. The placeholder `ccpa` is sent only before the box has
+chosen a name; sending it again while hostapd is already up makes `0x5703` name a network that
+is not on the air. AirPlay
+ends on the adapter. This app does not start `CarPlayRx`. It decrypts
+`CH_VIDEO` / `CH_MEDIA_AUDIO` / `CH_ALT_AUDIO` and plays them through `HevcRenderer`, `AacPlayer`,
+and `VoiceRouter`, so Call, Siri, and Navigation stay on GM's volume groups. Touch and the
+microphone go back on `CH_INPUT` and `CH_MIC`. The switch takes effect on the next host-present
+edge; turning it on tears the current link down.
 
 The box cannot join the vehicle SoftAP as a station on this firmware:
 

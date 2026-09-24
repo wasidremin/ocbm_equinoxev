@@ -1,5 +1,18 @@
 # ccpa_custom — open-source phone-projection firmware userspace + host app for the Carlinkit CPC200-CCPA
 
+> **This is the Equinox EV fork:** [wasidremin/ocbm_equinoxev](https://github.com/wasidremin/ocbm_equinoxev).
+> The original project is [lvalen91/ocbm](https://github.com/lvalen91/ocbm), by Tachi91
+> ([lvalen91](https://github.com/lvalen91) on GitHub, Tachi91 on XDA). That repository is the
+> open-source CPC200-CCPA userspace and the Silverado (`gminfo37`) host work. History up to the
+> fork point is his, and this tree keeps it.
+>
+> The fork exists because the two vehicles are not the same platform. lvalen91 develops against a
+> 2024 Silverado ICE and has no Equinox to test on. This line is the Chevrolet Equinox EV (GM VCU,
+> `burmese_orange`, AAOS 14): package `wasidremin.gmccpa`, shipped on the Play internal track.
+> This checkout has no write access to `lvalen91/ocbm`, so Equinox changes are published here
+> instead of as pull requests on the original repo. Fetch from upstream to read his new commits.
+> Do not push to `lvalen91/ocbm`.
+
 CarPlay and Android Auto, over one open transport (OCBM).
 
 > **Documentation:** [docs/README.md](docs/README.md) is the map — four categories

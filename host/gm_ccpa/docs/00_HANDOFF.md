@@ -107,6 +107,29 @@ End state, which is the intended design:
 
 Both rects are static constants for this panel — nothing measured or awaited at runtime.
 
+Equinox (API 34, 2026-09-22) did not honour the legacy `systemUiVisibility` flags, so the picture
+came up with GM's bars still on top of a full 2400×960 frame. `CarPlayActivity.applySystemUi`
+now also drives `WindowInsetsController`, and the launcher's Screen chip saves the four view
+options from the earlier Carlink app (full screen, hide top bar, hide bottom bar, show car bars)
+plus an optional left sidebar. The rail is 108 dp, the same width and icon set as the earlier
+Carlink app (Home, Settings, restart, voice, previous, play/pause, next, phone, back). When the
+sidebar is on at subscribe time the adapter config advertises the panel minus that rail (even
+video pixels) and the surface sits 1:1 in that gap; it is
+not a crop of the 2400×960 frame. Turning the sidebar on or off restarts a live session,
+the same as the earlier app, so the next subscribe advertises the new width.
+The launcher is that app's settings rail (Session, Screen, Audio, Logs). Audio source
+Adapter is the default and asks the head unit to play this app; Bluetooth leaves the
+stereo on the phone. A video stall — the phone sends nothing while the surface stays
+up — requests a keyframe and, if the decoder itself is stuck, resets it.
+A Play update kills the process without CT_STOP. The box then tears wireless down, and
+the app restarts the advertiser if `btd` stays gone, and does not cycle the radios while
+`btd` is still the process bringing the controller back.
+Default remains full screen. CarPlay's own resize to view area 1
+still forces the car bars visible. A Settings chip at the top-left of the picture (the other
+app's corner — the top-right is CarPlay's own cards) opens the launcher without tearing the
+session down; Back to CarPlay returns. Do not "restore" flags-only hiding, and do not inset the
+window to fit the bars — that is the 377,236 displacement.
+
 ### Three things that cost time here, recorded so they are not re-derived
 
 1. **`viewArea`/`safeArea` are NOT the mechanism for showing head-unit chrome.** They are Apple's

@@ -170,6 +170,29 @@ say()  { printf '[ncm-base] %s\n' "$*"; }
 warn() { printf '[ncm-base] !! %s\n' "$*" >&2; }
 die()  { printf '[ncm-base] ABORT: %s\n' "$*" >&2; exit 1; }
 
+host_md5() {
+  if command -v md5sum >/dev/null 2>&1; then md5sum "$1" | cut -d' ' -f1
+  else md5 -q "$1"
+  fi
+}
+host_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+host_size() { wc -c < "$1" | tr -d ' \n'; }
+
+# Configure the host side of USB-NCM only when explicitly requested. The adapter remains
+# untouched; this is the Linux equivalent of the macOS ifconfig fallback.
+host_if_up() {
+  [ -n "$HOST_IF" ] || return 0
+  case "$(uname -s)" in
+    Linux) sudo ip link set "$HOST_IF" up 2>/dev/null || true
+          sudo ip addr replace "$HOST_IP/24" dev "$HOST_IF" 2>/dev/null || true ;;
+    *)     sudo ifconfig "$HOST_IF" inet "$HOST_IP" netmask 255.255.255.0 up 2>/dev/null || true ;;
+  esac
+}
+
 gate() {
   [ "$ASSUME_YES" = 1 ] && { say "gate (auto-yes): $*"; return 0; }
   printf '\n[ncm-base] GATE: %s\n[ncm-base] type YES to continue: ' "$*"
@@ -223,15 +246,13 @@ pull() {  # $1 remote  $2 local
     if nc -w 120 "$BOX" 9899 > "$2" 2>/dev/null && [ -s "$2" ]; then
       local want got
       want=$(box "md5sum $1 | cut -c1-32" | tr -d ' \r\n')
-      got=$(md5 -q "$2")
+      got=$(host_md5 "$2")
       [ "$want" = "$got" ] && return 0
       warn "nc transfer of $1 did not verify (md5 $got != $want); falling back to base64"
     fi
   fi
   python3 "$BOXSH" --host "$BOX" --timeout 180 get "$1" "$2" >/dev/null
 }
-
-host_if_up() { [ -n "$HOST_IF" ] || return 0; sudo ifconfig "$HOST_IF" inet "$HOST_IP" netmask 255.255.255.0 up 2>/dev/null || true; }
 
 wait_box() {
   local deadline=$(( SECONDS + ${1:-200} )) n=0
@@ -499,8 +520,8 @@ ls -la /tmp/bk'
   box 'rm -rf /tmp/bk' >/dev/null
   cat "$RUN_DIR/backup_pre/mtd0.bin" "$RUN_DIR/backup_pre/mtd1.bin" "$RUN_DIR/backup_pre/mtd2.bin" \
       > "$RUN_DIR/backup_pre/full_nor_16MB.bin"
-  ( cd "$RUN_DIR/backup_pre" && shasum -a 256 ./* > SHA256SUMS )
-  local sz; sz=$(stat -f %z "$RUN_DIR/backup_pre/full_nor_16MB.bin")
+  ( cd "$RUN_DIR/backup_pre" && for f in ./*; do host_sha256 "$f"; done > SHA256SUMS )
+  local sz; sz=$(host_size "$RUN_DIR/backup_pre/full_nor_16MB.bin")
   [ "$sz" = 16777216 ] || die "recomposed NOR is $sz bytes, expected 16777216 — the backup is not trustworthy; do not proceed"
   say "backup verified → $RUN_DIR/backup_pre/full_nor_16MB.bin (SPI-programmer restore image)"
 }
@@ -522,7 +543,7 @@ phase_earlyaccess() {
   # The .img already ships (b). We verify it byte-for-byte against the repo copy rather than
   # trusting it, and add (a).
   local ci_md5 repo_md5
-  repo_md5=$(md5 -q "$OVERLAY/script/custom_init.sh")
+  repo_md5=$(host_md5 "$OVERLAY/script/custom_init.sh")
   ci_md5=$(box 'md5sum /script/custom_init.sh 2>/dev/null | cut -c1-32' | tr -d ' \r\n')
   if [ "$ci_md5" = "$repo_md5" ]; then
     say "custom_init.sh matches the repo copy ($repo_md5) — NCM early-arm is the known-good one"

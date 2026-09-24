@@ -36,7 +36,7 @@ Media took **6 underruns in 843 frames** (§3 rule 2). All four are filed as row
 | `AacPlayer.reclaimFocus()` (recovers from `AUDIOFOCUS_LOSS` without a permanent hang) | Landed 2026-08-28, compiles — **not truck-verified** |
 | Media recovery after a voice/call turn | **FIXED 2026-09-08 (`b8e8736`); truck re-measurement RECORDED 2026-09-09 at 1.95 s.** Owner-observed 2026-09-04 as 10–20 s of silence; device-measured at **12.0 s** before the fix, **1.95 s** after (assistant edge `22:55:50.348` → `media resumed after focus gain` `22:55:52.295`). Two clocks: `assistantTick` cleared `pausedForAssistant` after `ASSISTANT_HOLD_MS` (4 s), but focus was abandoned only by `Sink.release()` at `Purpose.idleMs` (15 s for ASSISTANT), so media resumed on the focus edge, not the assistant edge. `ASSISTANT.idleMs` is now `ASSISTANT_HOLD_MS + 1` sweep period. The design target was ~1 s; the measured 1.95 s is the sweep's 1 Hz throttle on top of it, and is accepted — see §3a |
 
-**Source, current as of this doc:** `netprobe_app/app/src/main/java/zeno/gmccpa/av/{AacPlayer,
+**Source, current as of this doc:** `netprobe_app/app/src/main/java/wasidremin/gmccpa/av/{AacPlayer,
 VoiceRouter, MicUplink}.kt`, wired into `CarPlayActivity.kt`. `VoiceRouter` (656 lines as of
 2026-09-09, was 597) replaces the
 earlier `drainVoice`, which accepted `:9003` and discarded every byte — that silence is why this

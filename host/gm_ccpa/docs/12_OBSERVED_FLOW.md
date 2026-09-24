@@ -352,7 +352,7 @@ POST /feedback every 2 s
 > then `read: rapid -1 x50 — device gone`, and a `consecutive=` counter that only ever climbs (it resets
 > to 0 on any successful write, so a monotonic climb means *nothing* has been written since).
 >
-> Fix: one bring-up per process. `adb shell am force-stop zeno.gmccpa` before `am start` if
+> Fix: one bring-up per process. `adb shell am force-stop wasidremin.gmccpa` before `am start` if
 > you are re-launching by hand — starting the activity while an instance is already live is enough to
 > cause it. Verify with `grep -c "claimed interface 0"` — it must be exactly **1**.
 - **Streams are not batched.** `audio(102)` arrived ~4 minutes after `screen(110)` in the reference run.
@@ -571,7 +571,7 @@ After a genuine two-sided clear the box logs `LOAD_LINK_KEYS(count=0)` and the n
 
 Health check (derive the uid — it changes on every reinstall):
 ```bash
-APPID=$(adb shell dumpsys package zeno.gmccpa | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -1)
+APPID=$(adb shell dumpsys package wasidremin.gmccpa | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -1)
 adb shell "cat /proc/net/tcp6" | awk -v u="$((1000000 + APPID))" '$8==u && $4=="01"'
 ```
 4–6 established sockets plus `POST /feedback` every 2 s is a healthy session.

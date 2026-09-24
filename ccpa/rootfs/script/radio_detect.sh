@@ -120,17 +120,22 @@ WIRELESS=no
 # The extraction carries no chipset table: we intersect the modules in THIS unit's own tarball
 # with the dispatcher's own insmod lines. A part nobody anticipated still resolves, because the
 # unit ships a dispatcher that knows its own silicon and a tarball that names its own modules.
-# REFUSE TO EMIT WHAT WE CANNOT FAITHFULLY EXECUTE. Single-line extraction only works while a
-# vendor branch is closed-form. The Realtek branches are; the NXP and Broadcom ones are NOT -
-# they carry shell variables resolved elsewhere in the dispatcher:
-#     insmod /tmp/moal.ko "mod_para=$nxpWiFiConfig"
-#     brcm_patchram_plus --patchram /lib/firmware/bcm/$bcmBTFirmware ... --bd_addr "$bcmBTMac" &
-# Captured verbatim, those are not commands, they are text that happens to look like one. Worse,
-# writing them into the descriptor makes `. /tmp/radio_caps` abort under `set -u` - status 2,
-# which radio_hal defines as "already converged". A mapping we cannot execute must therefore
-# become NO mapping, so the seam reports "unsupported" honestly and the caller can act on it.
-# A trailing `&` is stripped rather than rejected: backgrounding is the vendor's control-flow
-# choice, and radio_hal supplies its own detached-and-converged discipline in its place.
+# REFUSE TO EMIT WHAT WE CANNOT FAITHFULLY EXECUTE. A trailing `&` is stripped rather than
+# rejected: backgrounding is the vendor's control-flow choice, and radio_hal supplies its own
+# detached-and-converged discipline in its place.
+#
+# Closed-form lines (Realtek insmod, hciattach) are taken verbatim. Lines that still carry `$`,
+# backticks or quotes AFTER the step below are refused: writing those into /tmp/radio_caps makes
+# `. "$CAPS"` abort under `set -u` with status 2, which radio_hal defines as already converged
+# (docs/wireless/01_BT_AND_RADIO.md §6d). A mapping we cannot execute must become NO mapping.
+#
+# NXP and Broadcom insmod lines are not closed-form — they carry variables assigned earlier in
+# the SAME sdioCardID branch (`nxpWiFiConfig=nxp/wifi_mod_para.conf`, `bcmWiFiFirmware=...`).
+# Capturing them verbatim was the half-mapping that loaded mlan.ko and dropped moal.ko, so the
+# WLAN interface never appeared. The documented fix is to slice THIS unit's own branch and
+# resolve that branch's literal `var=value` assignments (no chipset table, no executing the
+# dispatcher). Leftover command substitution (`bcmBTMac=\`set_wifi_mac ...\``) still refuses,
+# which is why Broadcom BT attach stays unsupported until that observation has a literal form.
 safe_cmd() {  # stdin -> stdout, empty if the line cannot be executed as captured
   _c=$(cat)
   _c=$(echo "$_c" | sed 's/[[:space:]]*&[[:space:]]*$//')          # vendor's backgrounding
@@ -140,31 +145,172 @@ safe_cmd() {  # stdin -> stdout, empty if the line cannot be executed as capture
   esac
 }
 
+# After $var expansion, vendor quotes around a single token (`"mod_para=nxp/wifi_mod_para.conf"`)
+# are shell syntax, not part of the argument. radio_hal runs the mapping with unquoted `$_cmd`,
+# so a leftover quote character would reach insmod as a literal. Strip only simple quoted
+# tokens that contain no whitespace / `$` / backticks; anything else stays for safe_cmd to refuse.
+unquote_simple() {
+  sed 's/"\([^"$`'"'"'[:space:]]*\)"/\1/g; s/'"'"'\([^"$`'"'"'[:space:]]*\)'"'"'/\1/g'
+}
+
+# Slice a vendor dispatcher to THIS unit's own sdioCardID branch. Nesting-aware: the branch
+# ends at the next elif/else/fi AT ITS OWN LEVEL. Counting matters -- the NXP attach branches
+# close an inner `if [ $configBurned -eq 0 ]` BEFORE their scomtu line, so "stop at the first
+# fi" drops the lines we came for. A file with no sdioCardID dispatch (the owned IW416 rewrite)
+# is its own branch. An id the dispatcher never mentions yields nothing.
+sdio_branch() {  # $1 = file
+  [ -f "$1" ] || return 0
+  if ! grep -q 'sdioCardID' "$1" 2>/dev/null; then
+    cat "$1"; return 0
+  fi
+  [ -n "$SDIO_DEV" ] || return 0
+  awk -v id="$SDIO_DEV" '
+    !inb {
+      if ($0 ~ /sdioCardID/ && index($0, "\"" id "\"") > 0 && $0 ~ /^[ \t]*(el)?if[ \t]/) { inb=1; depth=0 }
+      next
+    }
+    {
+      if (depth == 0 && $0 ~ /^[ \t]*(elif|else|fi)([ \t]|$)/) exit
+      if ($0 ~ /^[ \t]*if[ \t]/) depth++
+      else if ($0 ~ /^[ \t]*fi([ \t]|$)/) depth--
+      print
+    }' "$1"
+}
+
+# The vendor picks STA vs AP firmware with `test -e /usr/sbin/wpa_supplicant`. That is a
+# file-existence observation on THIS box, not a chipset table. Honour the same test so the
+# `if [ "$supportStaMode" -eq 1 ]` assignment inside the sliced branch resolves the way the
+# dispatcher would have, without executing the dispatcher.
+test -e /usr/sbin/wpa_supplicant && _SSM=1 || _SSM=0
+
+# Expand $var / ${var} in a command using literal assignments from a sliced dispatcher branch.
+# Assignments inside the vendor's supportStaMode if-blocks apply only when _SSM matches; other
+# ifs (tarball overlays, ant_num) are not executed. Values that still contain `$` or backticks
+# are skipped, so a later safe_cmd refusal stays honest.
+expand_from_branch() {  # $1 = branch text, stdin = command
+  _line=$(cat)
+  # Must EXPORT: a `VAR=value printf | awk` prefix applies only to printf, so awk would
+  # see an empty command and emit nothing. Unique names, unset on the way out.
+  RADIO_EXPAND_CMD="$_line"
+  RADIO_EXPAND_SSM="$_SSM"
+  export RADIO_EXPAND_CMD RADIO_EXPAND_SSM
+  printf '%s\n' "$1" | awk '
+    BEGIN { ssm = ENVIRON["RADIO_EXPAND_SSM"] + 0; cmd = ENVIRON["RADIO_EXPAND_CMD"] }
+    function maybe_assign(line,    n, v, eq) {
+      sub(/^[ \t]+/, "", line)
+      if (line !~ /^[A-Za-z_][A-Za-z0-9_]*=/) return
+      eq = index(line, "="); n = substr(line, 1, eq - 1); v = substr(line, eq + 1)
+      sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+      if (v ~ /\$|`/) return
+      if (v ~ /^".*"$/ || v ~ /^'\''.*'\''$/) v = substr(v, 2, length(v) - 2)
+      if (v ~ /\$|`/) return
+      as[n] = v
+    }
+    function expand(s,    i, n, c, rest, name, out) {
+      n = length(s); out = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == "$") {
+          if (substr(s, i + 1, 1) == "{") {
+            rest = substr(s, i + 2)
+            if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*}/)) {
+              name = substr(rest, 1, RLENGTH - 1)
+              if (name in as) { out = out as[name]; i = i + 1 + RLENGTH; continue }
+            }
+          } else {
+            rest = substr(s, i + 1)
+            if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) {
+              name = substr(rest, 1, RLENGTH)
+              if (name in as) { out = out as[name]; i = i + RLENGTH; continue }
+            }
+          }
+        }
+        out = out c
+      }
+      return out
+    }
+    {
+      if ($0 ~ /^[ \t]*if[ \t].*supportStaMode/) {
+        in_ssm = 1; ssm_depth = 0
+        if ($0 ~ /-eq[ \t]*1/) ssm_skip = (ssm != 1)
+        else if ($0 ~ /-eq[ \t]*0/) ssm_skip = (ssm != 0)
+        else ssm_skip = 1
+        next
+      }
+      if (in_ssm) {
+        if ($0 ~ /^[ \t]*if[ \t]/) ssm_depth++
+        else if ($0 ~ /^[ \t]*else([ \t]|$)/) { if (ssm_depth == 0) { ssm_skip = !ssm_skip; next } }
+        else if ($0 ~ /^[ \t]*fi([ \t]|$)/) {
+          if (ssm_depth == 0) { in_ssm = 0; ssm_skip = 0; next }
+          ssm_depth--
+        }
+        if (ssm_skip) next
+      }
+      maybe_assign($0)
+    }
+    END { print expand(cmd) }
+  '
+  unset RADIO_EXPAND_CMD RADIO_EXPAND_SSM
+}
+
 BT_LDISC=""; WLAN_MODS=""
 for m in $(tar tzf "$KO_TARBALL" 2>/dev/null | sed 's|.*/||' | grep '\.ko$'); do
   case "$m" in *hci_uart*) BT_LDISC=$m ;; *) WLAN_MODS="$WLAN_MODS $m" ;; esac
 done
 WLAN_MODS=${WLAN_MODS# }
 
+# Slice once. Insmod, attach, preload and the WLAN-before-BT wait all live in several
+# chipset branches with different contents -- a whole-file `head -1` (or a whole-file wait-loop
+# grep) would hand this unit another chip's observation. Same rule as the SCO extraction below.
+_WIFI_BRANCH=$(sdio_branch /script/init_bluetooth_wifi.sh)
+_ATTACH_BRANCH=$(sdio_branch /script/attach_bluetooth.sh)
+
 # Anchor on "insmod /tmp/" - the dispatcher's success/failure echo strings also contain the word
 # insmod followed by the module name, and a greedy sed without this anchor picks the echo.
+# If the branch names an insmod we cannot faithfully execute, drop the WHOLE WLAN mapping: a
+# partial list (mlan without moal) is how this seam reported mapped success while the interface
+# never appeared.
 WLAN_INSMOD=""
+_wlan_incomplete=0
 for m in $WLAN_MODS; do
-  l=$(grep -h "insmod /tmp/$m" /script/init_bluetooth_wifi.sh 2>/dev/null \
-      | grep -v '^[[:space:]]*#' | head -1 \
-      | sed 's|.*\(insmod /tmp/[^&|;}]*\).*|\1|' | sed 's/[[:space:]]*$//' | safe_cmd)
-  [ -n "$l" ] && WLAN_INSMOD="$WLAN_INSMOD$l
+  _raw=$(printf '%s\n' "$_WIFI_BRANCH" \
+      | grep -e "insmod /tmp/$m" | grep -v '^[[:space:]]*#' | head -1)
+  [ -n "$_raw" ] || continue
+  l=$(printf '%s\n' "$_raw" \
+      | sed 's|.*\(insmod /tmp/[^&|;}]*\).*|\1|' | sed 's/[[:space:]]*$//' \
+      | expand_from_branch "$_WIFI_BRANCH" | unquote_simple | safe_cmd)
+  if [ -z "$l" ]; then
+    _wlan_incomplete=1
+    WLAN_INSMOD=""
+    break
+  fi
+  WLAN_INSMOD="$WLAN_INSMOD$l
 "
 done
+[ "$_wlan_incomplete" -eq 0 ] || WLAN_INSMOD=""
+
 # Attach helper invocation, anchored at line start so `if [ -e ... ]` tests and echo lines can
-# never be mistaken for the command itself.
+# never be mistaken for the command itself. Taken from THIS unit's attach branch.
 BT_ATTACH_CMD=""
-[ -n "$BT_ATTACH" ] && BT_ATTACH_CMD=$(grep -hE "^[[:space:]]*$BT_ATTACH " /script/attach_bluetooth.sh 2>/dev/null \
-                       | head -1 | sed 's/^[[:space:]]*//' | safe_cmd)
+[ -n "$BT_ATTACH" ] && BT_ATTACH_CMD=$(printf '%s\n' "$_ATTACH_BRANCH" \
+                       | grep -E "^[[:space:]]*$BT_ATTACH " \
+                       | head -1 | sed 's/^[[:space:]]*//' \
+                       | expand_from_branch "$_ATTACH_BRANCH" | unquote_simple | safe_cmd)
+
+# Firmware preload (IW416 `fw_loader_linux ...`). radio_hal.sh consumes RADIO_BT_PRELOAD_CMD
+# but detection used to emit only the helper name, so mapped-path IW416 never ran it.
+BT_PRELOAD_CMD=""
+[ -n "$BT_PRELOAD" ] && BT_PRELOAD_CMD=$(printf '%s\n' "$_ATTACH_BRANCH" \
+                       | grep -E "^[[:space:]]*$BT_PRELOAD " \
+                       | head -1 | sed 's/^[[:space:]]*//' \
+                       | expand_from_branch "$_ATTACH_BRANCH" | unquote_simple | safe_cmd)
+
 # Ordering constraint: some parts wedge if BT attaches before the WLAN driver is up. The vendor
-# encodes this as a wait loop inside the attach script; its presence is the signal.
+# encodes this as a wait loop inside the attach script; its presence in THIS unit's branch is
+# the signal. A whole-file grep is wrong: the 0xc822 and SD8987 wait loops made every NXP/Realtek
+# unit look like it needed WLAN first, including IW416 whose own branch attaches in parallel.
 BT_AFTER_WLAN=0
-grep -qE 'while \[ ! -e /sys/class/net/' /script/attach_bluetooth.sh 2>/dev/null && BT_AFTER_WLAN=1
+printf '%s\n' "$_ATTACH_BRANCH" | grep -qE 'while \[ ! -e /sys/class/net/' && BT_AFTER_WLAN=1
 
 # ---- 4c. THE SCO / HFP VOICE SETUP THIS UNIT'S OWN DISPATCHER APPLIES ------------------------
 # The bring-up in btd forces a DOWN->UP cycle on the controller, and this controller
@@ -182,31 +328,11 @@ grep -qE 'while \[ ! -e /sys/class/net/' /script/attach_bluetooth.sh 2>/dev/null
 #     0x9149/0x9141/0x9159 (NXP):      hcitool -i hci0 cmd 0x3f 0x1d 0x00
 # A whole-file `head -1` would hand one chip another chip's vendor-opaque HCI command -- exactly
 # the failure the no-chipset-whitelist rule exists to prevent, arrived at from the other side. So
-# `attach_branch` selects the branch by THIS UNIT'S OWN SDIO id against the dispatcher's own
-# if/elif chain: no table, no whitelist, and an id the dispatcher does not mention simply yields
-# NOTHING (the seam then reports `unsupported`, honestly). A single-branch attach script -- the
-# owned IW416 rewrite, which has no sdioCardID dispatch at all -- is its own branch.
-attach_branch() {
-  [ -f /script/attach_bluetooth.sh ] || return 0
-  if ! grep -q 'sdioCardID' /script/attach_bluetooth.sh 2>/dev/null; then
-    cat /script/attach_bluetooth.sh; return 0
-  fi
-  [ -n "$SDIO_DEV" ] || return 0
-  # Nesting-aware: the branch ends at the next elif/else/fi AT ITS OWN LEVEL. Counting matters --
-  # the NXP branches close an inner `if [ $configBurned -eq 0 ]` BEFORE their scomtu line, so a
-  # naive "stop at the first fi" would drop the very lines we came for.
-  awk -v id="$SDIO_DEV" '
-    !inb {
-      if ($0 ~ /sdioCardID/ && index($0, "\"" id "\"") > 0 && $0 ~ /^[ \t]*(el)?if[ \t]/) { inb=1; depth=0 }
-      next
-    }
-    {
-      if (depth == 0 && $0 ~ /^[ \t]*(elif|else|fi)([ \t]|$)/) exit
-      if ($0 ~ /^[ \t]*if[ \t]/) depth++
-      else if ($0 ~ /^[ \t]*fi([ \t]|$)/) depth--
-      print
-    }' /script/attach_bluetooth.sh
-}
+# `sdio_branch` (above) selects the branch by THIS UNIT'S OWN SDIO id against the dispatcher's
+# own if/elif chain: no table, no whitelist, and an id the dispatcher does not mention simply
+# yields NOTHING (the seam then reports `unsupported`, honestly). A single-branch attach script
+# -- the owned IW416 rewrite, which has no sdioCardID dispatch at all -- is its own branch.
+attach_branch() { sdio_branch /script/attach_bluetooth.sh; }
 
 # Strip a TRAILING comment before anything else. The owned rewrite annotates these lines inline
 # (`hcitool -i hci0 cmd 0x3f 0x1d 0x00              # route SCO to HCI`) while the vendor puts the
@@ -265,6 +391,7 @@ BT_MAC=""
   echo "RADIO_KO_TARBALL=$KO_TARBALL"
   echo "RADIO_BT_ATTACH=$BT_ATTACH"
   echo "RADIO_BT_PRELOAD=$BT_PRELOAD"
+  echo "RADIO_BT_PRELOAD_CMD=\"$BT_PRELOAD_CMD\""
   echo "RADIO_BT_UART=/dev/ttymxc2"
   echo "RADIO_BACKEND=$BACKEND"
   echo "RADIO_WLAN_MODULES=\"$WLAN_MODS\""

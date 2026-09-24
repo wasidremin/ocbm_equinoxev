@@ -66,6 +66,16 @@ So the only thing that dead-ends is **exactly our case**: a sideloaded third-par
 host-mode vendor device (`0x1314:0x2d00`) with no kernel driver and no privileged system claimant. It is
 also why GM never noticed — everything GM ships is privileged and routes around the broken handler.
 
+**Equinox EV (`burmese_orange`, Android 14 / SDK 34) is not this unit.** Corrected 2026-09-15 from
+Play-app logs (`wasidremin.gmccpa` v=4.0+usb-inventory, user 12): `FEATURE_USB_HOST=true` but
+`UsbManager.getDeviceList()` contains **only** the SoC xHCI roots and a Microchip USB24915P /
+USB249XX NCM/IAP bridge (`0424:4915`, `0424:49a0`, `0424:4911`). `0x1314:0x2d00` never appears, so
+`USB_DEVICE_ATTACHED` never fires and there is no Allow dialog. The Silverado claim that
+`mDevices.put` still exposes the adapter to third-party apps **does not hold here** — that data port
+is GM’s iPhone CarPlay jack, not a generic USB host. Full account:
+`host/gm_ccpa/docs/14_LESSONS_LEARNED.md`. Do not apply the squat, the “always allow” persistence
+work, or a new APK to this vehicle until `deviceList` actually lists `1314:2d00`.
+
 **Log-confirmed unique (POTATO capture, 2026-08-17).** A sweep of ~4.9 GB of real `adb logcat` from this
 unit (43 boots, `/Volumes/POTATO/logcat`) found `Default USB handling package (android.car.usb.handler)
 not found` **1,176 times and it is the ONLY variant** of the "handling package (X) not found" grant

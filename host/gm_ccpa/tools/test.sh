@@ -14,6 +14,18 @@ CCPA_ROOT="$(cd "$GM_ROOT/../.." && pwd)"
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
+# Some minimal server images have no host `cc`, but Rust build scripts and procedural macros still
+# need a Linux host linker. Use a user-local Zig fallback without changing the Android linker.
+if ! command -v cc >/dev/null 2>&1; then
+    ZIG="${ZIG:-$HOME/.local/opt/zig/zig}"
+    [ -x "$ZIG" ] || { echo "FATAL: host cc is missing and Zig was not found at $ZIG" >&2; exit 1; }
+    HOST_LINKER="$(mktemp -t gmccpa-zig-cc.XXXXXX)"
+    printf '#!/bin/sh\nexec "%s" cc "$@"\n' "$ZIG" > "$HOST_LINKER"
+    chmod 700 "$HOST_LINKER"
+    export CC="$HOST_LINKER"
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$HOST_LINKER"
+fi
+
 CCPA="$CCPA_ROOT/crates/vendor"
 
 echo "=== Tier-0: receiver ==="
@@ -23,7 +35,13 @@ echo "=== Tier-0: pairing ==="
 ( cd "$CCPA/pairing" && cargo test )
 
 echo "=== Tier-0: carplay-jni builds for the head unit ABI ==="
-NDK_BIN="$HOME/Library/Android/sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+# Prefer the host's standard Android SDK location, while retaining the documented macOS default.
+SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
+NDK_VERSION="${ANDROID_NDK_VERSION:-30.0.15729638}"
+NDK_ROOT="${ANDROID_NDK_HOME:-$SDK/ndk/$NDK_VERSION}"
+NDK_PREBUILT="$(find "$NDK_ROOT/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null || true)"
+[ -n "$NDK_PREBUILT" ] || { echo "FATAL: no NDK toolchain found under $NDK_ROOT" >&2; exit 1; }
+NDK_BIN="$NDK_PREBUILT/bin"
 # eld-codec compiles a C shim against libfdk-aac, so this gate needs the SAME cross-toolchain env as
 # build_apk.sh. Without it the gate fails on `cc failed compiling csrc/eld_shim.c` even though the
 # real build succeeds — a false red that would train people to ignore the gate.

@@ -364,10 +364,22 @@ do_wifi_ap_on() {
 
   if ap_running && wlan_iface >/dev/null 2>&1; then
     _i=$(wlan_iface)
-    log "already converged (AP running on $_i)"
-    publish "$WLAN_STATE" "result=ok" "backend=$RADIO_BACKEND" "chipset=$RADIO_SDIO_DEVICE" \
-            "ap_iface=$_i" "ap_ip=$(ap_ip_of "$_i")" "wlan_mac=$(cat /sys/class/net/$_i/address 2>/dev/null)"
-    return 2
+    # A running hostapd is not "the right AP". wifi_ap_on used to return here and leave whatever
+    # ssid= was last written in hostapd.conf — including the app's placeholder — while the beacon
+    # stayed on the name hostapd loaded at start. 0x5703 reads the file. Equinox 2026-09-22: the
+    # file said "ccpa" and the beacon was ccpa-fe01, so the phone never left the vehicle hotspot.
+    _want=$(box_name)
+    _have=$(sed -n 's/^ssid=//p' /etc/hostapd.conf 2>/dev/null | head -1 | tr -d '\r')
+    if [ "$_have" = "$_want" ]; then
+      log "already converged (AP running on $_i as $_want)"
+      publish "$WLAN_STATE" "result=ok" "backend=$RADIO_BACKEND" "chipset=$RADIO_SDIO_DEVICE" \
+              "ap_iface=$_i" "ap_ip=$(ap_ip_of "$_i")" "wlan_mac=$(cat /sys/class/net/$_i/address 2>/dev/null)"
+      return 2
+    fi
+    log "AP up on $_i as ssid '${_have:-empty}', box name is '$_want' — restarting so the beacon matches"
+    killall hostapd 2>/dev/null
+    _n=0
+    while ap_running && [ "$_n" -lt 25 ]; do _n=$((_n+1)); sleep 0.1; done
   fi
 
   case "$RADIO_BACKEND" in

@@ -32,10 +32,14 @@ rediscover. A 70-commit branch sat unmerged for exactly that reason (2026-09-08)
 
 **Do not push to lvalen91.** `origin` is `https://github.com/lvalen91/ocbm.git`. That GitHub
 account is lvalen91 (local trees sometimes spell it `ivalen91`, as in
-`tmp_carlink_native_ivalen91_update`). This checkout does not publish there: do not `git push`,
-do not open a pull request, and do not retry a refused push with another credential. Fetch and
-read are fine. The GM app leaves through the Play internal track
-(`host/gm_ccpa/tools/build_aab.sh --publish`), not through that remote. (2026-09-22)
+`tmp_carlink_native_ivalen91_update`). This checkout does not publish there: do not `git push`
+to `origin`, do not open a pull request on that repo, and do not retry a refused push with
+another credential. Fetch and read are fine.
+
+**The Equinox line publishes to the fork** `https://github.com/wasidremin/ocbm_equinoxev`
+(remote `equinox`). That repo is a fork of lvalen91/ocbm so the original history and credit stay
+attached. Push `main` there. The GM app also leaves through the Play internal track
+(`host/gm_ccpa/tools/build_aab.sh --publish`). (2026-09-23)
 
 **Build artifacts and caches never live under `~/Documents`.** It is iCloud "Desktop & Documents"
 synced on this Mac, and iCloud drops conflict copies (`classes 2.jar`, `Foo$Bar 2.dex`) into build

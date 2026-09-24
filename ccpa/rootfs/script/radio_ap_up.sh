@@ -191,8 +191,16 @@ ifconfig "$IF" "$WLANIP" netmask 255.255.255.0 mtu 1500 up || {
 test -e /tmp/bin/hostapd || cp /usr/sbin/hostapd /tmp/bin/hostapd 2>/dev/null
 # Nothing reads /tmp/radio_ap_hostapd.log back (checked: no tail/cat/grep of it anywhere in the
 # scripts), so it folds straight into the universal log with a source prefix.
-echo "[radio] hostapd starting on $IF" >> /tmp/box.log
-ps | grep -v grep | grep -qw hostapd || hostapd /etc/hostapd.conf -B >>/tmp/box.log 2>&1
+# hostapd reads the conf once. A process left over from an earlier creds write keeps beaconing
+# that SSID while 0x5703 reads the file this script just rewrote, so a live hostapd is restarted
+# rather than trusted.
+if ps | grep -v grep | grep -qw hostapd; then
+  killall hostapd 2>/dev/null
+  _n=0
+  while ps | grep -v grep | grep -qw hostapd && [ "$_n" -lt 25 ]; do _n=$((_n+1)); sleep 0.1; done
+fi
+echo "[radio] hostapd starting on $IF ssid=$NAME" >> /tmp/box.log
+hostapd /etc/hostapd.conf -B >>/tmp/box.log 2>&1
 
 # The AP's DHCP server, explicitly scoped. The stock script masked this behind a global udhcpd
 # check, so the always-running NCM instance satisfied it and the AP's own server never started -

@@ -58,7 +58,7 @@ adb install -i com.android.vending -g app/build/outputs/apk/debug/app-debug.apk
 If `-g` didn't grant everything (older platform), grant explicitly via `shell` (uid 2000):
 
 ```bash
-P=zeno.gmccpa
+P=wasidremin.gmccpa
 adb shell pm grant $P android.permission.ACCESS_FINE_LOCATION
 adb shell pm grant $P android.permission.ACCESS_COARSE_LOCATION
 adb shell pm grant $P android.permission.NEARBY_WIFI_DEVICES   # no-op pre-A13, harmless
@@ -76,7 +76,7 @@ adb shell dumpsys package $P | grep -i installerPackageName
 ## Run
 
 ```bash
-adb shell am start -n zeno.gmccpa/.MainActivity   # foregrounds even if hidden from the car launcher
+adb shell am start -n wasidremin.gmccpa/.MainActivity   # foregrounds even if hidden from the car launcher
 adb logcat -c && adb logcat -s NETPROBE                    # live output
 ```
 
@@ -87,7 +87,7 @@ adb logcat -c && adb logcat -s NETPROBE                    # live output
 4. Tap **Run all**, then **Save**.
 
 ```bash
-adb pull /sdcard/Android/data/zeno.gmccpa/files/netprobe_report_<ts>.txt
+adb pull /sdcard/Android/data/wasidremin.gmccpa/files/netprobe_report_<ts>.txt
 ```
 
 ## How to read it (maps to the open questions)
@@ -107,4 +107,4 @@ adb pull /sdcard/Android/data/zeno.gmccpa/files/netprobe_report_<ts>.txt
 ## Scope
 
 Read-only characterization on your own hardware. It changes nothing on the vehicle, opens no CarPlay
-session, and holds no privileged permission. Delete with `adb uninstall zeno.gmccpa`.
+session, and holds no privileged permission. Delete with `adb uninstall wasidremin.gmccpa`.

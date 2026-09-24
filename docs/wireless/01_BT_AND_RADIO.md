@@ -324,9 +324,15 @@ characters). What survives after that depends on the role:
 
 | | bridge role (`wifi_ap:false`) | box-AP role (`wifi_ap:true`) |
 |---|---|---|
-| SSID | honored | **overwritten** with `ccpa-<4hex>` |
+| SSID | honored | **the box name** `ccpa-<4hex>` from `/etc/carplay_ident` (the YAML value is a placeholder and is not written) |
 | passphrase | honored | honored (written only when absent or <8 chars) |
 | channel | honored | honored (unless `/etc/wifi_use_24G` forces ch 6) |
+
+`wifi_ap_on` used to return as soon as `hostapd` was running, so a second `wireless_up` rewrote
+`ssid=` to the YAML placeholder and never reached `radio_ap_up.sh`. `0x5703` reads that file.
+Equinox 2026-09-22: the phone was told `ccpa` while the beacon was `ccpa-fe01` and stayed on the
+vehicle hotspot. The box-AP branch now writes the name from `/etc/carplay_ident` (falling back to
+`/etc/wifi_name`), and a running AP whose `ssid=` is not that name is restarted.
 
 The box-AP SSID overwrite is long-standing — the old `wlan_on.sh` did the identical `sed` — but
 it sits awkwardly against docs/carplay/04_CAPABILITIES_AND_CONFIG.md's doctrine that configurable CarPlay state is app-driven and
@@ -383,20 +389,37 @@ still carrying `$`, a backtick or quotes becomes an empty mapping, so the seam r
 *unsupported* honestly), and `caps()` can no longer be killed by any descriptor. The usage-error
 exit moved off 2, which it had been colliding with.
 
-**So the honest scope of the design claim:** RTL8822BS/CS and RTL8733BS resolve on paper;
-Broadcom and NXP currently resolve to an honest "unsupported" rather than to a wrong command.
-Making those two families work needs the extraction to resolve the dispatcher's own literal
-variable assignments within the unit's branch — tracked in §7, not claimed here.
+**So the honest scope of the design claim, updated 2026-09-14:** RTL8822BS/CS and RTL8733BS
+still resolve as closed-form single lines. NXP and Broadcom *insmod* lines now resolve too, by
+slicing THIS unit's own `sdioCardID` branch and substituting that branch's literal `var=value`
+assignments (`nxpWiFiConfig=nxp/wifi_mod_para.conf`, `bcmWiFiFirmware=…`) — the work §7 asked
+for, with no chipset table. A leftover `$`, backtick, or quote still refuses, so a mapping we
+cannot execute is still no mapping.
+
+Hardware-measured on an IW416 unit (`0x9159`) that had already lost the owned `wlan_on.sh` /
+`bt_on.sh` pair (so `RADIO_BACKEND=mapped`): the old whole-file extract emitted
+`insmod /tmp/mlan.ko;` and dropped `moal.ko` because `"mod_para=$nxpWiFiConfig"` failed
+`safe_cmd`. The HAL then reported mapped success, `mlan` stayed loaded, no WLAN interface
+appeared, and BT attach was refused. Branch-local resolution of that unit's own dispatcher
+produces mlan + moal (with `mod_para` taken from the branch's `nxpWiFiConfig` assignment),
+`fw_loader_linux … uartiw416_bt_v0.bin` as `RADIO_BT_PRELOAD_CMD`, and
+`RADIO_BT_AFTER_WLAN=0`.
+
+`RADIO_BT_AFTER_WLAN` is now taken from THIS unit's attach branch, not the whole file: the
+0xc822 and SD8987 wait loops had been making every unit look like it needed WLAN first,
+including IW416, whose own branch attaches in parallel. Broadcom BT attach is still refused —
+`bd_addr "$bcmBTMac"` is command substitution (`bcmBTMac=\`set_wifi_mac | sed …\``), not a
+literal — which is why that family stays in §7.
 
 ### 7. Not yet done / not yet proven
 
-* Broadcom and NXP mappings are **refused, not resolved** (§6d). Making them work requires
-  slicing the dispatcher to the unit's own SDIO branch and resolving that branch's literal
-  `var=value` assignments. Until then those units report `unsupported` — correct behaviour, but
-  not working wireless.
-* `RADIO_BT_PRELOAD_CMD` is consumed by `radio_hal.sh` but **never emitted** by
-  `radio_detect.sh`, so a mapped-path unit needing `fw_loader_linux` before attach would never
-  run it. Moot while IW416 resolves to the `owned` backend, latent otherwise.
+* Broadcom **BT attach** is still refused (§6d): `brcm_patchram_plus … --bd_addr "$bcmBTMac"`
+  is command substitution, not a literal assignment. WLAN insmod for that family now resolves
+  on paper; attach does not. Untested on hardware.
+* NXP IW416 mapped-path bring-up is hardware-proven 2026-09-14 on `0x9159` with
+  `RADIO_BACKEND=mapped`: `moal` loaded against `nxp/wifi_mod_para.conf`, `wlan0`/`sta0`
+  appeared, `fw_loader_linux` + `hciattach` produced a responsive `hci0` (`radio_hal.sh bt_on`
+  rc=0, name `ccpa-fe01`). Broadcom attach and other unowned parts stay below.
 * `ocbm_install.sh`: the generic manifest cross-reference assertion (§6). The specific Realtek
   failure it would have caught is now closed — `--full` ships the seam alongside the supervisor
   (`ocbm_install.sh:158-160`) — but a future shipped script referencing a path the target lacks

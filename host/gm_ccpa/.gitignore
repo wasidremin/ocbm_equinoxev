@@ -1,4 +1,9 @@
-# Build artifacts
+# Local Play publishing credentials and signing metadata — never commit secrets.
+play-service-account.json
+netprobe_app/play-service-account.json
+signing.properties
+keystore/
+
 native/carplay-jni/target/
 netprobe_app/app/build/
 netprobe_app/build/

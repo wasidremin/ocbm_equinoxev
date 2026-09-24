@@ -20,7 +20,7 @@ needs is relayed back over OCBM.
 | | |
 |---|---|
 | **Head unit** | GM Info 3.7, Y181, AAOS API 32, x86_64, 2400x960 |
-| **Package** | `zeno.gmccpa` — unprivileged, `/data/app`, debug-signed |
+| **Package** | `wasidremin.gmccpa` — unprivileged, `/data/app`, debug-signed |
 | **Video** | HEVC 2400x960, hardware `OMX.Intel.hw_vd.h265`, HWC `composition=DEVICE` |
 | **Audio** | AAC-LC 48 kHz out, AAC-ELD voice, mic uplink |
 | **Core** | Rust receiver/pairing/MFi via JNI, cross-built `x86_64-linux-android` |
@@ -58,6 +58,7 @@ order.
 | [`12_OBSERVED_FLOW.md`](docs/12_OBSERVED_FLOW.md) | What the stack actually does, phase by phase |
 | [`13_AUDIO_ROUTING.md`](docs/13_AUDIO_ROUTING.md) | Audio routing, volume groups, mic uplink |
 | [`01_FINDINGS.md`](docs/01_FINDINGS.md) · [`03_BUILD_PLAN.md`](docs/03_BUILD_PLAN.md) · [`11_HARDENING_PLAN.md`](docs/11_HARDENING_PLAN.md) | Feasibility analysis · build map · work queue |
+| [`14_LESSONS_LEARNED.md`](docs/14_LESSONS_LEARNED.md) | Equinox EV / Play-app bring-up (2026-09-15). USB24915P, IW416 radio, no uDisk |
 
 ## Build and run
 
@@ -72,12 +73,12 @@ bash tools/build_apk.sh            # -> apk/gmccpa-debug-<sha>.apk, and prints t
 # because versionCode is pinned and `-r` would happily install a stale one after a failed build.
 # Play-attributed install keeps the in-motion path eligible; -g grants runtime perms; user 10 is foreground
 adb install -i com.android.vending -r -g --user 10 apk/gmccpa-debug-<sha>.apk
-adb shell appops set zeno.gmccpa SYSTEM_ALERT_WINDOW allow
+adb shell appops set wasidremin.gmccpa SYSTEM_ALERT_WINDOW allow
 
 # Logging boots effectively dead on this unit, and silence looks like a dead app
 adb shell "setprop persist.log.tag V" && adb logcat -G 16M
 
-adb shell "am start -n zeno.gmccpa/.MainActivity --es run full \
+adb shell "am start -n wasidremin.gmccpa/.MainActivity --es run full \
            --es ssid '<ssid>' --es pass '<passphrase>'"
 ```
 

@@ -8,8 +8,20 @@ CCPA_ROOT="$(cd "$GM_ROOT/../.." && pwd)"
 
 set -euo pipefail
 
-SDK="$HOME/Library/Android/sdk"
-BT="$SDK/build-tools/37.0.0"
+# Rust build scripts and procedural macros compile for the Linux host before the Android target is
+# linked. Minimal server images may omit host `cc`; use the same user-local Zig fallback as test.sh.
+if ! command -v cc >/dev/null 2>&1; then
+    ZIG="${ZIG:-$HOME/.local/opt/zig/zig}"
+    [ -x "$ZIG" ] || { echo "FATAL: host cc is missing and Zig was not found at $ZIG" >&2; exit 1; }
+    HOST_LINKER="$(mktemp -t gmccpa-zig-cc.XXXXXX)"
+    printf '#!/bin/sh\nexec "%s" cc "$@"\n' "$ZIG" > "$HOST_LINKER"
+    chmod 700 "$HOST_LINKER"
+    export CC="$HOST_LINKER"
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$HOST_LINKER"
+fi
+
+SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
+BT="$SDK/build-tools/${ANDROID_BUILD_TOOLS_VERSION:-37.0.0}"
 # Compile against the head unit's ACTUAL platform (API 32). Compiling against android-35 lets the
 # compiler resolve API 33-35 symbols that do not exist on gminfo37 -> NoSuchMethodError at runtime,
 # not a build error. The unit is API 32; compile against API 32.
@@ -19,8 +31,14 @@ ANDJAR="$SDK/platforms/android-32/android.jar"
 # runtime via `<uses-library android:name="android.car">`, so it must never reach a d8 *input* or the
 # APK would carry a duplicate copy of framework classes and fail to resolve against the real one.
 CARJAR="$SDK/platforms/android-32/optional/android.car.jar"
-KC="/Applications/Android Studio.app/Contents/plugins/Kotlin/kotlinc/bin/kotlinc"
-STDLIB="/Applications/Android Studio.app/Contents/plugins/Kotlin/kotlinc/lib/kotlin-stdlib.jar"
+KC="${KOTLIN_COMPILER:-/opt/android-studio-for-platform/plugins/Kotlin/kotlinc/bin/kotlinc}"
+STDLIB="${KOTLIN_STDLIB:-$(dirname "$(dirname "$KC")")/lib/kotlin-stdlib.jar}"
+if [ -x "$KC" ]; then
+    KOTLINC_CMD=("$KC")
+else
+    # Some server images ship the Kotlin compiler script non-executable but readable by the build user.
+    KOTLINC_CMD=(bash "$KC")
+fi
 
 # Fail fast with a clear message if any pinned toolchain path is missing (an Android Studio / SDK
 # update otherwise breaks the build mid-script with a cryptic error).
@@ -29,14 +47,14 @@ for p in "$BT/d8" "$BT/aapt2" "$BT/zipalign" "$BT/apksigner" "$ANDJAR" "$CARJAR"
 done
 
 PROJ="$GM_ROOT/netprobe_app"
-# Compile the whole java/ source root. It is a single tree again (zeno.gmccpa) since the
+# Compile the whole java/ source root. It is a single tree again (wasidremin.gmccpa) since the
 # android.car.usb.handler fixed-handler squat was reverted on 2026-09-08 — see the AndroidManifest
 # header. Kept as a source-root compile rather than a package glob so a new subpackage never has to
 # be added here to get built.
 SRCDIR="$PROJ/app/src/main/java"
 MAN="$PROJ/app/src/main/AndroidManifest.xml"
 
-WORK="$(mktemp -d -t gmccpa_build)"
+WORK="$(mktemp -d -t gmccpa_build.XXXXXX)"
 echo "[build] work dir: $WORK"
 mkdir -p "$WORK/classes" "$WORK/dex"
 
@@ -45,7 +63,7 @@ echo "[1/6] kotlinc compile"
 # APK built from whatever classes survived, which looks like a successful build of stale code.
 # pipefail is already on from `set -euo pipefail`; do NOT disable it (a failed kotlinc piped to sed
 # would otherwise look like success), so it stays on for every pipeline below too.
-"$KC" -jvm-target 1.8 -classpath "$ANDJAR:$CARJAR" -d "$WORK/classes" "$SRCDIR" 2>&1 | sed 's/^/    /'
+"${KOTLINC_CMD[@]}" -jvm-target 1.8 -classpath "$ANDJAR:$CARJAR" -d "$WORK/classes" "$SRCDIR" 2>&1 | sed 's/^/    /'
 # jar the compiled classes
 ( cd "$WORK/classes" && jar cf "$WORK/app-classes.jar" . )
 
@@ -80,12 +98,12 @@ fi
 # --version-code when the manifest carries none, so the attributes were removed from AndroidManifest.xml
 # on 2026-09-11 to hand this script the authority. The code is the commit count, which is monotonic
 # because this repo has one linear branch (see ccpa_custom/CLAUDE.md "One branch: main"), needs no
-# state file, and cannot collide. The name carries the sha so `dumpsys package zeno.gmccpa` names the
+# state file, and cannot collide. The name carries the sha so `dumpsys package wasidremin.gmccpa` names the
 # exact sources on the unit — which a pinned 7/"4.0" never could.
 #
 # COST, accepted deliberately: older artifacts in apk/ are all versionCode 7, and this APK is NOT
 # debuggable, so `adb install -d` cannot roll back to one. Rolling back needs
-# `adb uninstall -k zeno.gmccpa` first — the -k matters, a plain uninstall wipes carplay_peers.bin and
+# `adb uninstall -k wasidremin.gmccpa` first — the -k matters, a plain uninstall wipes carplay_peers.bin and
 # leaves the box's BR/EDR bond asserting a pairing the app no longer has (the split brain
 # BoxAction.FORGET_PHONE exists to repair). Do not "fix" this by marking the app debuggable: on API 32
 # `adb backup` eligibility for a non-privileged app is decided by FLAG_DEBUGGABLE, not allowBackup, so
@@ -123,7 +141,11 @@ NATIVE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/native/carplay-jni"
 # Override with CARGO_TARGET_DIR=... for a one-off build elsewhere.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-targets/gm_ccpa-carplay-jni}"
 JNILIB="$CARGO_TARGET_DIR/x86_64-linux-android/release/libcarplayjni.so"
-NDK_BIN="$HOME/Library/Android/sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+NDK_VERSION="${ANDROID_NDK_VERSION:-30.0.15729638}"
+NDK_ROOT="${ANDROID_NDK_HOME:-$SDK/ndk/$NDK_VERSION}"
+NDK_PREBUILT="$(find "$NDK_ROOT/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null || true)"
+[ -n "$NDK_PREBUILT" ] || { echo "FATAL: no NDK toolchain found under $NDK_ROOT" >&2; exit 1; }
+NDK_BIN="$NDK_PREBUILT/bin"
 # CC/AR must be set, not just the LINKER. eld-codec's build.rs compiles csrc/eld_shim.c with the cc
 # crate, which honours CC_<target> and otherwise falls back to the HOST compiler. Setting only the
 # linker let it build the shim as a Mach-O arm64 object, which LLD then linked into the ELF without
@@ -153,7 +175,7 @@ if UND=$("$NDK_BIN/llvm-readelf" --dyn-syms "$JNILIB" 2>/dev/null | grep -c " UN
 fi
 mkdir -p "$WORK/lib/x86_64"
 cp "$JNILIB" "$WORK/lib/x86_64/"
-echo "    packaging $(basename "$JNILIB") ($(stat -f%z "$JNILIB") bytes, sha $(shasum -a 256 "$JNILIB" | cut -c1-12)) for x86_64"
+echo "    packaging $(basename "$JNILIB") ($(stat -c%s "$JNILIB") bytes, sha $(sha256sum "$JNILIB" | cut -c1-12)) for x86_64"
 
 echo "[4/6] add classes.dex into apk"
 cp "$WORK/base.apk" "$WORK/app-unsigned.apk"
@@ -179,12 +201,12 @@ head -3 "$WORK/verify.txt"
 
 # Stamp the artifact with the git sha so a new build can never clobber the frozen golden APK
 # Artifacts are named for the app (gmccpa-debug-*), renamed from netprobe-debug-* 2026-09-10: the
-# app stopped being "NetProbe" in 2026-08 and installs as zeno.gmccpa / "GM CCPA". The FROZEN GOLDEN
+# app stopped being "NetProbe" in 2026-08 and installs as wasidremin.gmccpa / "GM CCPA". The FROZEN GOLDEN
 # build keeps its historical name, apk/netprobe-debug-v4.0.apk = baseline-2026-08-05-working — it is
 # a real file in the standalone archive and must not be renamed. versionCode was held constant at 7
 # across hardening so any of these installed `-r` over another without a downgrade rejection
 # (preserving carplay_peers.bin); since 2026-09-11 it is the commit count instead, so a rollback to
-# one of those older artifacts needs `adb uninstall -k zeno.gmccpa` first.
+# one of those older artifacts needs `adb uninstall -k wasidremin.gmccpa` first.
 #
 # NO "latest" SYMLINK (removed 2026-09-10, owner's call). There used to be a gmccpa-debug-latest.apk
 # convenience link and the docs told you to always install it. It is a footgun on exactly the rig
@@ -207,6 +229,6 @@ if ! (cd "$REPO" && git diff --quiet HEAD 2>/dev/null); then SHA="$SHA-dirty"; f
 mkdir -p "$REPO/apk"
 OUT="$REPO/apk/gmccpa-debug-$SHA.apk"
 cp "$WORK/gmccpa-debug.apk" "$OUT"
-echo "[done] $OUT ($(stat -f%z "$OUT") bytes)"
+echo "[done] $OUT ($(stat -c%s "$OUT") bytes)"
 echo "[install] adb install -i com.android.vending -r -g --user 10 $OUT"
 echo "WORKDIR=$WORK"
