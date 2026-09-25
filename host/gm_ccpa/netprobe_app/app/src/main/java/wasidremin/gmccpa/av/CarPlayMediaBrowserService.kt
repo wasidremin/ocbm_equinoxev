@@ -31,8 +31,9 @@ import java.util.concurrent.Executors
  * This is not theoretical: with the service registered, `dumpsys car_service` shows
  * `Current playback media component: wasidremin.gmccpa/.av.CarPlayMediaBrowserService` and six controllers
  * subscribed to the session below (device-observed 2026-09-08). They were being answered with a
- * constant title "CarPlay" and `STATE_STOPPED` while HEVC and AAC were streaming; this class now
- * answers them with what the phone actually reports.
+ * constant title "CarPlay" and `STATE_STOPPED` while HEVC and AAC were streaming. Title, art,
+ * and position now follow the phone. Playback state stays `STATE_PAUSED`: on this Equinox,
+ * reporting PLAYING makes the head unit pause the phone.
  *
  * ## Framework class, not the AndroidX one
  *
@@ -119,9 +120,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         }
 
         /**
-         * A CarPlay session came up. Note this does NOT flip the card to PLAYING: playback state is
-         * whatever iOS reports in `playbackStatus`, never inferred from the existence of a session or
-         * from bytes on the audio seam. The phone may hand us a paused player.
+         * A CarPlay session came up. The card stays paused on purpose: the Equinox treats a
+         * session that reports PLAYING as the audio owner and pauses the phone. See [publishState].
          */
         fun onSessionUp() {
             sessionUp = true
@@ -306,28 +306,18 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      */
     private fun publishState(s: NowPlayingState.Snapshot) {
         val sess = session ?: return
-        // iAP2 PlaybackStatus maps 1:1. A scrub reported as "playing" is a visible lie on the card.
-        val (state, rate) = when (s.playbackStatus) {
-            NowPlayingState.PLAY -> PlaybackState.STATE_PLAYING to 1.0f
-            NowPlayingState.SEEK_FWD -> PlaybackState.STATE_FAST_FORWARDING to 2.0f
-            NowPlayingState.SEEK_BACK -> PlaybackState.STATE_REWINDING to -2.0f
-            NowPlayingState.PAUSE -> PlaybackState.STATE_PAUSED to 0.0f
-            NowPlayingState.STOP -> PlaybackState.STATE_STOPPED to 0.0f
-            else -> {
-                // Never told. Say so once: otherwise the card silently freezes at "paused" with no
-                // trace of why, and the cause (PlaybackAttributes missing from the subscribe) is
-                // three layers away.
-                if (s.hasContent && !warnedNoPlaybackStatus) {
-                    warnedNoPlaybackStatus = true
-                    log.w("track with no iAP2 playbackStatus — check NowPlayingUpdate PlaybackAttributes are subscribed")
-                }
-                PlaybackState.STATE_PAUSED to 0.0f
-            }
+        if (s.playbackStatus == null && s.hasContent && !warnedNoPlaybackStatus) {
+            warnedNoPlaybackStatus = true
+            log.w("track with no iAP2 playbackStatus — check NowPlayingUpdate PlaybackAttributes are subscribed")
         }
-        // Rate + elapsedRealtime let each controller interpolate position locally instead of stepping
-        // it twice a second.
+        // The session is a mirror, not the player. Cloud-Bridge learned this on the same
+        // Equinox: reporting playWhenReady / STATE_PLAYING makes GM media arbitration
+        // claim the source and pause the thing that is actually playing (there, car
+        // Spotify or the phone's Bluetooth; here, the iPhone's CarPlay stream). Title,
+        // art, and position still publish. The on-screen play glyph is the phone's own
+        // picture, not this state. Rate stays 0 so the car does not treat us as running.
         val ps = PlaybackState.Builder().setActions(ACTIONS)
-            .setState(state, s.elapsedMs, rate, SystemClock.elapsedRealtime())
+            .setState(PlaybackState.STATE_PAUSED, s.elapsedMs, 0f, SystemClock.elapsedRealtime())
             .build()
         runCatching { sess.setPlaybackState(ps) }.onFailure { log.e("setPlaybackState failed: ${it.message}") }
     }
@@ -370,16 +360,22 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * the active `MediaSession` — this one — where the previously empty callback swallowed them. The
      * buttons were dead twice over.
      *
-     * No local state changes here: iOS owns playback, and the card updates when the phone's next
-     * nowPlaying record says it did. That is the same ordering a built-in head unit sees.
+     * No local state changes here: iOS owns playback. The Android card stays paused on
+     * purpose (see [publishState]); the picture on the CarPlay screen is the phone's.
      */
     private val callback = object : MediaSession.Callback() {
-        override fun onPlay() {
-            MediaTransportClock.playSentAt = SystemClock.elapsedRealtime()
-            send(NativeCore.MediaBtn.PLAY, "play")
+        override fun onPlay() = send(NativeCore.MediaBtn.PLAY, "play")
+        // GM binds every media source and sends pause, then pause+stop, as arbitration.
+        // Cloud-Bridge drops those in car mode. Forwarding them is HID pause to the
+        // phone, which tears the audio stream down. A finger on the CarPlay picture is
+        // already a touch to the phone. A steering-wheel pause arrives as a media key
+        // in [onMediaButtonEvent] and still goes through.
+        override fun onPause() {
+            log.i("transport: pause ignored — head unit probe, not sent to the phone")
         }
-        override fun onPause() = armPause("pause")
-        override fun onStop() = armPause("stop")
+        override fun onStop() {
+            log.i("transport: stop ignored — head unit probe, not sent to the phone")
+        }
         override fun onSkipToNext() = send(NativeCore.MediaBtn.NEXT, "next")
         override fun onSkipToPrevious() = send(NativeCore.MediaBtn.PREV, "prev")
 
@@ -400,68 +396,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS -> NativeCore.MediaBtn.PREV
                 else -> return super.onMediaButtonEvent(intent)
             }
-            if (idx == NativeCore.MediaBtn.PLAY || idx == NativeCore.MediaBtn.PLAY_PAUSE) {
-                MediaTransportClock.playSentAt = SystemClock.elapsedRealtime()
-            }
             send(idx, "key ${ev.keyCode}")
             return true
         }
-    }
-
-    /**
-     * The Equinox calls [onPause] and [onStop] a millisecond apart when CarPlay media starts and
-     * again right after a play. Both were forwarded as HID pause, so the phone tore the stream
-     * down. Wait briefly so a pair collapses to one decision, and drop that pair when it lands
-     * on the heels of a play or a focus loss. A pause that arrives alone still goes to the phone.
-     */
-    private val main = android.os.Handler(android.os.Looper.getMainLooper())
-    @Volatile private var pauseArmedAt = 0L
-
-    private fun armPause(what: String) {
-        val now = SystemClock.elapsedRealtime()
-        val armed = pauseArmedAt
-        // A stop with no pause beside it is the head unit, not the driver. On 2026-09-24 18:40:42
-        // that lone stop was forwarded as HID pause and the phone tore the stream down on the tap
-        // that had just started it. A real pause still arrives as onPause or a media key.
-        if (what == "stop" && (armed == 0L || now - armed >= 100)) {
-            log.i("transport: stop ignored — head unit echo")
-            pauseArmedAt = 0L
-            return
-        }
-        if (what == "stop" && armed != 0L && now - armed < 100) {
-            pauseArmedAt = 0L
-            if (transportEcho(now)) log.i("transport: pause+stop ignored — head unit echo after play or focus loss")
-            else send(NativeCore.MediaBtn.PAUSE, "stop")
-            return
-        }
-        if (what == "pause") {
-            pauseArmedAt = now
-            main.postDelayed({
-                if (pauseArmedAt != now) return@postDelayed
-                pauseArmedAt = 0L
-                if (transportEcho(SystemClock.elapsedRealtime())) {
-                    log.i("transport: pause ignored — head unit echo after play or focus loss")
-                } else send(NativeCore.MediaBtn.PAUSE, "pause")
-            }, 80)
-            return
-        }
-        if (transportEcho(now)) log.i("transport: $what ignored — head unit echo after play, focus loss, or a screen tap")
-        else send(NativeCore.MediaBtn.PAUSE, what)
-    }
-
-    /** True when this pause is the car reacting to a play or a focus loss, not a driver pause. */
-    private fun transportEcho(now: Long): Boolean {
-        val sincePlay = now - MediaTransportClock.playSentAt
-        val sinceLoss = now - MediaTransportClock.focusLossAt
-        val sinceTouch = now - MediaTransportClock.screenTouchAt
-        // The Equinox sends pause, then a pause+stop, several seconds after it takes focus
-        // (2026-09-25 pid 30987: focus loss 21:21:06, HID pause 21:21:10, HID stop 21:21:16).
-        // A finger on the picture is the same echo: 2026-09-25 11:02:52 the tap was already on
-        // its way to the phone, and the pause+stop 200 ms later was forwarded as HID pause,
-        // which tore the stream down. Every later tap did it again.
-        return (MediaTransportClock.playSentAt != 0L && sincePlay in 0..2_500) ||
-            (MediaTransportClock.focusLossAt != 0L && sinceLoss in 0..12_000) ||
-            (MediaTransportClock.screenTouchAt != 0L && sinceTouch in 0..4_000)
     }
 
     private fun send(index: Int, what: String) {

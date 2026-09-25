@@ -36,18 +36,6 @@ import java.util.concurrent.atomic.AtomicLong
  * gives the system a resting owner to return to. It also lets AAOS duck us properly for navigation
  * rather than relying solely on our own software ducking in [setVoiceDucked]/[setFocusGain].
  */
-/**
- * Times the head unit's transport echo. A play in CarPlay, or a focus loss, is followed within a
- * second by `onPause`+`onStop` on the media session. Forwarding those as HID pause is what stops
- * the phone. [CarPlayMediaBrowserService] drops that pair; a later lone pause still goes through.
- */
-internal object MediaTransportClock {
-    @Volatile var focusLossAt: Long = 0L
-    @Volatile var playSentAt: Long = 0L
-    /** Finger went down on the CarPlay picture. The head unit echoes that as pause. */
-    @Volatile var screenTouchAt: Long = 0L
-}
-
 class AacPlayer(private val am: android.media.AudioManager? = null) {
 
     private val log = ProbeLog.sub("aac")
@@ -437,11 +425,6 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             android.media.AudioManager.AUDIOFOCUS_LOSS,
             android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> 0f
             else -> 1f
-        }
-        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS ||
-            change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-        ) {
-            MediaTransportClock.focusLossAt = android.os.SystemClock.elapsedRealtime()
         }
         setFocusGain(gain)
         // A GAIN means the last reclaim worked, so the next LOSS is a new edge and may reclaim.
