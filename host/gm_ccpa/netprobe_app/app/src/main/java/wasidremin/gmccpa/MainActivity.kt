@@ -532,6 +532,7 @@ class MainActivity : Activity() {
         // USB diagnostics watcher: process-scoped and idempotent, so every Activity generation
         // re-arms it for free. Attach/detach events are logged whether or not a link is running —
         // the car failure to explain is exactly "dongle plugged in, app says waiting, nothing else".
+        wasidremin.gmccpa.ocbm.UsbDiagnostics.onOcbmAttached = { reclaimDeadLink() }
         runCatching { wasidremin.gmccpa.ocbm.UsbDiagnostics.start(applicationContext) }
             .onFailure { ProbeLog.sub("usbdiag").e("watcher start failed: ${it.message}") }
         bindAdapterSession()
@@ -875,6 +876,32 @@ class MainActivity : Activity() {
      * In a wireless-only design this attach is also the only physical trigger there is. Device-proven
      * 2026-08-17.
      */
+    private val lastDeadLinkReclaimAt = java.util.concurrent.atomic.AtomicLong(0)
+
+    /**
+     * The adapter enumerated again while this process was already up. The USB trampoline does not
+     * redeliver that to [handleAttachIntent], so a stalled session used to sit on "no link" until
+     * the driver pressed Restart (2026-09-25 pid 30987, twice). A live session and a link that is
+     * still subscribed are left alone. A second attach inside 20s is the same enumeration.
+     */
+    private fun reclaimDeadLink() {
+        if (cpRx?.sessionLive == true) return
+        if (ocbmProbe?.client?.subscribed == true) return
+        if (restartInProgress.get()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastDeadLinkReclaimAt.get() < 20_000L) return
+        lastDeadLinkReclaimAt.set(now)
+        emit("adapter is back and the link is down — reclaiming")
+        applyHotspotFields()
+        runAsync {
+            ocbm()
+            if (cpRx == null) toggleCarPlayRx()
+            val r = ocbm().runAll()
+            if (r.helloOk) supervisor.onBoxLinked(r.mfiProven)
+            else emit("adapter reclaim: link NOT established — ${r.failureDetail()}")
+        }
+    }
+
     private fun handleAttachIntent(i: Intent?): Boolean {
         if (i?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return false
         @Suppress("DEPRECATION")

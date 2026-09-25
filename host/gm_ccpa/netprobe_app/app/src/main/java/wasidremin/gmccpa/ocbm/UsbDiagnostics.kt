@@ -45,6 +45,12 @@ object UsbDiagnostics {
     private val log = ProbeLog.sub("usbdiag")
     /** One watcher per process; a second Activity generation must not double-register. */
     private val started = AtomicBoolean(false)
+    /**
+     * The activity reclaims a dead link when the OCBM adapter enumerates again. The trampoline
+     * intent only arrives if the platform launches the app; a process that is already up and
+     * stalled sees the attach here and nowhere else (2026-09-25 pid 30987, 01:06 and 01:40).
+     */
+    @Volatile var onOcbmAttached: (() -> Unit)? = null
     /** Set while a probe's replug window is open, so the watcher logs every event verbosely. */
     @Volatile private var verboseWindow = false
     /** Serializes probe runs; a second tap while one is live just extends nothing. */
@@ -95,6 +101,9 @@ object UsbDiagnostics {
                         log.i("ATTACH ${actionOf(dev)} — $brief")
                         if (dev != null && isOcbmFamily(dev)) {
                             log.i("ATTACH is the adapter family — OCBM=${dev.productId == UsbBulkTransport.PID_OCBM}, permission held=${usb.hasPermission(dev)}")
+                            if (dev.productId == UsbBulkTransport.PID_OCBM) {
+                                main.post { onOcbmAttached?.invoke() }
+                            }
                             if (verboseWindow) dumpDeep(app, "post-attach")
                         }
                         noteChange(app)

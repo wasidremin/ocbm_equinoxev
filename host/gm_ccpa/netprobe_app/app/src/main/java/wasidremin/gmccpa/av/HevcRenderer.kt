@@ -55,9 +55,10 @@ class HevcRenderer(
     private var pps: ByteArray? = null
     @Volatile private var sawKeyframe = false
     private var lastKeyframeReq = 0L
-    /** Last rendered frame. A live surface with this going stale is the frozen picture. */
+    /** Last rendered frame. A quiet now-playing screen leaves this stale on purpose. */
     private val lastRenderAt = AtomicLong(0)
-    private var lastStallNudge = 0L
+    /** Last access unit actually queued. A stall is queued-and-never-rendered, not a quiet screen. */
+    private val lastQueuedAt = AtomicLong(0)
     private var stallResetAt = 0L
     /** The VPS+SPS+PPS actually baked into the live codec's csd-0, to detect a mid-session change. */
     private var configuredCsd: ByteArray? = null
@@ -75,18 +76,12 @@ class HevcRenderer(
         const val CONFIGURE_RETRY_MS = 5_000L      // don't re-attempt configure per NAL (codec-pool leak)
         const val KEYFRAME_COOLDOWN_MS = 500L      // H264Renderer's REACTIVE_KEYFRAME_COOLDOWN
         /**
-         * The phone stopped sending while the surface stayed up (2026-09-23 21:35 and 21:41,
-         * `recv=0/s` for 10s then ~30s, last frame left on screen). Nothing in the decode loop
-         * asks for an IDR when NO access units arrive — the keyframe request only fires on a
-         * non-IRAP AU. Nudge once the picture has been still this long.
-         *
-         * 1.5s was short enough to fire on a live Spotify now-playing screen (2026-09-24,
-         * pid 4763): the box was still forwarding ~6 fps, the watchdog saw a 1.6s gap inside
-         * that, and ForceKeyFrame every 2s pinned the play glyph and the elapsed clock.
-         * A real stall is many seconds of nothing. This waits that long.
+         * Decoder accepted an access unit and produced nothing. Release it so the read loop can
+         * run again. A quiet Spotify now-playing screen is not this: iOS simply stops sending
+         * while the last frame stays up, and asking for an IDR pins the play glyph and the
+         * elapsed clock (2026-09-24 pid 4763 at 1.5s, pid 30987 at 8s — 100 ForceKeyFrames and
+         * a decoder reset on every frame that arrived after a 3s gap).
          */
-        const val STALL_KEYFRAME_MS = 8_000L
-        /** Decoder accepted input and produced nothing. Release it so the read loop can run again. */
         const val STALL_RESET_MS = 3_000L
         const val MAX_MESSAGE = 8 * 1024 * 1024     // desync guard on the seam length prefix
         // Match the seam's max message: a seam-legal AU in (old 2 MB, 8 MB] — most dangerously the IDR
@@ -157,22 +152,7 @@ class HevcRenderer(
         firstFrameThisConn = false
         keyframeReqsSinceIrap = 0
         lastRenderAt.set(0)
-        val stopWatch = AtomicBoolean(false)
-        val watch = Thread({
-            while (!stopWatch.get() && running.get()) {
-                try { Thread.sleep(1_000) } catch (_: InterruptedException) { break }
-                if (!running.get() || !sawKeyframe) continue
-                val last = lastRenderAt.get()
-                if (last == 0L) continue
-                val now = SystemClock.elapsedRealtime()
-                val idle = now - last
-                if (idle >= STALL_KEYFRAME_MS && now - lastStallNudge >= 2_000) {
-                    lastStallNudge = now
-                    log.w("video idle ${idle}ms with the surface up — requesting a keyframe")
-                    requestKeyframe()
-                }
-            }
-        }, "hevc-stall").apply { isDaemon = true; start() }
+        lastQueuedAt.set(0)
         // Armed per connection, on the seam thread, before the first read: a connection that never
         // renders is the "black screen with a healthy session" fault, and until now it produced no
         // line at all — only the absence of one. Met in [drain] on this connection's first frame.
@@ -201,8 +181,6 @@ class HevcRenderer(
                 handleMessage(msg)
             }
         } finally {
-            stopWatch.set(true)
-            watch.interrupt()
             releaseCodec(if (running.get()) "video seam connection ended — rebuilt on the producer's re-dial"
                          else "renderer stopped")
             if (!firstFrameThisConn) {
@@ -383,6 +361,7 @@ class HevcRenderer(
             }
             ib.put(auBytes)
             c.queueInputBuffer(idx, 0, auBytes.size, SystemClock.uptimeMillis() * 1000, 0)
+            lastQueuedAt.set(SystemClock.elapsedRealtime())
             drain(c)
         } catch (e: IllegalStateException) {
             log.e("codec in error state: ${e.message} — resetting")
@@ -409,14 +388,16 @@ class HevcRenderer(
      */
     private fun maybeResetForStall() {
         if (!sawKeyframe) return
-        val last = lastRenderAt.get()
-        if (last == 0L) return
+        val queued = lastQueuedAt.get()
+        val rendered = lastRenderAt.get()
+        // Last event was a rendered frame. The phone went quiet; the picture on screen is current.
+        if (queued == 0L || rendered == 0L || queued <= rendered) return
         val now = SystemClock.elapsedRealtime()
-        val idle = now - last
-        if (idle < STALL_RESET_MS || now - stallResetAt < 8_000) return
+        val stuck = now - queued
+        if (stuck < STALL_RESET_MS || now - stallResetAt < 8_000) return
         stallResetAt = now
-        log.e("no frame rendered for ${idle}ms — resetting the decoder")
-        releaseCodec("render stall ${idle}ms — output buffers released")
+        log.e("decoder held an access unit for ${stuck}ms without a frame — resetting")
+        releaseCodec("render stall ${stuck}ms — output buffers released")
         sawKeyframe = false
         configureFailedAt = 0L
         maybeConfigure()

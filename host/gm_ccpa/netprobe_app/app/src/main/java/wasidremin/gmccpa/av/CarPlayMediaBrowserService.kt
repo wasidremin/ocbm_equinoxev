@@ -453,8 +453,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private fun transportEcho(now: Long): Boolean {
         val sincePlay = now - MediaTransportClock.playSentAt
         val sinceLoss = now - MediaTransportClock.focusLossAt
+        // The Equinox sends pause, then a pause+stop, several seconds after it takes focus
+        // (2026-09-25 pid 30987: focus loss 21:21:06, HID pause 21:21:10, HID stop 21:21:16).
+        // A 1s window let both through and the phone's play glyph stuck on paused.
         return (MediaTransportClock.playSentAt != 0L && sincePlay in 0..2_500) ||
-            (MediaTransportClock.focusLossAt != 0L && sinceLoss in 0..1_000)
+            (MediaTransportClock.focusLossAt != 0L && sinceLoss in 0..12_000)
     }
 
     private fun send(index: Int, what: String) {
