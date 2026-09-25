@@ -109,8 +109,6 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         const val CONFIGURE_RETRY_MS = 5_000L
         /** 0.2, not 0.8: "duck by 20%" is ~2 dB and was reported by users as "does not duck at all". */
         const val DUCK_GAIN = 0.2f
-        /** Minimum gap between focus reclaims. Stops a LOSS-every-frame fight. */
-        const val RECLAIM_GAP_MS = 3_000L
         /**
          * Media AudioTrack depth, in audio time. See [buildTrack] for what it buys and what it costs.
          *
@@ -275,19 +273,6 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     }
 
     /**
-     * The car took permanent focus as the music stream opened, before this app was the selected
-     * source. Claim the source, then ask once. A second LOSS stands — repeating it is what tore
-     * the stream down on 2026-09-23.
-     */
-    private fun reclaimFocusOnce() {
-        if (!running.get() || wasidremin.gmccpa.AudioRoute.bluetooth) return
-        log.i("media focus lost — claiming the car source and requesting focus once")
-        CarPlayMediaBrowserService.claimCarSource()
-        abandonFocus("reclaiming media focus after the car took it")
-        requestFocus()
-    }
-
-    /**
      * Adapter plays through this track and holds media focus. Bluetooth mutes the track and
      * drops focus so the car stereo can stay on the phone.
      */
@@ -321,7 +306,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * LOSS_TRANSIENT could pause in between and the consume thread's `play()` landed last. The
      * remaining orderings are all consistent: a callback that lands AFTER this block is newer and
      * simply wins; one that landed BEFORE it is detected by the stamp. A LOSS that lands first is
-     * kept — the listener has already set playback gain to 0 — so a later GAIN still reaches this
+     * kept — the listener has already applied its gain — so a later GAIN still reaches this
      * request. Only a stop() that raced the grant abandons it.
      *
      * **Grant vs. teardown.** [stop] sets `running=false` under `this` and then abandons. A request
@@ -389,11 +374,6 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                         focusState = android.media.AudioManager.AUDIOFOCUS_GAIN
                         if (pausedForFocus) { pausedForFocus = false; applyPauseState("focus regained") }
                         log.i("media audio focus: GRANTED")
-                        // The listener's GAIN callback does not always run for a reclaim grant.
-                        // On 2026-09-25 11:00:10 the grant logged here, lastReclaimAt stayed set,
-                        // and the LOSS 500 ms later was swallowed. The stream stayed silent and
-                        // the phone tore it down.
-                        lastReclaimAt = 0L
                     }
                 }
             }
@@ -406,43 +386,27 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     }
 
     /**
-     * Silence or duck on focus loss. Do not pause the track and do not abandon the request.
+     * A permanent LOSS leaves the track at full gain and leaves the focus request held.
+     * LOSS_TRANSIENT mutes. CAN_DUCK uses [DUCK_GAIN]. The track stays in PLAY either way.
      *
-     * The Equinox (2026-09-23, `4.0+sidebar`) grants media focus and then sends `AUDIOFOCUS_LOSS`
-     * about 80 ms later, on every media SETUP after the first. Pausing and abandoning made the
-     * listener go deaf, and the next frame re-requested focus, which the car took away again. The
-     * phone then tore the stream down and the driver heard nothing. The other Carlink app sets the
-     * media volume to 0 on LOSS and LOSS_TRANSIENT, 0.2 on CAN_DUCK, and 1 on GAIN, and leaves the
-     * track in PLAY. PCM keeps flowing, so a later GAIN is audible immediately. Siri still pauses
-     * the track through [setAssistantSpeaking]; that path is what moves the volume knob.
+     * Pid 1173 (`4.0+mirror`, 2026-09-25 21:14 UTC) abandoned and re-requested focus twice as
+     * stream 102 opened. The phone sent TEARDOWN after 630 frames, with 500 frames already
+     * written and no HID pause in that session. Pid 22807 (`4.0+reconnect`) did not reclaim,
+     * and the same stream stayed up about 75 s. Siri still pauses the track through
+     * [setAssistantSpeaking]; that path is what moves the volume knob.
      *
      * [setFocusGain] takes `duckLock` and stays outside `this` (see [publishTrack]).
      */
     private val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { change ->
         val gain = when (change) {
-            android.media.AudioManager.AUDIOFOCUS_GAIN -> 1f
             android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> DUCK_GAIN
-            android.media.AudioManager.AUDIOFOCUS_LOSS,
             android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> 0f
             else -> 1f
         }
         setFocusGain(gain)
-        // A GAIN means the last reclaim worked, so the next LOSS is a new edge and may reclaim.
-        // On 2026-09-24 18:40:31 the car granted focus and took it back 70 ms later. The 3 s gap
-        // swallowed that second LOSS, the stream stayed at gain 0, and the phone tore it down
-        // before the first Spotify tap could be heard. A LOSS that never gets a GAIN still waits.
-        if (change == android.media.AudioManager.AUDIOFOCUS_GAIN) lastReclaimAt = 0L
-        val nowMs = android.os.SystemClock.elapsedRealtime()
-        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS &&
-            !wasidremin.gmccpa.AudioRoute.bluetooth &&
-            nowMs - lastReclaimAt >= RECLAIM_GAP_MS
-        ) {
-            lastReclaimAt = nowMs
-            android.os.Handler(android.os.Looper.getMainLooper()).post { reclaimFocusOnce() }
-        }
         synchronized(this@AacPlayer) {
             focusCallbackSeq = focusRequestSeq
-            log.i("media focus ${focusName(focusState)} -> ${focusName(change)} (playback gain $gain, track stays in PLAY)")
+            log.i("media focus ${focusName(focusState)} -> ${focusName(change)} (playback gain $gain, track stays in PLAY, request kept)")
             focusState = change
             SessionTrace.Board.up(BOARD_FOCUS, "${focusName(change)} — request kept, playback gain $gain (USAGE_MEDIA)")
         }
@@ -458,7 +422,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
 
     /** Release focus on teardown, and clear the focus-derived gain so a discarded player is not left
      *  at 0. Takes `duckLock` via [setFocusGain] — never call this under `this`. Caller: [stop].
-     *  A focus LOSS does not come here; that only sets playback gain to 0 and keeps the request. */
+     *  A focus LOSS does not come here. Permanent LOSS keeps playback gain at 1 and keeps the
+     *  request. LOSS_TRANSIENT sets gain to 0. */
     private fun abandonFocus(why: String) {
         // deliberate: abandoning a request AAOS may already have dropped; nothing to do if it throws.
         am?.let { mgr -> focus?.let { runCatching { mgr.abandonAudioFocusRequest(it) } } }
@@ -555,11 +520,9 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     // [applyGain]), so none needs @Volatile. duckGain is the min() of the two source flags and
     // is the ONLY value ever pushed to a track.
     private var voiceDuck = false
-    /** 1 while we hold focus at full level, [DUCK_GAIN] on CAN_DUCK, 0 on LOSS / LOSS_TRANSIENT. */
+    /** 1 at rest and on permanent LOSS, [DUCK_GAIN] on CAN_DUCK, 0 on LOSS_TRANSIENT. */
     private var focusGain = 1.0f
     private var duckGain = 1.0f
-    /** Last time a LOSS started a reclaim. A LOSS on every frame used to fight the car. */
-    private var lastReclaimAt = 0L
 
     /** The ONLY way a built track becomes [track]. Publish FIRST, then re-derive gain and hold state
      *  from the shared flags: an edge that landed before the publish saw `track == null` and pushed

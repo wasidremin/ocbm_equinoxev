@@ -32,8 +32,8 @@ import java.util.concurrent.Executors
  * `Current playback media component: wasidremin.gmccpa/.av.CarPlayMediaBrowserService` and six controllers
  * subscribed to the session below (device-observed 2026-09-08). They were being answered with a
  * constant title "CarPlay" and `STATE_STOPPED` while HEVC and AAC were streaming. Title, art,
- * and position now follow the phone. Playback state stays `STATE_PAUSED`: on this Equinox,
- * reporting PLAYING makes the head unit pause the phone.
+ * position, and playback state follow the phone. Reporting PLAYING is what lets the Equinox
+ * displace FM. A head-unit pause or stop is logged and left on the car; it is not sent to the phone.
  *
  * ## Framework class, not the AndroidX one
  *
@@ -120,8 +120,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         }
 
         /**
-         * A CarPlay session came up. The card stays paused on purpose: the Equinox treats a
-         * session that reports PLAYING as the audio owner and pauses the phone. See [publishState].
+         * A CarPlay session came up. Playback state follows the phone once Now Playing arrives.
+         * See [publishState].
          */
         fun onSessionUp() {
             sessionUp = true
@@ -303,6 +303,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * Separate from [publishNow] on purpose: position moves ~2 Hz and the metadata does not. Rebuilding
      * a `MediaMetadata` at that rate would churn every subscribed controller for a value that belongs
      * in the playback state.
+     *
+     * The state is the phone's PlaybackAttributes. Carlink's rule on this Equinox is that a
+     * newly PLAYING source displaces a source that is not playing, which is how FM gives up
+     * the cabin speakers. `4.0+mirror` forced STATE_PAUSED, so the card never became that
+     * source. Pause and stop callbacks stay on the car (see the session callback).
      */
     private fun publishState(s: NowPlayingState.Snapshot) {
         val sess = session ?: return
@@ -310,14 +315,14 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             warnedNoPlaybackStatus = true
             log.w("track with no iAP2 playbackStatus — check NowPlayingUpdate PlaybackAttributes are subscribed")
         }
-        // The session is a mirror, not the player. Cloud-Bridge learned this on the same
-        // Equinox: reporting playWhenReady / STATE_PLAYING makes GM media arbitration
-        // claim the source and pause the thing that is actually playing (there, car
-        // Spotify or the phone's Bluetooth; here, the iPhone's CarPlay stream). Title,
-        // art, and position still publish. The on-screen play glyph is the phone's own
-        // picture, not this state. Rate stays 0 so the car does not treat us as running.
+        val state = when (s.playbackStatus) {
+            NowPlayingState.STOP -> PlaybackState.STATE_STOPPED
+            NowPlayingState.PAUSE -> PlaybackState.STATE_PAUSED
+            NowPlayingState.PLAY, NowPlayingState.SEEK_FWD, NowPlayingState.SEEK_BACK -> PlaybackState.STATE_PLAYING
+            else -> PlaybackState.STATE_PAUSED
+        }
         val ps = PlaybackState.Builder().setActions(ACTIONS)
-            .setState(PlaybackState.STATE_PAUSED, s.elapsedMs, 0f, SystemClock.elapsedRealtime())
+            .setState(state, s.elapsedMs, if (s.playing) 1f else 0f, SystemClock.elapsedRealtime())
             .build()
         runCatching { sess.setPlaybackState(ps) }.onFailure { log.e("setPlaybackState failed: ${it.message}") }
     }
@@ -360,8 +365,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * the active `MediaSession` — this one — where the previously empty callback swallowed them. The
      * buttons were dead twice over.
      *
-     * No local state changes here: iOS owns playback. The Android card stays paused on
-     * purpose (see [publishState]); the picture on the CarPlay screen is the phone's.
+     * No local state changes here: iOS owns playback, and [publishState] repeats the
+     * status the phone already sent. A head-unit pause or stop stays on the car. A
+     * steering-wheel key arrives in [onMediaButtonEvent] and still goes to the phone.
      */
     private val callback = object : MediaSession.Callback() {
         override fun onPlay() = send(NativeCore.MediaBtn.PLAY, "play")
