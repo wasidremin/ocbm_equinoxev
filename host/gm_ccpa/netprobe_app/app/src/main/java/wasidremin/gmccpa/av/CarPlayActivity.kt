@@ -1194,7 +1194,10 @@ class CarPlayActivity : Activity() {
         if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this)) {
             val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendTouch(phase.toByte(), nx, ny)
             if (!sent) log.w("touch ${phaseName(phase)} sent=false — adapter has no subscription")
-            else if (phase != 1) log.i("touch ${phaseName(phase)} n=(%.3f, %.3f) sent=true".format(nx, ny))
+            else {
+                if (phase == 0) MediaTransportClock.screenTouchAt = android.os.SystemClock.elapsedRealtime()
+                if (phase != 1) log.i("touch ${phaseName(phase)} n=(%.3f, %.3f) sent=true".format(nx, ny))
+            }
             return
         }
         val tw = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.width else DISPLAY_W
@@ -1205,8 +1208,9 @@ class CarPlayActivity : Activity() {
         // from a healthy tap in a grep for problems.
         if (!sent) {
             log.w("touch ${phaseName(phase)} n=(%.3f, %.3f) sent=false — the event channel refused it".format(nx, ny))
-        } else if (phase != 1) {
-            log.i("touch ${phaseName(phase)} n=(%.3f, %.3f) sent=true".format(nx, ny))
+        } else {
+            if (phase == 0) MediaTransportClock.screenTouchAt = android.os.SystemClock.elapsedRealtime()
+            if (phase != 1) log.i("touch ${phaseName(phase)} n=(%.3f, %.3f) sent=true".format(nx, ny))
         }
     }
 

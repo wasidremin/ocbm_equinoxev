@@ -44,6 +44,8 @@ import java.util.concurrent.atomic.AtomicLong
 internal object MediaTransportClock {
     @Volatile var focusLossAt: Long = 0L
     @Volatile var playSentAt: Long = 0L
+    /** Finger went down on the CarPlay picture. The head unit echoes that as pause. */
+    @Volatile var screenTouchAt: Long = 0L
 }
 
 class AacPlayer(private val am: android.media.AudioManager? = null) {
@@ -399,6 +401,11 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                         focusState = android.media.AudioManager.AUDIOFOCUS_GAIN
                         if (pausedForFocus) { pausedForFocus = false; applyPauseState("focus regained") }
                         log.i("media audio focus: GRANTED")
+                        // The listener's GAIN callback does not always run for a reclaim grant.
+                        // On 2026-09-25 11:00:10 the grant logged here, lastReclaimAt stayed set,
+                        // and the LOSS 500 ms later was swallowed. The stream stayed silent and
+                        // the phone tore it down.
+                        lastReclaimAt = 0L
                     }
                 }
             }

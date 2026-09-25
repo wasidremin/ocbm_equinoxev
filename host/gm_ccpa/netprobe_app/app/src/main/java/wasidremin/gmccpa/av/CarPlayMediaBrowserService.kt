@@ -445,7 +445,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             }, 80)
             return
         }
-        if (transportEcho(now)) log.i("transport: $what ignored — head unit echo after play or focus loss")
+        if (transportEcho(now)) log.i("transport: $what ignored — head unit echo after play, focus loss, or a screen tap")
         else send(NativeCore.MediaBtn.PAUSE, what)
     }
 
@@ -453,11 +453,15 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private fun transportEcho(now: Long): Boolean {
         val sincePlay = now - MediaTransportClock.playSentAt
         val sinceLoss = now - MediaTransportClock.focusLossAt
+        val sinceTouch = now - MediaTransportClock.screenTouchAt
         // The Equinox sends pause, then a pause+stop, several seconds after it takes focus
         // (2026-09-25 pid 30987: focus loss 21:21:06, HID pause 21:21:10, HID stop 21:21:16).
-        // A 1s window let both through and the phone's play glyph stuck on paused.
+        // A finger on the picture is the same echo: 2026-09-25 11:02:52 the tap was already on
+        // its way to the phone, and the pause+stop 200 ms later was forwarded as HID pause,
+        // which tore the stream down. Every later tap did it again.
         return (MediaTransportClock.playSentAt != 0L && sincePlay in 0..2_500) ||
-            (MediaTransportClock.focusLossAt != 0L && sinceLoss in 0..12_000)
+            (MediaTransportClock.focusLossAt != 0L && sinceLoss in 0..12_000) ||
+            (MediaTransportClock.screenTouchAt != 0L && sinceTouch in 0..4_000)
     }
 
     private fun send(index: Int, what: String) {
