@@ -387,9 +387,18 @@ class OcbmClient(
                 if (pl.size >= 2) {
                     val m = pl[1]
                     lastProjMode = m
-                    log.i("<< PROJ_MODE ${Ocbm.pmName(m)}")
+                    log.i("<< PROJ_MODE ${Ocbm.pmName(m)}${if (replay) " (replay)" else ""}")
                     boardUp(OcbmBoard.PROJ_MODE, Ocbm.pmName(m))
                     onProjMode?.invoke(m)
+                    // A live AirPlay session that ends (the box's 30 s idle backstop after the
+                    // screen is destroyed, device-observed 2026-09-26 14:39) arrives as NONE
+                    // while the USB link stays up. Leaving the lanes armed keeps sessionUp true,
+                    // and the next open restores a surface onto a phone that is already gone:
+                    // 0 frames, touches hid_sent=false. Retire here. A replayed mirror is the
+                    // box re-reading its latch, not a session ending.
+                    if (!replay && adapterMode && m == Ocbm.PM_NONE) {
+                        retireLanes("projection ended")
+                    }
                 }
             }
             else -> log.i("<< CTRL unknown type 0x%02x (${pl.size}B)".format(pl[0]))

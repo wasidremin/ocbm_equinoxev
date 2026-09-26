@@ -386,20 +386,21 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     }
 
     /**
-     * A permanent LOSS leaves the track at full gain and leaves the focus request held.
-     * LOSS_TRANSIENT mutes. CAN_DUCK uses [DUCK_GAIN]. The track stays in PLAY either way.
+     * LOSS and LOSS_TRANSIENT mute. CAN_DUCK uses [DUCK_GAIN]. GAIN restores full level.
+     * The track stays in PLAY and the focus request stays held.
      *
-     * Pid 1173 (`4.0+mirror`, 2026-09-25 21:14 UTC) abandoned and re-requested focus twice as
-     * stream 102 opened. The phone sent TEARDOWN after 630 frames, with 500 frames already
-     * written and no HID pause in that session. Pid 22807 (`4.0+reconnect`) did not reclaim,
-     * and the same stream stayed up about 75 s. Siri still pauses the track through
-     * [setAssistantSpeaking]; that path is what moves the volume knob.
+     * Pid 1173 (`4.0+mirror`) abandoned and re-requested focus, and the phone tore stream 102
+     * down after 630 frames. `4.0+hold` kept full gain through a permanent LOSS: pid 12496
+     * (2026-09-26 14:03:50) played at gain 1 after LOSS, and the phone tore the same stream
+     * down after 72 frames. Pid 22807 kept the stream about 75 s at gain 0 without reclaiming.
+     * Siri still pauses the track through [setAssistantSpeaking].
      *
      * [setFocusGain] takes `duckLock` and stays outside `this` (see [publishTrack]).
      */
     private val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { change ->
         val gain = when (change) {
             android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> DUCK_GAIN
+            android.media.AudioManager.AUDIOFOCUS_LOSS,
             android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> 0f
             else -> 1f
         }
@@ -422,8 +423,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
 
     /** Release focus on teardown, and clear the focus-derived gain so a discarded player is not left
      *  at 0. Takes `duckLock` via [setFocusGain] — never call this under `this`. Caller: [stop].
-     *  A focus LOSS does not come here. Permanent LOSS keeps playback gain at 1 and keeps the
-     *  request. LOSS_TRANSIENT sets gain to 0. */
+     *  A focus LOSS does not come here. LOSS mutes and keeps the request. */
     private fun abandonFocus(why: String) {
         // deliberate: abandoning a request AAOS may already have dropped; nothing to do if it throws.
         am?.let { mgr -> focus?.let { runCatching { mgr.abandonAudioFocusRequest(it) } } }
@@ -520,7 +520,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     // [applyGain]), so none needs @Volatile. duckGain is the min() of the two source flags and
     // is the ONLY value ever pushed to a track.
     private var voiceDuck = false
-    /** 1 at rest and on permanent LOSS, [DUCK_GAIN] on CAN_DUCK, 0 on LOSS_TRANSIENT. */
+    /** 1 on GAIN, [DUCK_GAIN] on CAN_DUCK, 0 on LOSS and LOSS_TRANSIENT. */
     private var focusGain = 1.0f
     private var duckGain = 1.0f
 
