@@ -30,6 +30,16 @@ object DisplayPrefs {
     private const val PREFS = "carplay_screen"
     private const val KEY_MODE = "mode"
     private const val KEY_SIDEBAR = "sidebar"
+    private const val KEY_UI_SCALE = "ui_scale"
+    private const val KEY_SAFE_RIGHT = "safe_right"
+    private const val KEY_PHONE = "last_phone_name"
+
+    /** Percentages the screen page offers. 100 is today's advertised size. */
+    val SCALE_PRESETS = intArrayOf(100, 115, 125, 133, 150)
+    /** Right inset in 100% pixels. The advertised inset shrinks with [uiScale]. */
+    val SAFE_PRESETS = intArrayOf(0, 24, 48, 72, 96)
+    const val DEFAULT_UI_SCALE = 125
+    const val DEFAULT_SAFE_RIGHT = 48
 
     /**
      * The driver opened Settings from the CarPlay screen. Process-scoped, not persisted: a fresh
@@ -52,9 +62,39 @@ object DisplayPrefs {
         prefs(ctx).edit().putBoolean(KEY_SIDEBAR, on).apply()
     }
 
+    /** CarPlay UI scale, as a percentage. A change is read at the next `CT_SUBSCRIBE`. */
+    fun uiScale(ctx: Context): Int {
+        val v = prefs(ctx).getInt(KEY_UI_SCALE, DEFAULT_UI_SCALE)
+        return if (v in SCALE_PRESETS) v else DEFAULT_UI_SCALE
+    }
+
+    fun setUiScale(ctx: Context, percent: Int) {
+        if (percent in SCALE_PRESETS) prefs(ctx).edit().putInt(KEY_UI_SCALE, percent).apply()
+    }
+
+    /**
+     * Right inset in 100%-space pixels (0–96). The phone is told the scaled value, so a 48 px
+     * margin stays about the same physical width when the advertised picture shrinks.
+     */
+    fun safeRightPx(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_SAFE_RIGHT, DEFAULT_SAFE_RIGHT).coerceIn(0, 96)
+
+    fun setSafeRightPx(ctx: Context, px: Int) {
+        prefs(ctx).edit().putInt(KEY_SAFE_RIGHT, px.coerceIn(0, 96)).apply()
+    }
+
+    fun lastPhoneName(ctx: Context): String? =
+        prefs(ctx).getString(KEY_PHONE, null)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun setLastPhoneName(ctx: Context, name: String) {
+        val clean = name.trim()
+        if (clean.isEmpty()) return
+        prefs(ctx).edit().putString(KEY_PHONE, clean).apply()
+    }
+
     fun summary(ctx: Context): String {
         val side = if (sidebar(ctx)) "sidebar on" else "sidebar off"
-        return "Screen:  ${mode(ctx).label}   ·   $side   ·   tap to change"
+        return "Screen:  ${mode(ctx).label}   ·   $side   ·   ${uiScale(ctx)}%   ·   tap to change"
     }
 
     private fun prefs(ctx: Context) =
@@ -76,9 +116,21 @@ object VideoFrame {
     /** Matches the rail drawn in `CarPlayActivity`. Kept here so the advertised gap and the view agree. */
     const val RAIL_DP = 108
 
+    /** Advertised picture, after [DisplayPrefs.uiScale]. This is the decoder and the YAML size. */
     @Volatile var width: Int = PANEL_W
         private set
     @Volatile var height: Int = PANEL_H
+        private set
+    /** On-screen CarPlay rectangle. The [android.view.SurfaceView] stays this size; the buffer is [width]×[height]. */
+    @Volatile var viewWidth: Int = PANEL_W
+        private set
+    @Volatile var viewHeight: Int = PANEL_H
+        private set
+    /** Percent applied by the last [capture]. 100 until then, and always 100 on the wired path. */
+    @Volatile var uiScalePercent: Int = 100
+        private set
+    /** Right inset in advertised pixels. 0 keeps a full-frame safe area. */
+    @Volatile var safeRightPx: Int = 0
         private set
     /** Left gap in panel pixels. 0 when this session's picture is the full panel. */
     @Volatile var railPx: Int = 0
@@ -97,11 +149,10 @@ object VideoFrame {
      * is the one that sends [width] in the vehicle config.
      */
     fun capture(ctx: Context, advertise: Boolean) {
+        val percent = if (advertise) DisplayPrefs.uiScale(ctx) else 100
+        val inset = if (advertise) DisplayPrefs.safeRightPx(ctx) else 0
         if (!advertise || !DisplayPrefs.sidebar(ctx)) {
-            width = PANEL_W
-            height = PANEL_H
-            railPx = 0
-            panelPx = PANEL_W
+            latch(PANEL_W, PANEL_H, 0, PANEL_W, percent, inset)
             return
         }
         // The other Carlink app sizes from the activity window after layout, not from the
@@ -111,16 +162,27 @@ object VideoFrame {
         val rail = railPixels(ctx)
         val w = (panel - rail).coerceAtLeast(2) and 1.inv()
         if (w < 640) {
-            width = PANEL_W
-            height = PANEL_H
-            railPx = 0
-            panelPx = PANEL_W
+            latch(PANEL_W, PANEL_H, 0, PANEL_W, percent, inset)
             return
         }
-        width = w
-        height = PANEL_H
+        latch(w, PANEL_H, panel - w, panel, percent, inset)
+    }
+
+    /**
+     * [viewW]×[viewH] is what the surface occupies. [width]×[height] is that rectangle divided
+     * by the UI scale, even, which is what the phone lays out and what the decoder is configured
+     * with. The inset is the 100%-space margin mapped into the advertised width.
+     */
+    private fun latch(viewW: Int, viewH: Int, rail: Int, panel: Int, percent: Int, insetAt100: Int) {
+        viewWidth = viewW
+        viewHeight = viewH
+        uiScalePercent = percent
+        width = DisplayScale.even(viewW, percent)
+        height = DisplayScale.even(viewH, percent)
+        railPx = rail
         panelPx = panel
-        railPx = panel - w
+        val scaled = DisplayScale.even(insetAt100, percent)
+        safeRightPx = scaled.coerceIn(0, (width - 2).coerceAtLeast(0)) and 1.inv()
     }
 
     /** Record the activity's laid-out width. [MainActivity] calls this once the decor has a size. */
@@ -149,4 +211,35 @@ object VideoFrame {
      */
     fun railPixels(ctx: Context): Int =
         (RAIL_DP * ctx.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+}
+
+/**
+ * Advertised pixels for a UI-scale percentage.
+ *
+ * The on-screen CarPlay rectangle is divided by the scale and rounded to the nearest even
+ * number, so 2494×960 becomes 2168×834, 1996×768, 1870×720 or 1662×640. 133% is 4/3: `px*100/133`
+ * misses 1870×720.
+ */
+object DisplayScale {
+    fun even(px: Int, percent: Int): Int {
+        if (px <= 0) return 0
+        if (percent <= 100) return px and 1.inv()
+        val n = if (percent == 133) {
+            (px * 3) / 4
+        } else {
+            val num = px.toLong() * 100L
+            val q = num / percent
+            val rem = num % percent
+            var nearest = if (rem * 2 >= percent.toLong()) q + 1 else q
+            if (nearest % 2L != 0L) {
+                val real = num.toDouble() / percent.toDouble()
+                val down = nearest - 1
+                val up = nearest + 1
+                nearest = if (kotlin.math.abs(real - down) <= kotlin.math.abs(real - up)) down else up
+            }
+            nearest.toInt()
+        }
+        val even = if (n <= 0) 0 else n and 1.inv()
+        return if (even == 0) 2 else even
+    }
 }

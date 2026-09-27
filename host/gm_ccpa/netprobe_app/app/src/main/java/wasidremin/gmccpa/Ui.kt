@@ -171,6 +171,8 @@ class LauncherUi(private val act: Activity) {
     var onScreenChanged: () -> Unit = {}
     /** The sidebar toggle changed. A live session has to restart; the width is fixed at subscribe. */
     var onSidebarChanged: () -> Unit = {}
+    /** True while a CarPlay session is on screen. The intro must not cover settings in that case. */
+    var sessionIsLive: () -> Boolean = { false }
     /** Close the app. The caller stops the session first. */
     var onClose: () -> Unit = {}
 
@@ -229,6 +231,11 @@ class LauncherUi(private val act: Activity) {
     private lateinit var audioBluetooth: Button
     private lateinit var sidebarButton: Button
     private val screenModeButtons = mutableListOf<Button>()
+    private val scaleButtons = mutableListOf<Button>()
+    private val safeButtons = mutableListOf<Button>()
+    private val intro = StartupAnimationView(act)
+    private var introRestore: Runnable? = null
+    private val uiLog = ProbeLog.sub("ui")
     private val tabButtons = mutableListOf<Button>()
     private var selectedTab = 0
 
@@ -260,11 +267,11 @@ class LauncherUi(private val act: Activity) {
         // The pages hold what used to be one column of pills, split the way that screen split
         // Phones / Control / Logs. ScrollView so a short panel degrades to a scroll instead of
         // clipping Stop off the bottom.
-        val root = LinearLayout(act).apply {
+        val content = LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Palette.SURFACE)
         }
-        root.addView(buildRail(), LinearLayout.LayoutParams(act.dp(120), ViewGroup.LayoutParams.MATCH_PARENT))
+        content.addView(buildRail(), LinearLayout.LayoutParams(act.dp(120), ViewGroup.LayoutParams.MATCH_PARENT))
 
         val scroller = ScrollView(act).apply {
             isFillViewport = true
@@ -382,6 +389,34 @@ class LauncherUi(private val act: Activity) {
             onSidebarChanged()
         }
         screenPage.addView(sidebarButton, LinearLayout.LayoutParams(-2, -2))
+        screenPage.addView(sectionTitle("CarPlay size"))
+        screenPage.addView(bodyCopy(
+            "Larger makes the icons and text bigger. Applies next connection."
+        ))
+        val scaleRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        for (percent in DisplayPrefs.SCALE_PRESETS) {
+            val b = pill("$percent%", Palette.LIVE, filled = false, baseSp = 16f) {
+                DisplayPrefs.setUiScale(act, percent)
+                refreshScreenSummary()
+            }
+            scaleButtons += b
+            scaleRow.addView(b)
+        }
+        screenPage.addView(scaleRow, LinearLayout.LayoutParams(-2, -2))
+        screenPage.addView(sectionTitle("Right margin"))
+        screenPage.addView(bodyCopy(
+            "Keeps Now Playing off the right edge. Applies next connection."
+        ))
+        val safeRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        for (px in DisplayPrefs.SAFE_PRESETS) {
+            val b = pill("${px}px", Palette.PHONE, filled = false, baseSp = 16f) {
+                DisplayPrefs.setSafeRightPx(act, px)
+                refreshScreenSummary()
+            }
+            safeButtons += b
+            safeRow.addView(b)
+        }
+        screenPage.addView(safeRow, LinearLayout.LayoutParams(-2, -2))
         column.addView(screenPage, LinearLayout.LayoutParams(-1, -2))
         refreshScreenSummary()
 
@@ -415,12 +450,33 @@ class LauncherUi(private val act: Activity) {
 
         showTab(0)
         scroller.addView(column, ViewGroup.LayoutParams(-1, -2))
-        root.addView(scroller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        content.addView(scroller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
-        root.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or_, ob ->
+        content.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or_, ob ->
             if (r - l != or_ - ol || b - t != ob - ot) applyMetrics(r - l, b - t)
         }
-        return root
+        // The animation sits above the diagnostic screen. A long press hides it so the buttons
+        // can be reached; a live session does not show it at all.
+        intro.setPhoneName(DisplayPrefs.lastPhoneName(act))
+        intro.setOnLongClickListener {
+            uiLog.i("intro: hidden for diagnostics")
+            intro.visibility = View.GONE
+            introRestore?.let { intro.removeCallbacks(it) }
+            val restore = Runnable {
+                if (sessionIsLive()) return@Runnable
+                if (intro.alpha < 0.99f) return@Runnable
+                intro.visibility = View.VISIBLE
+            }
+            introRestore = restore
+            intro.postDelayed(restore, 15_000)
+            true
+        }
+        val frame = FrameLayout(act)
+        frame.addView(content, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        frame.addView(intro, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return frame
     }
 
     private fun page(): LinearLayout = LinearLayout(act).apply {
@@ -694,6 +750,36 @@ class LauncherUi(private val act: Activity) {
         stateText.text = state.label
         (dot.background as GradientDrawable).setColor(state.color)
         detailText.text = detail
+        if (sessionIsLive()) {
+            introRestore?.let { intro.removeCallbacks(it) }
+            intro.visibility = View.GONE
+            return@runOnUiThread
+        }
+        intro.setStage(
+            StartupAnimationView.stageFor(state),
+            StartupAnimationView.statusFor(state),
+            if (state == LinkState.FAILED) detail else null,
+        )
+    }
+
+    /** Saved name first, then the name from `CT_PHONE_IDENT`, so the line is right before the phone answers. */
+    fun setPhoneName(name: String?) = act.runOnUiThread {
+        val clean = name?.trim()?.takeIf { it.isNotEmpty() } ?: return@runOnUiThread
+        DisplayPrefs.setLastPhoneName(act, clean)
+        intro.setPhoneName(clean)
+    }
+
+    /** A session is already up (settings, or a return to the launcher). Leave the diagnostics reachable. */
+    fun concealIntro() {
+        introRestore?.let { intro.removeCallbacks(it) }
+        intro.visibility = View.GONE
+    }
+
+    /** The CarPlay session ended. The wait animation starts again from the first frame. */
+    fun resetIntro() = act.runOnUiThread {
+        if (act.isFinishing) return@runOnUiThread
+        introRestore?.let { intro.removeCallbacks(it) }
+        intro.reset()
     }
 
     /** Show (or, on an empty code, hide) the box's pairing code. */
@@ -738,6 +824,22 @@ class LauncherUi(private val act: Activity) {
         sidebarButton.text = if (side) "Sidebar: ON" else "Sidebar: OFF"
         sidebarButton.tag = if (side) Palette.PHONE else Color.TRANSPARENT
         sidebarButton.setTextColor(if (side) Palette.BG else Palette.TEXT)
+        val scale = DisplayPrefs.uiScale(act)
+        for (b in scaleButtons) {
+            val on = b.text.toString().equals("$scale%", ignoreCase = true)
+            b.tag = if (on) Palette.LIVE else Color.TRANSPARENT
+            b.setTextColor(if (on) Palette.BG else Palette.TEXT)
+            val h = b.minimumHeight.coerceAtLeast(act.dp(48))
+            b.background = pillBg(if (on) Palette.LIVE else Color.TRANSPARENT, Palette.LIVE, h / 2, act.dp(2))
+        }
+        val margin = DisplayPrefs.safeRightPx(act)
+        for (b in safeButtons) {
+            val on = b.text.toString().equals("${margin}px", ignoreCase = true)
+            b.tag = if (on) Palette.PHONE else Color.TRANSPARENT
+            b.setTextColor(if (on) Palette.BG else Palette.TEXT)
+            val h = b.minimumHeight.coerceAtLeast(act.dp(48))
+            b.background = pillBg(if (on) Palette.PHONE else Color.TRANSPARENT, Palette.PHONE, h / 2, act.dp(2))
+        }
     }
 
     /**

@@ -31,6 +31,16 @@ object AdapterSession {
     @Volatile var sessionUp: Boolean = false
         private set
 
+    /**
+     * How many video renderers this session has opened. The CarPlay screen uses a non-zero count
+     * to tell a new session (show the hand-off animation) from a Surface re-attach after home or
+     * settings (the `video epoch open` that must not replay the intro).
+     */
+    @Volatile var videoEpoch: Int = 0
+        private set
+
+    private var firstFrameCallback: (() -> Unit)? = null
+
     /** Fired on the main thread once a keyed session exists. [MainActivity] brings the screen up. */
     var onKeyed: (() -> Unit)? = null
 
@@ -105,7 +115,8 @@ object AdapterSession {
     fun requestKeyframe(): Boolean = client?.requestKeyframe() == true
 
     @Synchronized
-    fun attachVideo(surface: Surface) {
+    fun attachVideo(surface: Surface, onFirstFrame: (() -> Unit)? = null) {
+        if (onFirstFrame != null) firstFrameCallback = onFirstFrame
         if (!surface.isValid) {
             log.i("video surface ignored — not valid")
             return
@@ -118,9 +129,16 @@ object AdapterSession {
         }
         if (renderer != null) return
         val pipe = SeamPipe(8 * 1024 * 1024, 64)
-        val r = HevcRenderer(wasidremin.gmccpa.VideoFrame.width, wasidremin.gmccpa.VideoFrame.height, surface) {
-            requestKeyframe()
-        }
+        val cb = firstFrameCallback
+        firstFrameCallback = null
+        videoEpoch++
+        val r = HevcRenderer(
+            wasidremin.gmccpa.VideoFrame.width,
+            wasidremin.gmccpa.VideoFrame.height,
+            surface,
+            { requestKeyframe() },
+            cb,
+        )
         r.start()
         l.runConsumer("cp-video", pipe) { r.consume(it) }
         l.videoSeam.attach(pipe)
@@ -171,6 +189,8 @@ object AdapterSession {
             router = null
             lanes = null
             sessionUp = false
+            videoEpoch = 0
+            firstFrameCallback = null
         }
     }
 
@@ -261,6 +281,8 @@ object AdapterSession {
                 sessionUp = false
                 notify = true
             }
+            videoEpoch = 0
+            firstFrameCallback = null
         }
         if (notify) {
             clearResourceLog()

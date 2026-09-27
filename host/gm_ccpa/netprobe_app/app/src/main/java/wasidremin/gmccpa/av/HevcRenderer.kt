@@ -2,6 +2,8 @@ package wasidremin.gmccpa.av
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.Surface
 import wasidremin.gmccpa.ProbeLog
@@ -37,9 +39,12 @@ class HevcRenderer(
     private val width: Int,
     private val height: Int,
     private val surface: Surface,
-    private val onKeyframeNeeded: () -> Unit = {}
+    private val onKeyframeNeeded: () -> Unit = {},
+    /** Fired once, on the main thread, at the same moment as `FIRST FRAME RENDERED`. */
+    private val onFirstFrame: (() -> Unit)? = null,
 ) {
     private val log = ProbeLog.sub("hevc")
+    private val mainHandler = if (onFirstFrame != null) Handler(Looper.getMainLooper()) else null
     private val running = AtomicBoolean(false)
 
     @Volatile private var codec: MediaCodec? = null
@@ -436,6 +441,8 @@ class HevcRenderer(
                             // per-frame path — everything else is read from the counters at stop().
                             wasidremin.gmccpa.logging.SessionSummary.current()?.onFirstFrameObserved()
                             wasidremin.gmccpa.ocbm.StartupClock.onFirstVideo()
+                            val cb = onFirstFrame
+                            if (cb != null) mainHandler?.post { cb() }
                         }
                         if (n % 300 == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
                     }

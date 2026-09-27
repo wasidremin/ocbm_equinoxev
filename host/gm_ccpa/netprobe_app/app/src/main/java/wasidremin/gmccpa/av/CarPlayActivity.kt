@@ -22,6 +22,7 @@ import android.widget.LinearLayout
 import wasidremin.gmccpa.DisplayPrefs
 import wasidremin.gmccpa.ProbeLog
 import wasidremin.gmccpa.ScreenMode
+import wasidremin.gmccpa.StartupAnimationView
 import wasidremin.gmccpa.VideoFrame
 import wasidremin.gmccpa.logging.SessionTrace
 import wasidremin.gmccpa.pair.NativeCore
@@ -188,6 +189,9 @@ class CarPlayActivity : Activity() {
         private const val BOARD_VOICE = "seam-voice"
         private const val BOARD_META = "seam-meta"
         private const val BOARD_RENDERER = "video-renderer"
+        /** Wired-path video opens. Non-zero means this session already had a surface, so a
+         *  recreated activity is a re-attach and must not replay the hand-off animation. */
+        @Volatile private var wiredVideoEpoch = 0
 
         private fun boardFor(label: String): String = when (label) {
             "video" -> BOARD_VIDEO; "audio" -> BOARD_MEDIA; "voice" -> BOARD_VOICE; else -> BOARD_META
@@ -237,6 +241,10 @@ class CarPlayActivity : Activity() {
     // of a drag. getAndSet makes the drain atomic and self-coalescing.
     private val pendingMove = AtomicReference<Triple<Int, Float, Float>?>(null)
     private var primaryPointerId = -1
+    /** Hand-off overlay. Absent when this open is a Surface re-attach of a session that already played. */
+    private var intro: StartupAnimationView? = null
+    private var introFinished = false
+    private val introLate = Runnable { finishIntro(late = true) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -248,12 +256,15 @@ class CarPlayActivity : Activity() {
         // The root stays full-bleed (2400x960) and is the coordinate space touch is normalised in —
         // see [onTouch]. Its background is what shows outside the active view area.
         root = android.widget.FrameLayout(this)
-        root.addView(surfaceView, android.widget.FrameLayout.LayoutParams(VideoFrame.width, VideoFrame.height, Gravity.TOP or Gravity.START).apply {
+        root.addView(surfaceView, android.widget.FrameLayout.LayoutParams(VideoFrame.viewWidth, VideoFrame.viewHeight, Gravity.TOP or Gravity.START).apply {
             marginStart = VideoFrame.railPx
         })
+        // The view stays the on-screen rectangle. The buffer is the advertised size, so the
+        // compositor scales the picture up. Touch is normalised to the view.
         surfaceView.holder.setFixedSize(VideoFrame.width, VideoFrame.height)
         setContentView(root)
         applySystemUi()
+        maybeShowIntro()
 
         touchThread = HandlerThread("cp-touch").also { it.start(); touchHandler = Handler(it.looper) }
 
@@ -266,11 +277,11 @@ class CarPlayActivity : Activity() {
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(h: SurfaceHolder) { attachRenderer(h) }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {
-                log.i("surface ${w}x$ht (advertised ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx})")
+                log.i("surface ${w}x$ht (advertised ${VideoFrame.width}x${VideoFrame.height}, view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}, rail ${VideoFrame.railPx})")
                 // The view system owns this SurfaceControl and resets its geometry on relayout, so a
                 // non-default view area has to be re-asserted here or the picture silently goes
                 // full-bleed again after any layout pass.
-                if (viewAreaIndex != 0) applyGeometry(VIEW_AREAS[viewAreaIndex])
+                if (viewAreaIndex != 0) applyGeometry(declaredViewArea(viewAreaIndex))
             }
             override fun surfaceDestroyed(h: SurfaceHolder) { detachRenderer() }
         })
@@ -381,24 +392,52 @@ class CarPlayActivity : Activity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
-    /** Place the surface 1:1 in the rectangle the phone was told to fill. Never stretch it. */
+    /**
+     * Place the surface at the on-screen CarPlay rectangle and fix the buffer at the advertised
+     * size. The view is not scaled in software: [SurfaceHolder.setFixedSize] is what the
+     * compositor enlarges. Area 0 is that rectangle. A later view area uses the scaled template.
+     */
     private fun applyVideoFrame() {
         val lp = surfaceView.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return
         val rail = VideoFrame.railPx > 0 && viewAreaIndex == 0
-        val w = if (rail) VideoFrame.width else DISPLAY_W
-        val h = if (rail) VideoFrame.height else DISPLAY_H
-        // Flush against the rail. The advertised width is the measured window minus the rail, so
+        val scaled = VideoFrame.uiScalePercent != 100 && viewAreaIndex == 0
+        val viewW = when {
+            viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).width()
+            rail || scaled -> VideoFrame.viewWidth
+            else -> DISPLAY_W
+        }
+        val viewH = when {
+            viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).height()
+            rail || scaled -> VideoFrame.viewHeight
+            else -> DISPLAY_H
+        }
+        val bufW = if (viewAreaIndex == 0 && (rail || scaled)) VideoFrame.width else viewW
+        val bufH = if (viewAreaIndex == 0 && (rail || scaled)) VideoFrame.height else viewH
+        // Flush against the rail. The on-screen width is the measured window minus the rail, so
         // this rectangle and the rail together are the whole window.
         val gravity = Gravity.TOP or Gravity.START
         val inset = if (rail) VideoFrame.railPx else 0
-        if (lp.width == w && lp.height == h && lp.gravity == gravity && lp.marginStart == inset) return
-        lp.width = w
-        lp.height = h
+        if (lp.width == viewW && lp.height == viewH && lp.gravity == gravity && lp.marginStart == inset) return
+        lp.width = viewW
+        lp.height = viewH
         lp.gravity = gravity
         lp.marginStart = inset
         surfaceView.layoutParams = lp
-        surfaceView.holder.setFixedSize(w, h)
-        log.i("video frame ${w}x$h rail ${if (w == DISPLAY_W) 0 else VideoFrame.railPx}")
+        surfaceView.holder.setFixedSize(bufW, bufH)
+        log.i("video frame view ${viewW}x$viewH fixed ${bufW}x$bufH rail ${if (rail) VideoFrame.railPx else 0}")
+    }
+
+    /** [VIEW_AREAS] at 100%. Otherwise the same rectangles divided by the UI scale. Area 0 is the advertised frame. */
+    private fun declaredViewArea(index: Int): android.graphics.Rect {
+        val t = VIEW_AREAS[index]
+        val percent = VideoFrame.uiScalePercent
+        if (percent == 100) return t
+        if (index == 0) return android.graphics.Rect(0, 0, VideoFrame.width, VideoFrame.height)
+        val x = wasidremin.gmccpa.DisplayScale.even(t.left, percent)
+        val y = wasidremin.gmccpa.DisplayScale.even(t.top, percent)
+        val w = wasidremin.gmccpa.DisplayScale.even(t.width(), percent)
+        val h = wasidremin.gmccpa.DisplayScale.even(t.height(), percent)
+        return android.graphics.Rect(x, y, x + w, y + h)
     }
 
     /** The control the driver uses to get back to settings without ending the session. */
@@ -562,6 +601,49 @@ class CarPlayActivity : Activity() {
         return sent
     }
 
+    /**
+     * Continue the launcher's light bar over the still-black surface. [skipIntro] leaves the bar
+     * lit; the first decoded frame stretches it and fades it out. A session that already opened
+     * a renderer (home or settings, then back) does not get another one — that re-attach is the
+     * `video epoch open` after the picture was already up.
+     */
+    private fun maybeShowIntro() {
+        val adapter = wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this)
+        val reattach = if (adapter) wasidremin.gmccpa.ocbm.AdapterSession.videoEpoch > 0 else wiredVideoEpoch > 0
+        if (reattach) return
+        val v = StartupAnimationView(this)
+        v.skipIntro()
+        v.setPhoneName(DisplayPrefs.lastPhoneName(this))
+        v.setStage(StartupAnimationView.Stage.CARPLAY)
+        v.onFinished = {
+            v.removeCallbacks(introLate)
+            root.removeView(v)
+            if (intro === v) intro = null
+        }
+        root.addView(v, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        v.bringToFront()
+        intro = v
+        v.postDelayed(introLate, 8_000)
+    }
+
+    /** Main thread. HevcRenderer posts here from the `FIRST FRAME RENDERED` line. */
+    private fun onIntroFrame() {
+        if (isFinishing || isDestroyed) return
+        finishIntro(late = false)
+    }
+
+    private fun finishIntro(late: Boolean) {
+        val v = intro ?: return
+        if (introFinished) return
+        introFinished = true
+        v.removeCallbacks(introLate)
+        if (late) log.w("intro: no frame in 8s — finishing")
+        v.finish()
+    }
+
     /** Surface and touch only. Audio, metadata, and the mic already belong to [wasidremin.gmccpa.ocbm.AdapterSession]. */
     private fun startAdapterSession() {
         if (generation != null) { log.i("session already started"); return }
@@ -687,12 +769,13 @@ class CarPlayActivity : Activity() {
     /** Surface-scoped. The codec cannot outlive the Surface it renders into. */
     private fun attachRenderer(holder: SurfaceHolder) {
         if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this)) {
-            wasidremin.gmccpa.ocbm.AdapterSession.attachVideo(holder.surface)
+            wasidremin.gmccpa.ocbm.AdapterSession.attachVideo(holder.surface) { onIntroFrame() }
             SessionTrace.Board.up(BOARD_RENDERER, "Surface attached — USB HEVC ${VideoFrame.width}x${VideoFrame.height}")
             return
         }
         if (renderer != null) { log.i("renderer already attached"); return }
-        val r = HevcRenderer(VideoFrame.width, VideoFrame.height, holder.surface) { requestKeyframe() }
+        wiredVideoEpoch++
+        val r = HevcRenderer(VideoFrame.width, VideoFrame.height, holder.surface, { requestKeyframe() }) { onIntroFrame() }
         r.start()
         renderer = r
         // Let the SESSION line SAMPLE the counters at emit rather than depending on HevcRenderer.stop()
@@ -987,7 +1070,7 @@ class CarPlayActivity : Activity() {
                     log.w("requestViewArea index=$idx outside the ${VIEW_AREAS.size} declared areas — ignoring")
                     return
                 }
-                log.i("requestViewArea index=$idx -> laying the surface out at ${VIEW_AREAS[idx]}")
+                log.i("requestViewArea index=$idx -> laying the surface out at ${declaredViewArea(idx)}")
                 runOnUiThread { applyViewArea(idx) }
             }
         }
@@ -1056,8 +1139,8 @@ class CarPlayActivity : Activity() {
      */
     private fun applyViewArea(index: Int) {
         if (index !in VIEW_AREAS.indices) return
-        val from = VIEW_AREAS[viewAreaIndex]
-        val to = VIEW_AREAS[index]
+        val from = declaredViewArea(viewAreaIndex)
+        val to = declaredViewArea(index)
         viewAreaIndex = index
         log.i("view area [$index] $to — cropping on the compositor over ${VIEW_AREA_ANIM_MS}ms")
         if (from == to) { applyGeometry(to); return }
@@ -1217,6 +1300,8 @@ class CarPlayActivity : Activity() {
     }
 
     override fun onDestroy() {
+        intro?.removeCallbacks(introLate)
+        intro = null
         // Only clear the shared handle if it still points at US. A newer generation may already have
         // published itself (launch of the replacement can precede this teardown), and clearing it
         // unconditionally would leave the LIVE screen unreachable from [onSessionEnded].
@@ -1233,6 +1318,7 @@ class CarPlayActivity : Activity() {
      * already-finishing Activity is a no-op.
      */
     private fun endSession(why: String) {
+        wiredVideoEpoch = 0
         log.i("CarPlay session ended ($why) — stopping A/V and closing the screen")
         stopSession(why)
         runOnUiThread { if (!isFinishing) finish() }

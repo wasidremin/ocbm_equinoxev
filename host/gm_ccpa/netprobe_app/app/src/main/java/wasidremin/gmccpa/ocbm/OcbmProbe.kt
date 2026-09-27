@@ -298,10 +298,47 @@ class OcbmProbe(context: Context) {
             ?.toString(Charsets.UTF_8) ?: ""
         check("a panel wider than 2400 is advertised, not refused",
             wide.contains("\n      width: 2778\n") && wide.contains("\nwifi_ap: true\n"))
+        check("ui scale presets of a 2494x960 panel",
+            wasidremin.gmccpa.DisplayScale.even(2494, 100) == 2494 &&
+                wasidremin.gmccpa.DisplayScale.even(960, 100) == 960 &&
+                wasidremin.gmccpa.DisplayScale.even(2494, 115) == 2168 &&
+                wasidremin.gmccpa.DisplayScale.even(960, 115) == 834 &&
+                wasidremin.gmccpa.DisplayScale.even(2494, 125) == 1996 &&
+                wasidremin.gmccpa.DisplayScale.even(960, 125) == 768 &&
+                wasidremin.gmccpa.DisplayScale.even(2494, 133) == 1870 &&
+                wasidremin.gmccpa.DisplayScale.even(960, 133) == 720 &&
+                wasidremin.gmccpa.DisplayScale.even(2494, 150) == 1662 &&
+                wasidremin.gmccpa.DisplayScale.even(960, 150) == 640)
+        val inset = runCatching {
+            VehicleConfigYaml.renderAdapter("adapterpass1", width = 1996, height = 768, safeRight = 38)
+        }.getOrNull()?.toString(Charsets.UTF_8) ?: ""
+        check("a right inset narrows safeArea on the existing keys",
+            inset.contains("\n        width: 1958\n") && inset.contains("\n      width: 1996\n"))
 
         sink("")
         sink("SELF-TEST: $pass passed, $fail failed")
         if (fail == 0) sink("=> framing + client state machine are correct with no hardware in the loop.")
+    }
+
+    /**
+     * Physical size is not a YAML key. `assets/info.bplist` `displays[0]` carries
+     * `widthPhysical` / `heightPhysical` (both 0, matching the box's `/info`) and no dpi field.
+     * Logged once per subscribe. The values are not modified.
+     */
+    private fun logPhysicalSize() {
+        val bytes = runCatching { ctx.assets.open("info.bplist").use { it.readBytes() } }.getOrNull()
+        val root = bytes?.let { wasidremin.gmccpa.av.BPlist.parse(it) } as? Map<*, *>
+        val display = (root?.get("displays") as? List<*>)?.firstOrNull() as? Map<*, *>
+        fun num(key: String): String = when (val v = display?.get(key)) {
+            is Long -> v.toString()
+            is Int -> v.toString()
+            null -> "absent"
+            else -> v.toString()
+        }
+        val dpi = display?.keys?.map { it.toString() }?.filter {
+            it.contains("dpi", ignoreCase = true) || it.contains("density", ignoreCase = true)
+        }.orEmpty()
+        log.i("display: widthPhysical=${num("widthPhysical")} heightPhysical=${num("heightPhysical")} dpi=${if (dpi.isEmpty()) "none" else dpi.joinToString()}")
     }
 
     // ---- the real link ---------------------------------------------------------------------------
@@ -759,15 +796,28 @@ class OcbmProbe(context: Context) {
                 "— would pin 0x5703 to the box's stock credentials for the whole session")
         }
         VideoFrame.capture(ctx, advertise = adapterWifi)
+        log.i("display: ui scale ${VideoFrame.uiScalePercent}% → advertise ${VideoFrame.width}x${VideoFrame.height} into view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}")
+        logPhysicalSize()
         if (VideoFrame.railPx > 0) {
             log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px, panel ${VideoFrame.panelPx}px")
         }
         c.subscribe(if (adapterWifi) {
+            val percent = VideoFrame.uiScalePercent
+            // Area 0 is the advertised frame (VideoFrame). Area 1 is the dock rect, scaled by
+            // the same percentage from the 1416×842@188,118 template. Omitted at 100% so a
+            // full-size session stays a single view area. Dropped if it would fall outside the
+            // advertised frame — the box refuses an area that is not contained.
+            val v2x = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(188, percent)
+            val v2y = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(118, percent)
+            val v2w = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(1416, percent)
+            val v2h = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(842, percent)
             VehicleConfigYaml.renderAdapter(
                 AdapterWifi.passphrase(ctx),
                 adapterSsid(c),
                 VideoFrame.width,
                 VideoFrame.height,
+                VideoFrame.safeRightPx,
+                v2x, v2y, v2w, v2h,
             )
         } else btOnlyConfig())
         c.startHeartbeat()

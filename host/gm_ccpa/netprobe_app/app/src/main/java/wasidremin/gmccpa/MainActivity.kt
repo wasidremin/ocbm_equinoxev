@@ -300,6 +300,25 @@ class MainActivity : Activity() {
     private fun onBoxPhoneIdent(json: String) {
         SessionSummary.current()?.onPhoneIdent(json)
         if (json.isNotEmpty()) emit("phone identity: $json")
+        val name = jsonStringField(json, "name")
+        if (name.isNotEmpty()) ui.setPhoneName(name)
+    }
+
+    /** One string field from the box's phone-identity JSON. Honours `\"`, same as [OcbmClient]. */
+    private fun jsonStringField(json: String, key: String): String {
+        val marker = "\"$key\":\""
+        val i = json.indexOf(marker)
+        if (i < 0) return ""
+        val sb = StringBuilder()
+        var j = i + marker.length
+        while (j < json.length) {
+            val c = json[j]
+            if (c == '\\' && j + 1 < json.length) { sb.append(json[j + 1]); j += 2; continue }
+            if (c == '"') break
+            sb.append(c)
+            j++
+        }
+        return sb.toString()
     }
 
     /**
@@ -484,6 +503,9 @@ class MainActivity : Activity() {
         // (SecurityException on getSoftApConfiguration, EACCES on hostapd.conf), so LauncherUi
         // prefills the known value and keeps it editable. --es ssid/--es pass still override.
         ui = LauncherUi(this).apply {
+            sessionIsLive = {
+                cpRx?.sessionLive == true || wasidremin.gmccpa.ocbm.AdapterSession.sessionUp
+            }
             onStart = { runAsync { autoStart(manual = true) } }
             // abortClaimWait first, on THIS thread: a Start with no adapter sits in awaitClaimable
             // for up to ten minutes ON the command executor, so the stop queued behind it could not
@@ -554,6 +576,7 @@ class MainActivity : Activity() {
                 }
             }
         }
+        if (ui.sessionIsLive()) ui.concealIntro()
         setContentView(ui.root)
         ui.root.viewTreeObserver.addOnGlobalLayoutListener {
             val w = ui.root.width
@@ -1147,6 +1170,7 @@ class MainActivity : Activity() {
         sessionUp = false
         DisplayPrefs.holdLauncher = false
         ui.setReturnToCarPlay(false)
+        ui.resetIntro()
         // Deliberately NOT SessionTrace.cancelAll here. The receiver's own per-generation
         // expectations (pair-verify, auth-setup) are dropped by the pump whose finally fired this;
         // the box-side expectations are about the OCBM link, which the phone leaving does not end,
@@ -1240,8 +1264,10 @@ class MainActivity : Activity() {
             wasidremin.gmccpa.ocbm.AdapterSession.sessionUp
         if (sessionUp && pictureLive && DisplayPrefs.holdLauncher) {
             emit("session still live — staying on settings")
+            ui.concealIntro()
             ui.setReturnToCarPlay(true)
         } else if (sessionUp && pictureLive) {
+            ui.concealIntro()
             emit("session still live — restoring the CarPlay screen")
             launchCarPlayUi()
         } else if (sessionUp) {
