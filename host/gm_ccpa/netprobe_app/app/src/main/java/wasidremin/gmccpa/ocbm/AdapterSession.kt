@@ -143,6 +143,9 @@ object AdapterSession {
             lanes = armed
             val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             CarPlayMediaBrowserService.ensureStarted(ctx)
+            // Before the phone's music stream. CarMediaService will not move off an
+            // already-playing source (FM) once that stream opens. See announcePreparing.
+            CarPlayMediaBrowserService.announcePreparing()
             val p = AacPlayer(am).also { it.start(); it.prime() }
             val voice = VoiceRouter(
                 ctx,

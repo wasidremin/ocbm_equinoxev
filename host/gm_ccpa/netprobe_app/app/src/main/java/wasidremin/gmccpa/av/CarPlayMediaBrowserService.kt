@@ -32,8 +32,9 @@ import java.util.concurrent.Executors
  * `Current playback media component: wasidremin.gmccpa/.av.CarPlayMediaBrowserService` and six controllers
  * subscribed to the session below (device-observed 2026-09-08). They were being answered with a
  * constant title "CarPlay" and `STATE_STOPPED` while HEVC and AAC were streaming. Title, art,
- * position, and playback state follow the phone. Reporting PLAYING is what lets the Equinox
- * displace FM. A head-unit pause or stop is logged and left on the car; it is not sent to the phone.
+ * and position follow the phone. At connect time the card reports `STATE_BUFFERING` with
+ * rate 1, which is how the original app gets CarMediaService to select it before FM is
+ * already playing. A head-unit pause or stop is logged and left on the car.
  *
  * ## Framework class, not the AndroidX one
  *
@@ -104,6 +105,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         @Volatile private var last: NowPlayingState.Snapshot? = null
         @Volatile private var sessionUp = false
+        /**
+         * Set when the adapter arms audio, before the service's [onCreate] may have run.
+         * [onCreate] reads it so a late bind still publishes the preparing state.
+         */
+        @Volatile private var wantPreparing = false
 
         /** Seam entry point — the displayed metadata changed. Callable from any thread. */
         fun publish(s: NowPlayingState.Snapshot) {
@@ -120,11 +126,26 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         }
 
         /**
+         * The adapter is connecting, or a CarPlay session just came up. Publish
+         * [PlaybackState.STATE_BUFFERING] at rate 1 until the phone names a playback
+         * status. The original app does this at CONNECTING: CarMediaService only lets a
+         * newly playing source displace a source that is not already playing, so waiting
+         * until the music stream opens is too late (FM already holds the slot, this app
+         * takes `AUDIOFOCUS_LOSS`, and the phone tears stream 102 down after ~72 frames).
+         */
+        fun announcePreparing() {
+            if (wasidremin.gmccpa.AudioRoute.bluetooth) return
+            wantPreparing = true
+            live?.get()?.publishPreparing()
+        }
+
+        /**
          * A CarPlay session came up. Playback state follows the phone once Now Playing arrives.
          * See [publishState].
          */
         fun onSessionUp() {
             sessionUp = true
+            announcePreparing()
             // Not a fault at this instant — AAOS binds Media Center on its own schedule, routinely
             // after RECORD — but a session that ends with this still DOWN never appeared in the
             // source switcher, and the board is the only place that is visible.
@@ -138,7 +159,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          * also drops any seam record still in flight from the dead session.
          */
         fun onSessionDown() {
-            sessionUp = false; last = null
+            sessionUp = false; last = null; wantPreparing = false
             live?.get()?.let { it.publishIdle(); SessionTrace.Board.up(BOARD, "bound by AAOS; session idle (card cleared)") }
         }
 
@@ -181,6 +202,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         wasidremin.gmccpa.AudioRoute.load(this)
         publishIdle()
         applySessionActive()
+        if (wantPreparing || sessionUp) publishPreparing()
         last?.let { if (sessionUp) publishNow(it) }   // late bind: session was already up
         log.i("registered as an AAOS media source")
         SessionTrace.Board.up(BOARD, "bound by AAOS; session ${if (sessionUp) "up" else "idle"}")
@@ -259,6 +281,29 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
 
     // ---- publishing ------------------------------------------------------------------------------
 
+    /**
+     * Carlink publishes `STATE_BUFFERING` + `playWhenReady=true` at CONNECTING, before any
+     * media frame. That is the arbitration weight CarMediaService uses to select the app.
+     * A real Now Playing status replaces it. Bluetooth leaves the card stopped.
+     */
+    private fun publishPreparing() {
+        val sess = session ?: return
+        if (wasidremin.gmccpa.AudioRoute.bluetooth) return
+        if (last?.playbackStatus != null) return
+        sess.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, "CarPlay")
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, "Waiting for media...")
+                .build()
+        )
+        sess.setPlaybackState(
+            PlaybackState.Builder().setActions(ACTIONS)
+                .setState(PlaybackState.STATE_BUFFERING, 0L, 1f, SystemClock.elapsedRealtime())
+                .build()
+        )
+        log.i("playback STATE_BUFFERING rate=1 — selecting this source before another one locks")
+    }
+
     private fun publishIdle() {
         val sess = session ?: return
         artBitmap = null; artFor = null
@@ -304,10 +349,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * a `MediaMetadata` at that rate would churn every subscribed controller for a value that belongs
      * in the playback state.
      *
-     * The state is the phone's PlaybackAttributes. Carlink's rule on this Equinox is that a
-     * newly PLAYING source displaces a source that is not playing, which is how FM gives up
-     * the cabin speakers. `4.0+mirror` forced STATE_PAUSED, so the card never became that
-     * source. Pause and stop callbacks stay on the car (see the session callback).
+     * The state is the phone's PlaybackAttributes once iOS has named one. Until then the
+     * card stays [PlaybackState.STATE_BUFFERING] at rate 1 (see [publishPreparing]). An
+     * unknown status used to fall through to PAUSED, which handed the slot back.
      */
     private fun publishState(s: NowPlayingState.Snapshot) {
         val sess = session ?: return
@@ -319,10 +363,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             NowPlayingState.STOP -> PlaybackState.STATE_STOPPED
             NowPlayingState.PAUSE -> PlaybackState.STATE_PAUSED
             NowPlayingState.PLAY, NowPlayingState.SEEK_FWD, NowPlayingState.SEEK_BACK -> PlaybackState.STATE_PLAYING
-            else -> PlaybackState.STATE_PAUSED
+            else -> PlaybackState.STATE_BUFFERING
         }
+        val rate = if (s.playing || s.playbackStatus == null) 1f else 0f
         val ps = PlaybackState.Builder().setActions(ACTIONS)
-            .setState(state, s.elapsedMs, if (s.playing) 1f else 0f, SystemClock.elapsedRealtime())
+            .setState(state, s.elapsedMs, rate, SystemClock.elapsedRealtime())
             .build()
         runCatching { sess.setPlaybackState(ps) }.onFailure { log.e("setPlaybackState failed: ${it.message}") }
     }
