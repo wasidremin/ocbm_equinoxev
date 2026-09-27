@@ -164,6 +164,7 @@ class VehicleStateWatcher(private val ctx: Context) {
     }
 
     fun start() {
+        if (car != null) return
         uiNight = isNight(ctx.resources.configuration)
         log.i("night(uiMode)=$uiNight at start")
         var gearOk = false

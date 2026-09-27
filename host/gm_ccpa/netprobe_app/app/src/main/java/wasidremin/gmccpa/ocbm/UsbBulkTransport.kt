@@ -1,8 +1,10 @@
 package wasidremin.gmccpa.ocbm
 
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
@@ -43,7 +45,114 @@ class UsbBulkTransport(
         const val PID_NCM = 0x1520
         const val PID_STOCK = 0x1521
 
-        private const val ACTION_USB_PERMISSION = "wasidremin.gmccpa.USB_PERMISSION"
+        const val ACTION_USB_PERMISSION = "wasidremin.gmccpa.USB_PERMISSION"
+
+        @Volatile private var lastPermissionRequestAt = 0L
+
+        /** When [requestPermissionEarly] last fired. The claim loop will not raise a second dialog inside [OcbmProbe]'s re-raise interval. */
+        fun recentPermissionRequestAt(): Long = lastPermissionRequestAt
+
+        /**
+         * Raise the permission dialog without a live transport. The attach path calls this
+         * before [wasidremin.gmccpa.ocbm.OcbmProbe] exists, so the grant can land while the
+         * rest of bring-up is still starting. The result broadcast uses [ACTION_USB_PERMISSION].
+         */
+        fun requestPermissionEarly(ctx: Context, dev: UsbDevice) {
+            lastPermissionRequestAt = android.os.SystemClock.elapsedRealtime()
+            val app = ctx.applicationContext
+            val mgr = app.getSystemService(Context.USB_SERVICE) as UsbManager
+            try {
+                val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+                val pi = PendingIntent.getBroadcast(
+                    app, 0,
+                    Intent(ACTION_USB_PERMISSION).setPackage(app.packageName),
+                    flags,
+                )
+                mgr.requestPermission(dev, pi)
+            } catch (t: Throwable) {
+                wasidremin.gmccpa.ProbeLog.sub("usb").w(
+                    "requestPermission threw ${t.javaClass.simpleName}: ${t.message}",
+                )
+            }
+        }
+
+        private val permLock = Object()
+        @Volatile private var grantedViaBroadcast = false
+        private var permWatchArmed = false
+        private var permWatch: BroadcastReceiver? = null
+
+        /**
+         * Listen for [ACTION_USB_PERMISSION] before the dialog is raised. The claim loop waits
+         * on [awaitPermissionSignal] instead of sleeping out a full poll. The first arm of an
+         * attempt clears a stale grant; a later arm (the claim loop, after the attach path)
+         * does not, so a broadcast that already arrived is still visible.
+         */
+        fun armPermissionWatch(ctx: Context) {
+            val app = ctx.applicationContext
+            val created = synchronized(permLock) {
+                if (!permWatchArmed) {
+                    grantedViaBroadcast = false
+                    permWatchArmed = true
+                }
+                if (permWatch != null) return
+                val r = object : BroadcastReceiver() {
+                    override fun onReceive(c: Context?, intent: Intent?) {
+                        if (intent?.action != ACTION_USB_PERMISSION) return
+                        val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        synchronized(permLock) {
+                            if (granted) grantedViaBroadcast = true
+                            permLock.notifyAll()
+                        }
+                    }
+                }
+                permWatch = r
+                r
+            }
+            val filter = IntentFilter(ACTION_USB_PERMISSION)
+            try {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    app.registerReceiver(created, filter, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    app.registerReceiver(created, filter)
+                }
+            } catch (t: Throwable) {
+                synchronized(permLock) { if (permWatch === created) permWatch = null }
+                wasidremin.gmccpa.ProbeLog.sub("usb").w(
+                    "permission watch register failed: ${t.javaClass.simpleName}: ${t.message}",
+                )
+            }
+        }
+
+        /** @return true once a grant broadcast has arrived for this attempt. */
+        fun awaitPermissionSignal(timeoutMs: Long): Boolean = synchronized(permLock) {
+            if (grantedViaBroadcast) return true
+            try {
+                permLock.wait(timeoutMs)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            grantedViaBroadcast
+        }
+
+        /** Read and clear the grant-via-broadcast flag. */
+        fun consumeGrantViaBroadcast(): Boolean = synchronized(permLock) {
+            val v = grantedViaBroadcast
+            grantedViaBroadcast = false
+            v
+        }
+
+        fun disarmPermissionWatch(ctx: Context) {
+            val app = ctx.applicationContext
+            val r = synchronized(permLock) {
+                val cur = permWatch
+                permWatch = null
+                permWatchArmed = false
+                grantedViaBroadcast = false
+                cur
+            }
+            if (r != null) runCatching { app.unregisterReceiver(r) }
+        }
+
         /** Android's bulkTransfer is unreliable above 16 KiB on some platforms; frames reassemble anyway. */
         private const val READ_BUF = 16384
         private const val READ_TIMEOUT_MS = 250
@@ -79,7 +188,7 @@ class UsbBulkTransport(
     var writeFailures = 0
         private set
 
-    /** The OCBM accessory by VID/PID, or null. No logging: this is polled every 2 s by `OcbmProbe.awaitClaimable`. */
+    /** The OCBM accessory by VID/PID, or null. No logging: `OcbmProbe.awaitClaimable` polls this. */
     fun findQuiet(): UsbDevice? {
         val all = usb.deviceList.values
         return all.firstOrNull { it.vendorId == VID_CARLINKIT && it.productId == PID_OCBM }
@@ -129,16 +238,7 @@ class UsbBulkTransport(
      * [hasPermission] instead, which is authoritative regardless of whether the broadcast
      * arrives. Call this sparingly: each invocation can raise a system dialog.
      */
-    fun requestPermissionAsync(dev: UsbDevice) {
-        try {
-            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
-            val pi = PendingIntent.getBroadcast(appCtx, 0,
-                Intent(ACTION_USB_PERMISSION).setPackage(appCtx.packageName), flags)
-            usb.requestPermission(dev, pi)
-        } catch (t: Throwable) {
-            log.w("requestPermission threw ${t.javaClass.simpleName}: ${t.message}")
-        }
-    }
+    fun requestPermissionAsync(dev: UsbDevice) = requestPermissionEarly(appCtx, dev)
 
     /**
      * Walk every interface and claim the one carrying the bulk pair. Rather than hardcoding endpoint addresses we pick

@@ -81,6 +81,7 @@ object AdapterSession {
             // and the activity launch is a main-thread post that can lose the first title.
             CarPlayMediaBrowserService.onSessionUp()
             log.i("session keyed — media card session up")
+            StartupClock.note("keyed")
             main.post { if (epoch.get() == e) onKeyed?.invoke() }
         }
         val uplink = MicUplink()

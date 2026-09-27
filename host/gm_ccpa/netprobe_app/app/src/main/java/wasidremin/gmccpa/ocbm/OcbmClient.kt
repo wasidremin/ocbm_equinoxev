@@ -31,8 +31,10 @@ import wasidremin.gmccpa.logging.SessionTrace
  *  - [OcbmExpect.HELLO_ACK] in [hello] — the caller's `timeoutMs` (20 s default, 4 s on the
  *    post-sign-timeout re-HELLO).
  *  - [OcbmExpect.SETTIME_ACK] in [setTime] — its `timeoutMs` (2 s; 1 s inside [subscribe]).
- *  - [OcbmExpect.HOST_PRESENT] in [subscribe] — [BOX_REPLY_BUDGET_MS]: `ocbmd` raises presence and
- *    answers `SEV_HOST_PRESENT` synchronously (2 ms device-observed 2026-09-09).
+ *  - [OcbmExpect.HOST_PRESENT] in [subscribe], armed BEFORE the `CT_SUBSCRIBE` write —
+ *    [BOX_REPLY_BUDGET_MS]: `ocbmd` raises presence and answers `SEV_HOST_PRESENT` synchronously
+ *    (2 ms device-observed 2026-09-09). Arming after the write missed a reply that landed first
+ *    (Equinox 2026-09-27 13:12: HOST_PRESENT at .582, expect at .586) and then `EXPECTED-MISSING`.
  *  - [OcbmExpect.HCI_PRESENT] in [subscribe] — [BT_ATTACH_BUDGET_MS]: SUBSCRIBE is the radio-wake
  *    edge, and the first `CT_BOX_HEALTH` carrying `BH_HCI_PRESENT` is the proof that the box's BT
  *    controller actually attached. Its absence is "Bluetooth does nothing" (docs/wireless/01).
@@ -71,6 +73,13 @@ class OcbmClient(
     @Volatile var caps = 0; private set
     @Volatile var activeMode: Byte = Ocbm.MODE_PROJECTION; private set
     @Volatile var subscribed = false; private set
+    /**
+     * Set by the read thread the moment `SEV_HOST_PRESENT` arrives, including when that frame
+     * beats [subscribe]'s [expect]. [SessionTrace.met] ignores a name that is not armed yet, so
+     * the flag is what lets the write path re-assert the confirm instead of painting "awaiting"
+     * over a presence the box already reported.
+     */
+    private val hostPresentThisEdge = AtomicBoolean(false)
     @Volatile var lastSessionEvent: Byte = 0; private set
     /** Last CT_BT_PHASE seen this session. Advisory/monotonic-ish — see [Ocbm.btpName]. */
     @Volatile var lastBtPhase: Byte = Ocbm.BTP_IDLE; private set
@@ -311,6 +320,7 @@ class OcbmClient(
                     lastSessionEvent = sev
                     log.i("<< SESSION_EVENT ${Ocbm.sevName(sev)}")
                     if (sev == Ocbm.SEV_HOST_PRESENT) {
+                        hostPresentThisEdge.set(true)
                         met(OcbmExpect.HOST_PRESENT)
                         boardUp(OcbmBoard.LINK, linkDetail("subscribed, box confirms HOST_PRESENT"))
                     }
@@ -679,6 +689,7 @@ class OcbmClient(
                         .format(caps, Ocbm.capsString(caps),
                             if (activeMode == Ocbm.MODE_CONSOLE) "CONSOLE" else "PROJECTION"))
                     met(OcbmExpect.HELLO_ACK)
+                    StartupClock.note("hello")
                     boardUp(OcbmBoard.LINK, linkDetail("HELLO_ACK v${pl[1]}"))
                     // A fault, not a warning: without CAP_MFI the CH_MFI relay cannot exist, and
                     // every /auth-setup this session will fail. The box's own log says why
@@ -743,21 +754,38 @@ class OcbmClient(
         val pl = ByteArray(1 + config.size)
         pl[0] = Ocbm.CT_SUBSCRIBE
         System.arraycopy(config, 0, pl, 1, config.size)
+        // Before the write. The box answers in single-digit milliseconds, and a reply that lands
+        // before expect() is a met() of an unknown name — SessionTrace drops it, the later
+        // "awaiting" line overwrites the confirm, and the timer then fires EXPECTED-MISSING
+        // against a presence that already arrived (Equinox 2026-09-27 13:12).
+        hostPresentThisEdge.set(false)
+        expect(OcbmExpect.HOST_PRESENT, BOX_REPLY_BUDGET_MS,
+            "CT_SUBSCRIBE (${config.size}B) is being written — ocbmd raises /tmp/host_present and answers SEV_HOST_PRESENT synchronously (2 ms device-observed 2026-09-09)")
         if (!send(Ocbm.CH_CTRL, pl)) {
             log.e(">> CT_SUBSCRIBE write FAILED")
+            cancelExpect(OcbmExpect.HOST_PRESENT, "CT_SUBSCRIBE write failed")
             boardFailed(OcbmBoard.LINK, "CT_SUBSCRIBE write failed — the radio-wake edge was never taken")
             return false
         }
         subscribed = true
         log.i(">> CT_SUBSCRIBE (${config.size}B config) — this is the radio-wake edge")
+        StartupClock.note("subscribe")
         if (config.isNotEmpty()) config.toString(Charsets.UTF_8).trim().lines().forEach { log.i("     | $it") }
-        boardUp(OcbmBoard.LINK, linkDetail("subscribed, awaiting HOST_PRESENT"))
+        if (hostPresentThisEdge.get()) {
+            met(OcbmExpect.HOST_PRESENT)
+            boardUp(OcbmBoard.LINK, linkDetail("subscribed, box confirms HOST_PRESENT"))
+        } else {
+            boardUp(OcbmBoard.LINK, linkDetail("subscribed, awaiting HOST_PRESENT"))
+            // The confirm can land inside the awaiting update above. Do not leave that word up.
+            if (hostPresentThisEdge.get()) {
+                met(OcbmExpect.HOST_PRESENT)
+                boardUp(OcbmBoard.LINK, linkDetail("subscribed, box confirms HOST_PRESENT"))
+            }
+        }
 
-        // What the box owes us for this edge. Both are re-armed on every subscribe, including the
+        // HCI is the other thing this edge owes us. Re-armed on every subscribe, including the
         // heartbeat's recovery re-subscribe, because the box's state resets with the edge: the
         // supervisor tears wireless down on host loss and brings it up again from here.
-        expect(OcbmExpect.HOST_PRESENT, BOX_REPLY_BUDGET_MS,
-            "CT_SUBSCRIBE (${config.size}B) was written — ocbmd raises /tmp/host_present and answers SEV_HOST_PRESENT synchronously (2 ms device-observed 2026-09-09)")
         hciState = HCI_PENDING
         hciDeadlineMs = System.currentTimeMillis() + BT_ATTACH_BUDGET_MS
         expect(OcbmExpect.HCI_PRESENT, BT_ATTACH_BUDGET_MS,

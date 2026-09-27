@@ -435,6 +435,7 @@ class HevcRenderer(
                             // never came up" from "it came up slowly". Reported once, off the
                             // per-frame path — everything else is read from the counters at stop().
                             wasidremin.gmccpa.logging.SessionSummary.current()?.onFirstFrameObserved()
+                            wasidremin.gmccpa.ocbm.StartupClock.onFirstVideo()
                         }
                         if (n % 300 == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
                     }

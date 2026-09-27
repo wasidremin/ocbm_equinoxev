@@ -13,7 +13,10 @@ import wasidremin.gmccpa.logging.SessionTrace
  *
  * Two entry points:
  *   [selfTest]  — framing + client bring-up against a FakeTransport. No hardware, no adapter.
- *   [runAll]    — the real link: claim, HELLO, MGMT_INFO snapshot, SETTIME, MFi, MGMT_INFO, SUBSCRIBE, heartbeat.
+ *   [runAll]    — the real link: claim, HELLO, SETTIME, MFi certificate, SUBSCRIBE, then the
+ *                 signature preflight and the heartbeat. The certificate stays before
+ *                 SUBSCRIBE (the relay check). `create_signature` runs after it: the chip's
+ *                 time must not sit in front of the radio-wake edge.
  *
  * ## Severity, since 2026-09-10
  *
@@ -340,7 +343,10 @@ class OcbmProbe(context: Context) {
     }
 
     /**
-     * Full bring-up: claim, HELLO, SETTIME, MFi, then CT_SUBSCRIBE + heartbeat.
+     * Full bring-up: claim, HELLO, SETTIME, MFi certificate, then CT_SUBSCRIBE + heartbeat.
+     * `create_signature` runs on this same thread immediately after a successful subscribe:
+     * the phone's MFi-SAP is still ~20 s out, and [LinkResult.mfiProven] is only read once
+     * [runAll] returns.
      *
      * [subscribe] = false stops one step short, restoring the link and the CH_MFI relay WITHOUT
      * sending CT_SUBSCRIBE. That matters because SUBSCRIBE is the radio-wake edge: it flips
@@ -354,8 +360,12 @@ class OcbmProbe(context: Context) {
         ops.submit<LinkResult> { runAllLocked(subscribe) }.get()
 
     private companion object {
-        /** Poll cadence. hasPermission() is a cheap binder call; 2 s is responsive without churn. */
-        const val POLL_MS = 2_000L
+        /**
+         * Fallback poll. The permission grant wakes the loop through the
+         * [UsbBulkTransport.ACTION_USB_PERMISSION] broadcast; this is only how a lost
+         * broadcast is still noticed. hasPermission() is a cheap binder call.
+         */
+        const val POLL_MS = 250L
         /** How often the permission dialog may be re-raised. Rarely, so this is never a dialog storm. */
         const val REQUEST_INTERVAL_MS = 30_000L
         /** Overall patience. Long enough to cover walking to the vehicle and replugging. */
@@ -377,7 +387,9 @@ class OcbmProbe(context: Context) {
          * flock serialises the signature, so a sign that then goes silent is a dropped request
          * (ocbmd restarted under us), not a chip that needs the 15 s contention budget.
          * Equinox 2026-09-22 23:09: cert in 113 ms, sign silent for the full 15 s, retry signed
-         * in 1.7 s — and CT_SUBSCRIBE, which wakes the radios, could not start until that 15 s ended.
+         * in 1.7 s. The signature now runs after CT_SUBSCRIBE, so that silence no longer holds
+         * the radios; the short first budget is what keeps it from holding [runAll]'s return
+         * — and therefore `onBoxLinked` — for the full contention window.
          */
         const val PROBE_SIGN_FAST_CERT_MS = 500L
         /**
@@ -443,10 +455,16 @@ class OcbmProbe(context: Context) {
      *    "adapter present, USB permission not held" rather than nothing.
      */
     private fun awaitClaimable(t: UsbBulkTransport): android.hardware.usb.UsbDevice? {
+        // Before the first request this loop makes. The attach path may already have armed
+        // the watch and raised the dialog; a second arm does not clear a grant that landed.
+        UsbBulkTransport.armPermissionWatch(ctx)
+        try {
         val deadline = android.os.SystemClock.elapsedRealtime() + CLAIM_WAIT_MS
         val startedAt = android.os.SystemClock.elapsedRealtime()
         claimAbort = false
-        var lastRequestAt = 0L
+        // The attach path requests before this loop runs. Honour that so we do not raise a
+        // second dialog in the same second.
+        var lastRequestAt = UsbBulkTransport.recentPermissionRequestAt()
         var lastState = ""
         var lastInv = ""
         var polls = 0
@@ -502,6 +520,9 @@ class OcbmProbe(context: Context) {
                 }
             }
             if (dev != null && state == "claimable") {
+                val via = if (UsbBulkTransport.consumeGrantViaBroadcast()) "broadcast" else "poll"
+                sink("usb permission granted +${StartupClock.elapsedMs()}ms after attach (via $via)")
+                StartupClock.note("permission")
                 if (polls > 0) sink("  (claimable after ${polls * POLL_MS / 1000}s of waiting)")
                 SessionTrace.met(OcbmExpect.USB_PERMISSION)
                 return dev
@@ -532,15 +553,19 @@ class OcbmProbe(context: Context) {
                 }
             }
             polls++
-            // Sliced, so [stop] is observed within ABORT_SLICE_MS rather than up to a full POLL_MS.
+            // The grant broadcast wakes this immediately. POLL_MS is only the lost-broadcast
+            // fallback, sliced so [stop] is observed within ABORT_SLICE_MS.
             var slept = 0L
             while (slept < POLL_MS && !claimAbort) {
-                try { Thread.sleep(ABORT_SLICE_MS) }
-                catch (_: InterruptedException) { Thread.currentThread().interrupt(); return null }
+                if (UsbBulkTransport.awaitPermissionSignal(ABORT_SLICE_MS)) break
+                if (Thread.currentThread().isInterrupted) return null
                 slept += ABORT_SLICE_MS
             }
         }
         return null
+        } finally {
+            UsbBulkTransport.disarmPermissionWatch(ctx)
+        }
     }
 
     private fun runAllLocked(subscribe: Boolean = true): LinkResult {
@@ -585,6 +610,9 @@ class OcbmProbe(context: Context) {
             }
         }
 
+        // No-op when the attach path already started the clock. A launcher or scripted run
+        // with the adapter already plugged in starts it here, after the live-session teardown.
+        StartupClock.begin()
         val dev = awaitClaimable(t)
         if (dev == null) {
             // awaitClaimable re-sets the interrupt flag on its own InterruptedException path, so
@@ -613,7 +641,10 @@ class OcbmProbe(context: Context) {
         c.onBtPhase = { p -> onBtPhase?.invoke(p) }
         c.onBoxHealth = { f -> onBoxHealth?.invoke(f) }
         c.onSubscribeEdge = { onSubscribeEdge?.invoke() }
-        c.onBoxLog = { _, text, _, _, _ -> if (adapterWifi) AdapterWifi.observeBoxLine(ctx, text) }
+        c.onBoxLog = { _, text, backfill, _, _ ->
+            if (adapterWifi) AdapterWifi.observeBoxLine(ctx, text)
+            if (!backfill) StartupClock.noteBoxLine(text)
+        }
         c.onPhoneIdent = { j -> onPhoneIdent?.invoke(j) }
         c.onProjMode = { m -> onProjMode?.invoke(m) }
         // Box-side lines get their own sub-tag, so `logcat -s NETPROBE | grep '\[box'` still
@@ -641,8 +672,11 @@ class OcbmProbe(context: Context) {
 
         c.setTime()
 
-        // MFi BEFORE any BT work: it needs zero box-side changes and proves three things at once —
-        // an ordinary app can claim the accessory, the framing is right, and the relay works.
+        // The certificate is the relay check and stays in front of CT_SUBSCRIBE (~110 ms).
+        // create_signature is the ~1.7 s chip op; it runs after the radio-wake edge in
+        // [proveMfiSign], still on this thread, still before [runAll] returns.
+        var cert: Mfi.Response? = null
+        var certMs = 0L
         if (c.hasMfi) {
             // Every outcome below — including a TIMEOUT — reaches the session summary. Until
             // 2026-09-10 only the `!ok` branches called onMfiFailure and the null (timeout) branches
@@ -656,8 +690,8 @@ class OcbmProbe(context: Context) {
             SessionTrace.expect(OcbmExpect.MFI_CERT, OcbmClient.MFI_CERT_TIMEOUT_MS,
                 "CT_HELLO_ACK advertised CAP_MFI and copy_certificate was sent over CH_MFI — the coprocessor answers in ~160 ms (2026-09-09) when ocbmd holds the chip")
             val certStarted = android.os.SystemClock.elapsedRealtime()
-            val cert = c.mfiCertificate()
-            val certMs = android.os.SystemClock.elapsedRealtime() - certStarted
+            cert = c.mfiCertificate()
+            certMs = android.os.SystemClock.elapsedRealtime() - certStarted
             if (cert != null) SessionTrace.met(OcbmExpect.MFI_CERT)
             if (cert == null) {
                 wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("cert: timeout")
@@ -670,78 +704,6 @@ class OcbmProbe(context: Context) {
             else {
                 mfiLog.i("cert: ${cert.payload.size} bytes  ${if (cert.payload.size == Mfi.EXPECTED_CERT_LEN) "(matches the expected 945)" else "(expected 945)"}")
                 mfiLog.i("   first 16: ${hex(cert.payload, 16)}")
-            }
-            // A SHA-1-shaped digest; the chip signs whatever 20 bytes we hand it.
-            val digest = ByteArray(Mfi.DIGEST_LEN) { (it * 7 + 3).toByte() }
-            // A fast cert means the flock was free. Waiting the full contention budget then just
-            // delays the radio-wake edge (CT_SUBSCRIBE) for a request nobody is serving.
-            val signBudget = if (cert?.ok == true && certMs < PROBE_SIGN_FAST_CERT_MS)
-                PROBE_SIGN_FAST_BUDGET_MS else OcbmClient.MFI_SIGN_TIMEOUT_MS
-            if (signBudget != OcbmClient.MFI_SIGN_TIMEOUT_MS) {
-                mfiLog.i("sign: cert answered in ${certMs}ms — first wait ${signBudget}ms; a timeout still retries at the full ${OcbmClient.MFI_SIGN_TIMEOUT_MS}ms budget")
-            }
-            SessionTrace.expect(OcbmExpect.MFI_SIGN, signBudget,
-                "create_signature was sent over CH_MFI" + (if (cert?.ok == true) " right after a good certificate, so chip and daemon were both alive" else " (the certificate step already failed)"))
-            var sig = c.mfiSign(digest, signBudget)
-            if (sig != null) SessionTrace.met(OcbmExpect.MFI_SIGN)
-            // What the summary's `mfi=` token says about the sign, beyond its final status. Empty
-            // unless the first attempt timed out; then it records whether the re-HELLO below recovered
-            // it, so a recovered session is still countable as an ocbmd-restart instance.
-            var signNote = ""
-            if (sig == null && cert != null && cert.ok) {
-                // A sign timeout right after a GOOD cert is a link discontinuity, not a chip verdict.
-                //
-                // Device-observed 2026-09-09: the cert came back in 160 ms from ocbmd pid 127; the box
-                // supervisor then declared that daemon wedged ("alive mtime stale >=1min" — a false
-                // positive against a healthy idle daemon) and restarted it as pid 71, and our sign
-                // timed out at exactly 15 s. The replacement daemon then served CT_SUBSCRIBE and every
-                // later CH_MFI op without ever seeing a HELLO — `ocbmd`'s `handle()` gates neither on it
-                // (verified against ccpa/ocbmd/src/main.rs HEAD 2026-09-10) — so its `host_instance`
-                // stayed `None` for the whole session, which silently disables the host-replacement
-                // detection the nonce exists for. The chip was fine; the daemon that had our request
-                // was gone. The gadget stays CONFIGURED across an L2 restart, so the claim and the read
-                // thread are still valid and a fresh CT_HELLO over the same transport is the repair.
-                //
-                // The re-HELLO is also the discriminator: `ocbmd` is single-threaded, so a daemon that
-                // is GENUINELY wedged (blocked in the chip's I2C sequence, say) cannot ACK within
-                // REHELLO_TIMEOUT_MS, and that non-answer is itself the finding — no sign retry then.
-                //
-                // Cost on a real chip fault (chip dead, daemon healthy): the ACK arrives in
-                // milliseconds and the retry burns another full sign budget, so bring-up is at worst
-                // REHELLO_TIMEOUT_MS + one mfiSign timeout (~19 s) longer than before. The retry
-                // deliberately keeps the default sign budget: a shorter one would turn a slow-but-
-                // working chip into a false fault, which is the exact lie this branch exists to stop.
-                mfiLog.w("sign: NO RESPONSE (timeout) after a good cert — treating it as a link " +
-                    "discontinuity (ocbmd restarted under us?), not a chip verdict; re-HELLO")
-                // hello() arms its own HELLO_ACK expectation with REHELLO_TIMEOUT_MS.
-                if (c.hello(REHELLO_TIMEOUT_MS)) {
-                    mfiLog.i("re-HELLO acked — ocbmd is answering (replacement daemon now holds our nonce); retrying the sign once")
-                    SessionTrace.expect(OcbmExpect.MFI_SIGN_RETRY, OcbmClient.MFI_SIGN_TIMEOUT_MS,
-                        "the re-HELLO was ACKed after a sign timeout, so a live ocbmd holds the chip again and the retried create_signature should answer")
-                    sig = c.mfiSign(digest)
-                    if (sig != null) SessionTrace.met(OcbmExpect.MFI_SIGN_RETRY)
-                    signNote = if (sig != null) ", recovered by re-HELLO" else " after re-HELLO"
-                } else {
-                    mfiLog.e("re-HELLO: no CT_HELLO_ACK within ${REHELLO_TIMEOUT_MS}ms — ocbmd is wedged, not restarted; no sign retry")
-                    signNote = "; re-HELLO no ACK"
-                }
-            }
-            if (sig == null) {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("sign: timeout$signNote")
-                mfiLog.e("sign: NO RESPONSE (timeout$signNote) — the MFi relay is unproven; /auth-setup will fail the same way")
-            }
-            else if (!sig.ok) {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("sign: ${sig.statusName()}$signNote")
-                mfiLog.e("sign: ${sig.statusName()}$signNote — the coprocessor refused to sign")
-            }
-            else {
-                // A recovered timeout is still recorded: `mfi=` is the summary's only trace of an
-                // ocbmd restart mid-bring-up, and the value says "recovered" in so many words.
-                if (signNote.isNotEmpty()) wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("sign: timeout$signNote")
-                mfiLog.i("sign: ${sig.payload.size} bytes  ${if (sig.payload.size == Mfi.SIG_LEN) "(matches RSA-1024)" else "(expected 128)"}")
-                mfiLog.i("   first 16: ${hex(sig.payload, 16)}")
-                r = r.copy(mfiProven = sig.payload.size == Mfi.SIG_LEN)
-                sink("STEP 2 OK — the MFi relay works. This is the keystone of the whole architecture.")
             }
         } else {
             // A fault, not a skip: the relay is the keystone, and a box without CAP_MFI cannot
@@ -769,6 +731,10 @@ class OcbmProbe(context: Context) {
         // full host_present cycle. Device-observed 2026-08-12 — one credential-less click cost the
         // whole session. Failing here is cheap and obvious; succeeding into that state is neither.
         if (!subscribe) {
+            // No radio-wake on this path, so the signature does not delay one. Still prove the
+            // relay before returning: /auth-setup on the next control connection needs it, and
+            // [LinkResult.mfiProven] is what the caller reports.
+            if (c.hasMfi) r = proveMfiSign(c, r, cert, certMs, afterSubscribe = false)
             // CT_LOG_CTL does not require a subscription, so the box narrates its side of a
             // mid-session recovery even though we deliberately hold no presence latch.
             startBoxLogStream()
@@ -815,7 +781,102 @@ class OcbmProbe(context: Context) {
         sink("   Bluetooth). Box-side lines arrive over CH_LOG as [box:<source>]; the four /tmp files")
         sink("   CH_LOG does not carry are pulled once over CH_FILE at session end. No UART needed.")
         sink("   Leave this running; heartbeats hold the session at 1 Hz.")
+        // After the write. The box needs ~20 s before the phone's MFi-SAP, and mfiProven is
+        // only read once this function returns (onBoxLinked). A failure still reports false.
+        if (c.hasMfi) r = proveMfiSign(c, r, cert, certMs, afterSubscribe = c.subscribed)
         return r
+    }
+
+    /**
+     * `create_signature` preflight. On the subscribe path this runs AFTER `CT_SUBSCRIBE` was
+     * written, so the chip's time is not in front of the radio-wake edge. [mfiProven] stays
+     * false when the chip does not answer; callers report that only after [runAll] returns.
+     */
+    private fun proveMfiSign(
+        c: OcbmClient,
+        r: LinkResult,
+        cert: Mfi.Response?,
+        certMs: Long,
+        afterSubscribe: Boolean,
+    ): LinkResult {
+        if (afterSubscribe) {
+            mfiLog.i("sign: running after CT_SUBSCRIBE — radio wake is already taken; the phone's MFi-SAP is still ~20s out")
+        }
+        // A SHA-1-shaped digest; the chip signs whatever 20 bytes we hand it.
+        val digest = ByteArray(Mfi.DIGEST_LEN) { (it * 7 + 3).toByte() }
+        // A fast cert means the flock was free. The full contention budget then holds this
+        // thread — and onBoxLinked — on a request nobody is serving. It no longer holds the radios.
+        val signBudget = if (cert?.ok == true && certMs < PROBE_SIGN_FAST_CERT_MS)
+            PROBE_SIGN_FAST_BUDGET_MS else OcbmClient.MFI_SIGN_TIMEOUT_MS
+        if (signBudget != OcbmClient.MFI_SIGN_TIMEOUT_MS) {
+            mfiLog.i("sign: cert answered in ${certMs}ms — first wait ${signBudget}ms; a timeout still retries at the full ${OcbmClient.MFI_SIGN_TIMEOUT_MS}ms budget")
+        }
+        SessionTrace.expect(OcbmExpect.MFI_SIGN, signBudget,
+            "create_signature was sent over CH_MFI" +
+                (if (afterSubscribe) " after CT_SUBSCRIBE" else "") +
+                (if (cert?.ok == true) " right after a good certificate, so chip and daemon were both alive" else " (the certificate step already failed)"))
+        var sig = c.mfiSign(digest, signBudget)
+        if (sig != null) SessionTrace.met(OcbmExpect.MFI_SIGN)
+        // What the summary's `mfi=` token says about the sign, beyond its final status. Empty
+        // unless the first attempt timed out; then it records whether the re-HELLO below recovered
+        // it, so a recovered session is still countable as an ocbmd-restart instance.
+        var signNote = ""
+        if (sig == null && cert != null && cert.ok) {
+            // A sign timeout right after a GOOD cert is a link discontinuity, not a chip verdict.
+            //
+            // Device-observed 2026-09-09: the cert came back in 160 ms from ocbmd pid 127; the box
+            // supervisor then declared that daemon wedged ("alive mtime stale >=1min" — a false
+            // positive against a healthy idle daemon) and restarted it as pid 71, and our sign
+            // timed out at exactly 15 s. The replacement daemon then served CT_SUBSCRIBE and every
+            // later CH_MFI op without ever seeing a HELLO — `ocbmd`'s `handle()` gates neither on it
+            // (verified against ccpa/ocbmd/src/main.rs HEAD 2026-09-10) — so its `host_instance`
+            // stayed `None` for the whole session, which silently disables the host-replacement
+            // detection the nonce exists for. The chip was fine; the daemon that had our request
+            // was gone. The gadget stays CONFIGURED across an L2 restart, so the claim and the read
+            // thread are still valid and a fresh CT_HELLO over the same transport is the repair.
+            //
+            // The re-HELLO is also the discriminator: `ocbmd` is single-threaded, so a daemon that
+            // is GENUINELY wedged (blocked in the chip's I2C sequence, say) cannot ACK within
+            // REHELLO_TIMEOUT_MS, and that non-answer is itself the finding — no sign retry then.
+            //
+            // Cost on a real chip fault (chip dead, daemon healthy): the ACK arrives in
+            // milliseconds and the retry burns another full sign budget. The retry deliberately
+            // keeps the default sign budget: a shorter one would turn a slow-but-working chip
+            // into a false fault, which is the exact lie this branch exists to stop.
+            mfiLog.w("sign: NO RESPONSE (timeout) after a good cert — treating it as a link " +
+                "discontinuity (ocbmd restarted under us?), not a chip verdict; re-HELLO")
+            // hello() arms its own HELLO_ACK expectation with REHELLO_TIMEOUT_MS.
+            if (c.hello(REHELLO_TIMEOUT_MS)) {
+                mfiLog.i("re-HELLO acked — ocbmd is answering (replacement daemon now holds our nonce); retrying the sign once")
+                SessionTrace.expect(OcbmExpect.MFI_SIGN_RETRY, OcbmClient.MFI_SIGN_TIMEOUT_MS,
+                    "the re-HELLO was ACKed after a sign timeout, so a live ocbmd holds the chip again and the retried create_signature should answer")
+                sig = c.mfiSign(digest)
+                if (sig != null) SessionTrace.met(OcbmExpect.MFI_SIGN_RETRY)
+                signNote = if (sig != null) ", recovered by re-HELLO" else " after re-HELLO"
+            } else {
+                mfiLog.e("re-HELLO: no CT_HELLO_ACK within ${REHELLO_TIMEOUT_MS}ms — ocbmd is wedged, not restarted; no sign retry")
+                signNote = "; re-HELLO no ACK"
+            }
+        }
+        var out = r
+        if (sig == null) {
+            wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("sign: timeout$signNote")
+            mfiLog.e("sign: NO RESPONSE (timeout$signNote) — the MFi relay is unproven; /auth-setup will fail the same way")
+        }
+        else if (!sig.ok) {
+            wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("sign: ${sig.statusName()}$signNote")
+            mfiLog.e("sign: ${sig.statusName()}$signNote — the coprocessor refused to sign")
+        }
+        else {
+            // A recovered timeout is still recorded: `mfi=` is the summary's only trace of an
+            // ocbmd restart mid-bring-up, and the value says "recovered" in so many words.
+            if (signNote.isNotEmpty()) wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("sign: timeout$signNote")
+            mfiLog.i("sign: ${sig.payload.size} bytes  ${if (sig.payload.size == Mfi.SIG_LEN) "(matches RSA-1024)" else "(expected 128)"}")
+            mfiLog.i("   first 16: ${hex(sig.payload, 16)}")
+            out = r.copy(mfiProven = sig.payload.size == Mfi.SIG_LEN)
+            sink("STEP 2 OK — the MFi relay works. This is the keystone of the whole architecture.")
+        }
+        return out
     }
 
     /**
