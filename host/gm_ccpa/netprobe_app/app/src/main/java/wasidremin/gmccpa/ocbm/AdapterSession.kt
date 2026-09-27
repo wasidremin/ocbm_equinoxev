@@ -48,6 +48,10 @@ object AdapterSession {
 
     private var videoPipe: SeamPipe? = null
     private var renderer: HevcRenderer? = null
+    /** A Surface that arrived before [lanes]. [startAudio] attaches it once the lanes exist. */
+    private var pendingSurface: Surface? = null
+    /** Last `modes resources` line, so a repeated modesChanged does not log the same ownership. */
+    private var lastResources: String? = null
 
     fun bind(c: OcbmClient, ctx: Context) {
         quietStop()
@@ -61,13 +65,17 @@ object AdapterSession {
         val e = epoch.incrementAndGet()
         client = c
         c.adapterMode = true
-        c.onMetadata = { marker, payload -> onMeta(marker, payload) }
-        c.onUplinkGate = { on, rate, ch -> mic?.onGate(on, rate, ch) }
+        c.onMetadata = { marker, payload -> if (epoch.get() == e) onMeta(marker, payload) }
+        c.onUplinkGate = { on, rate, ch -> if (epoch.get() == e) mic?.onGate(on, rate, ch) }
         c.onLanesArmed = { armed -> if (epoch.get() == e) startAudio(app, armed) }
         c.onLanesRetired = { retired -> if (epoch.get() == e) stopAudio(retired) }
         c.onSessionKeyed = keyed@{
             if (epoch.get() != e) return@keyed
             sessionUp = true
+            // Before the activity's onKeyed. publish() drops every update until this runs,
+            // and the activity launch is a main-thread post that can lose the first title.
+            CarPlayMediaBrowserService.onSessionUp()
+            log.i("session keyed — media card session up")
             main.post { if (epoch.get() == e) onKeyed?.invoke() }
         }
         val uplink = MicUplink()
@@ -92,9 +100,17 @@ object AdapterSession {
 
     @Synchronized
     fun attachVideo(surface: Surface) {
-        val l = lanes ?: return
+        if (!surface.isValid) {
+            log.i("video surface ignored — not valid")
+            return
+        }
+        val l = lanes
+        if (l == null) {
+            pendingSurface = surface
+            log.i("video surface pending — lanes not armed")
+            return
+        }
         if (renderer != null) return
-        if (!surface.isValid) return
         val pipe = SeamPipe(8 * 1024 * 1024, 64)
         val r = HevcRenderer(wasidremin.gmccpa.VideoFrame.width, wasidremin.gmccpa.VideoFrame.height, surface) {
             requestKeyframe()
@@ -110,6 +126,7 @@ object AdapterSession {
 
     @Synchronized
     fun detachVideo(why: String) {
+        pendingSurface = null
         val pipe = videoPipe
         val r = renderer
         videoPipe = null
@@ -122,8 +139,18 @@ object AdapterSession {
 
     /** Drop renderers and the mic. Does not notify [onRetired] — the caller owns the screen. */
     fun release() {
+        val old = client
+        old?.onMetadata = null
+        old?.onUplinkGate = null
+        old?.onLanesArmed = null
+        old?.onLanesRetired = null
+        old?.onSessionKeyed = null
         quietStop()
         client = null
+        lastResources = null
+        CarPlayMediaBrowserService.onSessionDown()
+        CarPlayActivity.nowPlaying.clear()
+        log.i("adapter released — media card cleared")
     }
 
     private fun quietStop() {
@@ -142,26 +169,60 @@ object AdapterSession {
     }
 
     private fun startAudio(ctx: Context, armed: OcbmAvLanes) {
+        var resume: Surface? = null
         synchronized(this) {
             player?.stop("replaced by a new A/V generation")
             player = null
             router?.stop("replaced by a new A/V generation")
             router = null
             lanes = armed
-            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
-            // Preparing and the foreground media service already ran in [bind]. Focus waits
-            // for [AacPlayer.consume], the first stream of this generation.
-            val p = AacPlayer(am).also { it.start(); it.prime() }
-            val voice = VoiceRouter(
-                ctx,
-                onDuck = { ducked -> p.setVoiceDucked(ducked) },
-                onAssistant = { speaking -> p.setAssistantSpeaking(speaking) },
-            ).also { it.start() }
+            resume = pendingSurface?.takeIf { it.isValid }
+            var p: AacPlayer? = null
+            var voice: VoiceRouter? = null
+            try {
+                // Idempotent with [bind]. Focus still waits for [AacPlayer.onStreamStart].
+                CarPlayMediaBrowserService.ensureStarted(ctx)
+                CarPlayMediaBrowserService.announcePreparing()
+                val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                val created = AacPlayer(am)
+                p = created
+                created.start()
+                if (!wasidremin.gmccpa.AudioRoute.bluetooth) created.prime()
+                val routed = VoiceRouter(
+                    ctx,
+                    onDuck = { ducked -> created.setVoiceDucked(ducked) },
+                    onAssistant = { speaking -> created.setAssistantSpeaking(speaking) },
+                )
+                voice = routed
+                routed.start()
+            } catch (t: Throwable) {
+                log.e("audio start failed (${t.javaClass.simpleName}: ${t.message}) — pipes still drain")
+            }
             player = p
             router = voice
-            armed.runConsumer("cp-audio", armed.mediaPipe) { p.consume(it) }
-            armed.runConsumer("cp-voice", armed.voicePipe) { voice.consume(it) }
+            val audio = p
+            val nav = voice
+            if (audio != null) armed.runConsumer("cp-audio", armed.mediaPipe) { audio.consume(it) }
+            else armed.runConsumer("cp-audio", armed.mediaPipe) { drainSeam(it) }
+            if (nav != null) armed.runConsumer("cp-voice", armed.voicePipe) { nav.consume(it) }
+            else armed.runConsumer("cp-voice", armed.voicePipe) { drainSeam(it) }
             log.i("audio consumers armed")
+        }
+        val surface = synchronized(this) {
+            pendingSurface?.takeIf { it.isValid && it === resume && lanes != null }
+        }
+        if (surface != null) {
+            log.i("video surface was waiting — attaching now that lanes are armed")
+            attachVideo(surface)
+        }
+    }
+
+    /** Keeps an undrained seam from blocking the USB read thread when a player failed to start. */
+    private fun drainSeam(ins: java.io.InputStream) {
+        val buf = ByteArray(32 * 1024)
+        while (true) {
+            val n = try { ins.read(buf) } catch (_: Exception) { break }
+            if (n <= 0) break
         }
     }
 
@@ -180,7 +241,13 @@ object AdapterSession {
                 notify = true
             }
         }
-        if (notify) main.post { if (epoch.get() == e) onRetired?.invoke() }
+        if (notify) {
+            lastResources = null
+            CarPlayMediaBrowserService.onSessionDown()
+            CarPlayActivity.nowPlaying.clear()
+            log.i("lanes retired — media card cleared")
+            main.post { if (epoch.get() == e) onRetired?.invoke() }
+        }
     }
 
     private fun onMeta(marker: Int, payload: ByteArray) {
@@ -220,39 +287,23 @@ object AdapterSession {
 
     /**
      * `modesChanged` `resources[]` says who owns MainScreen (resourceID 1) and MainAudio
-     * (resourceID 2). Entity 1 is the phone, 2 is the accessory. Logged only — the voice
-     * path still reads `appStates`.
+     * (resourceID 2). Logged only when the line changes. The voice path still reads `appStates`.
      */
     private fun logResources(raw: Any?) {
         val list = raw as? List<*>
-        if (list == null) {
-            log.i("modes resources=(absent)")
-            return
-        }
-        if (list.isEmpty()) {
-            log.i("modes resources=(empty)")
-            return
-        }
-        val text = list.joinToString("; ") { item ->
-            val d = item as? Map<*, *> ?: return@joinToString "$item"
-            val id = d["resourceID"] as? Long
-            val name = when (id) {
-                1L -> "MainScreen"
-                2L -> "MainAudio"
-                else -> "resource"
+        val text = when {
+            list == null -> "(absent)"
+            list.isEmpty() -> "(empty)"
+            else -> list.joinToString("; ") { item ->
+                val d = item as? Map<*, *> ?: return@joinToString "$item"
+                val entities = d.entries
+                    .filter { (k, _) -> k.toString().contains("entity", ignoreCase = true) }
+                    .joinToString(" ") { (k, v) -> "$k=$v" }
+                "resourceID=${d["resourceID"]} transferType=${d["transferType"]} transferPriority=${d["transferPriority"]}${if (entities.isEmpty()) "" else " $entities"}"
             }
-            val ent = d["entity"] as? Long
-            val perm = d["permanentEntity"] as? Long
-            "$name id=$id entity=${entityName(ent)}($ent) permanent=${entityName(perm)}($perm)"
         }
+        if (text == lastResources) return
+        lastResources = text
         log.i("modes resources: $text")
-    }
-
-    private fun entityName(v: Long?) = when (v) {
-        0L -> "none"
-        1L -> "controller"
-        2L -> "accessory"
-        null -> "?"
-        else -> "other"
     }
 }

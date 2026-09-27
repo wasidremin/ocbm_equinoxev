@@ -47,6 +47,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     // consume thread's write has no happens-before edge to it — and silently pause nothing.
     @Volatile private var codec: MediaCodec? = null
     @Volatile private var track: AudioTrack? = null
+    /** Reused PCM scratch for [feed]. Grows when an output buffer is larger. Consume-thread only. */
+    private var pcmScratch = ByteArray(4096)
     @Volatile private var configureFailedAt = 0L
     // Remembered so a dead AudioTrack can be rebuilt in place without waiting for the next configure.
     @Volatile private var cfgRate = 48000
@@ -61,6 +63,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      *  a write the track refused outright (`ERROR_DEAD_OBJECT` or any other negative return). The
      *  last case counted as PLAYED before 2026-09-10. */
     val framesDroppedNoTrack = AtomicLong(0)
+    /** AAC frames [feed] could not hand the decoder because `dequeueInputBuffer` timed out. */
+    val framesDroppedNoInput = AtomicLong(0)
     /**
      * Decoded PCM handed to a track that was NOT playing, and therefore thrown away.
      *
@@ -158,6 +162,11 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
 
     @Volatile private var focus: android.media.AudioFocusRequest? = null
     /**
+     * Set under `this` by a permanent LOSS, which must not abandon inside the callback.
+     * [requestFocus] and [abandonFocus] abandon it later, outside the callback and outside `this`.
+     */
+    private var droppedRequest: android.media.AudioFocusRequest? = null
+    /**
      * Ordering stamp between a focus GRANT and the callbacks that follow it. [requestFocus] bumps
      * [focusRequestSeq] under `this` before its binder call; [focusListener] copies it into
      * [focusCallbackSeq] under `this` on every callback. So when the GRANTED bookkeeping runs and
@@ -176,6 +185,12 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * cannot mask each other if a future path sets it again.
      */
     @Volatile private var pausedForFocus = false
+    /**
+     * Bluetooth route. The track is built stopped and [applyPauseState] keeps it there, so a
+     * silent USAGE_MEDIA player does not pull the volume knob. Cleared when the route returns
+     * to Adapter, before the next focus request restores the gain.
+     */
+    @Volatile private var pausedForRoute = false
     /** Last focus state seen, so every transition logs old -> new and a wrong mapping is diagnosable
      *  from a capture alone. Written only under `this` (the listener and [requestFocus]), because
      *  [requestFocus] decides from it whether a callback beat the grant (see [focusRequestSeq]). */
@@ -235,11 +250,11 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      */
     private fun applyPauseState(reason: String) {
         val t = track ?: return
-        val held = pausedForAssistant || pausedForFocus
+        val held = pausedForAssistant || pausedForFocus || pausedForRoute
         runCatching {
             if (held) {
-                t.pause()
-                log.i("media paused for $reason (assistant=$pausedForAssistant focus=$pausedForFocus)")
+                if (t.playState == AudioTrack.PLAYSTATE_PLAYING) t.pause()
+                log.i("media paused for $reason (assistant=$pausedForAssistant focus=$pausedForFocus route=$pausedForRoute)")
                 SessionTrace.Board.up(BOARD_TRACK, trackDetail(t, "PAUSED for $reason"))
             } else if (!running.get()) {
                 log.i("$reason would resume media, but stop() has run — leaving the track paused")
@@ -265,12 +280,13 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         Companion.live = WeakReference(this)
         if (wasidremin.gmccpa.AudioRoute.bluetooth) {
             setFocusGain(0f)
-            log.i("audio source Bluetooth — local media muted, focus not taken")
+            synchronized(this) { pausedForRoute = true }
+            log.i("audio source Bluetooth — local media muted, focus not taken, track not primed")
             return
         }
-        // Focus is requested when a media connection opens ([consume]), not here.
+        // Focus is requested from [onStreamStart] when a media connection opens, not here.
         // Asking at lane-arm time raced the preparing signal and left FM as the source.
-        // A permanent LOSS drops the request; the next connection is what asks again.
+        synchronized(this) { pausedForRoute = false }
         CarPlayMediaBrowserService.claimCarSource()
         log.i("audio source Adapter — focus waits for the media stream")
     }
@@ -284,9 +300,18 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         if (wasidremin.gmccpa.AudioRoute.bluetooth) {
             abandonFocus("audio source Bluetooth — car stereo plays the phone")
             setFocusGain(0f)
-            log.i("audio source Bluetooth — local media muted")
+            synchronized(this) {
+                pausedForRoute = true
+                applyPauseState("audio source Bluetooth")
+            }
+            log.i("audio source Bluetooth — local media muted, track held")
         } else {
-            setFocusGain(1f)
+            // Gain stays where it is until GRANTED. Unmuting first plays over whoever holds focus.
+            synchronized(this) {
+                val held = pausedForRoute
+                pausedForRoute = false
+                if (held) applyPauseState("audio source Adapter")
+            }
             requestFocus()
             CarPlayMediaBrowserService.claimCarSource()
             log.i("audio source Adapter — media focus requested")
@@ -294,11 +319,12 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     }
 
     /**
-     * Take permanent media focus. Idempotent — [start] may be called again on a re-launched screen.
+     * Take permanent media focus. Idempotent while [focus] is already held.
+     * [onStreamStart] calls this when a media connection opens. [start] does not.
      *
-     * Deliberately NOT tied to whether audio is currently flowing: the point is to be the resting focus
-     * owner that AAOS returns to when Siri or a call abandons its transient focus. Releasing it between
-     * tracks would recreate the stuck-knob bug in the gaps.
+     * A LOSS_TRANSIENT keeps the request so Siri or a call can hand it back. A permanent
+     * LOSS clears it; the next connection is what asks again. Asking again inside the
+     * listener is the fight that tore stream 102 down.
      *
      * # Two windows closed 2026-09-10 (both were in the build on the truck)
      *
@@ -325,12 +351,14 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * takes `duckLock`, so it is never called under `this` — see [publishTrack].
      */
     private fun requestFocus() {
+        releaseDroppedRequest()
         val mgr = am ?: run { log.w("no AudioManager — media will not hold focus; the volume knob may stick on Phone/Siri"); return }
         val seq = synchronized(this) {
             if (focus != null) return
             if (!running.get()) { log.i("media focus not re-requested — stop() has run"); return }
             ++focusRequestSeq
         }
+        log.i("media focus requested t=${android.os.SystemClock.elapsedRealtime()}")
         runCatching {
             val req = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(
@@ -346,7 +374,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                 .build()
             val r = mgr.requestAudioFocus(req)
             // Cache ONLY a request that actually took. Caching on AUDIOFOCUS_REQUEST_FAILED made the
-            // `focus != null` guard above permanent — no later start() ever retried, and abandonFocus()
+            // `focus != null` guard above permanent — no later [onStreamStart] ever retried, and abandonFocus()
             // then abandoned a request we never held.
             // GRANTED only. DELAYED cannot occur — the builder never calls setAcceptsDelayedFocusGain —
             // and treating it as held would be wrong anyway: a DELAYED grant means focus is NOT yet
@@ -363,6 +391,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             // Non-null means "granted, but do not keep it": the reason is logged and the request is
             // abandoned OUTSIDE the monitor (a binder call, and nothing here may nest a lock).
             var orphanReason: String? = null
+            var restoreGain = false
             synchronized(this) {
                 val landed = focusCallbackSeq >= seq
                 when {
@@ -376,23 +405,28 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                             orphanReason = "permanent LOSS landed before the grant was cached"
                         } else {
                             focus = req
-                            log.i("media audio focus: GRANTED, but ${focusName(focusState)} landed first " +
+                            log.i("media audio focus: GRANTED t=${android.os.SystemClock.elapsedRealtime()}, but ${focusName(focusState)} landed first " +
                                   "for this request — keeping its hold (paused=$pausedForFocus)")
                         }
                     }
                     else -> {
                         focus = req
                         focusState = android.media.AudioManager.AUDIOFOCUS_GAIN
+                        restoreGain = true
                         if (pausedForFocus) { pausedForFocus = false; applyPauseState("focus regained") }
-                        log.i("media audio focus: GRANTED")
+                        log.i("media audio focus: GRANTED t=${android.os.SystemClock.elapsedRealtime()}")
                     }
                 }
             }
+            if (restoreGain) setFocusGain(1f)
             orphanReason?.let { why ->
                 runCatching { mgr.abandonAudioFocusRequest(req) }   // deliberate: discarding a request we will not keep
                 log.w("media audio focus: GRANTED but abandoned at once — $why")
             }
-            if (orphanReason == null) SessionTrace.Board.up(BOARD_FOCUS, "${focusName(focusState)} — AUDIOFOCUS_GAIN held (USAGE_MEDIA)")
+            if (orphanReason == null) {
+                CarPlayMediaBrowserService.noteArbitration("focus GRANTED")
+                SessionTrace.Board.up(BOARD_FOCUS, "${focusName(focusState)} — AUDIOFOCUS_GAIN held (USAGE_MEDIA)")
+            }
         }.onFailure { log.w("media focus request failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
@@ -409,7 +443,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      *
      * LOSS_TRANSIENT keeps the request so the later GAIN unmutes. Siri still pauses the
      * track through [setAssistantSpeaking]. [setFocusGain] takes `duckLock` and stays
-     * outside `this` (see [publishTrack]). [dropHeldRequest] abandons outside the monitor.
+     * outside `this` (see [publishTrack]). This callback does not abandon and does not
+     * request. [onStreamStart] is what asks again.
      */
     private val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { change ->
         val gain = when (change) {
@@ -419,20 +454,22 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             else -> 1f
         }
         setFocusGain(gain)
-        val drop = synchronized(this@AacPlayer) {
+        val label = synchronized(this@AacPlayer) {
             focusCallbackSeq = focusRequestSeq
             val permanent = change == android.media.AudioManager.AUDIOFOCUS_LOSS
             if (permanent) {
-                log.i("media focus ${focusName(focusState)} -> LOSS (playback gain $gain, request dropped — the next stream asks again)")
-                SessionTrace.Board.up(BOARD_FOCUS, "LOSS — request dropped, playback gain $gain (next stream asks again)")
+                if (focus != null) droppedRequest = focus
+                focus = null
+                log.i("media focus LOSS — request cleared; re-request on next stream start")
+                SessionTrace.Board.up(BOARD_FOCUS, "LOSS — request cleared, playback gain $gain (next stream asks again)")
             } else {
                 log.i("media focus ${focusName(focusState)} -> ${focusName(change)} (playback gain $gain, track stays in PLAY, request kept)")
                 SessionTrace.Board.up(BOARD_FOCUS, "${focusName(change)} — request kept, playback gain $gain (USAGE_MEDIA)")
             }
             focusState = change
-            permanent
+            if (permanent) "LOSS" else focusName(change)
         }
-        if (drop) dropHeldRequest()
+        CarPlayMediaBrowserService.noteArbitration("focus $label")
     }
 
     private fun focusName(c: Int) = when (c) {
@@ -444,29 +481,50 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     }
 
     /**
-     * Forget a request a permanent LOSS already removed from the stack.
-     *
-     * Does not touch the gain. [abandonFocus] sets it back to 1, which would unmute the
-     * track the listener just silenced. The binder abandon stays outside `this`.
+     * Abandon the request a permanent LOSS already cleared. Not called from the focus callback.
+     * Does not touch the gain. The binder call stays outside `this`.
      */
-    private fun dropHeldRequest() {
+    private fun releaseDroppedRequest() {
         val req = synchronized(this) {
-            val held = focus
-            focus = null
+            val held = droppedRequest
+            droppedRequest = null
             held
         } ?: return
         am?.let { mgr -> runCatching { mgr.abandonAudioFocusRequest(req) } }
+        log.i("media focus — abandoned the request a permanent LOSS had cleared")
     }
 
     /** Release focus on teardown, and clear the focus-derived gain so a discarded player is not left
      *  at 0. Takes `duckLock` via [setFocusGain] — never call this under `this`. Caller: [stop]
-     *  and the Bluetooth route. A focus LOSS uses [dropHeldRequest] instead. */
+     *  and the Bluetooth route. A focus LOSS only nulls [focus]; this also drops [droppedRequest]. */
     private fun abandonFocus(why: String) {
+        val (held, extra) = synchronized(this) {
+            val h = focus
+            val d = droppedRequest
+            focus = null
+            droppedRequest = null
+            h to d
+        }
         // deliberate: abandoning a request AAOS may already have dropped; nothing to do if it throws.
-        am?.let { mgr -> focus?.let { runCatching { mgr.abandonAudioFocusRequest(it) } } }
-        focus = null
+        am?.let { mgr ->
+            held?.let { runCatching { mgr.abandonAudioFocusRequest(it) } }
+            if (extra != null && extra !== held) runCatching { mgr.abandonAudioFocusRequest(extra) }
+        }
         setFocusGain(1f)
         SessionTrace.Board.down(BOARD_FOCUS, why)
+    }
+
+    /**
+     * One focus request per media connection, and only when the last permanent LOSS cleared
+     * the cached request. Matches the original app's request on every `AUDIO_MEDIA_START`.
+     * Does not retry on a timer.
+     */
+    fun onStreamStart() {
+        if (wasidremin.gmccpa.AudioRoute.bluetooth) {
+            log.i("stream start — Bluetooth route, focus not requested")
+            return
+        }
+        requestFocus()
     }
 
     /**
@@ -483,6 +541,10 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * Measured saving: ~134 ms of the 172 ms seam-connect -> first-audio path (2026-08-12).
      */
     fun prime() {
+        if (wasidremin.gmccpa.AudioRoute.bluetooth || pausedForRoute) {
+            log.i("prime skipped — Bluetooth route, no USAGE_MEDIA track")
+            return
+        }
         if (track != null) return
         // Goes through [publishTrack] like every other builder. Today this path cannot race a hold or
         // a duck edge by construction — prime() runs on the main looper before VoiceRouter exists and
@@ -579,11 +641,13 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         applyGain(t)                                      // duckLock, released before the next line
         var state = "PLAYING"
         synchronized(this) {                              // same monitor as the flag writers
-            if (pausedForAssistant || pausedForFocus) {
-                runCatching { t.pause() }
-                    .onFailure { log.w("new track pause() refused: ${it.message} — it is PLAYING through a hold") }
-                log.i("new track starts paused (assistant=$pausedForAssistant focus=$pausedForFocus)")
-                state = "PAUSED (assistant=$pausedForAssistant focus=$pausedForFocus)"
+            if (pausedForAssistant || pausedForFocus || pausedForRoute) {
+                if (t.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    runCatching { t.pause() }
+                        .onFailure { log.w("new track pause() refused: ${it.message} — it is PLAYING through a hold") }
+                }
+                log.i("new track starts paused (assistant=$pausedForAssistant focus=$pausedForFocus route=$pausedForRoute)")
+                state = "PAUSED (assistant=$pausedForAssistant focus=$pausedForFocus route=$pausedForRoute)"
             }
         }
         SessionTrace.Board.up(BOARD_TRACK, trackDetail(t, state))
@@ -647,12 +711,14 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         // writing).
         abandonFocus("stopped — $why")
         val dropped = framesDroppedNoTrack.get()
+        val inputDropped = framesDroppedNoInput.get()
         val net = netUnderruns(underruns)
         val msg = "stopping ($why) — ${framesDecoded.get()} frames played, ${framesDiscardedPaused.get()} discarded " +
-                  "(paused), $dropped dropped (no track), $underruns underruns ($net net of the fill baseline), " +
-                  "${bytesIn.get()} bytes"
+                  "(paused), $dropped dropped (no track), $inputDropped dropped (no input buffer), " +
+                  "$underruns underruns ($net net of the fill baseline), ${bytesIn.get()} bytes"
         when {
             dropped > 0 -> log.e("$msg — decoded media reached NO live track: that was silent media")
+            inputDropped > 0 -> log.w("$msg — AAC input frames were dropped before the decoder")
             net > UNDERRUN_TOLERANCE -> log.w("$msg — each net underrun is an audible gap unless it coincides with a `[rust] stream 102 ended`")
             else -> log.i(msg)
         }
@@ -666,32 +732,44 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     fun consume(ins: InputStream) {
         consumeStarted = true
         firstPcmThisConn = false
-        // One ask per connection. A permanent LOSS has already cleared [focus]; this is the
-        // next stream, which is when the original app asks again (AUDIO_MEDIA_START). A
-        // connection that still holds a grant returns inside [requestFocus]. Bluetooth
-        // never takes focus — the car stereo plays the phone.
-        if (!wasidremin.gmccpa.AudioRoute.bluetooth) requestFocus()
+        onStreamStart()
         // Per connection: forward.rs dials only once it holds an ADTS frame, so a connection with no
         // decoded PCM behind it is a decoder fault, not an idle phone. Met in [feed] on the first
         // output buffer of any outcome; cancelled below if the connection ends first.
         SessionTrace.expect(EXPECT_FIRST_PCM, FIRST_PCM_MS,
             "the media seam :9002 connected, and the producer dials only with an ADTS frame in hand, " +
             "so the AAC-LC decoder should configure and emit PCM at once (176ms on 2026-09-09)")
-        val buf = ByteArray(32 * 1024)
-        val acc = java.io.ByteArrayOutputStream(64 * 1024)
+        var storage = ByteArray(64 * 1024)
+        var start = 0
+        var end = 0
         try {
             while (running.get()) {
+                if (end == storage.size) {
+                    val pending = end - start
+                    if (start > 0) {
+                        System.arraycopy(storage, start, storage, 0, pending)
+                        start = 0
+                        end = pending
+                    }
+                    if (end == storage.size) {
+                        val grown = ByteArray(storage.size * 2)
+                        System.arraycopy(storage, 0, grown, 0, end)
+                        storage = grown
+                    }
+                }
                 // A SocketException here during teardown is the caller's deliberate close, not a fault.
-                val n = try { ins.read(buf) } catch (e: Exception) {
+                val n = try { ins.read(storage, end, storage.size - end) } catch (e: Exception) {
                     if (running.get()) log.e("read: ${e.message}"); break
                 }
                 if (n <= 0) break
                 bytesIn.addAndGet(n.toLong())
-                acc.write(buf, 0, n)
-                val data = acc.toByteArray()
-                val used = processAdts(data)
-                acc.reset()
-                if (used < data.size) acc.write(data, used, data.size - used)
+                end += n
+                val used = processAdts(storage, start, end)
+                start += used
+                if (start == end) {
+                    start = 0
+                    end = 0
+                }
             }
         } finally {
             releaseAv()
@@ -730,21 +808,21 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         runCatching { t?.release() }
     }
 
-    /** Walk complete ADTS frames; returns how many bytes were consumed. */
-    private fun processAdts(data: ByteArray): Int {
-        var i = 0
-        while (i + 7 <= data.size) {
-            // stop() may have run mid-buffer: a full 32 KB read holds many frames, and continuing to
+    /** Walk complete ADTS frames in `data[from, to)`; returns how many bytes from [from] were consumed. */
+    private fun processAdts(data: ByteArray, from: Int, to: Int): Int {
+        var i = from
+        while (i + 7 <= to) {
+            // stop() may have run mid-buffer: a full read holds many frames, and continuing to
             // decode+write them into a paused/flushed track is the write-after-stop deadlock. Bail.
-            if (!running.get()) return i
+            if (!running.get()) return i - from
             if ((data[i].toInt() and 0xFF) != 0xFF || (data[i + 1].toInt() and 0xF0) != 0xF0) { i++; continue }
             val frameLen = ((data[i + 3].toInt() and 0x03) shl 11) or
                            ((data[i + 4].toInt() and 0xFF) shl 3) or
                            ((data[i + 5].toInt() and 0xE0) ushr 5)
             if (frameLen < 7) { i++; continue }
-            if (i + frameLen > data.size) return i          // incomplete tail — keep it
+            if (i + frameLen > to) return i - from          // incomplete tail — keep it
             if (codec == null) {
-                if (!running.get()) return i   // tearing down — don't configure just to release
+                if (!running.get()) return i - from   // tearing down — don't configure just to release
                 val b2 = data[i + 2].toInt() and 0xFF
                 val rateIdx = (b2 shr 2) and 0x0F
                 val ch = ((b2 and 0x01) shl 2) or ((data[i + 3].toInt() and 0xC0) ushr 6)
@@ -754,7 +832,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             feed(data, i + 7, frameLen - 7)
             i += frameLen
         }
-        return i
+        return i - from
     }
 
     /**
@@ -892,7 +970,11 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                 log.i("AudioTrack ${sampleRate}Hz ${channels}ch buffer: asked $bufBytes B (${ms(bufBytes)} ms), " +
                       "granted $granted frames (${if (granted > 0) granted.toLong() * 1000 / sampleRate else -1} ms), " +
                       "getMinBufferSize=$minBuf B (${ms(minBuf)} ms)")
-                try { trk.play() } catch (e: Throwable) { runCatching { trk.release() }; throw e }
+                if (pausedForRoute) {
+                    log.i("AudioTrack left stopped — Bluetooth route holds it")
+                } else {
+                    try { trk.play() } catch (e: Throwable) { runCatching { trk.release() }; throw e }
+                }
             }
     }
 
@@ -904,6 +986,10 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         if (len <= 0) return
         try {
             val inIdx = c.dequeueInputBuffer(5_000)
+            if (inIdx < 0) {
+                val n = framesDroppedNoInput.incrementAndGet()
+                if (n == 1L) log.w("AAC input dropped — dequeueInputBuffer returned $inIdx")
+            }
             if (inIdx >= 0) {
                 // A dequeued index MUST be queued back on EVERY path, including the null-buffer
                 // one. Input buffers are a fixed pool of 4-8; leaking them makes dequeueInputBuffer
@@ -933,11 +1019,16 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                 // counted as played; see [framesDiscardedPaused] for the capture that exposed it.
                 var outcome = WriteOutcome.NO_PCM
                 c.getOutputBuffer(outIdx)?.let { ob ->
-                    val pcm = ByteArray(info.size)
-                    ob.position(info.offset); ob.get(pcm)
+                    if (info.size > pcmScratch.size) pcmScratch = ByteArray(info.size)
+                    val pcm = pcmScratch
+                    val pcmLen = info.size.coerceAtLeast(0)
+                    if (pcmLen > 0) {
+                        ob.position(info.offset)
+                        ob.get(pcm, 0, pcmLen)
+                    }
                     val t = track
                     outcome = if (t == null) WriteOutcome.NO_TRACK else {
-                        val w = t.write(pcm, 0, pcm.size)
+                        val w = t.write(pcm, 0, pcmLen)
                         when {
                             w == AudioTrack.ERROR_DEAD_OBJECT -> {
                                 // An audioserver restart or a route teardown invalidates the track.
@@ -957,7 +1048,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                             // A blocking write on an ACTIVE track returns only when every byte is in;
                             // anything less means the track was paused (or stopped) — before the
                             // write, or by the pause() that interrupted it — and the remainder is gone.
-                            w < pcm.size -> WriteOutcome.DISCARDED_PAUSED
+                            w < pcmLen -> WriteOutcome.DISCARDED_PAUSED
                             else -> WriteOutcome.PLAYED
                         }
                     }
@@ -993,11 +1084,14 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                     // tolerance a W. framesDiscardedPaused is printed but never judged — it is the hold.
                     val u = track?.underrunCount ?: -1
                     val dropped = framesDroppedNoTrack.get()
+                    val inputDropped = framesDroppedNoInput.get()
                     val net = netUnderruns(u)
                     val msg = "$n audio frames played, ${framesDiscardedPaused.get()} discarded (paused), " +
-                              "$dropped dropped (no track), $u underruns ($net net of the fill baseline)"
+                              "$dropped dropped (no track), $inputDropped dropped (no input buffer), " +
+                              "$u underruns ($net net of the fill baseline)"
                     when {
                         dropped > 0 -> log.e("$msg — decoded media is reaching NO live track")
+                        inputDropped > 0 -> log.w("$msg — AAC input frames were dropped before the decoder")
                         net > UNDERRUN_TOLERANCE -> log.w("$msg — audible gaps unless each coincides with a stream end")
                         else -> log.i(msg)
                     }

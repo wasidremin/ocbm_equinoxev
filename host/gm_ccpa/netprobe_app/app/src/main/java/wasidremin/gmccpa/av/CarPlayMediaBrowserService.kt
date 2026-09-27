@@ -77,7 +77,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
 
     @Volatile private var artBitmap: Bitmap? = null
     @Volatile private var artFor: ByteArray? = null
-    private var warnedNoPlaybackStatus = false
+    @Volatile private var foreground = false
 
     /**
      * Transport sends block on the native event-channel lock, and callbacks arrive on a binder thread.
@@ -118,6 +118,25 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          * [onCreate] reads it so a late start still publishes the preparing state.
          */
         @Volatile private var wantPreparing = false
+        /** Reset on every session. A status-less track warns once per session, not once per process. */
+        @Volatile private var warnedNoPlaybackStatus = false
+        /**
+         * Elapsed realtime when the arbitration window ends. Pause-type keys from anyone except
+         * [STEERING_WHEEL_PACKAGE] are dropped until then.
+         */
+        @Volatile private var arbitrationUntil = 0L
+        private const val ARBITRATION_MS = 5_000L
+        /**
+         * TODO: set from the first capture that logs `transport: first caller package=`.
+         * Empty means every pause-type key is dropped during the arbitration window.
+         */
+        private const val STEERING_WHEEL_PACKAGE = ""
+        private val seenCallers = HashSet<String>()
+        /**
+         * Null until the first `setMediaSource` lookup. False means this process already learned
+         * the method is absent, and later calls return without reflecting again.
+         */
+        @Volatile var sourceSwitchable: Boolean? = null
 
         /** Seam entry point — the displayed metadata changed. Callable from any thread. */
         fun publish(s: NowPlayingState.Snapshot) {
@@ -143,7 +162,22 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         fun announcePreparing() {
             if (wasidremin.gmccpa.AudioRoute.bluetooth) return
             wantPreparing = true
+            noteArbitration("preparing")
             live?.get()?.publishPreparing()
+        }
+
+        /** Opens the 5 s window in which head-unit pause keys are not forwarded. */
+        fun noteArbitration(why: String) {
+            arbitrationUntil = SystemClock.elapsedRealtime() + ARBITRATION_MS
+            ProbeLog.sub("mbs").i("arbitration window ${ARBITRATION_MS}ms — $why")
+        }
+
+        fun inArbitration(): Boolean = SystemClock.elapsedRealtime() < arbitrationUntil
+
+        fun noteCaller(pkg: String, uid: Int) {
+            if (pkg.isEmpty() || pkg == "?") return
+            val first = synchronized(seenCallers) { seenCallers.add(pkg) }
+            if (first) ProbeLog.sub("mbs").i("transport: first caller package=$pkg uid=$uid — candidate steering-wheel source")
         }
 
         /**
@@ -152,6 +186,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         fun onSessionUp() {
             sessionUp = true
+            warnedNoPlaybackStatus = false
             announcePreparing()
             // Not a fault at this instant — AAOS binds Media Center on its own schedule, routinely
             // after RECORD — but a session that ends with this still DOWN never appeared in the
@@ -167,7 +202,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         fun onSessionDown() {
             sessionUp = false; last = null; wantPreparing = false
-            live?.get()?.let { it.publishIdle(); SessionTrace.Board.up(BOARD, "bound by AAOS; session idle (card cleared)") }
+            warnedNoPlaybackStatus = false
+            live?.get()?.let {
+                it.publishIdle()
+                it.stopForegroundState()
+                SessionTrace.Board.up(BOARD, "bound by AAOS; session idle (card cleared)")
+            }
         }
 
         /** Settings changed the audio source, or the service just came up. */
@@ -175,9 +215,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             live?.get()?.applySessionActive()
         }
 
-        /** Ask the head unit to play this app. No-op when the driver chose Bluetooth. */
+        /** Ask the head unit to play this app. No-op when the driver chose Bluetooth.
+         *  After the first "not switchable" result, returns without reflecting again.
+         *  The lookup itself runs on the service executor, never on the caller. */
         fun claimCarSource() {
-            live?.get()?.claimCarSource()
+            if (sourceSwitchable == false) return
+            live?.get()?.enqueueClaim()
         }
 
         /** Distinct from [CarPlaySessionService]'s notification. Two foreground services, two ids. */
@@ -216,15 +259,26 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         val n = buildNotification()
         if (Build.VERSION.SDK_INT < 29) {
             startForeground(NOTIF_ID, n)
+            foreground = true
             log.i("foreground media service started")
             return
         }
         try {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            foreground = true
             log.i("foreground media service started (mediaPlayback)")
         } catch (e: Exception) {
             log.e("startForeground(mediaPlayback) refused: $e")
         }
+    }
+
+    /** Session ended. The service may stay bound; the foreground notification does not. */
+    private fun stopForegroundState() {
+        if (!foreground) return
+        foreground = false
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+            .onFailure { log.w("stopForeground refused: ${it.javaClass.simpleName}: ${it.message}") }
+        log.i("foreground media service stopped — session down")
     }
 
     private fun buildNotification(): Notification {
@@ -276,7 +330,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         if (bt) log.i("audio source Bluetooth — media session inactive")
         else {
             log.i("audio source Adapter — media session active")
-            claimCarSource()
+            enqueueClaim()
         }
     }
 
@@ -285,13 +339,30 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * head units still have it. Reflection keeps a missing class from being a build break.
      * A failed claim leaves the session active, which is the path AAOS already uses.
      */
+    /** Posts the reflection onto [tx]. A consume-thread caller returns immediately. */
+    private fun enqueueClaim() {
+        if (sourceSwitchable == false) return
+        if (wasidremin.gmccpa.AudioRoute.bluetooth) return
+        tx.execute {
+            if (sourceSwitchable == false) return@execute
+            if (wasidremin.gmccpa.AudioRoute.bluetooth) return@execute
+            claimCarSource()
+        }
+    }
+
     private fun claimCarSource() {
+        if (sourceSwitchable == false) return
         if (wasidremin.gmccpa.AudioRoute.bluetooth) return
         val cn = ComponentName(this, CarPlayMediaBrowserService::class.java)
         runCatching {
             val carClass = Class.forName("android.car.Car")
             val car = carClass.getMethod("createCar", android.content.Context::class.java)
-                .invoke(null, applicationContext) ?: return
+                .invoke(null, applicationContext)
+            if (car == null) {
+                sourceSwitchable = false
+                log.w("car media source not switchable — Car.createCar returned null")
+                return@runCatching
+            }
             val service = try {
                 carClass.getField("CAR_MEDIA_SERVICE").get(null) as String
             } catch (_: Throwable) {
@@ -301,13 +372,17 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             val set = mgr?.javaClass?.methods?.firstOrNull {
                 it.name == "setMediaSource" && it.parameterTypes.size == 1
             }
-            if (set == null) log.w("car media source not switchable from here (${mgr?.javaClass?.name ?: "no manager"}) — session stays active")
-            else {
+            if (set == null) {
+                sourceSwitchable = false
+                log.w("car media source not switchable from here (${mgr?.javaClass?.name ?: "no manager"}) — session stays active")
+            } else {
+                sourceSwitchable = true
                 set.invoke(mgr, cn)
                 log.i("car media source set to ${cn.flattenToShortString()}")
             }
             runCatching { carClass.getMethod("disconnect").invoke(car) }
         }.onFailure {
+            sourceSwitchable = false
             log.w("could not select this app as the car media source (${it.javaClass.simpleName}: ${it.message})")
         }
     }
@@ -357,7 +432,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 .setState(PlaybackState.STATE_BUFFERING, 0L, 1f, SystemClock.elapsedRealtime())
                 .build()
         )
-        log.i("playback STATE_BUFFERING rate=1 — selecting this source before another one locks")
+        log.i("playback STATE_BUFFERING rate=1 t=${SystemClock.elapsedRealtime()} — selecting this source before another one locks")
     }
 
     private fun publishIdle() {
@@ -376,9 +451,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
 
     private fun publishNow(s: NowPlayingState.Snapshot) {
         val sess = session ?: return
-        // Keep the previous card rather than flashing the "CarPlay" placeholder mid-track: an
-        // artwork-only or status-only update legitimately carries no title.
-        if (!s.hasContent) return
+        // Metadata waits for a title. Playback state does not: a status-only update (paused
+        // before any title) must leave BUFFERING, or the card keeps claiming the source.
+        if (s.hasContent) {
         val b = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, s.title.orEmpty())
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, s.title.orEmpty())
@@ -397,6 +472,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             b.putBitmap(MediaMetadata.METADATA_KEY_ART, it)
         }
         runCatching { sess.setMetadata(b.build()) }.onFailure { log.e("setMetadata failed: ${it.message}") }
+        }
         publishState(s)
     }
 
@@ -467,21 +543,22 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * buttons were dead twice over.
      *
      * No local state changes here: iOS owns playback, and [publishState] repeats the
-     * status the phone already sent. A head-unit pause or stop stays on the car. A
-     * steering-wheel key arrives in [onMediaButtonEvent] and still goes to the phone.
+     * status the phone already sent. A head-unit pause or stop stays on the car. During
+     * the arbitration window a pause-type key is dropped unless it comes from the
+     * steering-wheel package. Outside that window, play, next and previous still go to the phone.
      */
     private val callback = object : MediaSession.Callback() {
         override fun onPlay() = send(NativeCore.MediaBtn.PLAY, "play")
         // GM binds every media source and sends pause, then pause+stop, as arbitration.
-        // Cloud-Bridge drops those in car mode. Forwarding them is HID pause to the
-        // phone, which tears the audio stream down. A finger on the CarPlay picture is
-        // already a touch to the phone. A steering-wheel pause arrives as a media key
-        // in [onMediaButtonEvent] and still goes through.
+        // Those callbacks are never HID. A steering-wheel pause is a media key, and it is
+        // forwarded outside the arbitration window.
         override fun onPause() {
-            log.i("transport: pause ignored — head unit probe, not sent to the phone")
+            val why = if (inArbitration()) "arbitration window" else "head unit probe, not sent to the phone"
+            log.i("transport: pause ${callerLabel()} dropped — $why")
         }
         override fun onStop() {
-            log.i("transport: stop ignored — head unit probe, not sent to the phone")
+            val why = if (inArbitration()) "arbitration window" else "head unit probe, not sent to the phone"
+            log.i("transport: stop ${callerLabel()} dropped — $why")
         }
         override fun onSkipToNext() = send(NativeCore.MediaBtn.NEXT, "next")
         override fun onSkipToPrevious() = send(NativeCore.MediaBtn.PREV, "prev")
@@ -489,29 +566,61 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         /**
          * Handled explicitly so PLAY_PAUSE reaches iOS as the dedicated toggle rather than being
          * guessed into play-or-pause from a state we do not own.
+         *
+         * Pause, play/pause, headset-hook and stop are dropped during the arbitration window
+         * unless they come from [STEERING_WHEEL_PACKAGE]. PLAY, NEXT and PREV always go through.
          */
         override fun onMediaButtonEvent(intent: Intent): Boolean {
             @Suppress("DEPRECATION")
             val ev = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
                 ?: return super.onMediaButtonEvent(intent)
             if (ev.action != KeyEvent.ACTION_DOWN) return true
+            val caller = callerLabel()
+            val detail = "key ${ev.keyCode} source=${ev.source} flags=0x${Integer.toHexString(ev.flags)} device=${ev.deviceId} $caller"
+            val pauseType = ev.keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE ||
+                ev.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                ev.keyCode == KeyEvent.KEYCODE_HEADSETHOOK ||
+                ev.keyCode == KeyEvent.KEYCODE_MEDIA_STOP
+            if (pauseType && dropPauseKey(caller)) {
+                log.i("transport: $detail dropped — arbitration window")
+                return true
+            }
             val idx = when (ev.keyCode) {
                 KeyEvent.KEYCODE_MEDIA_PLAY -> NativeCore.MediaBtn.PLAY
                 KeyEvent.KEYCODE_MEDIA_PAUSE -> NativeCore.MediaBtn.PAUSE
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> NativeCore.MediaBtn.PLAY_PAUSE
                 KeyEvent.KEYCODE_MEDIA_NEXT -> NativeCore.MediaBtn.NEXT
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS -> NativeCore.MediaBtn.PREV
+                KeyEvent.KEYCODE_MEDIA_STOP -> {
+                    log.i("transport: $detail dropped — stop is not sent to the phone")
+                    return true
+                }
                 else -> return super.onMediaButtonEvent(intent)
             }
-            // Pause-type keys (127, 85, 79) still go to the phone. The last two drives had
-            // no `transport: key` line before the stream-102 teardown, so swallowing them
-            // would drop a real steering-wheel press. source and flags separate a wheel
-            // event from a head-unit arbitration key on the next capture.
-            val detail = "key ${ev.keyCode} source=${ev.source} flags=0x${Integer.toHexString(ev.flags)} device=${ev.deviceId}"
-            log.i("transport: $detail")
+            log.i("transport: $detail forwarded")
             send(idx, detail)
             return true
         }
+    }
+
+    /** `package=` and `uid=` of the controller that delivered this callback. */
+    private fun callerLabel(): String {
+        if (Build.VERSION.SDK_INT < 29) return "caller=package=? uid=?"
+        val info = runCatching { session?.currentControllerInfo }.getOrNull()
+            ?: return "caller=package=? uid=?"
+        val pkg = info.packageName ?: "?"
+        noteCaller(pkg, info.uid)
+        return "caller=package=$pkg uid=${info.uid}"
+    }
+
+    /**
+     * True when a pause-type key should stay on the car. The wheel package is forwarded
+     * even inside the window, once [STEERING_WHEEL_PACKAGE] is filled in from a capture.
+     */
+    private fun dropPauseKey(caller: String): Boolean {
+        if (!inArbitration()) return false
+        if (STEERING_WHEEL_PACKAGE.isEmpty()) return true
+        return !caller.contains("package=$STEERING_WHEEL_PACKAGE ")
     }
 
     private fun send(index: Int, what: String) {

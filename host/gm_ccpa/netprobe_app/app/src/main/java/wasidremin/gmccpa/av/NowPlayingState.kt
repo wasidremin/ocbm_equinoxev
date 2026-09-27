@@ -182,10 +182,16 @@ class NowPlayingState {
     /**
      * Session ended. Everything goes AND the cleared picture is published — a card still showing the
      * last track over a dead session is the metadata twin of the frozen-frame bug that
-     * `CarPlayActivity.onSessionEnded` was written to fix.
+     * `CarPlayActivity.onSessionEnded` was written to fix. [emit] runs after the lock, the same
+     * way [dispatch] does, so a consumer cannot re-enter under the monitor.
      */
-    @Synchronized
-    fun clear() { snapshot = Snapshot(); emit(snapshot) }
+    fun clear() {
+        val cleared = synchronized(this) {
+            snapshot = Snapshot()
+            snapshot
+        }
+        emit(cleared)
+    }
 
     private fun emit(s: Snapshot) {
         runCatching { onMetadataChanged?.invoke(s) }
