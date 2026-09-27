@@ -1,24 +1,27 @@
 package wasidremin.gmccpa
 
 import android.app.Activity
-import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.ColorDrawable
 import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
+import android.view.Window
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import wasidremin.gmccpa.logging.CapturePrefs
+import wasidremin.gmccpa.logging.LogCapture
 
 /**
  * The launcher screen's chrome. Kept out of [MainActivity] so the session logic there is not
@@ -122,76 +125,31 @@ enum class LogAction(val label: String) {
 /** dp -> px, against the density the Activity is actually running at. */
 fun Context.dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
-/** Rounded-rectangle background, used for the pill buttons and the credential chip. */
-private fun pillBg(fill: Int, stroke: Int, radiusPx: Int, strokePx: Int) =
-    GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = radiusPx.toFloat()
-        setColor(fill)
-        if (stroke != Color.TRANSPARENT) setStroke(strokePx, stroke)
-    }
-
 /**
  * The launcher screen.
  *
- * Deliberately minimal: connection state, one supporting line, Start and Stop. The Wi-Fi credentials
- * and the adapter-control verbs are real inputs but are not glanceable information, so they sit
- * behind a chip and a secondary row rather than competing with the state readout.
+ * Settings sit behind the startup animation. The gear on that animation opens them; Done puts the
+ * animation back when no session is live. A live session uses Back to CarPlay on the status strip.
  */
 class LauncherUi(private val act: Activity) {
 
-    /** Fired by the two primary buttons; wired up by [MainActivity]. */
     var onStart: () -> Unit = {}
     var onStop: () -> Unit = {}
-    /**
-     * Driver-triggered recovery. Deliberately next to Start/Stop rather than in the adapter row: it is
-     * the thing to press when everything *looks* right and CarPlay still will not start, which is the
-     * situation a driver actually finds themselves in.
-     */
     var onRecover: () -> Unit = {}
-    /**
-     * Restart Session: drop the phone, release the box, wait, re-claim — the one action that fixed
-     * things in the old app, and the one a driver needs when they cannot force-stop the app or reach
-     * the adapter. Primary-sized on its own row: a fourth pill in the Start/Stop/Recover row measured
-     * within ~5 % of the reference width, and a clipped button in a moving vehicle is worse than a
-     * second row.
-     */
     var onRestart: () -> Unit = {}
-    /** Fired when the credentials dialog is confirmed, so the caller can push them into the probe. */
     var onCredentials: (ssid: String, pass: String, chan: String) -> Unit = { _, _, _ -> }
-    /** Equinox switch. The caller persists it and tears the link down so the next Start is a fresh edge. */
     var onAdapterWifi: (Boolean) -> Unit = {}
     var adapterWifi: Boolean = false
         private set
-    /** Fired by the secondary row; the caller decides whether there is a link to send it on. */
     var onBoxAction: (BoxAction) -> Unit = {}
-    /** Fired by the capture row — export, scope toggle, status. */
     var onLogAction: (LogAction) -> Unit = {}
-    /** The driver wants the CarPlay picture back after opening settings from that screen. */
+    var onCaptureScope: (LogCapture.Scope) -> Unit = {}
     var onReturnToCarPlay: () -> Unit = {}
-    /** A view option changed. The CarPlay screen applies bar visibility immediately. */
     var onScreenChanged: () -> Unit = {}
-    /** The sidebar toggle changed. A live session has to restart; the width is fixed at subscribe. */
     var onSidebarChanged: () -> Unit = {}
-    /** True while a CarPlay session is on screen. The intro must not cover settings in that case. */
     var sessionIsLive: () -> Boolean = { false }
-    /** Close the app. The caller stops the session first. */
     var onClose: () -> Unit = {}
 
-    // Credential state lives here as plain strings, NOT as EditTexts held across dialog lifetimes:
-    // a dialog's views are torn down on dismiss, so keeping references to them means reading stale or
-    // detached widgets on the next session start.
-    //
-    // PERSISTED, and shipped BLANK. Until 2026-09-21 these were process-memory only, prefilled with
-    // the Silverado's hotspot. The Equinox EV's SSID differs from that default by one space
-    // (`myChevrolet32D4` vs `myChevrolet 32D4`); the driver corrected it in the dialog, the phone
-    // auto-joined, and then a Play update relaunched the process with the default back in place.
-    // The next SUBSCRIBE pushed the wrong SSID as a config CHANGE, which made the box tear down and
-    // rebuild its BT stack — mid-handoff, with the phone on the hotspot and a connect-out just
-    // accepted — and the session after that handed the phone a network that does not exist. Two
-    // drives lost to a value the user had already typed correctly. Blank is the safe default:
-    // OcbmProbe REFUSES a credential-less SUBSCRIBE with a message naming the missing field, so a
-    // fresh install cannot silently push a guess.
     var ssid: String = ""; private set
     var pass: String = ""; private set
     var chan: String = "36"; private set
@@ -204,265 +162,69 @@ class LauncherUi(private val act: Activity) {
         AudioRoute.load(act)
     }
 
+    private val intro = StartupAnimationView(act)
+    private val introGear = IntroSettingsButton(act) { openIntroSettings() }
+    private var introRestore: Runnable? = null
+    private val uiLog = ProbeLog.sub("ui")
+
+    private lateinit var settingsHost: LinearLayout
+    private lateinit var scroller: ScrollView
+    private lateinit var strip: EqStatusStrip
+    private lateinit var rail: EqNavRail
+    private lateinit var pages: List<LinearLayout>
+    private lateinit var phoneRow: EqRow
+    private lateinit var pairRow: EqRow
+    private lateinit var startRow: EqRow
+    private lateinit var restartButton: TextView
+    private lateinit var applyRow: EqRow
+    private lateinit var hotspotRow: EqRow
+    private lateinit var hotspotValue: TextView
+    private lateinit var infoRow: EqRow
+    private lateinit var scopeRow: EqRow
+    private lateinit var logStatusRow: EqRow
+    private lateinit var wifiToggle: EqToggle
+    private var scopeControl: EqSegmented? = null
+    private lateinit var audioRow: EqRow
+
+    private var selectedTab = 0
+    private var restartBusy = false
+    private var pairingCode = ""
+    private var lastState = LinkState.IDLE
+    private var lastDetail = "starting…"
+    private var logStatusText = ""
+    private var adapterInfoText = ""
+    private var displayResetDetail: String? = null
+    private var settingsTouchedAt = 0L
+    private var lastAnimStage: StartupAnimationView.Stage? = null
+    private var builtWidthPx = 0
+    private var rebuilding = false
+
+    val root: View = buildRoot()
+
     private fun persistCredentials() {
         act.getSharedPreferences(CRED_PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_SSID, ssid).putString(KEY_PASS, pass).putString(KEY_CHAN, chan).apply()
     }
 
-    private val dot = View(act)
-    private val stateText = TextView(act)
-    private val detailText = TextView(act)
-    private val pairText = TextView(act)
-    private val credSummary = TextView(act)
-    private lateinit var adapterPill: Button
-
-    private lateinit var actions: LinearLayout
-    private lateinit var returnRow: LinearLayout
-    private lateinit var restartRow: LinearLayout
-    /** Kept so [setRestartBusy] can relabel it; the only pill whose text changes. */
-    private lateinit var restartPill: Button
-    private lateinit var boxRow: LinearLayout
-    private lateinit var logRow: LinearLayout
-    private lateinit var logRow2: LinearLayout
-    private lateinit var column: LinearLayout
-    private lateinit var sessionPage: LinearLayout
-    private lateinit var screenPage: LinearLayout
-    private lateinit var audioPage: LinearLayout
-    private lateinit var logsPage: LinearLayout
-    private lateinit var audioAdapter: Button
-    private lateinit var audioBluetooth: Button
-    private lateinit var sidebarButton: Button
-    private val screenModeButtons = mutableListOf<Button>()
-    private val scaleButtons = mutableListOf<Button>()
-    private val safeButtons = mutableListOf<Button>()
-    private val intro = StartupAnimationView(act)
-    private val introGear = IntroSettingsButton(act) { openIntroSettings() }
-    private var introRestore: Runnable? = null
-    private val uiLog = ProbeLog.sub("ui")
-    private val tabButtons = mutableListOf<Button>()
-    private var selectedTab = 0
-
-    /** Every button, with the sp size it should have at scale 1.0. Re-sized in [applyMetrics]. */
-    private val pills = mutableListOf<Pair<Button, Float>>()
-
-    /** Last scale applied, so a layout pass that changes nothing does no work. */
-    private var lastScale = -1f
-
-    val root: View = buildRoot()
-
-    // ---- construction ---------------------------------------------------------------------------
-
-    private fun pill(labelText: String, accent: Int, filled: Boolean, baseSp: Float,
-                     onClick: () -> Unit): Button =
-        Button(act).apply {
-            text = labelText
-            isAllCaps = true
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(if (filled) Palette.BG else accent)
-            stateListAnimator = null       // the default elevation lift fights a flat pill
-            setOnClickListener { onClick() }
-            setTag(if (filled) accent else Color.TRANSPARENT)   // fill colour, re-read on re-style
-            pills += this to baseSp
-        }
-
     private fun buildRoot(): View {
-        // Left rail is the earlier app's settings navigation: back, the pages, close, version.
-        // The pages hold what used to be one column of pills, split the way that screen split
-        // Phones / Control / Logs. ScrollView so a short panel degrades to a scroll instead of
-        // clipping Stop off the bottom.
-        val content = LinearLayout(act).apply {
+        EqTheme.init(act, 0)
+        val frame = object : FrameLayout(act) {
+            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+                settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
+                return super.dispatchTouchEvent(ev)
+            }
+        }
+        settingsHost = LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Palette.SURFACE)
+            background = EqTheme.screenBackground()
         }
-        content.addView(buildRail(), LinearLayout.LayoutParams(act.dp(120), ViewGroup.LayoutParams.MATCH_PARENT))
-
-        val scroller = ScrollView(act).apply {
-            isFillViewport = true
-            setBackgroundColor(Palette.BG)
-            overScrollMode = View.OVER_SCROLL_NEVER
-        }
-        column = LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-
-        // --- state: colour dot above the one word that matters --------------------------------
-        // The dot sits ABOVE rather than beside the headline on purpose. Beside it, the row has to be
-        // full-width for the headline's autosizer to have a bound to shrink against, which drags the
-        // pair to the left edge while everything below stays centred. Stacked, both are centred and
-        // the headline still gets a full-width slot to autosize within.
-        dot.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Palette.IDLE)
-        }
-        column.addView(dot, LinearLayout.LayoutParams(0, 0))       // sized in applyMetrics
-        stateText.apply {
-            text = LinkState.IDLE.label
-            setTextColor(Palette.TEXT)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            gravity = Gravity.CENTER_HORIZONTAL
-            setSingleLine()
-            letterSpacing = 0.02f
-        }
-        column.addView(stateText, LinearLayout.LayoutParams(-1, -2))
-
-        // --- detail line: the sentence the old screen used as its entire UI -------------------
-        detailText.apply {
-            text = "starting…"
-            setTextColor(Palette.TEXT_DIM)
-            gravity = Gravity.CENTER_HORIZONTAL
-            maxLines = 2
-        }
-        column.addView(detailText, LinearLayout.LayoutParams(-1, -2))
-
-        // --- pairing code: hidden until the box sends one -------------------------------------
-        // When it does appear it is the most important thing on the screen: it has to be read off
-        // this display and matched against a prompt on the iPhone.
-        pairText.apply {
-            setTextColor(Palette.PHONE)
-            typeface = Typeface.create("monospace", Typeface.BOLD)
-            gravity = Gravity.CENTER_HORIZONTAL
-            letterSpacing = 0.28f
-            setSingleLine()
-            visibility = View.GONE
-        }
-        column.addView(pairText, LinearLayout.LayoutParams(-1, -2))
-
-        sessionPage = page()
-        // Shown only while the driver came here from the CarPlay screen and the session is still up.
-        returnRow = LinearLayout(act).apply {
-            orientation = LinearLayout.HORIZONTAL
-            visibility = View.GONE
-        }
-        returnRow.addView(pill("Back to CarPlay", Palette.LIVE, filled = true, baseSp = 26f) { onReturnToCarPlay() })
-        sessionPage.addView(returnRow, LinearLayout.LayoutParams(-2, -2))
-
-        actions = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(pill("Start", Palette.LIVE, filled = true, baseSp = 26f) { onStart() })
-        actions.addView(pill("Stop", Palette.TEXT_DIM, filled = false, baseSp = 26f) { onStop() })
-        actions.addView(pill("Recover", Palette.PHONE, filled = false, baseSp = 26f) { onRecover() })
-        sessionPage.addView(actions, LinearLayout.LayoutParams(-2, -2))
-
-        restartRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        restartPill = pill(RESTART_LABEL, Palette.WORKING, filled = false, baseSp = 26f) { onRestart() }
-        restartRow.addView(restartPill)
-        sessionPage.addView(restartRow, LinearLayout.LayoutParams(-2, -2))
-
-        boxRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        for (a in BoxAction.values()) {
-            boxRow.addView(pill(a.label, Palette.LINE, filled = false, baseSp = 17f) { onBoxAction(a) }
-                .also { it.setTextColor(Palette.TEXT_DIM) })
-        }
-        sessionPage.addView(boxRow, LinearLayout.LayoutParams(-2, -2))
-
-        adapterPill = pill("Adapter Wi-Fi: OFF", Palette.PHONE, filled = false, baseSp = 17f) {
-            setAdapterWifi(!adapterWifi)
-            onAdapterWifi(adapterWifi)
-        }.also { it.setTextColor(Palette.TEXT_DIM) }
-        sessionPage.addView(adapterPill, LinearLayout.LayoutParams(-2, -2))
-
-        credSummary.apply {
-            setTextColor(Palette.TEXT_DIM)
-            gravity = Gravity.CENTER
-            setSingleLine()
-            setOnClickListener { showCredentialsDialog() }
-        }
-        sessionPage.addView(credSummary, LinearLayout.LayoutParams(-2, -2))
-        refreshCredSummary()
-        column.addView(sessionPage, LinearLayout.LayoutParams(-1, -2))
-
-        screenPage = page()
-        screenPage.addView(sectionTitle("Screen"))
-        screenPage.addView(bodyCopy(
-            "Full screen hides the car's bars. The sidebar is the 108 dp icon rail, and turning it on or off restarts a live session so the picture matches."
-        ))
-        for (mode in ScreenMode.values()) {
-            val b = pill(mode.label, Palette.LIVE, filled = false, baseSp = 18f) {
-                DisplayPrefs.setMode(act, mode)
-                refreshScreenSummary()
-                onScreenChanged()
-            }
-            screenModeButtons += b
-            screenPage.addView(b, LinearLayout.LayoutParams(-2, -2))
-        }
-        sidebarButton = pill("Sidebar: OFF", Palette.PHONE, filled = false, baseSp = 18f) {
-            val on = !DisplayPrefs.sidebar(act)
-            DisplayPrefs.setSidebar(act, on)
-            refreshScreenSummary()
-            onSidebarChanged()
-        }
-        screenPage.addView(sidebarButton, LinearLayout.LayoutParams(-2, -2))
-        screenPage.addView(sectionTitle("CarPlay size"))
-        screenPage.addView(bodyCopy(
-            "Larger makes the icons and text bigger. Applies next connection."
-        ))
-        val scaleRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        for (percent in DisplayPrefs.SCALE_PRESETS) {
-            val b = pill("$percent%", Palette.LIVE, filled = false, baseSp = 16f) {
-                DisplayPrefs.setUiScale(act, percent)
-                refreshScreenSummary()
-            }
-            scaleButtons += b
-            scaleRow.addView(b)
-        }
-        screenPage.addView(scaleRow, LinearLayout.LayoutParams(-2, -2))
-        screenPage.addView(sectionTitle("Right margin"))
-        screenPage.addView(bodyCopy(
-            "Keeps Now Playing off the right edge. Applies next connection."
-        ))
-        val safeRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        for (px in DisplayPrefs.SAFE_PRESETS) {
-            val b = pill("${px}px", Palette.PHONE, filled = false, baseSp = 16f) {
-                DisplayPrefs.setSafeRightPx(act, px)
-                refreshScreenSummary()
-            }
-            safeButtons += b
-            safeRow.addView(b)
-        }
-        screenPage.addView(safeRow, LinearLayout.LayoutParams(-2, -2))
-        column.addView(screenPage, LinearLayout.LayoutParams(-1, -2))
-        refreshScreenSummary()
-
-        audioPage = page()
-        audioPage.addView(sectionTitle("Audio source"))
-        audioPage.addView(bodyCopy(
-            "Adapter plays CarPlay through this app and selects it as the car's media source. Bluetooth leaves the stereo on the phone and this app stays quiet."
-        ))
-        audioAdapter = pill("Adapter", Palette.LIVE, filled = true, baseSp = 22f) { setAudioRoute(false) }
-        audioBluetooth = pill("Bluetooth", Palette.PHONE, filled = false, baseSp = 22f) { setAudioRoute(true) }
-        val audioRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        audioRow.addView(audioAdapter)
-        audioRow.addView(audioBluetooth)
-        audioPage.addView(audioRow, LinearLayout.LayoutParams(-2, -2))
-        column.addView(audioPage, LinearLayout.LayoutParams(-1, -2))
-        refreshAudioRoute()
-
-        logsPage = page()
-        logsPage.addView(sectionTitle("Logs"))
-        // Six pills in one row clipped Clear Logs off the Equinox (2026-09-21). Three per row fits.
-        logRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        logRow2 = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-        LogAction.values().forEachIndexed { i, a ->
-            (if (i < 3) logRow else logRow2)
-                .addView(pill(a.label, Palette.LINE, filled = false, baseSp = 17f) { onLogAction(a) }
-                    .also { it.setTextColor(Palette.TEXT_DIM) })
-        }
-        logsPage.addView(logRow, LinearLayout.LayoutParams(-2, -2))
-        logsPage.addView(logRow2, LinearLayout.LayoutParams(-2, -2))
-        column.addView(logsPage, LinearLayout.LayoutParams(-1, -2))
-
-        showTab(0)
-        scroller.addView(column, ViewGroup.LayoutParams(-1, -2))
-        content.addView(scroller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-
-        content.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or_, ob ->
-            if (r - l != or_ - ol || b - t != ob - ot) applyMetrics(r - l, b - t)
-        }
-        // The animation sits above the diagnostic screen. A long press hides it so the buttons
-        // can be reached; a live session does not show it at all.
+        frame.addView(settingsHost, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        fillSettings()
         intro.setPhoneName(DisplayPrefs.lastPhoneName(act))
         intro.setOnLongClickListener {
             uiLog.i("intro: hidden for diagnostics")
+            settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
             hideIntroLayer()
             introRestore?.let { intro.removeCallbacks(it) }
             val restore = Runnable {
@@ -474,21 +236,259 @@ class LauncherUi(private val act: Activity) {
             intro.postDelayed(restore, 15_000)
             true
         }
-        val frame = FrameLayout(act)
-        frame.addView(content, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         frame.addView(intro, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         frame.addView(introGear, FrameLayout.LayoutParams(act.dp(72), act.dp(72), Gravity.TOP or Gravity.END).apply {
             topMargin = act.dp(20)
             marginEnd = act.dp(28)
         })
+        settingsHost.addOnLayoutChangeListener { _, l, _, r, _, _, _, _, _ ->
+            considerWidth(r - l)
+        }
         return frame
     }
 
-    /** Gear on the light bar. Leaves the animation down and opens the screen settings. */
+    private fun considerWidth(w: Int) {
+        if (w <= 0 || rebuilding) return
+        val baseline = if (builtWidthPx > 0) builtWidthPx
+            else (1100f * act.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        val first = builtWidthPx == 0
+        if (first) builtWidthPx = w
+        if (kotlin.math.abs(w - baseline) / baseline.toFloat() <= 0.10f) return
+        rebuilding = true
+        settingsHost.post {
+            fillSettings(w)
+            rebuilding = false
+        }
+    }
+
+    private fun fillSettings(widthPx: Int = 0) {
+        if (widthPx > 0) {
+            EqTheme.init(act, widthPx)
+            builtWidthPx = widthPx
+        }
+        settingsHost.removeAllViews()
+        val version = runCatching {
+            act.packageManager.getPackageInfo(act.packageName, 0).versionName
+        }.getOrNull() ?: ""
+        rail = EqNavRail(act, listOf("Connection", "Display", "Audio", "Advanced"), { showTab(it) }, version)
+        settingsHost.addView(rail, LinearLayout.LayoutParams(
+            EqTheme.px(300f), ViewGroup.LayoutParams.MATCH_PARENT))
+
+        scroller = ScrollView(act).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        val column = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(EqTheme.px(36f), EqTheme.px(28f), EqTheme.px(36f), EqTheme.px(36f))
+        }
+        strip = EqStatusStrip(act)
+        column.addView(strip, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = EqTheme.px(8f) })
+
+        val connection = page("Connection")
+        val display = page("Display")
+        val audio = page("Audio")
+        val advanced = page("Advanced")
+        pages = listOf(connection, display, audio, advanced)
+        buildConnection(connection)
+        buildDisplay(display)
+        buildAudio(audio)
+        buildAdvanced(advanced)
+        for (p in pages) column.addView(p, LinearLayout.LayoutParams(-1, -2))
+        this.scroller.addView(column, ViewGroup.LayoutParams(-1, -2))
+        settingsHost.addView(this.scroller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        showTab(selectedTab)
+        refreshDynamic()
+    }
+
+    private fun page(title: String): LinearLayout = LinearLayout(act).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(eqPageTitle(act, title))
+        addView(EqLightLine(act), LinearLayout.LayoutParams(-1, EqTheme.px(2f)).apply {
+            bottomMargin = EqTheme.px(4f)
+        })
+    }
+
+    private fun buildConnection(page: LinearLayout) {
+        pairRow = EqRow(act, pairingCode.ifEmpty { " " })
+        pairRow.titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(40f))
+        pairRow.titleView.typeface = EqTheme.Weight.LIGHT.face
+        pairRow.titleView.letterSpacing = 0.18f
+        page.addView(pairRow, 0)
+
+        phoneRow = EqRow(act, phoneTitle(), lastDetail)
+        restartButton = eqButton(act, if (restartBusy) "Restarting…" else "Restart", EqButtonStyle.SECONDARY) {
+            onRestart()
+        }
+        val restart = EqRow(
+            act, "Restart CarPlay",
+            "Reconnects the adapter and your iPhone (about 15 s)",
+            trailing = restartButton,
+        )
+        val stop = EqRow(act, "Stop CarPlay", onClick = { onStop() })
+        startRow = EqRow(act, "Start", onClick = { onStart() })
+        page.addView(eqSectionLabel(act, "Status"))
+        page.addView(EqCard(act).addRow(phoneRow).addRow(restart).addRow(stop).addRow(startRow))
+        page.addView(eqSectionLabel(act, "Phone"))
+        page.addView(EqCard(act).addRow(EqRow(
+            act, "Forget pairing",
+            "Clears the adapter and this app. Also forget this car on the iPhone.",
+            titleColor = EqTheme.DANGER,
+            onClick = { confirmForget() },
+        )))
+    }
+
+    private fun buildDisplay(page: LinearLayout) {
+        val scales = DisplayPrefs.SCALE_PRESETS
+        val scaleLabels = scales.map { "$it%" }
+        val scaleIndex = scales.indexOf(DisplayPrefs.uiScale(act)).coerceAtLeast(0)
+        val margins = DisplayPrefs.SAFE_PRESETS
+        val marginLabels = listOf("Off", "Small", "Medium", "Large", "Max")
+        val marginIndex = margins.indexOf(DisplayPrefs.safeRightPx(act)).let { if (it < 0) 2 else it }
+        val modes = listOf(
+            ScreenMode.SYSTEM_UI, ScreenMode.STATUS_HIDDEN, ScreenMode.NAV_HIDDEN, ScreenMode.FULLSCREEN,
+        )
+        val modeIndex = modes.indexOf(DisplayPrefs.mode(act)).let { if (it < 0) 3 else it }
+        page.addView(eqSectionLabel(act, "Picture"))
+        val card = EqCard(act)
+        card.addRow(EqRow(
+            act, "CarPlay size",
+            "Bigger icons and text. Applies at the next connection.",
+            trailing = EqSegmented(act, scaleLabels, scaleIndex) { i ->
+                DisplayPrefs.setUiScale(act, scales[i])
+                refreshDynamic()
+            },
+        ))
+        card.addRow(EqRow(
+            act, "Right margin",
+            "Keeps Now Playing off the right edge. Applies at the next connection.",
+            trailing = EqSegmented(act, marginLabels, marginIndex) { i ->
+                DisplayPrefs.setSafeRightPx(act, margins[i])
+                refreshDynamic()
+            },
+        ))
+        card.addRow(EqRow(
+            act, "Screen layout",
+            trailing = EqSegmented(act, listOf("Car bars", "No top", "No bottom", "Full"), modeIndex) { i ->
+                DisplayPrefs.setMode(act, modes[i])
+                onScreenChanged()
+            },
+        ))
+        card.addRow(EqRow(
+            act, "Sidebar",
+            "Home, media and voice buttons beside CarPlay. Restarts CarPlay.",
+            trailing = EqToggle(act, DisplayPrefs.sidebar(act)) { on ->
+                DisplayPrefs.setSidebar(act, on)
+                onSidebarChanged()
+            },
+        ))
+        page.addView(card)
+        applyRow = EqRow(
+            act, "Apply size now",
+            "Restarts CarPlay so this size is what the iPhone lays out.",
+            trailing = eqButton(act, "Restart", EqButtonStyle.SECONDARY) { onRestart() },
+        )
+        page.addView(applyRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(16f) })
+    }
+
+    private fun buildAudio(page: LinearLayout) {
+        val bt = AudioRoute.bluetooth
+        audioRow = EqRow(
+            act, "Audio source", audioSubtitle(bt),
+            trailing = EqSegmented(act, listOf("Adapter", "Bluetooth"), if (bt) 1 else 0) { i ->
+                AudioRoute.set(act, i == 1)
+                audioRow.setSubtitle(audioSubtitle(i == 1))
+            },
+        )
+        page.addView(eqSectionLabel(act, "Playback"))
+        page.addView(EqCard(act).addRow(audioRow))
+    }
+
+    private fun buildAdvanced(page: LinearLayout) {
+        wifiToggle = EqToggle(act, adapterWifi) { want ->
+            wifiToggle.setChecked(!want)
+            EqDialog.confirm(
+                act, "Adapter Wi-Fi", "Changing this restarts the connection",
+                if (want) "Turn on" else "Turn off", false,
+            ) {
+                wifiToggle.setChecked(want)
+                setAdapterWifi(want)
+                onAdapterWifi(want)
+            }
+        }
+        val chevron = eqValueChevron(act, hotspotLabel())
+        hotspotValue = chevron.getChildAt(0) as TextView
+        hotspotRow = EqRow(act, "Vehicle hotspot", trailing = chevron, onClick = { showCredentialsDialog() })
+        infoRow = EqRow(
+            act, "Adapter info",
+            adapterInfoText.ifEmpty { null },
+            trailing = EqChevron(act),
+            onClick = { onBoxAction(BoxAction.INFO) },
+        )
+        page.addView(eqSectionLabel(act, "Adapter"))
+        page.addView(EqCard(act)
+            .addRow(EqRow(act, "Adapter Wi-Fi", "The iPhone joins the adapter.", trailing = wifiToggle))
+            .addRow(hotspotRow)
+            .addRow(infoRow)
+            .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
+            .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() }))
+            .addRow(EqRow(
+                act, "Recover",
+                "Tries the automatic recovery steps now.",
+                onClick = { onRecover() },
+            )))
+
+        val granted = readLogsGranted()
+        val scope = CapturePrefs.scope(act)
+        scopeControl = EqSegmented(act, listOf("This app", "Whole car"), if (scope == LogCapture.Scope.WHOLE_OS) 1 else 0) { i ->
+            onScopePicked(i)
+        }
+        scopeRow = EqRow(act, "Log scope", scopeSubtitle(granted), trailing = scopeControl)
+        logStatusRow = EqRow(act, "Log status", logStatusText.ifEmpty { null }, onClick = { onLogAction(LogAction.STATUS) })
+        page.addView(eqSectionLabel(act, "Logs"))
+        page.addView(EqCard(act)
+            .addRow(EqRow(
+                act, "Upload logs",
+                trailing = eqButton(act, "Upload", EqButtonStyle.PRIMARY) { onLogAction(LogAction.UPLOAD) },
+            ))
+            .addRow(EqRow(act, "Export logs", onClick = { onLogAction(LogAction.EXPORT) }))
+            .addRow(scopeRow)
+            .addRow(logStatusRow)
+            .addRow(EqRow(act, "USB probe", onClick = { onLogAction(LogAction.USB_PROBE) }))
+            .addRow(EqRow(act, "Clear logs", titleColor = EqTheme.DANGER, onClick = { confirmClearLogs() })))
+        page.addView(eqSectionLabel(act, "App"))
+        page.addView(EqCard(act).addRow(EqRow(
+            act, "Close app",
+            titleColor = EqTheme.DANGER,
+            onClick = {
+                EqDialog.confirm(
+                    act, "Close app", "Stops CarPlay and closes the app", "Close", true,
+                ) { onClose() }
+            },
+        )))
+    }
+
+    private fun showTab(index: Int) {
+        selectedTab = index
+        if (::pages.isInitialized) {
+            pages.forEachIndexed { i, p -> p.visibility = if (i == index) View.VISIBLE else View.GONE }
+        }
+        if (::rail.isInitialized) rail.select(index)
+        if (::scroller.isInitialized) scroller.scrollTo(0, 0)
+    }
+
+    /** A GONE row inside an [EqCard] leaves its hairline. Hide that divider with the row. */
+    private fun setRowShown(row: View, shown: Boolean) {
+        row.visibility = if (shown) View.VISIBLE else View.GONE
+        val parent = row.parent as? LinearLayout ?: return
+        val i = parent.indexOfChild(row)
+        if (i > 0) parent.getChildAt(i - 1).visibility = row.visibility
+    }
+
     private fun openIntroSettings() {
         uiLog.i("intro: settings")
+        settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
         introRestore?.let { intro.removeCallbacks(it) }
         hideIntroLayer()
         showTab(1)
@@ -504,435 +504,288 @@ class LauncherUi(private val act: Activity) {
         introGear.visibility = View.VISIBLE
     }
 
-    private fun page(): LinearLayout = LinearLayout(act).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER_HORIZONTAL
-    }
-
-    private fun sectionTitle(text: String): TextView = TextView(act).apply {
-        this.text = text
-        setTextColor(Palette.TEXT)
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        gravity = Gravity.CENTER
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-    }
-
-    private fun bodyCopy(text: String): TextView = TextView(act).apply {
-        this.text = text
-        setTextColor(Palette.TEXT_DIM)
-        gravity = Gravity.CENTER
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-    }
-
-    private fun buildRail(): LinearLayout {
-        val rail = LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Palette.SURFACE)
-            setPadding(act.dp(8), act.dp(16), act.dp(8), act.dp(12))
-        }
-        rail.addView(railButton("Back") { onReturnToCarPlay() }, LinearLayout.LayoutParams(-1, -2))
-        listOf("Session", "Screen", "Audio", "Logs").forEachIndexed { i, name ->
-            val b = railButton(name) { showTab(i) }
-            tabButtons += b
-            rail.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = act.dp(8) })
-        }
-        rail.addView(View(act), LinearLayout.LayoutParams(0, 0, 1f))
-        rail.addView(railButton("Close") { onClose() }, LinearLayout.LayoutParams(-1, -2))
-        val version = TextView(act).apply {
-            val name = runCatching {
-                act.packageManager.getPackageInfo(act.packageName, 0).versionName
-            }.getOrNull() ?: ""
-            text = name
-            setTextColor(Palette.TEXT_DIM)
-            gravity = Gravity.CENTER
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        }
-        rail.addView(version, LinearLayout.LayoutParams(-1, -2).apply { topMargin = act.dp(8) })
-        return rail
-    }
-
-    private fun railButton(labelText: String, onClick: () -> Unit): Button =
-        Button(act).apply {
-            text = labelText
-            isAllCaps = false
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(Palette.TEXT)
-            stateListAnimator = null
-            setOnClickListener { onClick() }
-            background = pillBg(Color.TRANSPARENT, Color.TRANSPARENT, act.dp(20), 0)
-            setPadding(act.dp(4), act.dp(10), act.dp(4), act.dp(10))
-        }.also {
-            // LayoutParams applied by the caller via addView's default if we set them here.
-        }
-
-    private fun showTab(index: Int) {
-        selectedTab = index
-        val pages = listOf(sessionPage, screenPage, audioPage, logsPage)
-        pages.forEachIndexed { i, p -> p.visibility = if (i == index) View.VISIBLE else View.GONE }
-        tabButtons.forEachIndexed { i, b ->
-            val on = i == index
-            b.setTextColor(if (on) Palette.BG else Palette.TEXT)
-            b.background = pillBg(if (on) Palette.LIVE else Color.TRANSPARENT, Color.TRANSPARENT, act.dp(20), 0)
-        }
-    }
-
-    private fun setAudioRoute(bluetooth: Boolean) {
-        AudioRoute.set(act, bluetooth)
-        refreshAudioRoute()
-    }
-
-    private fun refreshAudioRoute() {
-        if (!::audioAdapter.isInitialized) return
-        val bt = AudioRoute.bluetooth
-        styleChoice(audioAdapter, !bt)
-        styleChoice(audioBluetooth, bt)
-    }
-
-    private fun styleChoice(b: Button, on: Boolean) {
-        b.setTextColor(if (on) Palette.BG else Palette.TEXT)
-        b.tag = if (on) Palette.LIVE else Color.TRANSPARENT
-        val h = b.minimumHeight.coerceAtLeast(act.dp(48))
-        b.background = pillBg(if (on) Palette.LIVE else Color.TRANSPARENT, Palette.LIVE, h / 2, act.dp(2))
-    }
-
-    // ---- responsive sizing ----------------------------------------------------------------------
-
-    /**
-     * Derive every size from the area actually granted.
-     *
-     * The reference panel is 1100x620dp — comfortably smaller than the emulator's 2400x960 and
-     * around what a head unit leaves an app after its own chrome. Bigger panels scale up (capped, so
-     * a huge dash does not turn into a billboard), smaller ones scale down to a floor that keeps the
-     * secondary row tappable.
-     */
-    private fun applyMetrics(wPx: Int, hPx: Int) {
-        if (wPx <= 0 || hPx <= 0) return
-        val d = act.resources.displayMetrics.density
-        val wDp = wPx / d
-        val hDp = hPx / d
-        val s = minOf(wDp / 1100f, hDp / 620f).coerceIn(0.5f, 1.35f)
-        if (kotlin.math.abs(s - lastScale) < 0.01f) return
-        lastScale = s
-
-        fun px(dpValue: Float) = (dpValue * s * d + 0.5f).toInt()
-        fun sp(v: Float) = v * s
-
-        column.setPadding(px(48f), px(32f), px(48f), px(32f))
-
-        // Headline. Autosizing is the part that makes this survive an unknown panel: the text shrinks
-        // itself down to the floor rather than clipping, so "LOOKING FOR ADAPTER" fits where it must.
-        stateText.setAutoSizeTextTypeUniformWithConfiguration(
-            maxOf(14, (sp(22f)).toInt()), maxOf(16, sp(64f).toInt()), 1,
-            TypedValue.COMPLEX_UNIT_SP)
-
-        val dotPx = px(26f)
-        (dot.layoutParams as LinearLayout.LayoutParams).apply {
-            width = dotPx; height = dotPx; bottomMargin = px(22f)
-        }
-        dot.requestLayout()
-
-        detailText.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(24f))
-        (detailText.layoutParams as LinearLayout.LayoutParams).topMargin = px(16f)
-
-        pairText.setAutoSizeTextTypeUniformWithConfiguration(
-            maxOf(14, sp(24f).toInt()), maxOf(16, sp(56f).toInt()), 1,
-            TypedValue.COMPLEX_UNIT_SP)
-        (pairText.layoutParams as LinearLayout.LayoutParams).topMargin = px(24f)
-
-        (returnRow.layoutParams as LinearLayout.LayoutParams).topMargin = px(40f)
-        (actions.layoutParams as LinearLayout.LayoutParams).topMargin = px(28f)
-        (restartRow.layoutParams as LinearLayout.LayoutParams).topMargin = px(20f)
-        (boxRow.layoutParams as LinearLayout.LayoutParams).topMargin = px(28f)
-        (logRow.layoutParams as LinearLayout.LayoutParams).topMargin = px(16f)
-        (logRow2.layoutParams as LinearLayout.LayoutParams).topMargin = px(8f)
-        (adapterPill.layoutParams as LinearLayout.LayoutParams).topMargin = px(20f)
-        (credSummary.layoutParams as LinearLayout.LayoutParams).topMargin = px(16f)
-
-        for ((b, baseSp) in pills) {
-            val primary = baseSp >= 20f
-            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(baseSp))
-            // The primary pair is sized for a glance-and-stab while moving; this Activity is declared
-            // distractionOptimized, so it is genuinely on screen in motion. The secondary row is
-            // smaller on purpose — it is a parked-and-deliberate action, not a driving one.
-            val h = px(if (primary) 88f else 60f)
-            b.minimumHeight = h
-            b.minHeight = h
-            val padH = px(if (primary) 48f else 26f)
-            b.setPadding(padH, 0, padH, 0)
-            val fill = b.tag as Int
-            val accent = if (fill != Color.TRANSPARENT) fill else
-                if (primary) Palette.TEXT_DIM else Palette.LINE
-            b.background = pillBg(fill, accent, h / 2, px(2f))
-            // The first button of each row carries no left margin so every row stays centred.
-            val parent = b.parent as? LinearLayout
-            val stacked = parent?.orientation == LinearLayout.VERTICAL
-            val firstInRow = parent?.getChildAt(0) === b
-            (b.layoutParams as? ViewGroup.MarginLayoutParams)?.apply {
-                leftMargin = if (stacked || firstInRow) 0 else px(if (primary) 24f else 12f)
-                if (stacked) topMargin = px(12f)
-            }
-        }
-
-        credSummary.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(19f))
-        credSummary.background = pillBg(Color.TRANSPARENT, Palette.LINE, px(32f), px(2f))
-        credSummary.setPadding(px(32f), px(16f), px(32f), px(16f))
-
-        column.requestLayout()
-    }
-
-    // ---- credentials ----------------------------------------------------------------------------
-
     fun setAdapterWifi(on: Boolean) {
         adapterWifi = on
-        if (::adapterPill.isInitialized) {
-            adapterPill.text = if (on) "Adapter Wi-Fi: ON" else "Adapter Wi-Fi: OFF"
-        }
-        refreshCredSummary()
+        if (::wifiToggle.isInitialized && wifiToggle.checked != on) wifiToggle.setChecked(on)
+        if (::hotspotValue.isInitialized) hotspotValue.text = hotspotLabel()
+        if (::hotspotRow.isInitialized) setRowShown(hotspotRow, !on)
     }
 
-    private fun refreshCredSummary() {
-        credSummary.text = when {
-            adapterWifi -> "Adapter Wi-Fi: the phone joins the adapter on channel 149"
-            ssid.isBlank() || pass.isBlank() ->
-                "Wi-Fi:  NOT SET — tap to enter the vehicle hotspot SSID and passphrase"
-            else -> "Wi-Fi:  $ssid   ·   ch $chan   ·   tap to edit"
-        }
-    }
+    private fun hotspotLabel(): String =
+        if (ssid.isBlank() || pass.isBlank()) "Not set" else "$ssid · ch $chan"
 
-    /**
-     * The credentials popup. Platform [AlertDialog] with the DeviceDefault dark alert theme — the
-     * light default would flash a white sheet on a dark dash at night.
-     */
     fun showCredentialsDialog() {
-        val pad = act.dp(40)
+        val dialog = Dialog(act)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setDimAmount(0.6f)
         val body = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, act.dp(24), pad, act.dp(8))
+            background = EqTheme.rounded(0xFF111826.toInt(), 28f, EqTheme.CARD_LINE)
+            setPadding(EqTheme.px(40f), EqTheme.px(36f), EqTheme.px(40f), EqTheme.px(28f))
+            addView(EqTheme.text(act, 28f, EqTheme.TEXT, EqTheme.Weight.LIGHT).apply { text = "Vehicle hotspot" })
         }
-
         fun field(labelText: String, value: String, numeric: Boolean): EditText {
-            body.addView(TextView(act).apply {
-                text = labelText
-                setTextColor(Palette.TEXT_DIM)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                isAllCaps = true
-                letterSpacing = 0.08f
-            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = act.dp(20) })
+            body.addView(EqTheme.text(act, 14f, EqTheme.ACCENT, EqTheme.Weight.MEDIUM).apply {
+                text = labelText.uppercase()
+                letterSpacing = 0.12f
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(18f) })
             val e = EditText(act).apply {
                 setText(value)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-                setTextColor(Palette.TEXT)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(22f))
+                setTextColor(EqTheme.TEXT)
+                setHintTextColor(EqTheme.TEXT_FAINT)
                 inputType = if (numeric) InputType.TYPE_CLASS_NUMBER
-                            else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                    else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
                 setSingleLine()
+                background = null
             }
-            body.addView(e, LinearLayout.LayoutParams(-1, -2))
+            body.addView(e, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(6f) })
             return e
         }
-
-        // The passphrase is shown, not masked. It is a fixed vehicle-hotspot credential that has to be
-        // read off this screen and typed into a phone during bring-up; masking it would help nobody
-        // and would hide typos in the one value whose mistyping is silent — the phone simply never
-        // joins, and per docs/06 §5.4 the dead network then poisons the next attempt.
-        val eSsid = field("Hotspot SSID", ssid, numeric = false)
-        val ePass = field("Passphrase", pass, numeric = false)
-        val eChan = field("Channel", chan, numeric = true)
-
-        AlertDialog.Builder(act, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Vehicle hotspot")
-            .setView(body)
-            .setPositiveButton("Save") { _, _ ->
-                ssid = eSsid.text.toString().trim()
-                pass = ePass.text.toString().trim()
-                chan = eChan.text.toString().trim()
-                persistCredentials()
-                refreshCredSummary()
-                onCredentials(ssid, pass, chan)
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        val eSsid = field("Hotspot SSID", ssid, false)
+        val ePass = field("Passphrase", pass, false)
+        val eChan = field("Channel", chan, true)
+        val buttons = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        buttons.addView(eqButton(act, "Cancel", EqButtonStyle.SECONDARY) { dialog.dismiss() })
+        buttons.addView(eqButton(act, "Save", EqButtonStyle.PRIMARY) {
+            ssid = eSsid.text.toString().trim()
+            pass = ePass.text.toString().trim()
+            chan = eChan.text.toString().trim()
+            persistCredentials()
+            if (::hotspotValue.isInitialized) hotspotValue.text = hotspotLabel()
+            onCredentials(ssid, pass, chan)
+            dialog.dismiss()
+        }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(16f) })
+        body.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(32f) })
+        dialog.setContentView(body, ViewGroup.LayoutParams(EqTheme.px(720f), ViewGroup.LayoutParams.WRAP_CONTENT))
+        dialog.show()
     }
 
-    /** Set the credentials from outside the dialog — the `--es ssid/pass/chan` scripted path. */
     fun setCredentials(newSsid: String?, newPass: String?, newChan: String?) = act.runOnUiThread {
         if (newSsid == null && newPass == null && newChan == null) return@runOnUiThread
         newSsid?.let { ssid = it }
         newPass?.let { pass = it }
         newChan?.let { chan = it }
         persistCredentials()
-        refreshCredSummary()
+        if (::hotspotValue.isInitialized) hotspotValue.text = hotspotLabel()
     }
 
-    // ---- state ----------------------------------------------------------------------------------
-
-    /**
-     * The single UI update channel. [detail] is the free-form sentence the session code already
-     * produces; [state] is what makes it glanceable.
-     */
     fun setState(state: LinkState, detail: String) = act.runOnUiThread {
         if (act.isFinishing) return@runOnUiThread
-        stateText.text = state.label
-        (dot.background as GradientDrawable).setColor(state.color)
-        detailText.text = detail
-        if (sessionIsLive()) {
+        val stage = StartupAnimationView.stageFor(state)
+        val prevStage = lastAnimStage
+        lastState = state
+        lastDetail = detail
+        if (state == LinkState.LIVE) displayResetDetail = null
+        refreshDynamic()
+        if (sessionIsLive() || state == LinkState.LIVE) {
             introRestore?.let { intro.removeCallbacks(it) }
             hideIntroLayer()
+            lastAnimStage = stage
             return@runOnUiThread
         }
-        intro.setStage(
-            StartupAnimationView.stageFor(state),
-            StartupAnimationView.statusFor(state),
-            if (state == LinkState.FAILED) detail else null,
-        )
+        val status = if (detail == "Waiting for your iPhone") detail else StartupAnimationView.statusFor(state)
+        val animDetail = when {
+            state == LinkState.FAILED -> detail
+            displayResetDetail != null -> displayResetDetail
+            else -> null
+        }
+        intro.setStage(stage, status, animDetail)
+        if (intro.visibility != View.VISIBLE && prevStage != null && stage != prevStage) {
+            val idle = android.os.SystemClock.elapsedRealtime() - settingsTouchedAt
+            if (idle >= 30_000L) showIntroLayer()
+        }
+        lastAnimStage = stage
     }
 
-    /** Saved name first, then the name from `CT_PHONE_IDENT`, so the line is right before the phone answers. */
     fun setPhoneName(name: String?) = act.runOnUiThread {
         val clean = name?.trim()?.takeIf { it.isNotEmpty() } ?: return@runOnUiThread
         DisplayPrefs.setLastPhoneName(act, clean)
         intro.setPhoneName(clean)
+        refreshDynamic()
     }
 
-    /** A session is already up (settings, or a return to the launcher). Leave the diagnostics reachable. */
     fun concealIntro() {
         introRestore?.let { intro.removeCallbacks(it) }
         hideIntroLayer()
     }
 
-    /** The CarPlay session ended. The wait animation starts again from the first frame. */
     fun resetIntro() = act.runOnUiThread {
         if (act.isFinishing) return@runOnUiThread
         introRestore?.let { intro.removeCallbacks(it) }
         intro.reset()
-        introGear.visibility = View.VISIBLE
+        showIntroLayer()
     }
 
-    /** Show (or, on an empty code, hide) the box's pairing code. */
     fun setPairingCode(code: String) = act.runOnUiThread {
         if (act.isFinishing) return@runOnUiThread
-        pairText.text = code
-        pairText.visibility = if (code.isEmpty()) View.GONE else View.VISIBLE
+        pairingCode = code
+        refreshDynamic()
     }
 
-    /** Free-form message shown in the detail line without disturbing the state word. */
     fun setDetail(detail: String) = act.runOnUiThread {
-        if (!act.isFinishing) detailText.text = detail
+        if (act.isFinishing) return@runOnUiThread
+        lastDetail = detail
+        refreshDynamic()
     }
 
-    /**
-     * Relabel the restart pill while a restart is in flight. The pill stays enabled: a repeat press
-     * is rejected by `MainActivity.requestRestart` with its own detail line, and a disabled pill on a
-     * dark dash reads as missing rather than busy.
-     */
     fun setRestartBusy(busy: Boolean) = act.runOnUiThread {
-        if (!act.isFinishing) restartPill.text = if (busy) "Restarting…" else RESTART_LABEL
+        if (act.isFinishing) return@runOnUiThread
+        restartBusy = busy
+        if (::restartButton.isInitialized) restartButton.text = if (busy) "Restarting…" else "Restart"
     }
 
-    /** The gear on the CarPlay screen landed here. Show the way back while the session is still up. */
+    /** Refreshes the strip. Back to CarPlay is shown only while a session is live. */
     fun setReturnToCarPlay(show: Boolean) = act.runOnUiThread {
-        if (!act.isFinishing && ::returnRow.isInitialized) {
-            returnRow.visibility = if (show) View.VISIBLE else View.GONE
+        if (act.isFinishing) return@runOnUiThread
+        // The CarPlay screen passes true when it wants the way back. The button still
+        // follows the session, so a stale true cannot show it after the session ends.
+        if (show && !(sessionIsLive() || lastState == LinkState.LIVE)) return@runOnUiThread
+        refreshDynamic()
+    }
+
+    fun setLogStatus(text: String) = act.runOnUiThread {
+        if (act.isFinishing) return@runOnUiThread
+        logStatusText = text
+        if (::logStatusRow.isInitialized) logStatusRow.setSubtitle(text)
+    }
+
+    fun setAdapterInfo(text: String) = act.runOnUiThread {
+        if (act.isFinishing) return@runOnUiThread
+        adapterInfoText = text
+        if (::infoRow.isInitialized) infoRow.setSubtitle(text)
+    }
+
+    fun noteDisplayReset() = act.runOnUiThread {
+        if (act.isFinishing) return@runOnUiThread
+        displayResetDetail = "Display settings were reset"
+        if (!sessionIsLive() && lastState != LinkState.LIVE) {
+            val status = if (lastDetail == "Waiting for your iPhone") lastDetail
+                else StartupAnimationView.statusFor(lastState)
+            intro.setStage(StartupAnimationView.stageFor(lastState), status, displayResetDetail)
         }
     }
 
-    private fun refreshScreenSummary() {
-        if (screenModeButtons.isEmpty()) return
-        val selected = DisplayPrefs.mode(act)
-        for (b in screenModeButtons) {
-            val on = b.text.toString().equals(selected.label, ignoreCase = true)
-            b.tag = if (on) Palette.LIVE else Color.TRANSPARENT
-            b.setTextColor(if (on) Palette.BG else Palette.TEXT)
-            val h = b.minimumHeight.coerceAtLeast(act.dp(48))
-            b.background = pillBg(if (on) Palette.LIVE else Color.TRANSPARENT, Palette.LIVE, h / 2, act.dp(2))
+    private fun refreshDynamic() {
+        if (!::strip.isInitialized) return
+        val detail = if (lastState == LinkState.LIVE) liveDetail() else lastDetail
+        strip.set(lastState.label, detail, stripColor(lastState))
+        val sessionLive = sessionIsLive() || lastState == LinkState.LIVE
+        strip.setAction(if (sessionLive) {
+            eqButton(act, "Back to CarPlay", EqButtonStyle.PRIMARY) { onReturnToCarPlay() }
+        } else {
+            eqButton(act, "Done", EqButtonStyle.SECONDARY) { showIntroLayer() }
+        })
+        if (::phoneRow.isInitialized) {
+            phoneRow.titleView.text = phoneTitle()
+            phoneRow.setSubtitle(lastDetail)
         }
-        val side = DisplayPrefs.sidebar(act)
-        sidebarButton.text = if (side) "Sidebar: ON" else "Sidebar: OFF"
-        sidebarButton.tag = if (side) Palette.PHONE else Color.TRANSPARENT
-        sidebarButton.setTextColor(if (side) Palette.BG else Palette.TEXT)
-        val scale = DisplayPrefs.uiScale(act)
-        for (b in scaleButtons) {
-            val on = b.text.toString().equals("$scale%", ignoreCase = true)
-            b.tag = if (on) Palette.LIVE else Color.TRANSPARENT
-            b.setTextColor(if (on) Palette.BG else Palette.TEXT)
-            val h = b.minimumHeight.coerceAtLeast(act.dp(48))
-            b.background = pillBg(if (on) Palette.LIVE else Color.TRANSPARENT, Palette.LIVE, h / 2, act.dp(2))
+        if (::pairRow.isInitialized) {
+            pairRow.titleView.text = pairingCode
+            pairRow.visibility = if (pairingCode.isEmpty()) View.GONE else View.VISIBLE
         }
-        val margin = DisplayPrefs.safeRightPx(act)
-        for (b in safeButtons) {
-            val on = b.text.toString().equals("${margin}px", ignoreCase = true)
-            b.tag = if (on) Palette.PHONE else Color.TRANSPARENT
-            b.setTextColor(if (on) Palette.BG else Palette.TEXT)
-            val h = b.minimumHeight.coerceAtLeast(act.dp(48))
-            b.background = pillBg(if (on) Palette.PHONE else Color.TRANSPARENT, Palette.PHONE, h / 2, act.dp(2))
+        if (::startRow.isInitialized) {
+            setRowShown(startRow, lastState == LinkState.IDLE || lastState == LinkState.STOPPED)
+        }
+        if (::applyRow.isInitialized) {
+            applyRow.visibility = if (sizePending()) View.VISIBLE else View.GONE
+        }
+        if (::hotspotRow.isInitialized) {
+            setRowShown(hotspotRow, !adapterWifi)
         }
     }
 
-    /**
-     * The view options and the sidebar toggle. A view option applies immediately if the CarPlay
-     * screen is still up. The sidebar is the left rail (settings, home, media keys). It takes its
-     * width out of the picture the phone lays out, which is fixed at subscribe. Turning the
-     * sidebar on or off restarts a live session so the next subscribe uses the new width. It
-     * does not change which GM bars are hidden.
-     */
-    private fun showScreenDialog() {
-        val pad = act.dp(40)
-        val body = LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, act.dp(8), pad, act.dp(8))
-        }
-        val selected = DisplayPrefs.mode(act)
-        for (mode in ScreenMode.values()) {
-            val on = mode == selected
-            body.addView(Button(act).apply {
-                text = mode.label
-                tag = mode.value
-                isAllCaps = true
-                setTextColor(if (on) Palette.BG else Palette.TEXT)
-                stateListAnimator = null
-                background = pillBg(if (on) Palette.LIVE else Color.TRANSPARENT, Palette.LIVE, act.dp(40), act.dp(2))
-                setOnClickListener {
-                    DisplayPrefs.setMode(act, mode)
-                    refreshScreenSummary()
-                    onScreenChanged()
-                    for (i in 0 until body.childCount) {
-                        val b = body.getChildAt(i) as? Button ?: continue
-                        val value = b.tag as? Int ?: continue
-                        val match = value == mode.value
-                        b.setTextColor(if (match) Palette.BG else Palette.TEXT)
-                        b.background = pillBg(if (match) Palette.LIVE else Color.TRANSPARENT, Palette.LIVE, act.dp(40), act.dp(2))
-                    }
-                }
-            }, LinearLayout.LayoutParams(-1, act.dp(72)).apply { topMargin = act.dp(12) })
-        }
-        val sideOn = booleanArrayOf(DisplayPrefs.sidebar(act))
-        body.addView(Button(act).apply {
-            fun label() = if (sideOn[0]) "Sidebar: ON" else "Sidebar: OFF"
-            text = label()
-            isAllCaps = true
-            setTextColor(Palette.TEXT)
-            stateListAnimator = null
-            background = pillBg(Color.TRANSPARENT, Palette.PHONE, act.dp(40), act.dp(2))
-            setOnClickListener {
-                sideOn[0] = !sideOn[0]
-                DisplayPrefs.setSidebar(act, sideOn[0])
-                text = label()
-                refreshScreenSummary()
-                onSidebarChanged()
-            }
-        }, LinearLayout.LayoutParams(-1, act.dp(72)).apply { topMargin = act.dp(24) })
+    private fun phoneTitle(): String =
+        DisplayPrefs.lastPhoneName(act) ?: "No phone connected"
 
-        AlertDialog.Builder(act, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Screen")
-            .setMessage("Full screen hides the car's bars so CarPlay uses the whole panel. The sidebar is a 108 dp icon rail — Home, Settings, restart, voice, and media — and CarPlay is drawn in the space beside it. Turning it on or off restarts a live session so the picture matches the rail.")
-            .setView(body)
-            .setPositiveButton("Done", null)
-            .show()
+    private fun liveDetail(): String {
+        val phone = DisplayPrefs.lastPhoneName(act) ?: "iPhone"
+        return "$phone · ${VideoFrame.width}×${VideoFrame.height} at ${VideoFrame.uiScalePercent}%"
+    }
+
+    private fun stripColor(state: LinkState): Int = when (state) {
+        LinkState.LIVE -> EqTheme.OK
+        LinkState.FAILED -> EqTheme.DANGER
+        LinkState.PHONE_DETECTED, LinkState.PAIRING, LinkState.STARTING,
+        LinkState.WAITING, LinkState.SEARCHING, LinkState.CLAIMING, LinkState.RESTARTING -> EqTheme.ACCENT
+        else -> EqTheme.TEXT_FAINT
+    }
+
+    private fun sizePending(): Boolean {
+        if (!(sessionIsLive() || lastState == LinkState.LIVE)) return false
+        if (DisplayPrefs.uiScale(act) != VideoFrame.uiScalePercent) return true
+        val advertised = DisplayScale.even(DisplayPrefs.safeRightPx(act), VideoFrame.uiScalePercent)
+            .coerceIn(0, (VideoFrame.width - 2).coerceAtLeast(0)) and 1.inv()
+        return advertised != VideoFrame.safeRightPx
+    }
+
+    private fun audioSubtitle(bluetooth: Boolean): String =
+        if (bluetooth) "The car plays your iPhone over Bluetooth; this app stays quiet."
+        else "CarPlay audio plays through the car as its own source."
+
+    private fun readLogsGranted(): Boolean =
+        act.checkSelfPermission(android.Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
+
+    private fun scopeSubtitle(granted: Boolean): String =
+        if (granted) "Whole car includes the rest of the head unit."
+        else "Whole car needs a one-time adb grant"
+
+    private fun onScopePicked(index: Int) {
+        if (index == 1 && !readLogsGranted()) {
+            scopeRow.setSubtitle("Whole car needs a one-time adb grant")
+            val current = if (CapturePrefs.scope(act) == LogCapture.Scope.WHOLE_OS) 1 else 0
+            scopeControl?.setSelected(current)
+            return
+        }
+        scopeRow.setSubtitle(scopeSubtitle(true))
+        onCaptureScope(if (index == 1) LogCapture.Scope.WHOLE_OS else LogCapture.Scope.OWN_PROCESS)
+    }
+
+    private fun confirmForget() {
+        val running = if (sessionIsLive()) "A CarPlay session is RUNNING and this will end it.\n\n" else ""
+        EqDialog.confirm(
+            act, "Forget Pairing",
+            running + "Clear the pairing on both the adapter and this app?\n\nYou must ALSO forget " +
+                "this car on the iPhone — a one-sided pairing makes the next attempt fail in a " +
+                "way that looks like broken encryption.",
+            "Forget Pairing", true,
+        ) { onBoxAction(BoxAction.FORGET_PHONE) }
+    }
+
+    private fun confirmRestartWifi() {
+        EqDialog.confirm(
+            act, "Restart Wi-Fi",
+            "Restart the adapter's wireless stack?\n\nThe radios go down for about five " +
+                "seconds, Bluetooth takes ~12 s to come back, and a live session drops. This is " +
+                "also the only way to re-apply changed hotspot credentials without unplugging.",
+            "Restart Wi-Fi", true,
+        ) { onBoxAction(BoxAction.RESTART_WIFI) }
+    }
+
+    private fun confirmReboot() {
+        EqDialog.confirm(
+            act, "Reboot Box",
+            "Reboot the adapter?\n\nAny live CarPlay session drops immediately and the box " +
+                "needs a fresh claim afterwards.",
+            "Reboot Box", true,
+        ) { onBoxAction(BoxAction.REBOOT) }
+    }
+
+    private fun confirmClearLogs() {
+        EqDialog.confirm(
+            act, "Clear Logs",
+            "Delete all captured log files on this head unit and restart capture?\n\n" +
+                "Logs already uploaded or exported are not affected. Use this before a clean " +
+                "reproduction so the next upload contains only the new run.",
+            "Clear", true,
+        ) { onLogAction(LogAction.CLEAR) }
     }
 
     private companion object {
-        const val RESTART_LABEL = "Restart Session"
-        /** Vehicle hotspot credentials — survive process restarts and app updates. */
         const val CRED_PREFS = "hotspot_credentials"
         const val KEY_SSID = "ssid"
         const val KEY_PASS = "pass"

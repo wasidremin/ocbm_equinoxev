@@ -291,10 +291,10 @@ class OcbmClient(
             Ocbm.CH_MGMT -> mgmtQ.offer(f.payload)
             Ocbm.CH_FILE -> fileQ.offer(f.payload)
             Ocbm.CH_LOG -> handleLog(f.payload)
-            Ocbm.CH_VIDEO -> if (adapterMode) lanes?.feedVideo(f.payload) ?: dropAv(f) else unexpected(f)
-            Ocbm.CH_MEDIA_AUDIO -> if (adapterMode) lanes?.feedMedia(f.payload) ?: dropAv(f) else unexpected(f)
-            Ocbm.CH_ALT_AUDIO -> if (adapterMode) lanes?.feedVoice(f.payload) ?: dropAv(f) else unexpected(f)
-            Ocbm.CH_METADATA -> if (adapterMode) lanes?.feedMetadata(f.payload) ?: dropAv(f) else unexpected(f)
+            Ocbm.CH_VIDEO -> if (adapterMode) deliverAv(f) { it.feedVideo(f.payload) } else unexpected(f)
+            Ocbm.CH_MEDIA_AUDIO -> if (adapterMode) deliverAv(f) { it.feedMedia(f.payload) } else unexpected(f)
+            Ocbm.CH_ALT_AUDIO -> if (adapterMode) deliverAv(f) { it.feedVoice(f.payload) } else unexpected(f)
+            Ocbm.CH_METADATA -> if (adapterMode) deliverAv(f) { it.feedMetadata(f.payload) } else unexpected(f)
             Ocbm.CH_ALT_VIDEO -> if (adapterMode) { /* no cluster display is advertised */ } else unexpected(f)
             else -> unexpected(f)
         }
@@ -406,8 +406,21 @@ class OcbmClient(
                     // and the next open restores a surface onto a phone that is already gone:
                     // 0 frames, touches hid_sent=false. Retire here. A replayed mirror is the
                     // box re-reading its latch, not a session ending.
+                    if (!replay && adapterMode && m == Ocbm.PM_WIRELESS_CP && lanes == null) {
+                        ensureLanes()
+                    }
+                    // A live AirPlay session that ends retires the lanes. The next session does not
+                    // re-subscribe: the link stays up and the box pages the phone itself. Arm a new
+                    // generation once the old one is off the field (its close runs on a daemon
+                    // thread). HOST_GONE clears [subscribed] first, and [stop] clears [running], so
+                    // neither of those retires gets a replacement.
                     if (!replay && adapterMode && m == Ocbm.PM_NONE) {
+                        val had = synchronized(lanesLock) { lanes != null }
                         retireLanes("projection ended")
+                        if (had && subscribed && running.get()) {
+                            armLanes()
+                            if (lanes != null) log.i("A/V lanes re-armed — waiting for the next session")
+                        }
                     }
                 }
             }
@@ -1294,6 +1307,43 @@ class OcbmClient(
         if (now - lastAvDropLogNs < 1_000_000_000L) return
         lastAvDropLogNs = now
         log.w("<< dropped ${Ocbm.channelName(f.channel)} (${f.payload.size}B) — no session armed")
+    }
+
+    /** Feed [f] to the armed lanes, or arm them first when a frame shows up with none. */
+    private fun deliverAv(f: OcbmFrame, feed: (OcbmAvLanes) -> Unit) {
+        val existing = lanes
+        if (existing != null) {
+            feed(existing)
+            return
+        }
+        if (subscribed && running.get() && ensureLanes()) {
+            val armed = lanes
+            if (armed != null) {
+                feed(armed)
+                return
+            }
+        }
+        dropAv(f)
+    }
+
+    /**
+     * Arm lanes when a projection or a frame arrived with none. Already-armed is a no-op and
+     * does not log. The supervisor calls this when the box has a session this process never keyed.
+     */
+    fun ensureLanes(): Boolean {
+        if (lanes != null) return true
+        if (!adapterMode || !subscribed || !running.get()) return false
+        log.w("A/V arrived with no lanes armed — arming now")
+        armLanes()
+        return lanes != null
+    }
+
+    fun lanesAreArmed(): Boolean = lanes != null
+
+    /** Drop the armed generation without going through retire, so a test can force the self-heal. */
+    fun testDropLanes() {
+        val l = synchronized(lanesLock) { lanes.also { lanes = null } } ?: return
+        Thread({ runCatching { l.close() } }, "ocbm-lanes-close").apply { isDaemon = true }.start()
     }
 
     private fun armLanes() {

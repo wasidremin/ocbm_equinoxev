@@ -102,6 +102,9 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     @Volatile private var mediaScid = 0L
     /** One mute warning per stream. Reset in [onStreamStart]. */
     @Volatile private var warnedGain0 = false
+    /** Counts at the previous 500-frame line, so a checkpoint only warns when they rose. */
+    private var checkpointInputDropped = 0L
+    private var checkpointNetUnderruns = 0
     /** PLAYED frames whose effective gain was 0. Cumulative; printed at the 500-frame checkpoint and in [stop]. */
     val framesPlayedMuted = AtomicLong(0)
 
@@ -114,6 +117,22 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         fun applyAudioRoute() {
             live?.get()?.applyAudioRoute()
         }
+
+        /** Last focus word and playback gain, so settings can log them without touching the request. */
+        @Volatile var focusLabel: String = "none"
+            private set
+        @Volatile var playbackGain: Float = 1f
+            private set
+
+        fun noteFocus(label: String, gain: Float) {
+            focusLabel = label
+            playbackGain = gain
+        }
+
+        fun noteGain(gain: Float) { playbackGain = gain }
+
+        fun settingsFocusLine(): String =
+            "focus while settings is in front: focus=$focusLabel gain=$playbackGain"
 
         /** Never re-attempt configure per ADTS frame — that drains the codec pool in seconds. */
         const val CONFIGURE_RETRY_MS = 5_000L
@@ -481,6 +500,10 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             if (permanent) "LOSS" else focusName(change)
         }
         CarPlayMediaBrowserService.noteArbitration("focus $label")
+        noteFocus(label, gain)
+        if (wasidremin.gmccpa.DisplayPrefs.holdLauncher) {
+            log.i("focus while settings is in front: focus=$label gain=$gain")
+        }
     }
 
     private fun focusName(c: Int) = when (c) {
@@ -618,6 +641,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     private fun pushGain(source: String) {
         val voice = if (voiceDuck) DUCK_GAIN else 1.0f
         val g = minOf(voice, focusGain)
+        noteGain(g)
         if (g == duckGain) {
             log.i("media level: $source, gain stays $g (voice=$voiceDuck focus=$focusGain)")
             return
@@ -1122,14 +1146,18 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                     val dropped = framesDroppedNoTrack.get()
                     val inputDropped = framesDroppedNoInput.get()
                     val net = netUnderruns(u)
+                    val inputUp = inputDropped > checkpointInputDropped
+                    val netUp = net > checkpointNetUnderruns
+                    checkpointInputDropped = inputDropped
+                    checkpointNetUnderruns = net
                     val msg = "$n audio frames played, ${framesDiscardedPaused.get()} discarded (paused), " +
                               "$dropped dropped (no track), $inputDropped dropped (no input buffer), " +
                               "${framesPlayedMuted.get()} played at gain 0, " +
                               "$u underruns ($net net of the fill baseline)"
                     when {
                         dropped > 0 -> log.e("$msg — decoded media is reaching NO live track")
-                        inputDropped > 0 -> log.w("$msg — AAC input frames were dropped before the decoder")
-                        net > UNDERRUN_TOLERANCE -> log.w("$msg — audible gaps unless each coincides with a stream end")
+                        inputUp -> log.w("$msg — AAC input frames were dropped before the decoder")
+                        netUp && net > UNDERRUN_TOLERANCE -> log.w("$msg — audible gaps unless each coincides with a stream end")
                         else -> log.i(msg)
                     }
                 }

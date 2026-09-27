@@ -95,6 +95,11 @@ class MainActivity : Activity() {
                 // launcher screen already speaks, so the two are mapped rather than merged.
                 ui.setState(linkStateFor(phase), detail)
             }
+            override fun sessionKeyed(): Boolean =
+                wasidremin.gmccpa.ocbm.AdapterSession.sessionUp
+            override fun ensureLanes(): Boolean =
+                ocbmProbe?.client?.ensureLanes() == true
+            override fun restartSession() { requestRestart() }
         })
     }
 
@@ -109,7 +114,7 @@ class MainActivity : Activity() {
         RxPhase.RX_READY -> LinkState.SEARCHING
         RxPhase.RX_UNHEALTHY, RxPhase.BOX_UNHEALTHY -> LinkState.FAILED
         RxPhase.BOX_LINKED -> LinkState.CLAIMING
-        RxPhase.ARMED, RxPhase.GRACE -> LinkState.WAITING
+        RxPhase.ARMED, RxPhase.GRACE, RxPhase.AWAY -> LinkState.WAITING
         RxPhase.BT_PAIRING -> LinkState.PAIRING
         RxPhase.BT_PAIRED, RxPhase.HANDOFF_SENT -> LinkState.PHONE_DETECTED
         // LinkState.STARTING was declared and never used by anything. This is precisely what it
@@ -219,6 +224,10 @@ class MainActivity : Activity() {
             it.onSubscribeEdge = { supervisor.noteSubscribeEdge() }
             it.onPhoneIdent = { j -> onBoxPhoneIdent(j) }
             it.onProjMode = { m -> onBoxProjMode(m) }
+            it.onPhoneOutOfRange = { away -> supervisor.notePhoneRange(away) }
+            it.onBoxSessionEstablished = { supervisor.noteBoxSessionEstablished() }
+            it.onDisplayReset = { ui.noteDisplayReset() }
+            it.onSubscribeFault = { msg -> setStatus(LinkState.FAILED, msg) }
             it.adapterWifi = wasidremin.gmccpa.ocbm.AdapterWifi.enabled(applicationContext)
             ocbmProbe = it
         }
@@ -321,12 +330,19 @@ class MainActivity : Activity() {
         return sb.toString()
     }
 
+    /** One numeric field from the box's JSON (`uptime_s` is a number, not a string). */
+    private fun jsonNumberField(json: String, key: String): String {
+        val m = Regex("\"$key\"\\s*:\\s*(-?\\d+)").find(json) ?: return ""
+        return m.groupValues[1]
+    }
+
     /**
      * `CT_PROJ_MODE` — which projection transport currently owns the box. Advisory: an unknown
      * value means "some transport owns the box" — never gate on ordering.
      */
     private fun onBoxProjMode(mode: Byte) {
         SessionSummary.current()?.onProjMode(mode)
+        supervisor.noteProjection(mode)
         ui.setDetail("projection: ${Ocbm.pmName(mode)}")
     }
 
@@ -345,8 +361,18 @@ class MainActivity : Activity() {
             BoxAction.INFO -> {
                 val json = c.mgmtGetInfo()
                 emit(json ?: "MGMT_GET_INFO: no reply")
-                ui.setDetail(if (json == null) "adapter did not answer MGMT_GET_INFO"
-                             else "adapter info written to logcat")
+                if (json == null) {
+                    ui.setAdapterInfo("adapter did not answer")
+                    ui.setDetail("adapter did not answer MGMT_GET_INFO")
+                } else {
+                    val line = listOf(
+                        jsonStringField(json, "name"),
+                        jsonStringField(json, "serial"),
+                        jsonNumberField(json, "uptime_s").takeIf { it.isNotEmpty() }?.let { "up ${it}s" } ?: "",
+                    ).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "adapter info written to logcat" }
+                    ui.setAdapterInfo(line)
+                    ui.setDetail(line)
+                }
             }
             // This is the ONLY lever that re-applies the hotspot credentials without a full
             // host_present cycle: ocbmd just writes /tmp/wireless_restart and ACKs immediately, then
@@ -436,53 +462,6 @@ class MainActivity : Activity() {
         supervisor.userRecover()
     }
 
-    /**
-     * Confirmation for Clear Logs: deletes every captured log file on the head unit and restarts
-     * capture, so the next session's capture starts from a known-clean baseline. Deliberately not
-     * undoable and deliberately confirmed — the ring is the only record a drive leaves behind.
-     */
-    private fun confirmClearLogs() {
-        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Clear Logs")
-            .setMessage("Delete all captured log files on this head unit and restart capture?\n\n" +
-                "Logs already uploaded or exported are not affected. Use this before a clean " +
-                "reproduction so the next upload contains only the new run.")
-            .setPositiveButton("Clear") { _, _ ->
-                runAsync {
-                    val n = LogCapture.clearAll(applicationContext)
-                    emit("logs cleared: $n file(s) deleted; capture restarted")
-                    if (uiAlive()) ui.setDetail("logs cleared ($n files); capturing fresh")
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    /** Confirmation for the three adapter verbs that cannot be walked back by pressing Start again. */
-    private fun confirmBoxAction(a: BoxAction) {
-        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle(a.label)
-            .setMessage(when (a) {
-                BoxAction.REBOOT ->
-                    "Reboot the adapter?\n\nAny live CarPlay session drops immediately and the box " +
-                    "needs a fresh claim afterwards."
-                BoxAction.RESTART_WIFI ->
-                    "Restart the adapter's wireless stack?\n\nThe radios go down for about five " +
-                    "seconds, Bluetooth takes ~12 s to come back, and a live session drops. This is " +
-                    "also the only way to re-apply changed hotspot credentials without unplugging."
-                BoxAction.FORGET_PHONE ->
-                    (if (cpRx?.sessionLive == true)
-                        "A CarPlay session is RUNNING and this will end it.\n\n" else "") +
-                    "Clear the pairing on both the adapter and this app?\n\nYou must ALSO forget " +
-                    "this car on the iPhone — a one-sided pairing makes the next attempt fail in a " +
-                    "way that looks like broken encryption."
-                else -> "Continue?"
-            })
-            .setPositiveButton(a.label) { _, _ -> runAsync { boxAction(a) } }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
     /** MGMT_ACK status: 0 ok, non-zero error, null no reply at all. */
     private fun reportMgmt(what: String, status: Int?) = when (status) {
         0 -> ui.setDetail("$what: adapter acknowledged")
@@ -531,15 +510,8 @@ class MainActivity : Activity() {
                 if (ocbmProbe != null || cpRx != null) runAsync { stopEverything() }
             }
             setAdapterWifi(wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this@MainActivity))
-            // Reboot, restart-wireless and forget-bond are destructive to a live session and, unlike everything else on
-            // this screen, are not undone by pressing Start again — so they ask first.
-            onBoxAction = { a ->
-                when (a) {
-                    BoxAction.REBOOT, BoxAction.FORGET_PHONE, BoxAction.RESTART_WIFI ->
-                        confirmBoxAction(a)
-                    else -> runAsync { boxAction(a) }
-                }
-            }
+            // The settings screen confirms the destructive verbs before it calls this.
+            onBoxAction = { a -> runAsync { boxAction(a) } }
             onReturnToCarPlay = {
                 DisplayPrefs.holdLauncher = false
                 ui.setReturnToCarPlay(false)
@@ -553,14 +525,22 @@ class MainActivity : Activity() {
                 if (!runAsync { stopEverything() }) SessionHolder.stopRequested = false
                 finishAffinity()
             }
+            onCaptureScope = { setCaptureScope(it) }
             onLogAction = { a ->
                 when (a) {
                     LogAction.EXPORT -> exportLogs(redact = true)
                     LogAction.UPLOAD -> uploadLogs()
                     LogAction.USB_PROBE -> runAsync { wasidremin.gmccpa.ocbm.UsbDiagnostics.runProbe(applicationContext) }
-                    // Destructive to the on-device capture ring, so it asks first — same shape as
-                    // the adapter's destructive actions. Logs already uploaded are unaffected.
-                    LogAction.CLEAR -> confirmClearLogs()
+                    // The settings row confirms before this runs.
+                    LogAction.CLEAR -> runAsync {
+                        val n = LogCapture.clearAll(applicationContext)
+                        emit("logs cleared: $n file(s) deleted; capture restarted")
+                        val line = "logs cleared ($n files); capturing fresh"
+                        if (uiAlive()) {
+                            ui.setDetail(line)
+                            ui.setLogStatus(line)
+                        }
+                    }
                     LogAction.SCOPE -> setCaptureScope(
                         if (CapturePrefs.scope(this@MainActivity) == LogCapture.Scope.WHOLE_OS)
                             LogCapture.Scope.OWN_PROCESS else LogCapture.Scope.WHOLE_OS
@@ -568,10 +548,10 @@ class MainActivity : Activity() {
                     LogAction.STATUS -> {
                         val st = LogCapture.status()
                         emit(st.toString())
-                        ui.setDetail(
-                            "capture ${st.effectiveScope}: ${st.fileCount} files, " +
-                                "${st.bytesOnDisk / 1024 / 1024} MB, ${st.linesDropped} dropped"
-                        )
+                        val line = "capture ${st.effectiveScope}: ${st.fileCount} files, " +
+                            "${st.bytesOnDisk / 1024 / 1024} MB, ${st.linesDropped} dropped"
+                        ui.setDetail(line)
+                        ui.setLogStatus(line)
                     }
                 }
             }
@@ -1426,6 +1406,7 @@ class MainActivity : Activity() {
         // line and the degraded-path hints come from the pump itself.
         emit("capture scope=$scope start=$ok (effective scope + read_logs resolve on the pump thread; see [logcap])")
         ui.setDetail("capture: $scope")
+        ui.setLogStatus("capture: $scope")
     }
 
     @Suppress("DEPRECATION")

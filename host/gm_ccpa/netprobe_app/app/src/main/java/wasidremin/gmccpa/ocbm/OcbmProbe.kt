@@ -118,6 +118,14 @@ class OcbmProbe(context: Context) {
     var onSubscribeEdge: (() -> Unit)? = null
     var onPhoneIdent: ((String) -> Unit)? = null
     var onProjMode: ((Byte) -> Unit)? = null
+    /** `DEVICE_DISCONNECTED reason=0x01` / `CONNECT_FAILED status=0x04` (true), cleared on `DEVICE_CONNECTED`. */
+    var onPhoneOutOfRange: ((Boolean) -> Unit)? = null
+    /** Box log `RECORD — session ESTABLISHED`. */
+    var onBoxSessionEstablished: (() -> Unit)? = null
+    /** The subscribe document was replaced with the 100% / no-inset default. */
+    var onDisplayReset: (() -> Unit)? = null
+    /** Wi-Fi still did not come up after one re-subscribe with the default document. */
+    var onSubscribeFault: ((String) -> Unit)? = null
 
     /**
      * The vehicle hotspot the iPhone should be sent to by the 0x5703 handoff. The passphrase cannot
@@ -317,6 +325,74 @@ class OcbmProbe(context: Context) {
                 inset.split("- viewArea:").size == 2 &&
                 inset.contains("\nwifi_ap: true\n"))
 
+        for (scale in wasidremin.gmccpa.DisplayPrefs.SCALE_PRESETS) {
+            for (safe in wasidremin.gmccpa.DisplayPrefs.SAFE_PRESETS) {
+                for (sidebar in listOf(false, true)) {
+                    val viewW = if (sidebar) 2280 else 2494
+                    val advW = wasidremin.gmccpa.DisplayScale.even(viewW, scale)
+                    val advH = wasidremin.gmccpa.DisplayScale.even(960, scale)
+                    val rawInset = wasidremin.gmccpa.DisplayScale.even(safe, scale)
+                    val insetPx = rawInset.coerceIn(0, (advW - 2).coerceAtLeast(0)) and 1.inv()
+                    val doc = runCatching {
+                        VehicleConfigYaml.renderAdapter(
+                            "adapterpass1", width = advW, height = advH, safeRight = insetPx,
+                        )
+                    }.getOrNull()?.toString(Charsets.UTF_8)
+                    val err = doc?.let { VehicleConfigYaml.structuralError(it, true) }
+                    check(
+                        "subscribe document scale=$scale safe=$safe sidebar=$sidebar",
+                        doc != null && err == null,
+                        err ?: "render failed",
+                    )
+                }
+            }
+        }
+        val good = VehicleConfigYaml.renderAdapter(
+            "adapterpass1", width = 1996, height = 768, safeRight = 38,
+        ).toString(Charsets.UTF_8)
+        val broken = good.replace("    primaryInput: Touchpad\n", "    primaryInput: Touchpad\n    - viewArea:\n")
+        val brokenErr = VehicleConfigYaml.structuralError(broken, true)
+        check(
+            "a second viewAreas item after primaryInput is refused",
+            brokenErr != null && brokenErr.startsWith("line "),
+            brokenErr ?: "accepted",
+        )
+        val fallback = VehicleConfigYaml.renderAdapter(
+            "adapterpass1", width = 2494, height = 960, safeRight = 0,
+        ).toString(Charsets.UTF_8)
+        check(
+            "the 100% no-inset fallback passes",
+            VehicleConfigYaml.structuralError(fallback, true) == null,
+        )
+        check(
+            "a broken document is replaced by the fallback",
+            subscribeOrFallback(broken, fallback) == fallback &&
+                VehicleConfigYaml.structuralError(subscribeOrFallback(broken, fallback), true) == null,
+        )
+        val watch = WifiApWatch()
+        check("wifi watch first timeout retries", watch.onTimeout() == "retry")
+        check("wifi watch proof after a retry is ok", watch.onProof() == "ok")
+        val watchFail = WifiApWatch()
+        check("wifi watch second timeout fails", watchFail.onTimeout() == "retry" && watchFail.onTimeout() == "fail")
+        val policy = wasidremin.gmccpa.SessionSupervisor.ReconnectPolicy()
+        check("auto-restart once per episode", policy.shouldAutoRestart() && !policy.shouldAutoRestart())
+        policy.onPhoneOutOfRange()
+        check("a new away episode may auto-restart once", policy.shouldAutoRestart() && !policy.shouldAutoRestart())
+
+        val lanesFake = FakeTransport()
+        val lanesClient = OcbmClient(lanesFake, wasidremin.gmccpa.ProbeLog.silent(), hostInstance, trace = false)
+        lanesClient.adapterMode = true
+        lanesClient.start()
+        lanesClient.subscribe(VehicleConfigYaml.renderAdapter("adapterpass1", width = 2400, height = 960, safeRight = 0))
+        check("subscribe arms lanes", lanesClient.lanesAreArmed())
+        lanesClient.testDropLanes()
+        check("test hook drops lanes", !lanesClient.lanesAreArmed())
+        val healStarted = System.nanoTime()
+        lanesFake.feed(Framing.frame(Ocbm.CH_VIDEO, Ocbm.F_BOTH, 0, byteArrayOf(0)))
+        val healMs = (System.nanoTime() - healStarted) / 1_000_000L
+        check("self-heal arms within 1s", lanesClient.lanesAreArmed() && healMs < 1000L, "armed=${lanesClient.lanesAreArmed()} ${healMs}ms")
+        lanesClient.stop()
+
         sink("")
         sink("SELF-TEST: $pass passed, $fail failed")
         if (fail == 0) sink("=> framing + client state machine are correct with no hardware in the loop.")
@@ -349,6 +425,15 @@ class OcbmProbe(context: Context) {
     private val ops = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "ocbm-session").apply { isDaemon = true }
     }
+
+    /** 20 s after a `wifi_ap: true` subscribe, proof or one retry. Daemon; [stop] shuts it down. */
+    private val wifiSched = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "ocbm-wifi-watch").apply { isDaemon = true }
+    }
+    private var wifiGen = 0
+    private var wifiWatch: WifiApWatch? = null
+    private val wifiRejected =
+        "adapter did not start its Wi-Fi after subscribe — document likely rejected"
 
     /**
      * What a bring-up attempt actually achieved.
@@ -678,11 +763,17 @@ class OcbmProbe(context: Context) {
         // a caller wiring them afterwards would miss every phase up to WIFI_HANDOFF — precisely the
         // window the events exist to explain.
         c.onBtPhase = { p -> onBtPhase?.invoke(p) }
-        c.onBoxHealth = { f -> onBoxHealth?.invoke(f) }
+        c.onBoxHealth = { f ->
+            if ((f and Ocbm.BH_WLAN_AP) != 0) noteWifiProof()
+            onBoxHealth?.invoke(f)
+        }
         c.onSubscribeEdge = { onSubscribeEdge?.invoke() }
         c.onBoxLog = { _, text, backfill, _, _ ->
             if (adapterWifi) AdapterWifi.observeBoxLine(ctx, text)
-            if (!backfill) StartupClock.noteBoxLine(text)
+            if (!backfill) {
+                StartupClock.noteBoxLine(text)
+                noteBoxSignals(text)
+            }
         }
         c.onPhoneIdent = { j -> onPhoneIdent?.invoke(j) }
         c.onProjMode = { m -> onProjMode?.invoke(m) }
@@ -803,7 +894,7 @@ class OcbmProbe(context: Context) {
         if (VideoFrame.railPx > 0) {
             log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px, panel ${VideoFrame.panelPx}px")
         }
-        c.subscribe(if (adapterWifi) {
+        val rendered = if (adapterWifi) {
             VehicleConfigYaml.renderAdapter(
                 AdapterWifi.passphrase(ctx),
                 adapterSsid(c),
@@ -811,7 +902,10 @@ class OcbmProbe(context: Context) {
                 VideoFrame.height,
                 VideoFrame.safeRightPx,
             )
-        } else btOnlyConfig())
+        } else btOnlyConfig()
+        val doc = acceptSubscribeDocument(c, rendered)
+        c.subscribe(doc)
+        if (doc.toString(Charsets.UTF_8).contains("\nwifi_ap: true\n")) armWifiWatch()
         c.startHeartbeat()
         r = r.copy(subscribed = true)
         // From here the box narrates its own bring-up. Follow it, so both halves of any failure land
@@ -944,6 +1038,82 @@ class OcbmProbe(context: Context) {
             log.i("adapter SSID $ssid")
         }
         return ssid
+    }
+
+    /**
+     * `DEVICE_DISCONNECTED` contains the substring `DEVICE_CONNECTED`, so the disconnect arm has
+     * to win. A page timeout (`status=0x04`) is the same away signal, not a second fault.
+     */
+    private fun noteBoxSignals(text: String) {
+        when {
+            "DEVICE_DISCONNECTED" in text && "reason=0x01" in text -> onPhoneOutOfRange?.invoke(true)
+            "CONNECT_FAILED" in text && "status=0x04" in text -> onPhoneOutOfRange?.invoke(true)
+            "DEVICE_CONNECTED" in text -> onPhoneOutOfRange?.invoke(false)
+            "session ESTABLISHED" in text -> onBoxSessionEstablished?.invoke()
+            "wireless stack up + AP enabled" in text -> noteWifiProof()
+        }
+    }
+
+    /** Null structural error keeps [doc]. A failure is logged and, on adapter Wi-Fi, replaced. */
+    private fun acceptSubscribeDocument(c: OcbmClient, doc: ByteArray): ByteArray {
+        val text = doc.toString(Charsets.UTF_8)
+        val err = VehicleConfigYaml.structuralError(text, adapterWifi)
+        if (err == null) return doc
+        log.e("subscribe document rejected: $err")
+        onDisplayReset?.invoke()
+        if (!adapterWifi) return doc
+        val fallback = defaultAdapterDocument(c)
+        val again = VehicleConfigYaml.structuralError(fallback.toString(Charsets.UTF_8), true)
+        if (again != null) log.e("subscribe document rejected: $again")
+        return fallback
+    }
+
+    /** 100% of the on-screen view, no right inset. The document the phone can still join. */
+    private fun defaultAdapterDocument(c: OcbmClient): ByteArray =
+        VehicleConfigYaml.renderAdapter(
+            AdapterWifi.passphrase(ctx),
+            adapterSsid(c),
+            VideoFrame.viewWidth,
+            VideoFrame.viewHeight,
+            0,
+        )
+
+    private fun subscribeOrFallback(doc: String, fallback: String): String =
+        if (VehicleConfigYaml.structuralError(doc, true) == null) doc else fallback
+
+    private fun armWifiWatch() {
+        val gen = ++wifiGen
+        val watch = WifiApWatch()
+        wifiWatch = watch
+        scheduleWifi(gen, watch)
+    }
+
+    private fun scheduleWifi(gen: Int, watch: WifiApWatch) {
+        wifiSched.schedule({
+            if (gen != wifiGen) return@schedule
+            when (watch.onTimeout()) {
+                "retry" -> {
+                    log.e(wifiRejected)
+                    onDisplayReset?.invoke()
+                    runCatching {
+                        ops.execute {
+                            val live = client
+                            if (live != null) live.subscribe(defaultAdapterDocument(live))
+                        }
+                    }
+                    scheduleWifi(gen, watch)
+                }
+                "fail" -> {
+                    log.e(wifiRejected)
+                    onSubscribeFault?.invoke(wifiRejected)
+                }
+            }
+        }, 20, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    private fun noteWifiProof() {
+        val w = wifiWatch ?: return
+        if (w.onProof() == "ok") wifiGen++
     }
 
     // ---- session teardown -------------------------------------------------------------------------
@@ -1124,6 +1294,8 @@ class OcbmProbe(context: Context) {
      * `shutdown()` rather than `shutdownNow()` so the teardown task is never interrupted part-way.
      */
     fun stop(quick: Boolean = false) {
+        wifiGen++
+        if (!wifiSched.isShutdown) wifiSched.shutdownNow()
         if (ops.isShutdown) return
         if (adapterWifi) AdapterSession.release()
         // Set the abort FIRST, from this thread. See [claimAbort]: the submit below queues behind
@@ -1231,4 +1403,20 @@ class OcbmProbe(context: Context) {
 
     private fun hex(b: ByteArray, n: Int): String =
         b.take(n).joinToString(" ") { "%02x".format(it) } + if (b.size > n) " …" else ""
+}
+
+/** First timeout retries, the second fails, and proof from either state is success. */
+internal class WifiApWatch {
+    private var step = 0
+
+    @Synchronized fun onProof(): String {
+        step = 2
+        return "ok"
+    }
+
+    @Synchronized fun onTimeout(): String = when (step) {
+        2 -> "ok"
+        0 -> { step = 1; "retry" }
+        else -> { step = 2; "fail" }
+    }
 }

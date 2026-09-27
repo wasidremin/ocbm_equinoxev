@@ -470,4 +470,72 @@ object VehicleConfigYaml {
         b.append("  visible: true\n")
         return b.toString()
     }
+
+    /**
+     * Structural check before `CT_SUBSCRIBE`. serde rejects the whole document — including
+     * `wifi_ap` — and the box says nothing. Returns `line N: …`, or null when the document is safe
+     * to send. [adapterWifiOn] requires the four AP keys at indent 0; the Silverado document
+     * (`wifi_ap: false`) does not.
+     *
+     * A list item is legal under a bare `key:` (same indent, as `viewAreas:` / `- viewArea:`, or
+     * two spaces deeper, as `images:` / `- width:`) and as a further item of a sequence already
+     * open at that dash indent. A dash after a scalar (`primaryInput: Touchpad` then `- viewArea`)
+     * is the 4.0+scale failure. A deeper line under `key: value` is rejected too.
+     */
+    fun structuralError(yaml: String, adapterWifiOn: Boolean): String? {
+        var prevIndent = -1
+        var prevBare = false
+        var prevItem = false
+        var seqDash: Int? = null
+        var mainIndent = Int.MIN_VALUE
+        var sawMain = false
+        var viewAreas = 0
+        val root = HashSet<String>()
+        yaml.split('\n').forEachIndexed { index, raw ->
+            val lineNo = index + 1
+            if (raw.isBlank()) return@forEachIndexed
+            if ('\t' in raw) return "line $lineNo: tab in indentation"
+            val indent = raw.indexOfFirst { it != ' ' }
+            if (indent % 2 != 0) return "line $lineNo: indent is not a multiple of 2"
+            val body = raw.substring(indent)
+            val isItem = body.startsWith("- ")
+            val open = seqDash
+            if (open != null && !(isItem && indent == open) && indent <= open) seqDash = null
+            if (indent > prevIndent && !prevBare && prevIndent >= 0) {
+                val listSibling = prevItem && seqDash != null && indent == prevIndent + 2
+                if (!listSibling) return "line $lineNo: child indented under a scalar"
+            }
+            if (isItem) {
+                val continuing = seqDash == indent
+                val underBare = prevBare && (indent == prevIndent || indent == prevIndent + 2)
+                if (!continuing && !underBare) return "line $lineNo: list item is not under a key"
+                if (!continuing) seqDash = indent
+            }
+            if (mainIndent != Int.MIN_VALUE && indent <= mainIndent) mainIndent = Int.MIN_VALUE
+            val content = if (isItem) body.substring(2) else body
+            val colon = content.indexOf(':')
+            val key = if (colon >= 0) content.substring(0, colon).trim() else ""
+            val bare = colon >= 0 && content.substring(colon + 1).isBlank()
+            if (indent == 0 && key.isNotEmpty()) root.add(key)
+            if (key == "mainVideoStream" && bare) {
+                sawMain = true
+                mainIndent = indent
+            }
+            if (key == "viewAreas" && bare && mainIndent != Int.MIN_VALUE && indent > mainIndent) {
+                viewAreas++
+            }
+            prevIndent = indent
+            prevBare = bare
+            prevItem = isItem
+        }
+        if (adapterWifiOn) {
+            for (k in listOf("wifi_ap", "wifi_ssid", "wifi_pass", "wifi_channel")) {
+                if (k !in root) return "line 1: missing $k"
+            }
+        }
+        if (sawMain && viewAreas != 1) {
+            return "line 1: expected one viewAreas list under mainVideoStream, found $viewAreas"
+        }
+        return null
+    }
 }

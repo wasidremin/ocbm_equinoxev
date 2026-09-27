@@ -55,6 +55,11 @@ enum class RxPhase(val label: String) {
     SESSION_UP("CarPlay live"),
     /** The session ended and we are holding still to let the phone come back on its own. */
     GRACE("session ended — waiting"),
+    /**
+     * The phone left Bluetooth range. The box pages it about once a minute; cycling the radios
+     * only resets that loop. Not a failure — the driver is waiting, not repairing.
+     */
+    AWAY("Waiting for your iPhone"),
     /** The box went away while CarPlay was streaming. Deliberately do nothing. */
     BOX_LOST_SESSION_UP("box gone, session live"),
     /** Discovered, answering, refusing to connect. Needs the driver. */
@@ -101,6 +106,12 @@ class SessionSupervisor(private val act: Actions) {
         fun resumeDiscovery()
         /** Surface phase + a human sentence. */
         fun report(phase: RxPhase, detail: String)
+        /** True once this process has keyed a CarPlay session (video key, not the box's record). */
+        fun sessionKeyed(): Boolean
+        /** Arm A/V lanes if a projection is up and this process dropped them. Already-armed is quiet. */
+        fun ensureLanes(): Boolean
+        /** Same path as Restart Session. Must not block this scheduler. */
+        fun restartSession()
     }
 
     private companion object {
@@ -195,6 +206,32 @@ class SessionSupervisor(private val act: Actions) {
          * about two seconds on the 22:16 attempt) and far shorter than waiting for the driver.
          */
         const val BTD_ABSENT_MS = 12_000L
+
+        /**
+         * Bluetooth link-timeout (`DEVICE_DISCONNECTED reason=0x01`) counts as "the phone walked
+         * away" when it lands within this long of the projection ending. Grace is 10 s, and the
+         * timeout in the 2026-09-27 capture was ~8 s before `PROJ_MODE NONE`, so the window has to
+         * still match when it is evaluated at grace expiry.
+         */
+        const val OUT_OF_RANGE_WINDOW_MS = 15_000L
+
+        /** How long a self-heal arm may take to key a session before Restart Session runs itself. */
+        const val UNKEYED_RESTART_MS = 10_000L
+    }
+
+    /**
+     * One automatic Restart Session per Bluetooth episode. Cleared when the phone goes out of
+     * range (a new episode), not when a session comes up.
+     */
+    internal class ReconnectPolicy {
+        private var used = false
+        fun onPhoneOutOfRange() { used = false }
+        /** True the first time a stuck episode should restart, then false until the next away edge. */
+        fun shouldAutoRestart(): Boolean {
+            if (used) return false
+            used = true
+            return true
+        }
     }
 
     private val log = ProbeLog.sub("sup")
@@ -247,6 +284,15 @@ class SessionSupervisor(private val act: Actions) {
      * next connection attempt could never begin.
      */
     private var radiosHeldForSession = false
+    /** `DEVICE_DISCONNECTED reason=0x01` or `CONNECT_FAILED status=0x04`, until `DEVICE_CONNECTED`. */
+    private var phoneOutOfRange = false
+    private var outOfRangeAt = 0L
+    private var sessionEndedAt = 0L
+    /** Box log `RECORD — session ESTABLISHED`. Cleared on `PROJ_MODE NONE`. */
+    private var boxSessionEstablished = false
+    /** Last non-replay projection was wireless CarPlay. */
+    private var projWireless = false
+    private val reconnect = ReconnectPolicy()
 
     // ---- event intake ---------------------------------------------------------------------------
     // All of these are safe to call from any thread; they only queue work onto the scheduler.
@@ -294,7 +340,8 @@ class SessionSupervisor(private val act: Actions) {
         // of those is a new bring-up and BOX_LINKED is its correct first phase.)
         when (phase) {
             RxPhase.ARMED, RxPhase.BT_PAIRING, RxPhase.BT_PAIRED, RxPhase.HANDOFF_SENT,
-            RxPhase.INBOUND_EXPECTED, RxPhase.SESSION_UP, RxPhase.BOX_LOST_SESSION_UP, RxPhase.GRACE -> {
+            RxPhase.INBOUND_EXPECTED, RxPhase.SESSION_UP, RxPhase.BOX_LOST_SESSION_UP, RxPhase.GRACE,
+            RxPhase.AWAY -> {
                 log.i("box linked ($detail) — phase already ${phase.label}, not regressing to ${RxPhase.BOX_LINKED.label}")
                 return@post
             }
@@ -376,7 +423,8 @@ class SessionSupervisor(private val act: Actions) {
             // the box's Bluetooth went away. GRACE is here for the same reason inverted: acting there
             // destroys the hold the grace window exists to protect, and rung 1 demonstrably CAUSES
             // health regressions, so the two together are a loop with a session in the middle.
-            RxPhase.SESSION_UP, RxPhase.BOX_LOST_SESSION_UP, RxPhase.GRACE -> log.i("session is live or in grace — noting the box fault, not acting on it")
+            RxPhase.SESSION_UP, RxPhase.BOX_LOST_SESSION_UP, RxPhase.GRACE, RxPhase.AWAY ->
+                log.i("session is live, in grace, or waiting for the phone — noting the box fault, not acting on it")
             else -> {
                 to(RxPhase.BOX_UNHEALTHY, detail)
                 escalate(detail)
@@ -561,9 +609,16 @@ class SessionSupervisor(private val act: Actions) {
      */
     fun onSessionDown() = post {
         releaseSessionRadioHold("the session it was protecting has ended")
+        sessionEndedAt = System.currentTimeMillis()
         to(RxPhase.GRACE, "session ended — holding ${GRACE_MS / 1000}s for the phone to return")
         graceTimer = arm(graceTimer, GRACE_MS) {
             if (phase != RxPhase.GRACE) return@arm
+            // A Bluetooth link timeout just before the projection ended is the phone leaving
+            // range, not a fault. Rungs 1–2 reset the box's own once-a-minute page. Stay put.
+            if (phoneStillAway()) {
+                enterAway()
+                return@arm
+            }
             log.w("phone did not return within ${GRACE_MS / 1000}s")
             // Leave GRACE FIRST. escalate() does not move the phase unless the ladder runs out, so
             // staying here would strand the machine in a state that suspends discovery with no timer
@@ -572,6 +627,50 @@ class SessionSupervisor(private val act: Actions) {
             to(RxPhase.ARMED, "grace expired — resuming discovery and recovering")
             escalate("the session ended and the phone did not come back")
         }
+    }
+
+    /**
+     * Box log: `DEVICE_DISCONNECTED … reason=0x01` and `CONNECT_FAILED … status=0x04` are the same
+     * fact (the phone is not in Bluetooth range). `DEVICE_CONNECTED` clears it. Repeated page
+     * timeouts refresh the timestamp but are not a new episode.
+     */
+    fun notePhoneRange(away: Boolean) = post {
+        if (away) {
+            if (!phoneOutOfRange) {
+                phoneOutOfRange = true
+                reconnect.onPhoneOutOfRange()
+                log.i("phone out of range — Bluetooth timeout, not a fault")
+            }
+            outOfRangeAt = System.currentTimeMillis()
+        } else if (phoneOutOfRange) {
+            phoneOutOfRange = false
+            outOfRangeAt = 0L
+            log.i("phone back on Bluetooth")
+        }
+    }
+
+    /** `CT_PROJ_MODE`. `NONE` drops the box-session latch; wireless CarPlay raises the projection bit. */
+    fun noteProjection(mode: Byte) = post {
+        projWireless = mode == Ocbm.PM_WIRELESS_CP
+        if (mode == Ocbm.PM_NONE) boxSessionEstablished = false
+    }
+
+    /** Box log `RECORD — session ESTABLISHED`. */
+    fun noteBoxSessionEstablished() = post { boxSessionEstablished = true }
+
+    private fun phoneStillAway(): Boolean {
+        if (!phoneOutOfRange || outOfRangeAt == 0L) return false
+        val delta = sessionEndedAt - outOfRangeAt
+        return delta in -OUT_OF_RANGE_WINDOW_MS..(OUT_OF_RANGE_WINDOW_MS + GRACE_MS)
+    }
+
+    /** Waiting, with the ladder stood down. Bluetooth progress leaves this the same way it leaves ARMED. */
+    private fun enterAway() {
+        retryTimer?.cancel(false); retryTimer = null
+        handoffTimer?.cancel(false); handoffTimer = null
+        btdAbsentTimer?.cancel(false); btdAbsentTimer = null
+        log.i("phone left Bluetooth range — waiting, not cycling the radios")
+        to(RxPhase.AWAY, "Waiting for your iPhone")
     }
 
     /**
@@ -880,6 +979,22 @@ class SessionSupervisor(private val act: Actions) {
             when (phase) {
                 RxPhase.ARMED, RxPhase.BT_PAIRING, RxPhase.BT_PAIRED, RxPhase.HANDOFF_SENT -> {
                     log.w("no CarPlay connect within ${HANDOFF_TIMEOUT_MS / 1000}s of Bluetooth progress")
+                    // The box already has a session and this process never keyed it: the lanes were
+                    // retired when the phone walked away. Arm them, and if a key still does not
+                    // land, do what Restart Session does — once per Bluetooth episode.
+                    if ((boxSessionEstablished || projWireless) && !act.sessionKeyed()) {
+                        act.ensureLanes()
+                        handoffTimer = arm(handoffTimer, UNKEYED_RESTART_MS) {
+                            if (act.sessionKeyed()) return@arm
+                            if (!reconnect.shouldAutoRestart()) {
+                                log.i("auto-restart already used this Bluetooth episode")
+                                return@arm
+                            }
+                            log.w("auto-restart: box has a session the app never keyed")
+                            act.restartSession()
+                        }
+                        return@arm
+                    }
                     // Same reason as the grace and inbound timers: escalate() does not move the phase,
                     // so without this the label stays HANDOFF_SENT for the whole of recovery and every
                     // line the driver and the logs see names a step that finished long ago.
@@ -1022,7 +1137,7 @@ class SessionSupervisor(private val act: Actions) {
         }
         if (!sawBtd || btdAbsentTimer != null) return
         if (phase == RxPhase.SESSION_UP || phase == RxPhase.BOX_LOST_SESSION_UP ||
-            phase == RxPhase.GRACE || phase == RxPhase.IDLE || phase == RxPhase.STALLED
+            phase == RxPhase.GRACE || phase == RxPhase.AWAY || phase == RxPhase.IDLE || phase == RxPhase.STALLED
         ) return
         if (System.currentTimeMillis() < radioSettleUntil) return
         log.i("btd left the health mask — restarting wireless if it is still gone in ${BTD_ABSENT_MS / 1000}s")
@@ -1035,7 +1150,7 @@ class SessionSupervisor(private val act: Actions) {
         if (boxHealth and Ocbm.BH_CARPLAY_WIRELESS != 0) return
         if (!sawBtd) return
         if (phase == RxPhase.SESSION_UP || phase == RxPhase.BOX_LOST_SESSION_UP ||
-            phase == RxPhase.GRACE || phase == RxPhase.IDLE
+            phase == RxPhase.GRACE || phase == RxPhase.AWAY || phase == RxPhase.IDLE
         ) return
         if (System.currentTimeMillis() < radioSettleUntil) return
         if (!runCatching { act.boxLinkAlive() }.getOrDefault(false)) return

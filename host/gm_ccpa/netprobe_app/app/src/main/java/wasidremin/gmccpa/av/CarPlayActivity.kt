@@ -548,6 +548,7 @@ class CarPlayActivity : Activity() {
     private fun openSettings() {
         DisplayPrefs.holdLauncher = true
         log.i("settings — holding the launcher in front; the session stays up")
+        log.i(AacPlayer.settingsFocusLine())
         startActivity(
             Intent(this, wasidremin.gmccpa.MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)

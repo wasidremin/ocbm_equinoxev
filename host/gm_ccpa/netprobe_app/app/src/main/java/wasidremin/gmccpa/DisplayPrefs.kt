@@ -92,11 +92,6 @@ object DisplayPrefs {
         prefs(ctx).edit().putString(KEY_PHONE, clean).apply()
     }
 
-    fun summary(ctx: Context): String {
-        val side = if (sidebar(ctx)) "sidebar on" else "sidebar off"
-        return "Screen:  ${mode(ctx).label}   ·   $side   ·   ${uiScale(ctx)}%   ·   tap to change"
-    }
-
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }
