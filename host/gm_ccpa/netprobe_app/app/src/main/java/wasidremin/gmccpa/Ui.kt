@@ -271,7 +271,7 @@ class LauncherUi(private val act: Activity) {
         val version = runCatching {
             act.packageManager.getPackageInfo(act.packageName, 0).versionName
         }.getOrNull() ?: ""
-        rail = EqNavRail(act, listOf("Connection", "Display", "Audio", "Advanced"), { showTab(it) }, version)
+        rail = EqNavRail(act, listOf("Connection", "Display", "Audio", "Logs", "Advanced"), { showTab(it) }, version)
         settingsHost.addView(rail, LinearLayout.LayoutParams(
             EqTheme.px(300f), ViewGroup.LayoutParams.MATCH_PARENT))
 
@@ -289,11 +289,13 @@ class LauncherUi(private val act: Activity) {
         val connection = page("Connection")
         val display = page("Display")
         val audio = page("Audio")
+        val logs = page("Logs")
         val advanced = page("Advanced")
-        pages = listOf(connection, display, audio, advanced)
+        pages = listOf(connection, display, audio, logs, advanced)
         buildConnection(connection)
         buildDisplay(display)
         buildAudio(audio)
+        buildLogs(logs)
         buildAdvanced(advanced)
         for (p in pages) column.addView(p, LinearLayout.LayoutParams(-1, -2))
         this.scroller.addView(column, ViewGroup.LayoutParams(-1, -2))
@@ -405,6 +407,27 @@ class LauncherUi(private val act: Activity) {
         page.addView(EqCard(act).addRow(audioRow))
     }
 
+    private fun buildLogs(page: LinearLayout) {
+        val granted = readLogsGranted()
+        val scope = CapturePrefs.scope(act)
+        scopeControl = EqSegmented(act, listOf("This app", "Whole car"), if (scope == LogCapture.Scope.WHOLE_OS) 1 else 0) { i ->
+            onScopePicked(i)
+        }
+        scopeRow = EqRow(act, "Log scope", scopeSubtitle(granted), trailing = scopeControl)
+        logStatusRow = EqRow(act, "Log status", logStatusText.ifEmpty { null }, onClick = { onLogAction(LogAction.STATUS) })
+        page.addView(eqSectionLabel(act, "Capture"))
+        page.addView(EqCard(act)
+            .addRow(EqRow(
+                act, "Upload logs",
+                trailing = eqButton(act, "Upload", EqButtonStyle.PRIMARY) { onLogAction(LogAction.UPLOAD) },
+            ))
+            .addRow(EqRow(act, "Export logs", onClick = { onLogAction(LogAction.EXPORT) }))
+            .addRow(scopeRow)
+            .addRow(logStatusRow)
+            .addRow(EqRow(act, "USB probe", onClick = { onLogAction(LogAction.USB_PROBE) }))
+            .addRow(EqRow(act, "Clear logs", titleColor = EqTheme.DANGER, onClick = { confirmClearLogs() })))
+    }
+
     private fun buildAdvanced(page: LinearLayout) {
         wifiToggle = EqToggle(act, adapterWifi) { want ->
             wifiToggle.setChecked(!want)
@@ -439,24 +462,6 @@ class LauncherUi(private val act: Activity) {
                 onClick = { onRecover() },
             )))
 
-        val granted = readLogsGranted()
-        val scope = CapturePrefs.scope(act)
-        scopeControl = EqSegmented(act, listOf("This app", "Whole car"), if (scope == LogCapture.Scope.WHOLE_OS) 1 else 0) { i ->
-            onScopePicked(i)
-        }
-        scopeRow = EqRow(act, "Log scope", scopeSubtitle(granted), trailing = scopeControl)
-        logStatusRow = EqRow(act, "Log status", logStatusText.ifEmpty { null }, onClick = { onLogAction(LogAction.STATUS) })
-        page.addView(eqSectionLabel(act, "Logs"))
-        page.addView(EqCard(act)
-            .addRow(EqRow(
-                act, "Upload logs",
-                trailing = eqButton(act, "Upload", EqButtonStyle.PRIMARY) { onLogAction(LogAction.UPLOAD) },
-            ))
-            .addRow(EqRow(act, "Export logs", onClick = { onLogAction(LogAction.EXPORT) }))
-            .addRow(scopeRow)
-            .addRow(logStatusRow)
-            .addRow(EqRow(act, "USB probe", onClick = { onLogAction(LogAction.USB_PROBE) }))
-            .addRow(EqRow(act, "Clear logs", titleColor = EqTheme.DANGER, onClick = { confirmClearLogs() })))
         page.addView(eqSectionLabel(act, "App"))
         page.addView(EqCard(act).addRow(EqRow(
             act, "Close app",
