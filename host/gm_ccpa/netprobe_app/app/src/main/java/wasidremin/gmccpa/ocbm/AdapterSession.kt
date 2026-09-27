@@ -51,12 +51,19 @@ object AdapterSession {
 
     fun bind(c: OcbmClient, ctx: Context) {
         quietStop()
+        val app = ctx.applicationContext
+        // CONNECTING, before any phone traffic. The original shows buffering and starts its
+        // media service here, seconds before the first stream asks for focus. Doing both at
+        // lane-arm time let focus land while the car still had FM as the source.
+        wasidremin.gmccpa.AudioRoute.load(app)
+        CarPlayMediaBrowserService.announcePreparing()
+        CarPlayMediaBrowserService.ensureStarted(app)
         val e = epoch.incrementAndGet()
         client = c
         c.adapterMode = true
         c.onMetadata = { marker, payload -> onMeta(marker, payload) }
         c.onUplinkGate = { on, rate, ch -> mic?.onGate(on, rate, ch) }
-        c.onLanesArmed = { armed -> if (epoch.get() == e) startAudio(ctx.applicationContext, armed) }
+        c.onLanesArmed = { armed -> if (epoch.get() == e) startAudio(app, armed) }
         c.onLanesRetired = { retired -> if (epoch.get() == e) stopAudio(retired) }
         c.onSessionKeyed = keyed@{
             if (epoch.get() != e) return@keyed
@@ -142,10 +149,8 @@ object AdapterSession {
             router = null
             lanes = armed
             val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
-            CarPlayMediaBrowserService.ensureStarted(ctx)
-            // Before the phone's music stream. CarMediaService will not move off an
-            // already-playing source (FM) once that stream opens. See announcePreparing.
-            CarPlayMediaBrowserService.announcePreparing()
+            // Preparing and the foreground media service already ran in [bind]. Focus waits
+            // for [AacPlayer.consume], the first stream of this generation.
             val p = AacPlayer(am).also { it.start(); it.prime() }
             val voice = VoiceRouter(
                 ctx,
@@ -194,6 +199,7 @@ object AdapterSession {
     @Suppress("UNCHECKED_CAST")
     private fun onModes(root: Any?, size: Int) {
         val params = (root as? Map<String, Any?>)?.get("params") as? Map<String, Any?> ?: return
+        logResources(params["resources"])
         val states = params["appStates"] as? List<Any?> ?: return
         var speechMode = -1L
         var speechEntity = 0L
@@ -210,5 +216,43 @@ object AdapterSession {
             }
         }
         router?.onModes(speechMode, speechEntity, phoneEntity, turnsEntity, size)
+    }
+
+    /**
+     * `modesChanged` `resources[]` says who owns MainScreen (resourceID 1) and MainAudio
+     * (resourceID 2). Entity 1 is the phone, 2 is the accessory. Logged only — the voice
+     * path still reads `appStates`.
+     */
+    private fun logResources(raw: Any?) {
+        val list = raw as? List<*>
+        if (list == null) {
+            log.i("modes resources=(absent)")
+            return
+        }
+        if (list.isEmpty()) {
+            log.i("modes resources=(empty)")
+            return
+        }
+        val text = list.joinToString("; ") { item ->
+            val d = item as? Map<*, *> ?: return@joinToString "$item"
+            val id = d["resourceID"] as? Long
+            val name = when (id) {
+                1L -> "MainScreen"
+                2L -> "MainAudio"
+                else -> "resource"
+            }
+            val ent = d["entity"] as? Long
+            val perm = d["permanentEntity"] as? Long
+            "$name id=$id entity=${entityName(ent)}($ent) permanent=${entityName(perm)}($perm)"
+        }
+        log.i("modes resources: $text")
+    }
+
+    private fun entityName(v: Long?) = when (v) {
+        0L -> "none"
+        1L -> "controller"
+        2L -> "accessory"
+        null -> "?"
+        else -> "other"
     }
 }

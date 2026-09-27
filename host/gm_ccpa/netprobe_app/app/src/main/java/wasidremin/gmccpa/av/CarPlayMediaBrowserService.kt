@@ -1,13 +1,19 @@
 package wasidremin.gmccpa.av
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadata
 import android.media.browse.MediaBrowser
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.service.media.MediaBrowserService
@@ -58,9 +64,11 @@ import java.util.concurrent.Executors
  * ## Where the data comes from
  *
  * The `:9004` seam ([MetadataSeam]) feeds [NowPlayingState], which calls [publish] and
- * [publishPlaybackState] here. AAOS owns THIS service's lifetime — it is constructed when Media Center
- * binds, not by us — so the seam reader cannot hold an instance. Hence the process-wide [live] weak
- * reference, the same idiom as `CarPlayActivity.live`.
+ * [publishPlaybackState] here. AAOS also binds this service on its own schedule, so the seam
+ * reader cannot hold an instance. Hence the process-wide [live] weak reference, the same idiom
+ * as `CarPlayActivity.live`. [ensureStarted] additionally starts it in the foreground at adapter
+ * connect, before any phone traffic, the way the original app starts its media service at
+ * CONNECTING.
  */
 class CarPlayMediaBrowserService : MediaBrowserService() {
 
@@ -106,8 +114,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         @Volatile private var last: NowPlayingState.Snapshot? = null
         @Volatile private var sessionUp = false
         /**
-         * Set when the adapter arms audio, before the service's [onCreate] may have run.
-         * [onCreate] reads it so a late bind still publishes the preparing state.
+         * Set at adapter bind (CONNECTING), before the service's [onCreate] may have run.
+         * [onCreate] reads it so a late start still publishes the preparing state.
          */
         @Volatile private var wantPreparing = false
 
@@ -128,10 +136,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         /**
          * The adapter is connecting, or a CarPlay session just came up. Publish
          * [PlaybackState.STATE_BUFFERING] at rate 1 until the phone names a playback
-         * status. The original app does this at CONNECTING: CarMediaService only lets a
-         * newly playing source displace a source that is not already playing, so waiting
-         * until the music stream opens is too late (FM already holds the slot, this app
-         * takes `AUDIOFOCUS_LOSS`, and the phone tears stream 102 down after ~72 frames).
+         * status. The original app does this at CONNECTING, seconds before it asks for
+         * focus: CarMediaService only lets a newly playing source displace a source that
+         * is not already playing. Waiting until the music stream opens is too late.
          */
         fun announcePreparing() {
             if (wasidremin.gmccpa.AudioRoute.bluetooth) return
@@ -173,17 +180,66 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             live?.get()?.claimCarSource()
         }
 
+        /** Distinct from [CarPlaySessionService]'s notification. Two foreground services, two ids. */
+        private const val NOTIF_ID = 1002
+        private const val CHANNEL_ID = "carplay_media"
+
         /**
-         * Bring the service up ourselves. AAOS binds it on its own schedule, which on the
-         * 2026-09-24 drive was never — `claimCarSource` was a no-op and media focus was stolen
-         * the moment the music stream opened.
+         * Bring the service up ourselves, in the foreground, as a media-playback service.
+         * AAOS binds it on its own schedule, which on the 2026-09-24 drive was never.
+         * Always starts, even when [live] is already set: a bind-only instance has not
+         * called [startForeground] yet. [onStartCommand] is idempotent.
          */
         fun ensureStarted(ctx: android.content.Context) {
-            if (live?.get() != null) return
-            ctx.applicationContext.startService(
-                android.content.Intent(ctx, CarPlayMediaBrowserService::class.java)
-            )
+            val app = ctx.applicationContext
+            val intent = android.content.Intent(app, CarPlayMediaBrowserService::class.java)
+            runCatching { app.startForegroundService(intent) }
+                .onFailure {
+                    ProbeLog.sub("mbs").w(
+                        "startForegroundService refused: ${it.javaClass.simpleName}: ${it.message}"
+                    )
+                }
         }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        promote()
+        return START_NOT_STICKY
+    }
+
+    /**
+     * Media playback only. No microphone type: a Play install does not grant `RECORD_AUDIO`,
+     * and declaring that type on `startForeground` force-closed versionCode 34 and 35.
+     * [CarPlaySessionService] is the process pin that adds the microphone type when held.
+     */
+    private fun promote() {
+        val n = buildNotification()
+        if (Build.VERSION.SDK_INT < 29) {
+            startForeground(NOTIF_ID, n)
+            log.i("foreground media service started")
+            return
+        }
+        try {
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            log.i("foreground media service started (mediaPlayback)")
+        } catch (e: Exception) {
+            log.e("startForeground(mediaPlayback) refused: $e")
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        mgr.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "CarPlay media", NotificationManager.IMPORTANCE_LOW).apply {
+                setShowBadge(false)
+            },
+        )
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("CarPlay")
+            .setContentText("Connecting media")
+            .setSmallIcon(android.R.drawable.stat_sys_headset)
+            .setOngoing(true)
+            .build()
     }
 
     override fun onCreate() {
@@ -447,7 +503,13 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS -> NativeCore.MediaBtn.PREV
                 else -> return super.onMediaButtonEvent(intent)
             }
-            send(idx, "key ${ev.keyCode}")
+            // Pause-type keys (127, 85, 79) still go to the phone. The last two drives had
+            // no `transport: key` line before the stream-102 teardown, so swallowing them
+            // would drop a real steering-wheel press. source and flags separate a wheel
+            // event from a head-unit arbitration key on the next capture.
+            val detail = "key ${ev.keyCode} source=${ev.source} flags=0x${Integer.toHexString(ev.flags)} device=${ev.deviceId}"
+            log.i("transport: $detail")
+            send(idx, detail)
             return true
         }
     }

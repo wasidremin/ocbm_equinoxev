@@ -192,7 +192,8 @@
              Media Center / CarLauncher, not us. -->
         <service
             android:name="wasidremin.gmccpa.av.CarPlayMediaBrowserService"
-            android:exported="true">
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
