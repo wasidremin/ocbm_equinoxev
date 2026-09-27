@@ -81,14 +81,6 @@ data class VehicleConfigSpec(
     val limitedUiJapanMaps: Boolean = false,
     val limitedUiLongAlerts: Boolean = true,
     /**
-     * Second main view area (`viewAreas[1]`), the Dock resize rect. Zero width omits it, so the
-     * pinned document stays one area. The box treats a second entry as `main_view_area_2`.
-     */
-    val viewArea2OriginX: Int = 0,
-    val viewArea2OriginY: Int = 0,
-    val viewArea2Width: Int = 0,
-    val viewArea2Height: Int = 0,
-    /**
      * CarPlay home-screen tile that returns to this app. Empty means the section is omitted, so the
      * pinned document stays byte-identical. A partial size set is what renders as a blank tile.
      */
@@ -194,19 +186,6 @@ object VehicleConfigYaml {
         // Emitted LAST in hidConfig, matching the reference emitter's order.
         line("      steeringWheelSupport: false")
         line("    primaryInput: Touchpad")
-        if (s.viewArea2Width > 0 && s.viewArea2Height > 0) {
-            line("    - viewArea:")
-            line("        originX: ${s.viewArea2OriginX}")
-            line("        originY: ${s.viewArea2OriginY}")
-            line("        width: ${s.viewArea2Width}")
-            line("        height: ${s.viewArea2Height}")
-            line("      safeArea:")
-            line("        originX: ${s.viewArea2OriginX}")
-            line("        originY: ${s.viewArea2OriginY}")
-            line("        width: ${s.viewArea2Width}")
-            line("        height: ${s.viewArea2Height}")
-            line("      drawUIOutsideSafeArea: false")
-        }
         line("  altVideoStreams: []")
     }
 
@@ -439,10 +418,6 @@ object VehicleConfigYaml {
         width: Int = 2400,
         height: Int = 960,
         safeRight: Int = 0,
-        view2X: Int = 0,
-        view2Y: Int = 0,
-        view2W: Int = 0,
-        view2H: Int = 0,
     ): ByteArray {
         require(passphrase.length >= 8 && passphrase.all { it.isLetterOrDigit() }) {
             "adapter passphrase must be at least 8 letters or digits"
@@ -461,23 +436,18 @@ object VehicleConfigYaml {
         // The pin guards the emitter. A sidebar session is the same document with a narrower main
         // panel, produced by that emitter after the pin has passed — not a hand-edited copy.
         // safeRight is an advertised-pixel inset on the right. 0 keeps the full-frame safe area
-        // the box logs as safe=None. A real inset uses the existing safeArea keys; it is not a
-        // second view area (viewAreas[1] is the Dock resize rect).
+        // the box logs as safe=None. A real inset uses the existing safeArea keys.
+        // Do not emit viewAreas[1] here. A second list item after primaryInput is not valid YAML
+        // at this indent, and serde then rejects the whole subscribe — including wifi_ap — so the
+        // phone is never handed the adapter network.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
-        val second = view2W > 0 && view2H > 0 &&
-            view2X >= 0 && view2Y >= 0 &&
-            view2X + view2W <= width && view2Y + view2H <= height
-        val doc = if (width == 2400 && height == 960 && inset == 0 && !second) pinned
+        val doc = if (width == 2400 && height == 960 && inset == 0) pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
                 height = height,
                 safeWidth = width - inset,
                 safeHeight = height,
-                viewArea2OriginX = if (second) view2X else 0,
-                viewArea2OriginY = if (second) view2Y else 0,
-                viewArea2Width = if (second) view2W else 0,
-                viewArea2Height = if (second) view2H else 0,
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

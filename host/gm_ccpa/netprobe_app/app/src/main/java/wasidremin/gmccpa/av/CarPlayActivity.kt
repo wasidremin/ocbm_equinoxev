@@ -243,6 +243,7 @@ class CarPlayActivity : Activity() {
     private var primaryPointerId = -1
     /** Hand-off overlay. Absent when this open is a Surface re-attach of a session that already played. */
     private var intro: StartupAnimationView? = null
+    private var introGear: View? = null
     private var introFinished = false
     private val introLate = Runnable { finishIntro(late = true) }
 
@@ -618,14 +619,24 @@ class CarPlayActivity : Activity() {
         v.onFinished = {
             v.removeCallbacks(introLate)
             root.removeView(v)
+            introGear?.let { root.removeView(it) }
             if (intro === v) intro = null
+            introGear = null
         }
         root.addView(v, android.widget.FrameLayout.LayoutParams(
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
         ))
-        v.bringToFront()
+        val gear = wasidremin.gmccpa.IntroSettingsButton(this) {
+            log.i("intro: settings")
+            openSettings()
+        }
+        root.addView(gear, android.widget.FrameLayout.LayoutParams(dp(72), dp(72), Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(20)
+            marginEnd = dp(28)
+        })
         intro = v
+        introGear = gear
         v.postDelayed(introLate, 8_000)
     }
 
@@ -1302,6 +1313,7 @@ class CarPlayActivity : Activity() {
     override fun onDestroy() {
         intro?.removeCallbacks(introLate)
         intro = null
+        introGear = null
         // Only clear the shared handle if it still points at US. A newer generation may already have
         // published itself (launch of the replacement can precede this teardown), and clearing it
         // unconditionally would leave the LIVE screen unreachable from [onSessionEnded].

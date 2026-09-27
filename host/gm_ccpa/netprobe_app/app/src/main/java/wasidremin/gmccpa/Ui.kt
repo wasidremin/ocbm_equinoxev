@@ -3,7 +3,9 @@ package wasidremin.gmccpa
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
@@ -234,6 +236,7 @@ class LauncherUi(private val act: Activity) {
     private val scaleButtons = mutableListOf<Button>()
     private val safeButtons = mutableListOf<Button>()
     private val intro = StartupAnimationView(act)
+    private val introGear = IntroSettingsButton(act) { openIntroSettings() }
     private var introRestore: Runnable? = null
     private val uiLog = ProbeLog.sub("ui")
     private val tabButtons = mutableListOf<Button>()
@@ -460,12 +463,12 @@ class LauncherUi(private val act: Activity) {
         intro.setPhoneName(DisplayPrefs.lastPhoneName(act))
         intro.setOnLongClickListener {
             uiLog.i("intro: hidden for diagnostics")
-            intro.visibility = View.GONE
+            hideIntroLayer()
             introRestore?.let { intro.removeCallbacks(it) }
             val restore = Runnable {
                 if (sessionIsLive()) return@Runnable
                 if (intro.alpha < 0.99f) return@Runnable
-                intro.visibility = View.VISIBLE
+                showIntroLayer()
             }
             introRestore = restore
             intro.postDelayed(restore, 15_000)
@@ -476,7 +479,29 @@ class LauncherUi(private val act: Activity) {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         frame.addView(intro, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        frame.addView(introGear, FrameLayout.LayoutParams(act.dp(72), act.dp(72), Gravity.TOP or Gravity.END).apply {
+            topMargin = act.dp(20)
+            marginEnd = act.dp(28)
+        })
         return frame
+    }
+
+    /** Gear on the light bar. Leaves the animation down and opens the screen settings. */
+    private fun openIntroSettings() {
+        uiLog.i("intro: settings")
+        introRestore?.let { intro.removeCallbacks(it) }
+        hideIntroLayer()
+        showTab(1)
+    }
+
+    private fun hideIntroLayer() {
+        intro.visibility = View.GONE
+        introGear.visibility = View.GONE
+    }
+
+    private fun showIntroLayer() {
+        intro.visibility = View.VISIBLE
+        introGear.visibility = View.VISIBLE
     }
 
     private fun page(): LinearLayout = LinearLayout(act).apply {
@@ -752,7 +777,7 @@ class LauncherUi(private val act: Activity) {
         detailText.text = detail
         if (sessionIsLive()) {
             introRestore?.let { intro.removeCallbacks(it) }
-            intro.visibility = View.GONE
+            hideIntroLayer()
             return@runOnUiThread
         }
         intro.setStage(
@@ -772,7 +797,7 @@ class LauncherUi(private val act: Activity) {
     /** A session is already up (settings, or a return to the launcher). Leave the diagnostics reachable. */
     fun concealIntro() {
         introRestore?.let { intro.removeCallbacks(it) }
-        intro.visibility = View.GONE
+        hideIntroLayer()
     }
 
     /** The CarPlay session ended. The wait animation starts again from the first frame. */
@@ -780,6 +805,7 @@ class LauncherUi(private val act: Activity) {
         if (act.isFinishing) return@runOnUiThread
         introRestore?.let { intro.removeCallbacks(it) }
         intro.reset()
+        introGear.visibility = View.VISIBLE
     }
 
     /** Show (or, on an empty code, hide) the box's pairing code. */
@@ -911,5 +937,45 @@ class LauncherUi(private val act: Activity) {
         const val KEY_SSID = "ssid"
         const val KEY_PASS = "pass"
         const val KEY_CHAN = "chan"
+    }
+}
+
+/**
+ * Settings control drawn on the startup light bar. A stroke gear in the animation's blue, no
+ * filled chip, so it sits in the corner without looking like a second screen.
+ */
+internal class IntroSettingsButton(
+    ctx: android.content.Context,
+    private val onTap: () -> Unit,
+) : View(ctx) {
+    private val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF4C9BFF.toInt()
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    init {
+        contentDescription = "Settings"
+        isClickable = true
+        setOnClickListener { onTap() }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val outer = minOf(width, height) * 0.28f
+        ink.strokeWidth = outer * 0.14f
+        canvas.drawCircle(cx, cy, outer * 0.42f, ink)
+        canvas.drawCircle(cx, cy, outer * 0.78f, ink)
+        val teeth = 8
+        for (i in 0 until teeth) {
+            val a = Math.toRadians(i * (360.0 / teeth) - 90.0)
+            val c = Math.cos(a).toFloat()
+            val s = Math.sin(a).toFloat()
+            canvas.drawLine(
+                cx + c * outer * 0.62f, cy + s * outer * 0.62f,
+                cx + c * outer, cy + s * outer, ink,
+            )
+        }
     }
 }

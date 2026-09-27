@@ -313,7 +313,9 @@ class OcbmProbe(context: Context) {
             VehicleConfigYaml.renderAdapter("adapterpass1", width = 1996, height = 768, safeRight = 38)
         }.getOrNull()?.toString(Charsets.UTF_8) ?: ""
         check("a right inset narrows safeArea on the existing keys",
-            inset.contains("\n        width: 1958\n") && inset.contains("\n      width: 1996\n"))
+            inset.contains("\n        width: 1958\n") && inset.contains("\n      width: 1996\n") &&
+                inset.split("- viewArea:").size == 2 &&
+                inset.contains("\nwifi_ap: true\n"))
 
         sink("")
         sink("SELF-TEST: $pass passed, $fail failed")
@@ -802,22 +804,12 @@ class OcbmProbe(context: Context) {
             log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px, panel ${VideoFrame.panelPx}px")
         }
         c.subscribe(if (adapterWifi) {
-            val percent = VideoFrame.uiScalePercent
-            // Area 0 is the advertised frame (VideoFrame). Area 1 is the dock rect, scaled by
-            // the same percentage from the 1416×842@188,118 template. Omitted at 100% so a
-            // full-size session stays a single view area. Dropped if it would fall outside the
-            // advertised frame — the box refuses an area that is not contained.
-            val v2x = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(188, percent)
-            val v2y = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(118, percent)
-            val v2w = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(1416, percent)
-            val v2h = if (percent == 100) 0 else wasidremin.gmccpa.DisplayScale.even(842, percent)
             VehicleConfigYaml.renderAdapter(
                 AdapterWifi.passphrase(ctx),
                 adapterSsid(c),
                 VideoFrame.width,
                 VideoFrame.height,
                 VideoFrame.safeRightPx,
-                v2x, v2y, v2w, v2h,
             )
         } else btOnlyConfig())
         c.startHeartbeat()
