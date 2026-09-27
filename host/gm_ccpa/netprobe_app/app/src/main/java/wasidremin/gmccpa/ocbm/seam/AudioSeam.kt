@@ -76,6 +76,16 @@ class AudioSeam(
     val decryptFail = AtomicLong(0)
     val unkeyed = AtomicLong(0)
 
+    /**
+     * One call per new media scid, on the OCBM read thread, inside this seam's lock.
+     * Must not block and must not call back into the seam: post binder work (the focus
+     * request) to another thread. Cleared, with [announcedMedia], when the lanes close.
+     */
+    @Volatile var onMediaStreamStart: ((scid: Long) -> Unit)? = null
+
+    /** Media scids already handed to [onMediaStreamStart]. A repeat MARK_FORMAT for the same scid is not a new stream. */
+    private val announcedMedia = HashSet<Long>()
+
     private val keys = HashMap<Long, ByteArray>()
     private val formats = HashMap<Long, Format>()
 
@@ -109,6 +119,13 @@ class AudioSeam(
 
     @Synchronized
     fun resetVoice() = reset(voice)
+
+    /** Lanes are closing. Drop the announced-scid set and the callback so a late format cannot post. */
+    @Synchronized
+    fun closeStreamSignals() {
+        announcedMedia.clear()
+        onMediaStreamStart = null
+    }
 
     private fun reset(s: Buf) {
         val held = s.end - s.start
@@ -342,6 +359,7 @@ class AudioSeam(
                     )
                 val prev = formats[scid]
                 formats[scid] = f
+                val media = SeamCrypto.isMediaAudioType(f.atype)
                 if (prev == null ||
                     prev.codec != f.codec ||
                     prev.rate != f.rate ||
@@ -350,9 +368,10 @@ class AudioSeam(
                 ) {
                     log.i(
                         "audio format scid=$scid: codec=${codecName(f.codec)} ${f.rate}Hz " +
-                            "${f.channels}ch atype=${f.atype} -> ${if (SeamCrypto.isMediaAudioType(f.atype)) "media" else "voice"}",
+                            "${f.channels}ch atype=${f.atype} -> ${if (media) "media" else "voice"}",
                     )
                 }
+                if (media && announcedMedia.add(scid)) onMediaStreamStart?.invoke(scid)
             }
             SeamCrypto.MARK_PKT -> {
                 if (len < 9) return

@@ -626,7 +626,9 @@ class CarPlayActivity : Activity() {
             val r = renderer
             if (r != null) r.consume(ins) else discardUntilRenderer(gen, ins)
         }
-        serve(gen, aus, "audio") { ins -> p.consume(ins) }
+        // Each :9002 accept is one stream on this wired path. The adapter path fires
+        // onStreamStart from AudioSeam's MARK_FORMAT instead, because that pipe stays open.
+        serve(gen, aus, "audio") { ins -> p.onStreamStart(0L); p.consume(ins) }
 
         // :9003 carries every NON-media audioType — Siri, telephony, alerts, navigation prompts
         // (session.rs routes them there, tagged `[rate u32 BE][ch u16 BE][atype u8][len u32 BE][AU]`).

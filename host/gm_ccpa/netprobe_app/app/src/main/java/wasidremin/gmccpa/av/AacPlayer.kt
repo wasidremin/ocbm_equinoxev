@@ -93,11 +93,17 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      */
     @Volatile private var underrunBaseline = -1
     /**
-     * Per-CONNECTION latch for [EXPECT_FIRST_PCM]: the counters above are cumulative across every
-     * producer re-dial, so "first frame" per session and "first PCM of this connection" are different
-     * events. Consume-thread only.
+     * Per-stream latch for [EXPECT_FIRST_PCM]. Reset on the main thread in [onStreamStart];
+     * set on the consume thread in [feed]. [consume]'s finally cancels the expectation when
+     * the pipe ends with this still false.
      */
-    private var firstPcmThisConn = false
+    @Volatile private var firstPcmThisConn = false
+    /** Seam scid of the media stream [onStreamStart] last announced. Consume thread reads it for the mute warning. */
+    @Volatile private var mediaScid = 0L
+    /** One mute warning per stream. Reset in [onStreamStart]. */
+    @Volatile private var warnedGain0 = false
+    /** PLAYED frames whose effective gain was 0. Cumulative; printed at the 500-frame checkpoint and in [stop]. */
+    val framesPlayedMuted = AtomicLong(0)
 
     private val rates = intArrayOf(96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350)
 
@@ -134,16 +140,19 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
          * each stream start and stale audio on each track skip (see [buildTrack]).
          */
         const val TRACK_BUFFER_MS = 750L
-        /** [SessionTrace] name for "this seam connection produced decoded PCM". Armed in [consume];
-         *  `av/`-scoped so `CarPlayActivity.stopSession` can drop it when the AirPlay session ends. */
+        /** [SessionTrace] name for "this media stream produced decoded PCM". Armed in [onStreamStart]
+         *  when the phone SETUPs a media stream; `av/`-scoped so `CarPlayActivity.stopSession` can
+         *  drop it when the AirPlay session ends. */
         const val EXPECT_FIRST_PCM = "av/media-first-pcm"
         /**
-         * Budget from seam connect to the first decoded output buffer of that connection. Measured on
-         * 2026-09-09: `audio seam connected` 22:55:30.365 → `configured AAC-LC` .415 → `FIRST AUDIO
-         * FRAME PLAYED` .541 — **176 ms**, and forward.rs only dials once it has an ADTS frame to
-         * send, so a connection with no PCM behind it within 3 s is a decoder that did not configure
-         * or is producing nothing. Met on ANY output buffer, played or discarded: whether the track is
-         * paused for Siri is a separate, already-logged state and must not turn this into a false
+         * Budget from media-stream SETUP to the first decoded output buffer of that stream.
+         * The :9002 pipe opens once per lane generation and can sit idle for tens of seconds
+         * before any phone, so the budget must not start at the pipe. Measured on 2026-09-09:
+         * `audio seam connected` 22:55:30.365 → `configured AAC-LC` .415 → `FIRST AUDIO
+         * FRAME PLAYED` .541 — **176 ms** after a live stream's first ADTS frame. A stream with
+         * no PCM within 3 s of its SETUP is a decoder that did not configure or is producing
+         * nothing. Met on ANY output buffer, played or discarded: whether the track is paused
+         * for Siri is a separate, already-logged state and must not turn this into a false
          * alarm (the second stream 102 of that session started 5.1 s into a hold).
          */
         const val FIRST_PCM_MS = 3_000L
@@ -284,8 +293,9 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             log.i("audio source Bluetooth — local media muted, focus not taken, track not primed")
             return
         }
-        // Focus is requested from [onStreamStart] when a media connection opens, not here.
-        // Asking at lane-arm time raced the preparing signal and left FM as the source.
+        // Focus is requested from [onStreamStart] when a media stream is SET UP, not here
+        // and not when the :9002 pipe connects. Asking at lane-arm time raced the preparing
+        // signal and left FM as the source.
         synchronized(this) { pausedForRoute = false }
         CarPlayMediaBrowserService.claimCarSource()
         log.i("audio source Adapter — focus waits for the media stream")
@@ -320,10 +330,11 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
 
     /**
      * Take permanent media focus. Idempotent while [focus] is already held.
-     * [onStreamStart] calls this when a media connection opens. [start] does not.
+     * [onStreamStart] calls this when a media stream is SET UP and focus is not already
+     * GAIN. [start] does not.
      *
      * A LOSS_TRANSIENT keeps the request so Siri or a call can hand it back. A permanent
-     * LOSS clears it; the next connection is what asks again. Asking again inside the
+     * LOSS clears it; the next media stream is what asks again. Asking again inside the
      * listener is the fight that tore stream 102 down.
      *
      * # Two windows closed 2026-09-10 (both were in the build on the truck)
@@ -381,7 +392,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             // held, so clearing pausedForFocus and unducking on it would play over the current holder.
             if (r != android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                 // E, not W: with no resting owner AAOS has nothing to hand focus back to after Siri or
-                // a call, so the knob sticks on Phone/Siri for the session. The next [consume]
+                // a call, so the knob sticks on Phone/Siri for the session. The next [onStreamStart]
                 // asks again. A permanent LOSS drops the cached request so that ask is not blocked.
                 log.e("media audio focus REQUEST_FAILED (result=$r) — not cached; the next stream asks again")
                 // note(), not failed(): the E above is the severity; a second E would double-count.
@@ -437,8 +448,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * A permanent LOSS drops the cached request and leaves the gain at 0. On AOSP and the
      * AAOS car stack that LOSS already removed this app from the focus stack, so keeping the
      * [AudioFocusRequest] made [requestFocus] return at `focus != null` for the rest of the
-     * session — the "request kept" line was playback with no focus. The next [consume] is
-     * what asks again. Asking again inside this listener is the `4.0+mirror` fight (pid 1173
+     * session — the "request kept" line was playback with no focus. The next [onStreamStart]
+     * is what asks again. Asking again inside this listener is the `4.0+mirror` fight (pid 1173
      * abandoned and re-requested, then the phone tore stream 102 down after 630 frames).
      *
      * LOSS_TRANSIENT keeps the request so the later GAIN unmutes. Siri still pauses the
@@ -515,15 +526,31 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     }
 
     /**
-     * One focus request per media connection, and only when the last permanent LOSS cleared
-     * the cached request. Matches the original app's request on every `AUDIO_MEDIA_START`.
-     * Does not retry on a timer.
+     * One focus request per media stream, and only when focus is not already held at GAIN.
+     * Matches the original app's request on every `AUDIO_MEDIA_START`. Does not retry on a timer.
+     *
+     * Also arms [EXPECT_FIRST_PCM]. The budget starts at this SETUP, not at the :9002 pipe,
+     * which opens once per lane generation and can sit idle before any phone.
+     *
+     * [duckGain] is read under [duckLock]. This method does not hold `this` across that read,
+     * and it does not call [setFocusGain] or [abandonFocus] while holding `this`.
      */
-    fun onStreamStart() {
+    fun onStreamStart(scid: Long) {
+        mediaScid = scid
+        warnedGain0 = false
+        firstPcmThisConn = false
+        SessionTrace.expect(EXPECT_FIRST_PCM, FIRST_PCM_MS,
+            "media stream scid=$scid SETUP, so the budget starts here and the AAC-LC decoder " +
+            "should emit PCM within 3s (176ms after a live stream's first ADTS frame on 2026-09-09)")
+        val gain = synchronized(duckLock) { duckGain }
+        val held = focus != null
+        val state = focusState
+        log.i("stream start scid=$scid — focus=${focusName(state)} held=$held gain=$gain")
         if (wasidremin.gmccpa.AudioRoute.bluetooth) {
-            log.i("stream start — Bluetooth route, focus not requested")
+            log.i("stream start scid=$scid — Bluetooth route, focus not requested")
             return
         }
+        if (held && state == android.media.AudioManager.AUDIOFOCUS_GAIN) return
         requestFocus()
     }
 
@@ -713,9 +740,10 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         val dropped = framesDroppedNoTrack.get()
         val inputDropped = framesDroppedNoInput.get()
         val net = netUnderruns(underruns)
+        val muted = framesPlayedMuted.get()
         val msg = "stopping ($why) — ${framesDecoded.get()} frames played, ${framesDiscardedPaused.get()} discarded " +
                   "(paused), $dropped dropped (no track), $inputDropped dropped (no input buffer), " +
-                  "$underruns underruns ($net net of the fill baseline), ${bytesIn.get()} bytes"
+                  "$muted played at gain 0, $underruns underruns ($net net of the fill baseline), ${bytesIn.get()} bytes"
         when {
             dropped > 0 -> log.e("$msg — decoded media reached NO live track: that was silent media")
             inputDropped > 0 -> log.w("$msg — AAC input frames were dropped before the decoder")
@@ -728,17 +756,16 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     /** Set on the consume thread's entry; read by [stop] to decide whether the primed track has an owner. */
     @Volatile private var consumeStarted = false
 
-    /** Consume ADTS off the seam until it closes. Blocking; call on its own thread. */
+    /**
+     * Consume ADTS off the seam until it closes. Blocking; call on its own thread.
+     *
+     * Does not request focus and does not arm [EXPECT_FIRST_PCM]. Both happen in [onStreamStart],
+     * once per media stream. The :9002 pipe opens once per lane generation, long before any phone,
+     * so doing either here fired a false first-PCM miss and never asked for focus again after a LOSS.
+     * The wired path calls [onStreamStart] itself: each :9002 accept there is one stream.
+     */
     fun consume(ins: InputStream) {
         consumeStarted = true
-        firstPcmThisConn = false
-        onStreamStart()
-        // Per connection: forward.rs dials only once it holds an ADTS frame, so a connection with no
-        // decoded PCM behind it is a decoder fault, not an idle phone. Met in [feed] on the first
-        // output buffer of any outcome; cancelled below if the connection ends first.
-        SessionTrace.expect(EXPECT_FIRST_PCM, FIRST_PCM_MS,
-            "the media seam :9002 connected, and the producer dials only with an ADTS frame in hand, " +
-            "so the AAC-LC decoder should configure and emit PCM at once (176ms on 2026-09-09)")
         var storage = ByteArray(64 * 1024)
         var start = 0
         var end = 0
@@ -1070,6 +1097,15 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                     continue
                 }
                 val n = framesDecoded.incrementAndGet()
+                val gain = synchronized(duckLock) { duckGain }
+                if (gain == 0f) {
+                    framesPlayedMuted.incrementAndGet()
+                    if (focus == null && !warnedGain0) {
+                        warnedGain0 = true
+                        log.w("media playing at gain 0 with no focus held — driver hears nothing " +
+                            "(focus=${focusName(focusState)}, stream scid=$mediaScid)")
+                    }
+                }
                 // The underrun count here is the baseline for the session: it already includes the
                 // one AudioFlinger tallies while a primed track sits empty (see [buildTrack]), so
                 // "underruns at stop minus underruns here" is the number that actually happened
@@ -1088,6 +1124,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                     val net = netUnderruns(u)
                     val msg = "$n audio frames played, ${framesDiscardedPaused.get()} discarded (paused), " +
                               "$dropped dropped (no track), $inputDropped dropped (no input buffer), " +
+                              "${framesPlayedMuted.get()} played at gain 0, " +
                               "$u underruns ($net net of the fill baseline)"
                     when {
                         dropped > 0 -> log.e("$msg — decoded media is reaching NO live track")

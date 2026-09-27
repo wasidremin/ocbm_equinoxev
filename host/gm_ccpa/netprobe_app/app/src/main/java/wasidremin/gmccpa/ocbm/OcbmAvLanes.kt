@@ -62,6 +62,14 @@ class OcbmAvLanes(
     val voicePipe = SeamPipe(voiceCapacityBytes)
     val audioSeam = AudioSeam(mediaPipe, voicePipe, log)
 
+    /**
+     * Fired once per new media scid, on the OCBM read thread. The session layer posts
+     * the focus request off this thread. See [AudioSeam.onMediaStreamStart].
+     */
+    var onMediaStreamStart: ((scid: Long) -> Unit)?
+        get() = audioSeam.onMediaStreamStart
+        set(value) { audioSeam.onMediaStreamStart = value }
+
     val metadataSeam = MetadataSeam(log, onMetadata)
 
     private val threads = ArrayList<Thread>()
@@ -117,6 +125,7 @@ class OcbmAvLanes(
      */
     fun close() {
         if (!closed.compareAndSet(false, true)) return
+        audioSeam.closeStreamSignals()
         videoSeam.attach(null)
         mediaPipe.close()
         voicePipe.close()

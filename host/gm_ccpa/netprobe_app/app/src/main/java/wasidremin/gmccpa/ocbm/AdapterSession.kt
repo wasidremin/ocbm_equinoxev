@@ -52,6 +52,10 @@ object AdapterSession {
     private var pendingSurface: Surface? = null
     /** Last `modes resources` line, so a repeated modesChanged does not log the same ownership. */
     private var lastResources: String? = null
+    /** Raw key set of each resource dict, once per session. transferType was null in 20260927-100549. */
+    private var loggedResourceKeys = false
+    /** Last mainAudio borrow (owner ≠ permanent). Null until the first dict; transitions log on their own. */
+    private var mainAudioBorrowed: Boolean? = null
 
     fun bind(c: OcbmClient, ctx: Context) {
         quietStop()
@@ -60,6 +64,7 @@ object AdapterSession {
         // media service here, seconds before the first stream asks for focus. Doing both at
         // lane-arm time let focus land while the car still had FM as the source.
         wasidremin.gmccpa.AudioRoute.load(app)
+        clearResourceLog()
         CarPlayMediaBrowserService.announcePreparing()
         CarPlayMediaBrowserService.ensureStarted(app)
         val e = epoch.incrementAndGet()
@@ -147,7 +152,7 @@ object AdapterSession {
         old?.onSessionKeyed = null
         quietStop()
         client = null
-        lastResources = null
+        clearResourceLog()
         CarPlayMediaBrowserService.onSessionDown()
         CarPlayActivity.nowPlaying.clear()
         log.i("adapter released — media card cleared")
@@ -176,11 +181,26 @@ object AdapterSession {
             router?.stop("replaced by a new A/V generation")
             router = null
             lanes = armed
+            val e = epoch.get()
+            armed.onMediaStreamStart = stream@{ scid ->
+                if (epoch.get() != e) return@stream
+                main.post {
+                    if (epoch.get() != e) return@post
+                    val current = synchronized(this@AdapterSession) {
+                        if (lanes !== armed) null else player
+                    } ?: return@post
+                    current.onStreamStart(scid)
+                    if (CarPlayMediaBrowserService.needsPreparing()) {
+                        CarPlayMediaBrowserService.announcePreparing()
+                    }
+                }
+            }
             resume = pendingSurface?.takeIf { it.isValid }
             var p: AacPlayer? = null
             var voice: VoiceRouter? = null
             try {
-                // Idempotent with [bind]. Focus still waits for [AacPlayer.onStreamStart].
+                // Idempotent with [bind]. Focus waits for each media MARK_FORMAT
+                // ([AacPlayer.onStreamStart]), not for this pipe.
                 CarPlayMediaBrowserService.ensureStarted(ctx)
                 CarPlayMediaBrowserService.announcePreparing()
                 val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
@@ -242,7 +262,7 @@ object AdapterSession {
             }
         }
         if (notify) {
-            lastResources = null
+            clearResourceLog()
             CarPlayMediaBrowserService.onSessionDown()
             CarPlayActivity.nowPlaying.clear()
             log.i("lanes retired — media card cleared")
@@ -285,21 +305,72 @@ object AdapterSession {
         router?.onModes(speechMode, speechEntity, phoneEntity, turnsEntity, size)
     }
 
+    private fun clearResourceLog() {
+        lastResources = null
+        loggedResourceKeys = false
+        mainAudioBorrowed = null
+    }
+
+    /** 0 none, 1 phone (controller), 2 car (accessory). Anything else is printed as the number. */
+    private fun entityName(v: Any?): String {
+        val n = (v as? Number)?.toLong() ?: return if (v == null) "null" else v.toString()
+        return when (n) {
+            0L -> "none"
+            1L -> "phone"
+            2L -> "car"
+            else -> n.toString()
+        }
+    }
+
+    private fun resourceLabel(id: Any?): String {
+        val n = (id as? Number)?.toLong()
+        return when (n) {
+            1L -> "mainScreen"
+            2L -> "mainAudio"
+            null -> "resource?"
+            else -> "resource$n"
+        }
+    }
+
     /**
      * `modesChanged` `resources[]` says who owns MainScreen (resourceID 1) and MainAudio
-     * (resourceID 2). Logged only when the line changes. The voice path still reads `appStates`.
+     * (resourceID 2). Entity 0 is none, 1 is the phone, 2 is the car. Logged only when the
+     * line changes. A mainAudio borrow (owner ≠ permanent) flipping to owned, or back, is
+     * its own line. The raw key set of each dict is logged once per session — transferType
+     * and transferPriority were null in capture 20260927-100549. The voice path still reads `appStates`.
      */
     private fun logResources(raw: Any?) {
         val list = raw as? List<*>
+        if (!loggedResourceKeys) {
+            loggedResourceKeys = true
+            when {
+                list == null -> log.i("modes resource keys: (absent)")
+                list.isEmpty() -> log.i("modes resource keys: (empty)")
+                else -> list.forEach { item ->
+                    val d = item as? Map<*, *>
+                    if (d == null) log.i("modes resource keys: (not a dict)")
+                    else log.i("modes resource keys: ${d.keys.joinToString(",") { it.toString() }}")
+                }
+            }
+        }
         val text = when {
             list == null -> "(absent)"
             list.isEmpty() -> "(empty)"
             else -> list.joinToString("; ") { item ->
                 val d = item as? Map<*, *> ?: return@joinToString "$item"
-                val entities = d.entries
-                    .filter { (k, _) -> k.toString().contains("entity", ignoreCase = true) }
-                    .joinToString(" ") { (k, v) -> "$k=$v" }
-                "resourceID=${d["resourceID"]} transferType=${d["transferType"]} transferPriority=${d["transferPriority"]}${if (entities.isEmpty()) "" else " $entities"}"
+                val label = resourceLabel(d["resourceID"])
+                val owner = entityName(d["entity"])
+                val perm = entityName(d["permanentEntity"])
+                if (label == "mainAudio" && d["entity"] is Number && d["permanentEntity"] is Number) {
+                    val borrowed = (d["entity"] as Number).toLong() != (d["permanentEntity"] as Number).toLong()
+                    val prev = mainAudioBorrowed
+                    mainAudioBorrowed = borrowed
+                    if (prev != null && prev != borrowed) {
+                        val which = if (borrowed) "borrowed" else "owned"
+                        log.i("mainAudio $which — owner=$owner permanent=$perm")
+                    }
+                }
+                "$label owner=$owner permanent=$perm"
             }
         }
         if (text == lastResources) return

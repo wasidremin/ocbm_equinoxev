@@ -127,8 +127,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         @Volatile private var arbitrationUntil = 0L
         private const val ARBITRATION_MS = 5_000L
         /**
-         * TODO: set from the first capture that logs `transport: first caller package=`.
-         * Empty means every pause-type key is dropped during the arbitration window.
+         * Still empty. Capture 20260927-100549 (pid 17091) saw both `com.android.car` (uid 1000)
+         * and `com.gm.car.media.gmcarmediaservice` send arbitration pause and stop through
+         * [MediaSession.Callback.onPause] / [MediaSession.Callback.onStop], not media keys.
+         * The steering-wheel source is still unknown, so this stays empty and every pause-type
+         * key is dropped during the arbitration window.
          */
         private const val STEERING_WHEEL_PACKAGE = ""
         private val seenCallers = HashSet<String>()
@@ -165,6 +168,14 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             noteArbitration("preparing")
             live?.get()?.publishPreparing()
         }
+
+        /**
+         * True while a stream-start should re-signal BUFFERING. False on the Bluetooth route,
+         * and false once the phone has sent a playback status — calling [announcePreparing]
+         * after that would restart the arbitration window.
+         */
+        fun needsPreparing(): Boolean =
+            !wasidremin.gmccpa.AudioRoute.bluetooth && last?.playbackStatus == null
 
         /** Opens the 5 s window in which head-unit pause keys are not forwarded. */
         fun noteArbitration(why: String) {
@@ -548,7 +559,10 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * steering-wheel package. Outside that window, play, next and previous still go to the phone.
      */
     private val callback = object : MediaSession.Callback() {
-        override fun onPlay() = send(NativeCore.MediaBtn.PLAY, "play")
+        override fun onPlay() {
+            val caller = callerLabel()
+            send(NativeCore.MediaBtn.PLAY, "play $caller")
+        }
         // GM binds every media source and sends pause, then pause+stop, as arbitration.
         // Those callbacks are never HID. A steering-wheel pause is a media key, and it is
         // forwarded outside the arbitration window.
@@ -560,8 +574,14 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             val why = if (inArbitration()) "arbitration window" else "head unit probe, not sent to the phone"
             log.i("transport: stop ${callerLabel()} dropped — $why")
         }
-        override fun onSkipToNext() = send(NativeCore.MediaBtn.NEXT, "next")
-        override fun onSkipToPrevious() = send(NativeCore.MediaBtn.PREV, "prev")
+        override fun onSkipToNext() {
+            val caller = callerLabel()
+            send(NativeCore.MediaBtn.NEXT, "next $caller")
+        }
+        override fun onSkipToPrevious() {
+            val caller = callerLabel()
+            send(NativeCore.MediaBtn.PREV, "prev $caller")
+        }
 
         /**
          * Handled explicitly so PLAY_PAUSE reaches iOS as the dedicated toggle rather than being
@@ -615,7 +635,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
 
     /**
      * True when a pause-type key should stay on the car. The wheel package is forwarded
-     * even inside the window, once [STEERING_WHEEL_PACKAGE] is filled in from a capture.
+     * even inside the window, once [STEERING_WHEEL_PACKAGE] is known. Capture 20260927-100549
+     * did not identify it: both seen packages used onPause/onStop, not media keys.
      */
     private fun dropPauseKey(caller: String): Boolean {
         if (!inArbitration()) return false
