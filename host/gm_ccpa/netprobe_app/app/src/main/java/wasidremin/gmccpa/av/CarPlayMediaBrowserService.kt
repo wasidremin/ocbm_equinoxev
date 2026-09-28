@@ -73,6 +73,8 @@ import java.util.concurrent.Executors
 class CarPlayMediaBrowserService : MediaBrowserService() {
 
     private val log = ProbeLog.sub("mbs")
+    /** Last `card: metadata` line, so a repeated title does not log again until the art or title moves. */
+    private var cardLogLine: String? = null
     private var session: MediaSession? = null
 
     @Volatile private var artBitmap: Bitmap? = null
@@ -141,17 +143,26 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         @Volatile var sourceSwitchable: Boolean? = null
 
+        /** One "session not up" line per gap, so a 2 Hz tick cannot flood the capture. */
+        private var cardDropLogged = false
+
         /** Seam entry point — the displayed metadata changed. Callable from any thread. */
         fun publish(s: NowPlayingState.Snapshot) {
-            if (!sessionUp) return
             last = s
+            if (!sessionUp) {
+                if (!cardDropLogged) {
+                    cardDropLogged = true
+                    ProbeLog.sub("mbs").i("card: update dropped — session not up")
+                }
+                return
+            }
             live?.get()?.publishNow(s)
         }
 
         /** Seam entry point — the ~2 Hz elapsed-only tick. Never rebuilds `MediaMetadata`. */
         fun publishPlaybackState(s: NowPlayingState.Snapshot) {
-            if (!sessionUp) return
             last = s
+            if (!sessionUp) return
             live?.get()?.publishState(s)
         }
 
@@ -197,8 +208,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         fun onSessionUp() {
             sessionUp = true
+            cardDropLogged = false
             warnedNoPlaybackStatus = false
             announcePreparing()
+            live?.get()?.resetCardLog()
+            replayCard()
             // Not a fault at this instant — AAOS binds Media Center on its own schedule, routinely
             // after RECORD — but a session that ends with this still DOWN never appeared in the
             // source switcher, and the board is the only place that is visible.
@@ -213,7 +227,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         fun onSessionDown() {
             sessionUp = false; last = null; wantPreparing = false
+            cardDropLogged = false
             warnedNoPlaybackStatus = false
+            live?.get()?.resetCardLog()
             live?.get()?.let {
                 it.publishIdle()
                 it.stopForegroundState()
@@ -235,6 +251,14 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         }
 
         /** Distinct from [CarPlaySessionService]'s notification. Two foreground services, two ids. */
+        /** The picture to put on the card: the live snapshot when it has a title, else the last stored one. */
+        private fun replayCard() {
+            val snap = CarPlayActivity.nowPlaying.snapshot
+            val s = if (snap.hasContent) snap else last?.takeIf { it.hasContent } ?: return
+            last = s
+            live?.get()?.publishNow(s)
+        }
+
         private const val NOTIF_ID = 1002
         private const val CHANNEL_ID = "carplay_media"
 
@@ -324,7 +348,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         publishIdle()
         applySessionActive()
         if (wantPreparing || sessionUp) publishPreparing()
-        last?.let { if (sessionUp) publishNow(it) }   // late bind: session was already up
+        if (sessionUp) replayCard()
         log.i("registered as an AAOS media source")
         SessionTrace.Board.up(BOARD, "bound by AAOS; session ${if (sessionUp) "up" else "idle"}")
     }
@@ -460,6 +484,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         )
     }
 
+    fun resetCardLog() { cardLogLine = null }
+
     private fun publishNow(s: NowPlayingState.Snapshot) {
         val sess = session ?: return
         // Metadata waits for a title. Playback state does not: a status-only update (paused
@@ -476,11 +502,18 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         if (s.durationMs > 0) b.putLong(MediaMetadata.METADATA_KEY_DURATION, s.durationMs)
         if (s.trackNumber > 0) b.putLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER, s.trackNumber.toLong())
         if (s.trackCount > 0) b.putLong(MediaMetadata.METADATA_KEY_NUM_TRACKS, s.trackCount.toLong())
-        bitmapFor(s.artwork)?.let {
+        val art = bitmapFor(s.artwork)
+        art?.let {
             // BOTH keys: AAOS consumers disagree on which they read, and a card with no image where
             // one exists is the usual symptom of picking only one.
             b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it)
             b.putBitmap(MediaMetadata.METADATA_KEY_ART, it)
+        }
+        val artNote = if (art != null) "${art.width}x${art.height}" else "none"
+        val cardLine = "card: metadata \"${s.title.orEmpty()}\" art=$artNote (sessionUp=$sessionUp)"
+        if (cardLine != cardLogLine) {
+            cardLogLine = cardLine
+            log.i(cardLine)
         }
         runCatching { sess.setMetadata(b.build()) }.onFailure { log.e("setMetadata failed: ${it.message}") }
         }
@@ -520,6 +553,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         if (artFor === jpeg) return artBitmap   // decode once per blob, including a failed decode
         val bm = runCatching { decodeBounded(jpeg) }.getOrNull()
         if (bm == null) log.w("artwork (${jpeg.size} B) failed to decode — publishing without an image")
+        else log.i("card: art decode ${bm.width}x${bm.height}")
         artBitmap = bm; artFor = jpeg
         return bm
     }

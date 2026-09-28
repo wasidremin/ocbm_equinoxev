@@ -173,7 +173,7 @@ object AdapterSession {
         client = null
         clearResourceLog()
         CarPlayMediaBrowserService.onSessionDown()
-        CarPlayActivity.nowPlaying.clear()
+        CarPlayActivity.nowPlaying.clear("adapter released")
         log.i("adapter released — media card cleared")
     }
 
@@ -287,7 +287,7 @@ object AdapterSession {
         if (notify) {
             clearResourceLog()
             CarPlayMediaBrowserService.onSessionDown()
-            CarPlayActivity.nowPlaying.clear()
+            CarPlayActivity.nowPlaying.clear("A/V lanes retired")
             log.i("lanes retired — media card cleared")
             main.post { if (epoch.get() == e) onRetired?.invoke() }
         }

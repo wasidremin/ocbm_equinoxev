@@ -579,6 +579,11 @@ class LauncherUi(private val act: Activity) {
         if (::hotspotValue.isInitialized) hotspotValue.text = hotspotLabel()
     }
 
+    /** The walk-away sentence is the status line. The generic waiting label has no page age. */
+    private fun introStatus(state: LinkState, detail: String): String? =
+        if (detail == "Waiting for your iPhone" || detail.startsWith("Looking for your iPhone")) detail
+        else StartupAnimationView.statusFor(state)
+
     fun setState(state: LinkState, detail: String) = act.runOnUiThread {
         if (act.isFinishing) return@runOnUiThread
         val stage = StartupAnimationView.stageFor(state)
@@ -593,7 +598,7 @@ class LauncherUi(private val act: Activity) {
             lastAnimStage = stage
             return@runOnUiThread
         }
-        val status = if (detail == "Waiting for your iPhone") detail else StartupAnimationView.statusFor(state)
+        val status = introStatus(state, detail)
         val animDetail = when {
             state == LinkState.FAILED -> detail
             displayResetDetail != null -> displayResetDetail
@@ -669,8 +674,7 @@ class LauncherUi(private val act: Activity) {
         if (act.isFinishing) return@runOnUiThread
         displayResetDetail = "Display settings were reset"
         if (!sessionIsLive() && lastState != LinkState.LIVE) {
-            val status = if (lastDetail == "Waiting for your iPhone") lastDetail
-                else StartupAnimationView.statusFor(lastState)
+            val status = introStatus(lastState, lastDetail)
             intro.setStage(StartupAnimationView.stageFor(lastState), status, displayResetDetail)
         }
     }

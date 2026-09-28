@@ -2,6 +2,8 @@ package wasidremin.gmccpa.av
 
 import org.json.JSONObject
 import wasidremin.gmccpa.ProbeLog
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * The merged now-playing picture assembled from the `:9004` metadata seam.
@@ -23,6 +25,30 @@ import wasidremin.gmccpa.ProbeLog
  */
 class NowPlayingState {
     private val log = ProbeLog.sub("np")
+    /** Posts the 2 s id-mismatch check off this monitor. Daemon: it must not pin the process. */
+    private val artSched = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "np-art").apply { isDaemon = true }
+    }
+    private lateinit var art: ArtworkKeeper
+
+    init {
+        art = ArtworkKeeper(
+            log = { log.i(it) },
+            afterMs = { delay, fire ->
+                artSched.schedule({
+                    val next = synchronized(this@NowPlayingState) {
+                        if (!fire()) null
+                        else {
+                            val n = snapshot.copy(artwork = art.artwork, artworkId = art.artworkId)
+                            snapshot = n
+                            n
+                        }
+                    }
+                    if (next != null) emit(next)
+                }, delay, TimeUnit.MILLISECONDS)
+            },
+        )
+    }
 
     data class Snapshot(
         val title: String? = null,
@@ -134,9 +160,10 @@ class NowPlayingState {
         // On a track change, merge onto a BLANK record: a field the full record omits is genuinely
         // absent for the new track. Merging onto the previous snapshot instead kept the old artist,
         // album and duration alive beside the new title. playbackStatus carries across because it
-        // describes the PLAYER, not the item.
+        // describes the PLAYER, not the item. Artwork is the exception: iOS does not resend a JPEG
+        // whose id did not change, so a chapter that keeps the cover must keep the bytes too.
         val base = if (trackChanged) Snapshot(playbackStatus = prev.playbackStatus) else prev
-        val artworkId = json.optIntOrNull("artworkId") ?: base.artworkId
+        art.onRecord(trackChanged, json.optIntOrNull("artworkId"))
         val next = Snapshot(
             title = incomingTitle ?: base.title,
             artist = json.optStringOrNull("artist") ?: base.artist,
@@ -148,11 +175,8 @@ class NowPlayingState {
             elapsedMs = json.optLongOrNull("elapsedMs") ?: base.elapsedMs,
             trackNumber = json.optIntOrNull("trackNumber") ?: base.trackNumber,
             trackCount = json.optIntOrNull("trackCount") ?: base.trackCount,
-            artworkId = artworkId,
-            // A JPEG is only valid for the id it arrived under. Drop it when the id moves — on a track
-            // change (base is blank, so this is the existing behaviour) AND when iOS swaps art under
-            // the same title. A brief blank cover is honest; the previous cover under a new id is not.
-            artwork = if (artworkId == base.artworkId) base.artwork else null,
+            artworkId = art.artworkId,
+            artwork = art.artwork,
             playbackStatus = json.optIntOrNull("playbackStatus") ?: base.playbackStatus,
         )
         snapshot = next
@@ -166,15 +190,9 @@ class NowPlayingState {
      */
     @Synchronized
     fun onArtwork(id: Int, jpeg: ByteArray): Snapshot? {
-        val prev = snapshot
-        // A mismatched id is a late transfer for a track that has already changed.
-        if (prev.artworkId >= 0 && id != prev.artworkId) return null
-        if (jpeg.isEmpty()) return null
-        // Byte-identical re-send is not a change, and republishing would re-decode the bitmap.
-        if (prev.artworkId == id && prev.artwork.contentEqualsOrBothNull(jpeg)) return null
-        // ADOPT the id. While it is -1 the guard above accepts anything; recording what we took is
-        // exactly what lets the next stale transfer be rejected.
-        val next = prev.copy(artwork = jpeg, artworkId = id)
+        val verdict = art.onTransfer(id, jpeg, !snapshot.title.isNullOrEmpty())
+        if (verdict != "accepted") return null
+        val next = snapshot.copy(artwork = art.artwork, artworkId = art.artworkId)
         snapshot = next
         return next
     }
@@ -185,9 +203,11 @@ class NowPlayingState {
      * `CarPlayActivity.onSessionEnded` was written to fix. [emit] runs after the lock, the same
      * way [dispatch] does, so a consumer cannot re-enter under the monitor.
      */
-    fun clear() {
+    fun clear(why: String) {
         val cleared = synchronized(this) {
+            art.clear()
             snapshot = Snapshot()
+            log.i("np: cleared — $why")
             snapshot
         }
         emit(cleared)

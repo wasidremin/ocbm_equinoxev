@@ -118,8 +118,14 @@ class OcbmProbe(context: Context) {
     var onSubscribeEdge: (() -> Unit)? = null
     var onPhoneIdent: ((String) -> Unit)? = null
     var onProjMode: ((Byte) -> Unit)? = null
-    /** `DEVICE_DISCONNECTED reason=0x01` / `CONNECT_FAILED status=0x04` (true), cleared on `DEVICE_CONNECTED`. */
+    /** `DEVICE_DISCONNECTED reason=0x01` (true), cleared on `DEVICE_CONNECTED`. */
     var onPhoneOutOfRange: ((Boolean) -> Unit)? = null
+    /** `CONNECT_FAILED status=0x04` or `SDP query failed: Host is down` — a page, not a new absence. */
+    var onPaging: (() -> Unit)? = null
+    /** Box log `driving reconnect`: the reconnect loop is running. */
+    var onDrivingReconnect: (() -> Unit)? = null
+    /** Box log `reconnect loop exiting`: paging stopped. */
+    var onReconnectExited: (() -> Unit)? = null
     /** Box log `RECORD — session ESTABLISHED`. */
     var onBoxSessionEstablished: (() -> Unit)? = null
     /** The subscribe document was replaced with the 100% / no-inset default. */
@@ -1042,12 +1048,16 @@ class OcbmProbe(context: Context) {
 
     /**
      * `DEVICE_DISCONNECTED` contains the substring `DEVICE_CONNECTED`, so the disconnect arm has
-     * to win. A page timeout (`status=0x04`) is the same away signal, not a second fault.
+     * to win. `reconnect loop exiting` is matched before `driving reconnect` so a line cannot
+     * be read as both. A page timeout is paging, not a new absence.
      */
     private fun noteBoxSignals(text: String) {
         when {
             "DEVICE_DISCONNECTED" in text && "reason=0x01" in text -> onPhoneOutOfRange?.invoke(true)
-            "CONNECT_FAILED" in text && "status=0x04" in text -> onPhoneOutOfRange?.invoke(true)
+            "CONNECT_FAILED" in text && "status=0x04" in text -> onPaging?.invoke()
+            "SDP query failed: Host is down" in text -> onPaging?.invoke()
+            "reconnect loop exiting" in text -> onReconnectExited?.invoke()
+            "driving reconnect" in text -> onDrivingReconnect?.invoke()
             "DEVICE_CONNECTED" in text -> onPhoneOutOfRange?.invoke(false)
             "session ESTABLISHED" in text -> onBoxSessionEstablished?.invoke()
             "wireless stack up + AP enabled" in text -> noteWifiProof()

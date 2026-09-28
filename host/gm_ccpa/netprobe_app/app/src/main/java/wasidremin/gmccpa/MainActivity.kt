@@ -100,6 +100,8 @@ class MainActivity : Activity() {
             override fun ensureLanes(): Boolean =
                 ocbmProbe?.client?.ensureLanes() == true
             override fun restartSession() { requestRestart() }
+            override fun adapterWifi(): Boolean =
+                wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this@MainActivity)
         })
     }
 
@@ -225,6 +227,9 @@ class MainActivity : Activity() {
             it.onPhoneIdent = { j -> onBoxPhoneIdent(j) }
             it.onProjMode = { m -> onBoxProjMode(m) }
             it.onPhoneOutOfRange = { away -> supervisor.notePhoneRange(away) }
+            it.onPaging = { supervisor.notePaging() }
+            it.onDrivingReconnect = { supervisor.noteDrivingReconnect() }
+            it.onReconnectExited = { supervisor.noteReconnectExited() }
             it.onBoxSessionEstablished = { supervisor.noteBoxSessionEstablished() }
             it.onDisplayReset = { ui.noteDisplayReset() }
             it.onSubscribeFault = { msg -> setStatus(LinkState.FAILED, msg) }
@@ -382,6 +387,11 @@ class MainActivity : Activity() {
             // ~12 s after the press. The ACK below means "request accepted", NOT "wireless is back";
             // the radios are genuinely down for several seconds and any live session dies with them.
             BoxAction.RESTART_WIFI -> {
+                if (supervisor.blocksWirelessRestart()) {
+                    emit("MGMT_RESTART_WIRELESS held — within 45s of CT_RADIO")
+                    ui.setDetail("wireless restart held — Bluetooth paging was just restarted")
+                    return
+                }
                 ui.setDetail("asking the adapter to bounce its wireless stack…")
                 // BEFORE the verb goes out, as rung 1 does: the health regression this causes is ours,
                 // and the ladder used to climb on it — an app restart on top of the box's restart.
@@ -1094,7 +1104,10 @@ class MainActivity : Activity() {
             "ocbm_state" -> runAsync { ocbmProbe?.sessionState() ?: emit("no OCBM link") }
             // Session teardown. disconnect = drop BT, keep the bond (test hygiene between runs).
             // forget = clear the bond entirely; also forget the car on the iPhone.
-            "ocbm_disconnect" -> runAsync { ocbmProbe?.disconnectPhone() ?: emit("no OCBM link") }
+            "ocbm_disconnect" -> runAsync {
+                if (supervisor.blocksWirelessRestart()) emit("MGMT_RESTART_WIRELESS held — within 45s of CT_RADIO")
+                else ocbmProbe?.disconnectPhone() ?: emit("no OCBM link")
+            }
             "ocbm_forget" -> runAsync { ocbmProbe?.forgetPhone(i.getStringExtra("mac")) ?: emit("no OCBM link") }
             "ocbm_stop" -> runAsync {
                 ocbmProbe?.let { it.stop(); emit(it.stats()); SessionHolder.lastProbeStopAt = android.os.SystemClock.elapsedRealtime() }

@@ -91,7 +91,7 @@ class CarPlayActivity : Activity() {
          */
         fun onSessionEnded(why: String) {
             val act = live?.get()
-            if (act != null) act.endSession(why) else nowPlaying.clear()
+            if (act != null) act.endSession(why) else nowPlaying.clear("session ended")
         }
 
         /** View-area command from the USB metadata lane. The activity applies it if it is up. */
@@ -987,7 +987,7 @@ class CarPlayActivity : Activity() {
             generation = null
             wasidremin.gmccpa.ocbm.AdapterSession.detachVideo(why)
             CarPlaySessionService.stop(this)
-            nowPlaying.clear()
+            nowPlaying.clear("adapter screen stopped")
             SessionTrace.Board.down(BOARD_RENDERER, "session stopped — $why")
             log.i("adapter screen stopped — $why")
             return
@@ -1012,7 +1012,7 @@ class CarPlayActivity : Activity() {
         CarPlaySessionService.stop(this)
         // Clear AND publish the cleared picture: a card still showing the last track over a dead
         // session is the metadata twin of the frozen-frame bug onSessionEnded exists to prevent.
-        nowPlaying.clear()
+        nowPlaying.clear("session stopped")
         for (b in listOf(BOARD_VIDEO, BOARD_MEDIA, BOARD_VOICE, BOARD_META)) SessionTrace.Board.down(b, "session stopped — $why")
         SessionTrace.Board.down(BOARD_RENDERER, "session stopped — $why")
         // After the components' own stop(): those that could cancel synchronously have, with a more

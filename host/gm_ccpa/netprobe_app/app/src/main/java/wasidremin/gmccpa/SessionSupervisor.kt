@@ -56,8 +56,9 @@ enum class RxPhase(val label: String) {
     /** The session ended and we are holding still to let the phone come back on its own. */
     GRACE("session ended — waiting"),
     /**
-     * The phone left Bluetooth range. The box pages it about once a minute; cycling the radios
-     * only resets that loop. Not a failure — the driver is waiting, not repairing.
+     * The phone left Bluetooth range. A session start stops the adapter's reconnect loop, so this
+     * phase sends one `CT_RADIO` cycle to start it again and then waits, with no deadline, until
+     * Bluetooth progress, Stop, or the adapter link dropping.
      */
     AWAY("Waiting for your iPhone"),
     /** The box went away while CarPlay was streaming. Deliberately do nothing. */
@@ -112,6 +113,8 @@ class SessionSupervisor(private val act: Actions) {
         fun ensureLanes(): Boolean
         /** Same path as Restart Session. Must not block this scheduler. */
         fun restartSession()
+        /** Adapter Wi-Fi has no mDNS responder, so rung 0 cannot announce anything. */
+        fun adapterWifi(): Boolean
     }
 
     private companion object {
@@ -207,16 +210,23 @@ class SessionSupervisor(private val act: Actions) {
          */
         const val BTD_ABSENT_MS = 12_000L
 
-        /**
-         * Bluetooth link-timeout (`DEVICE_DISCONNECTED reason=0x01`) counts as "the phone walked
-         * away" when it lands within this long of the projection ending. Grace is 10 s, and the
-         * timeout in the 2026-09-27 capture was ~8 s before `PROJ_MODE NONE`, so the window has to
-         * still match when it is evaluated at grace expiry.
-         */
-        const val OUT_OF_RANGE_WINDOW_MS = 15_000L
-
         /** How long a self-heal arm may take to key a session before Restart Session runs itself. */
         const val UNKEYED_RESTART_MS = 10_000L
+
+        /**
+         * After a walk-away `CT_RADIO` cycle, the box should log `driving reconnect` inside this
+         * window. One more cycle if it does not. A second miss stays in [RxPhase.AWAY].
+         */
+        const val PAGE_CONFIRM_MS = 40_000L
+
+        /** `MGMT_RESTART_WIRELESS` inside this long of a `CT_RADIO` cycle tears the paging back down. */
+        const val RADIO_RESTART_HOLD_MS = 45_000L
+
+        /** A `reconnect loop exiting` line while waiting may cycle the radios at most this often. */
+        const val RECONNECT_EXIT_COOLDOWN_MS = 90_000L
+
+        /** How often the waiting sentence refreshes the age of the last page. */
+        const val PAGE_AGE_TICK_MS = 10_000L
     }
 
     /**
@@ -284,10 +294,19 @@ class SessionSupervisor(private val act: Actions) {
      * next connection attempt could never begin.
      */
     private var radiosHeldForSession = false
-    /** `DEVICE_DISCONNECTED reason=0x01` or `CONNECT_FAILED status=0x04`, until `DEVICE_CONNECTED`. */
+    /** `DEVICE_DISCONNECTED reason=0x01`, held until `DEVICE_CONNECTED`. */
     private var phoneOutOfRange = false
-    private var outOfRangeAt = 0L
-    private var sessionEndedAt = 0L
+    /**
+     * Instant the last walk-away `CT_RADIO` off was sent. [blocksWirelessRestart] reads it off
+     * this scheduler's thread, so it is volatile.
+     */
+    @Volatile private var lastRadioCycleAt = 0L
+    private var pageConfirmTimer: ScheduledFuture<*>? = null
+    private var pageAgeTimer: ScheduledFuture<*>? = null
+    private var lastPageAt = 0L
+    /** Extra `CT_RADIO` cycles sent because `driving reconnect` did not arrive. Capped at one. */
+    private var confirmRetries = 0
+    private var lastExitCycleAt = 0L
     /** Box log `RECORD — session ESTABLISHED`. Cleared on `PROJ_MODE NONE`. */
     private var boxSessionEstablished = false
     /** Last non-replay projection was wireless CarPlay. */
@@ -609,13 +628,13 @@ class SessionSupervisor(private val act: Actions) {
      */
     fun onSessionDown() = post {
         releaseSessionRadioHold("the session it was protecting has ended")
-        sessionEndedAt = System.currentTimeMillis()
         to(RxPhase.GRACE, "session ended — holding ${GRACE_MS / 1000}s for the phone to return")
         graceTimer = arm(graceTimer, GRACE_MS) {
             if (phase != RxPhase.GRACE) return@arm
-            // A Bluetooth link timeout just before the projection ended is the phone leaving
-            // range, not a fault. Rungs 1–2 reset the box's own once-a-minute page. Stay put.
-            if (phoneStillAway()) {
+            // A Bluetooth link timeout that is still outstanding means the phone walked away,
+            // even when PROJ_MODE NONE arrives half a minute later. One radio cycle restarts
+            // paging. Rung 0 and rung 2 do not run on this path.
+            if (phoneOutOfRange) {
                 enterAway()
                 return@arm
             }
@@ -630,9 +649,9 @@ class SessionSupervisor(private val act: Actions) {
     }
 
     /**
-     * Box log: `DEVICE_DISCONNECTED … reason=0x01` and `CONNECT_FAILED … status=0x04` are the same
-     * fact (the phone is not in Bluetooth range). `DEVICE_CONNECTED` clears it. Repeated page
-     * timeouts refresh the timestamp but are not a new episode.
+     * Box log: `DEVICE_DISCONNECTED … reason=0x01` sets the flag and `DEVICE_CONNECTED` clears it.
+     * The flag stays up across the whole absence, so a projection that ends 30 s later is still a
+     * walk-away. A page timeout is [notePaging], not another episode.
      */
     fun notePhoneRange(away: Boolean) = post {
         if (away) {
@@ -641,12 +660,57 @@ class SessionSupervisor(private val act: Actions) {
                 reconnect.onPhoneOutOfRange()
                 log.i("phone out of range — Bluetooth timeout, not a fault")
             }
-            outOfRangeAt = System.currentTimeMillis()
         } else if (phoneOutOfRange) {
             phoneOutOfRange = false
-            outOfRangeAt = 0L
             log.i("phone back on Bluetooth")
         }
+    }
+
+    /** `CONNECT_FAILED status=0x04` or `SDP query failed: Host is down`: paging, phone not here. */
+    fun notePaging() = post {
+        if (phase != RxPhase.AWAY) return@post
+        lastPageAt = System.currentTimeMillis()
+        publishPageAge()
+    }
+
+    /** Box log `driving reconnect` while we are waiting. The confirm timer can stand down. */
+    fun noteDrivingReconnect() = post {
+        if (phase != RxPhase.AWAY) return@post
+        pageConfirmTimer?.cancel(false)
+        pageConfirmTimer = null
+        log.i("walk-away: driving reconnect — paging confirmed")
+    }
+
+    /**
+     * Box log `reconnect loop exiting` while still waiting and no session is up. One more
+     * `CT_RADIO` cycle, at most once per [RECONNECT_EXIT_COOLDOWN_MS]. A session start logs the
+     * same line and is ignored because the phase is not [RxPhase.AWAY].
+     */
+    fun noteReconnectExited() = post {
+        if (phase != RxPhase.AWAY) return@post
+        val now = System.currentTimeMillis()
+        // The cycle we just sent takes the radios down for a couple of seconds. An exit line in
+        // that window is that cycle, and answering it with another one never lets paging start.
+        if (radioOnPending || now < radioSettleUntil) {
+            log.i("walk-away: reconnect loop exited during the radio cycle — not cycling again yet")
+            return@post
+        }
+        if (now - lastExitCycleAt < RECONNECT_EXIT_COOLDOWN_MS) {
+            log.i("walk-away: reconnect loop exited — radio cycle still inside ${RECONNECT_EXIT_COOLDOWN_MS / 1000}s")
+            return@post
+        }
+        lastExitCycleAt = now
+        confirmRetries = 0
+        log.w("walk-away: reconnect loop exited while waiting — cycling the radios")
+        cycleRadios()
+        armPageConfirm()
+    }
+
+    /** True for [RADIO_RESTART_HOLD_MS] after a `CT_RADIO` cycle. Safe off the supervisor thread. */
+    fun blocksWirelessRestart(): Boolean {
+        val at = lastRadioCycleAt
+        if (at == 0L) return false
+        return System.currentTimeMillis() - at < RADIO_RESTART_HOLD_MS
     }
 
     /** `CT_PROJ_MODE`. `NONE` drops the box-session latch; wireless CarPlay raises the projection bit. */
@@ -658,19 +722,70 @@ class SessionSupervisor(private val act: Actions) {
     /** Box log `RECORD — session ESTABLISHED`. */
     fun noteBoxSessionEstablished() = post { boxSessionEstablished = true }
 
-    private fun phoneStillAway(): Boolean {
-        if (!phoneOutOfRange || outOfRangeAt == 0L) return false
-        val delta = sessionEndedAt - outOfRangeAt
-        return delta in -OUT_OF_RANGE_WINDOW_MS..(OUT_OF_RANGE_WINDOW_MS + GRACE_MS)
-    }
-
-    /** Waiting, with the ladder stood down. Bluetooth progress leaves this the same way it leaves ARMED. */
+    /** Waiting, with the ladder stood down. One radio cycle, then no deadline. */
     private fun enterAway() {
         retryTimer?.cancel(false); retryTimer = null
         handoffTimer?.cancel(false); handoffTimer = null
         btdAbsentTimer?.cancel(false); btdAbsentTimer = null
-        log.i("phone left Bluetooth range — waiting, not cycling the radios")
+        confirmRetries = 0
+        lastPageAt = 0L
+        log.i("walk-away: restarting the adapter's Bluetooth paging")
+        if (!cycleRadios()) log.w("walk-away: CT_RADIO was not sent")
         to(RxPhase.AWAY, "Waiting for your iPhone")
+        armPageConfirm()
+        armPageAge()
+    }
+
+    private fun armPageConfirm() {
+        pageConfirmTimer = arm(pageConfirmTimer, PAGE_CONFIRM_MS) {
+            if (phase != RxPhase.AWAY) return@arm
+            if (confirmRetries >= 1) {
+                log.w("walk-away: still no driving reconnect after the second radio cycle — still waiting")
+                return@arm
+            }
+            confirmRetries++
+            log.w("walk-away: no driving reconnect within ${PAGE_CONFIRM_MS / 1000}s — cycling the radios once more")
+            cycleRadios()
+            armPageConfirm()
+        }
+    }
+
+    private fun armPageAge() {
+        pageAgeTimer = arm(pageAgeTimer, PAGE_AGE_TICK_MS) {
+            if (phase != RxPhase.AWAY) return@arm
+            publishPageAge()
+            if (phase == RxPhase.AWAY) armPageAge()
+        }
+    }
+
+    private fun publishPageAge() {
+        if (phase != RxPhase.AWAY) return
+        if (lastPageAt == 0L) {
+            to(RxPhase.AWAY, "Waiting for your iPhone")
+            return
+        }
+        val sec = ((System.currentTimeMillis() - lastPageAt) / 1000L).coerceAtLeast(0L)
+        to(RxPhase.AWAY, "Looking for your iPhone — last try $sec s ago")
+    }
+
+    private fun wirelessRestartHoldLeft(now: Long = System.currentTimeMillis()): Long {
+        val at = lastRadioCycleAt
+        if (at == 0L) return 0L
+        val left = RADIO_RESTART_HOLD_MS - (now - at)
+        return if (left > 0L) left else 0L
+    }
+
+    /** Off, then on 2 s later. Stamps [lastRadioCycleAt] so a wireless restart cannot follow inside 45 s. */
+    private fun cycleRadios(): Boolean {
+        if (!act.setBoxRadios(false)) {
+            log.w("CT_RADIO off failed")
+            return false
+        }
+        val now = System.currentTimeMillis()
+        lastRadioCycleAt = now
+        radioSettleUntil = now + RADIO_SETTLE_MS
+        armRadioOnEdge()
+        return true
     }
 
     /**
@@ -681,8 +796,10 @@ class SessionSupervisor(private val act: Actions) {
      */
     fun onStalled(dials: Int) = post {
         cancelAllTimers()
-        to(RxPhase.STALLED, "iPhone sees this receiver but will not connect ($dials tries) — " +
-            "reconnect Bluetooth to the car from the iPhone")
+        val detail = if (act.adapterWifi()) "Can't find your iPhone — tap Restart"
+        else "iPhone sees this receiver but will not connect ($dials tries) — " +
+            "reconnect Bluetooth to the car from the iPhone"
+        to(RxPhase.STALLED, detail)
     }
 
     /**
@@ -858,6 +975,14 @@ class SessionSupervisor(private val act: Actions) {
                 retryTimer = arm(retryTimer, left) { escalate(why) }
                 return
             }
+            if (rung == 2) {
+                val left = wirelessRestartHoldLeft(now)
+                if (left > 0L) {
+                    log.i("rung 2 held — CT_RADIO was under ${RADIO_RESTART_HOLD_MS / 1000}s ago; MGMT_RESTART_WIRELESS waits ${left / 1000}s")
+                    retryTimer = arm(retryTimer, left) { escalate(why) }
+                    return
+                }
+            }
             val done = runRung(rung, why)
             // Stamp only a rung that actually RAN. A refused rung (no responder, no box link) costs
             // nothing and must cost nothing: burning its cooldown here walked the ladder to
@@ -888,10 +1013,15 @@ class SessionSupervisor(private val act: Actions) {
      */
     private fun runRung(n: Int, why: String): Boolean = when (n) {
         0 -> {
-            log.w("recovery rung 0 (re-announce mDNS): $why")
-            val ok = act.reannounce()
-            if (!ok) log.w("rung 0 refused — responder down")
-            ok
+            if (act.adapterWifi()) {
+                log.i("rung 0 skipped — adapter Wi-Fi has no mDNS responder")
+                false
+            } else {
+                log.w("recovery rung 0 (re-announce mDNS): $why")
+                val ok = act.reannounce()
+                if (!ok) log.w("rung 0 refused — responder down")
+                ok
+            }
         }
         1, 2 -> if (!runCatching { act.boxLinkAlive() }.getOrDefault(false)) {
             log.w("recovery rung $n skipped — no OCBM link to the adapter, so a box-side action cannot help")
@@ -905,25 +1035,21 @@ class SessionSupervisor(private val act: Actions) {
         1 -> {
             log.w("recovery rung 1 (CT_RADIO off/on — no host_present edge, so no flap risk): $why")
             // Off then on, spaced. The box clears its radio inhibit on the off->on edge; doing both
-            // back to back would collapse into no edge at all.
-            if (!act.setBoxRadios(false)) { log.w("CT_RADIO off failed"); false }
-            else {
-                // Everything that happens to box health for the next few seconds is ours. Claim it
-                // BEFORE the on-edge is armed, or the first regression arrives unowned.
-                radioSettleUntil = System.currentTimeMillis() + RADIO_SETTLE_MS
-                armRadioOnEdge()
-                true
-            }
+            // back to back would collapse into no edge at all. [cycleRadios] claims the health
+            // regression before the on-edge is armed.
+            cycleRadios()
         }
         2 -> { log.w("recovery rung 2 (MGMT_RESTART_WIRELESS): $why"); act.restartBoxWireless() }
         else -> false
     }
 
     /** Name the fault the driver can actually act on, rather than always blaming the phone. */
-    private fun terminalDetail(): String =
-        if (!runCatching { act.boxLinkAlive() }.getOrDefault(false))
+    private fun terminalDetail(): String = when {
+        !runCatching { act.boxLinkAlive() }.getOrDefault(false) ->
             "no link to the CarPlay adapter — check it is plugged in"
-        else "cannot recover automatically — reconnect Bluetooth to the car from the iPhone"
+        act.adapterWifi() -> "Can't find your iPhone — tap Restart"
+        else -> "cannot recover automatically — reconnect Bluetooth to the car from the iPhone"
+    }
 
     // ---- plumbing -------------------------------------------------------------------------------
 
@@ -943,6 +1069,10 @@ class SessionSupervisor(private val act: Actions) {
      * able to answer when it does.
      */
     private fun to(next: RxPhase, detail: String) {
+        if (phase == RxPhase.AWAY && next != RxPhase.AWAY) {
+            pageAgeTimer?.cancel(false); pageAgeTimer = null
+            pageConfirmTimer?.cancel(false); pageConfirmTimer = null
+        }
         if (next != phase) {
             val line = "${phase.label} -> ${next.label}  ($detail)"
             if (next.isFailure) log.e(line) else log.i(line)
@@ -1117,6 +1247,8 @@ class SessionSupervisor(private val act: Actions) {
         retryTimer?.cancel(false); retryTimer = null
         handoffTimer?.cancel(false); handoffTimer = null
         btdAbsentTimer?.cancel(false); btdAbsentTimer = null
+        pageConfirmTimer?.cancel(false); pageConfirmTimer = null
+        pageAgeTimer?.cancel(false); pageAgeTimer = null
     }
 
     /**
@@ -1154,6 +1286,12 @@ class SessionSupervisor(private val act: Actions) {
         ) return
         if (System.currentTimeMillis() < radioSettleUntil) return
         if (!runCatching { act.boxLinkAlive() }.getOrDefault(false)) return
+        val held = wirelessRestartHoldLeft()
+        if (held > 0L) {
+            log.i("btd still absent — MGMT_RESTART_WIRELESS waits ${held / 1000}s after CT_RADIO")
+            btdAbsentTimer = arm(null, held) { onBtdStayedGone() }
+            return
+        }
         log.w("btd still absent ${BTD_ABSENT_MS / 1000}s after the wireless stack was torn down — MGMT_RESTART_WIRELESS")
         radioSettleUntil = maxOf(radioSettleUntil, System.currentTimeMillis() + WIRELESS_RESTART_SETTLE_MS)
         if (phase == RxPhase.HANDOFF_SENT || phase == RxPhase.BT_PAIRING || phase == RxPhase.BT_PAIRED ||
