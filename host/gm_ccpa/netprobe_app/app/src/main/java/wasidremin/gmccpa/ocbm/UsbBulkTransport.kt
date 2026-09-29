@@ -111,7 +111,9 @@ class UsbBulkTransport(
             val filter = IntentFilter(ACTION_USB_PERMISSION)
             try {
                 if (Build.VERSION.SDK_INT >= 33) {
-                    app.registerReceiver(created, filter, Context.RECEIVER_NOT_EXPORTED)
+                    // 0x4 is RECEIVER_NOT_EXPORTED. The truck build compiles against android-32,
+                    // which does not declare the constant, so the literal is what both targets share.
+                    app.registerReceiver(created, filter, 0x4)
                 } else {
                     app.registerReceiver(created, filter)
                 }
