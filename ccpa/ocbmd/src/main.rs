@@ -3513,6 +3513,12 @@ impl Daemon {
         match ch {
             p::CH_CTRL => {
                 if pl.first() == Some(&p::CT_HELLO) {
+                    // Internal boot-local signal for the USB admission trampoline; no OCBM frame or
+                    // host-visible behavior changes. The boot watcher uses this to avoid rebinding
+                    // the gadget once any host has reached the OCBM phase.
+                    if !std::path::Path::new("/tmp/ocbm_hello_seen").exists() {
+                        let _ = std::fs::write("/tmp/ocbm_hello_seen", b"1\n");
+                    }
                     // Host instance nonce (trailing u32 LE, 0 = not supplied). A DIFFERENT nonce while
                     // we still think a host is present means the previous one died without CT_STOP:
                     // its carplayd went with it, but presence never dropped, so nothing would re-ARM.

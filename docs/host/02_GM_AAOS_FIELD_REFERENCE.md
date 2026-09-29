@@ -144,6 +144,28 @@ for any of this; dongle AP is `192.168.43.1`, telnet port 23.
 
 ## 5. Our OCBM implementation of the same thing (summary; details in `14_LESSONS_LEARNED.md` §5)
 
+**Boot-time admission trampoline (2026-09-28; not yet vehicle-verified):** `ocbm_boot.sh` now defaults
+through a storage-only mass-storage phase, then re-enumerates as OCBM. The announce PID is **`0x2d06`**
+(VID `0x1314`, class `0/0/0`); it is deliberately distinct from OCBM `0x2d00` and stock/NCM `0x1520` /
+`0x1521`, and it does not match the GM app's OCBM attach filter. The box uses the same trimmed
+per-device serial in both phases so the OCBM enumeration can be treated as a reconnect to the admitted
+storage device. The announce LUN is removable and uses an 8 MiB FAT image by default; `usb_announce_medium=none`
+selects an empty/no-medium LUN for comparison. Neither storage-only mode has yet been proven on a GM
+AAOS 14 emulator or vehicle; the existing Equinox observation used the composite accessory+storage identity.
+Host apps must not match the transient `0x1314:0x2d06` identity.
+
+The persistent configuration is `/script/ocbm.conf` (`usb_announce=1`,
+`usb_announce_dwell_ms=1500`, and `usb_announce_medium=image` by default). Set `usb_announce=0` to
+bypass the announce. `usb_announce_medium=image` prepares and binds the existing 8 MiB FAT image;
+`none` clears the LUN backing file. The image mode is preferred for the first GM emulator test because
+the observed Equinox admission used a populated storage function; whether no-medium storage is admitted
+remains unverified. The boot watcher retries the announce once after 90 s without OCBM `CT_HELLO`
+(`usb_announce_retry_ms`, default 90000), but
+only if no HELLO marker exists and the gadget is not `CONFIGURED`; `ocbmd` writes the internal tmpfs
+marker without changing OCBM frames. Later `/script/ocbm_udisk.sh` rebinds go directly to OCBM and reuse
+the boot serial. The reserved announce PID must stay excluded from OCBM host filters; only `0x2d00`
+speaks OCBM.
+
 - `ccpa/rootfs/script/ocbm_udisk.sh` — `status | on | off | prepare | apply`. Stock recipe with
   `idProduct=2d00`, `bDeviceClass=0`, a README instead of `BoxHelper.apk`. Flag `/script/ocbm_udisk`
   (jffs2, survives reboot). `on`/`off` detach themselves; `ocbmd` comes back via the inittab respawn.

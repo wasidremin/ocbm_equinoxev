@@ -1,6 +1,6 @@
 #!/bin/sh
 ########################
-# ocbm_udisk.sh — OPT-IN GM-EV experiment: present accessory + mass_storage
+# ocbm_udisk.sh — OPT-IN GM-EV experiment: present OCBM accessory + mass_storage
 # while keeping OCBM PID 0x2d00 and /dev/usb_accessory for ocbmd.
 #
 # WHY: GM VCU radios (Bosch VCUNH1 — Equinox EV, Silverado EV, Sierra EV, Escalade IQ;
@@ -98,7 +98,12 @@ set_ids() {
   echo 0 > "$A/bDeviceClass"
   echo 0 > "$A/bDeviceSubClass"
   echo 0 > "$A/bDeviceProtocol"
+  echo 1314 > "$A/idVendor"
   echo 2d00 > "$A/idProduct"
+  if [ -s /tmp/ocbm_usb_serial ]; then
+    _serial=$(tr -d '\r\n' < /tmp/ocbm_usb_serial)
+    [ -z "$_serial" ] || echo "$_serial" > "$A/iSerial" 2>/dev/null
+  fi
 }
 
 # RUNTIME=1 (the detached on/off path) inserts the stock 1 s settle after the disconnect so the
@@ -188,7 +193,7 @@ detach() {
 
 case "${1:-status}" in
   status)  cmd_status ;;
-  prepare) [ -e "$FLAG" ] || exit 0; make_img && log "prepared $IMG on $LOOP" || log "WARN: prepare failed" ;;
+  prepare) make_img && log "prepared $IMG on $LOOP" || log "WARN: prepare failed" ;;
   apply)   apply_now ;;
   on)      touch "$FLAG"; sync; detach on ;;
   off)     rm -f "$FLAG"; sync; detach off ;;

@@ -350,8 +350,7 @@ platform has real **configfs**, not this legacy monolithic gadget.)
 
 #### Why the PID differs from stock, and what hosts must do about it
 
-Stock/NCM is `0x1314:0x1520` (`0x1521` on some SKUs); OCBM is `0x1314:0x2d00`. **The PID change is
-load-bearing and is not just installer bookkeeping.** Two reasons, in order of importance:
+Stock/NCM is `0x1314:0x1520` (`0x1521` on some SKUs); OCBM is `0x1314:0x2d00`. `0x1314:0x2d06` is the transient storage-only admission identity, present for under two seconds at boot, and host apps must not match it. **The OCBM PID change is load-bearing and is not just installer bookkeeping.** Two reasons, in order of importance:
 
 1. **It marks a different application protocol on the same wire.** The endpoints and interface class
    are identical between stock and OCBM, so a PID is the only thing in the descriptors that tells a
