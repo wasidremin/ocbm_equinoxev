@@ -22,6 +22,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import wasidremin.gmccpa.logging.CapturePrefs
 import wasidremin.gmccpa.logging.LogCapture
+import wasidremin.gmccpa.ocbm.UsbIdentity
 
 /**
  * The launcher screen's chrome. Kept out of [MainActivity] so the session logic there is not
@@ -194,6 +195,7 @@ class LauncherUi(private val act: Activity) {
     private var logStatusText = ""
     private var adapterInfoText = ""
     private var displayResetDetail: String? = null
+    private var alwaysHint: String? = null
     private var settingsTouchedAt = 0L
     private var lastAnimStage: StartupAnimationView.Stage? = null
     private var builtWidthPx = 0
@@ -584,13 +586,28 @@ class LauncherUi(private val act: Activity) {
         if (detail == "Waiting for your iPhone" || detail.startsWith("Looking for your iPhone")) detail
         else StartupAnimationView.statusFor(state)
 
+    /**
+     * The one-time Always line wins while it is up: the driver is looking at the permission
+     * dialog, and the next phase report must not clear it. A failure detail is next, then the
+     * display-reset note.
+     */
+    private fun startupDetail(state: LinkState, detail: String): String? = when {
+        alwaysHint != null -> alwaysHint
+        state == LinkState.FAILED -> detail
+        displayResetDetail != null -> displayResetDetail
+        else -> null
+    }
+
     fun setState(state: LinkState, detail: String) = act.runOnUiThread {
         if (act.isFinishing) return@runOnUiThread
         val stage = StartupAnimationView.stageFor(state)
         val prevStage = lastAnimStage
         lastState = state
         lastDetail = detail
-        if (state == LinkState.LIVE) displayResetDetail = null
+        if (state == LinkState.LIVE) {
+            displayResetDetail = null
+            alwaysHint = null
+        }
         refreshDynamic()
         if (sessionIsLive() || state == LinkState.LIVE) {
             introRestore?.let { intro.removeCallbacks(it) }
@@ -599,11 +616,7 @@ class LauncherUi(private val act: Activity) {
             return@runOnUiThread
         }
         val status = introStatus(state, detail)
-        val animDetail = when {
-            state == LinkState.FAILED -> detail
-            displayResetDetail != null -> displayResetDetail
-            else -> null
-        }
+        val animDetail = startupDetail(state, detail)
         intro.setStage(stage, status, animDetail)
         if (intro.visibility != View.VISIBLE && prevStage != null && stage != prevStage) {
             val idle = android.os.SystemClock.elapsedRealtime() - settingsTouchedAt
@@ -675,8 +688,23 @@ class LauncherUi(private val act: Activity) {
         displayResetDetail = "Display settings were reset"
         if (!sessionIsLive() && lastState != LinkState.LIVE) {
             val status = introStatus(lastState, lastDetail)
-            intro.setStage(StartupAnimationView.stageFor(lastState), status, displayResetDetail)
+            intro.setStage(StartupAnimationView.stageFor(lastState), status, startupDetail(lastState, lastDetail))
         }
+    }
+
+    /**
+     * First system-dispatched attach with permission not yet held. One line on the startup
+     * animation, then the flag is saved so a later attach does not repeat it.
+     */
+    fun noteAlwaysHint() = act.runOnUiThread {
+        if (act.isFinishing) return@runOnUiThread
+        if (!UsbIdentity.shouldShowAlwaysHint(act)) return@runOnUiThread
+        if (sessionIsLive() || lastState == LinkState.LIVE) return@runOnUiThread
+        alwaysHint = "Tick 'Always' so CarPlay starts without asking"
+        val status = introStatus(lastState, lastDetail)
+        intro.setStage(StartupAnimationView.stageFor(lastState), status, alwaysHint)
+        if (intro.visibility != View.VISIBLE) showIntroLayer()
+        UsbIdentity.markAlwaysHintShown(act)
     }
 
     private fun refreshDynamic() {

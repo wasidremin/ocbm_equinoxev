@@ -5,7 +5,8 @@
          vendor-id/product-id are DECIMAL here: 0x1314 = 4884, 0x2d00 = 11520. -->
     <usb-device vendor-id="4884" product-id="11520" />
     <!-- Stock Carlinkit PIDs, matched only so the app can say "wrong mode" instead of staying silent.
-         0x1520 = 5408, 0x1521 = 5409. -->
+         0x1520 = 5408, 0x1521 = 5409.
+         The storage-only announce PID is intentionally absent. Only 0x2d00 is the OCBM adapter. -->
     <usb-device vendor-id="4884" product-id="5408" />
     <usb-device vendor-id="4884" product-id="5409" />
 </resources>

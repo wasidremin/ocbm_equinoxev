@@ -53,9 +53,12 @@ import java.util.concurrent.atomic.AtomicLong
  * Schema history:
  *  - `v=1` (2026-08-26): the original field set, `id=` … `exit=`.
  *  - `v=2` (2026-09-10): `origin=` appended at the end (`usb_attach` | `launch`); `perm_trampoline=`
- *    may now read `none` (a launch-origin session had no trampoline to sample). No key moved or
- *    changed meaning: a `v=1` reader that ignores unknown trailing keys still parses a `v=2` line, and
+ *    may now read `none` (a launch-origin session had no trampoline to sample). No key moved.
  *    `perm_trampoline=none` is the same absent-token rule every other field already follows.
+ *  - `perm_trampoline=attach` (2026-09-28): a session the system started by dispatching
+ *    `USB_DEVICE_ATTACHED` prints `attach`. Whether the grant was already held is the log line
+ *    `attach dispatched by system — permission held=`, not `true`/`false` on this key. Launch
+ *    origin stays `none`.
  *
  * A lower-frequency `SESSION_DETAIL id=<id> ...` block (session-end only, one key per line) carries the
  * fields too long or too structured for one line: the raw phone-identity JSON and the two `MGMT_INFO`
@@ -145,7 +148,7 @@ object SessionSummary {
         }
         log.i(
             "session id=${s.id} begin origin=${attach.origin.tag} uid=${attach.uid} user=${attach.userId} " +
-                "perm_trampoline=${attach.hasPermissionAtTrampoline ?: "none"} serial=${attach.serialOutcome.tag}"
+                "perm_trampoline=${permTrampolineToken(attach)} serial=${attach.serialOutcome.tag}"
         )
         return s
     }
@@ -156,9 +159,10 @@ object SessionSummary {
      * bring the link up without the trampoline ever having run for this session.
      *
      * Everything the trampoline would have measured and cannot be measured honestly here is the
-     * explicit absent token: `hasPermissionAtTrampoline` is null (rendered `perm_trampoline=none`)
-     * because sampling `hasPermission()` now would be a real fact wearing a trampoline fact's label,
-     * and `serialOutcome` is [SerialOutcome.UNKNOWN] because its `SECURITY_EXCEPTION` value is
+     * explicit absent token: `hasPermissionAtTrampoline` is null (rendered `perm_trampoline=none`),
+     * because sampling `hasPermission()` now would be a real fact wearing a trampoline fact's label.
+     * A system-dispatched attach renders `perm_trampoline=attach`. `serialOutcome` is
+     * [SerialOutcome.UNKNOWN] because its `SECURITY_EXCEPTION` value is
      * defined as "the attach-time grant did not land". The descriptor fingerprint IS taken: it is a
      * device-identity fact, the same whenever it is read, and it is what lets a launch-origin session
      * be compared with an attach-origin one for the same box.
@@ -257,7 +261,7 @@ object SessionSummary {
             append(" uid=${s.attach.uid}")
             append(" user=${s.attach.userId}")
             append(" proc_age_ms=${s.attach.processAgeMs}")
-            append(" perm_trampoline=${s.attach.hasPermissionAtTrampoline ?: "none"}")
+            append(" perm_trampoline=${permTrampolineToken(s.attach)}")
             append(" serial=${s.attach.serialOutcome.tag}")
             append(" desc_fp=${sanitize(s.attach.descriptorFingerprint)}")
             append(" prompted=${s.dialogPrompted}")
@@ -295,6 +299,10 @@ object SessionSummary {
     }
 
     // ---- small parsing helpers, all defensive: a malformed/partial JSON must never abort the emit ----
+
+    /** `attach` when the system dispatched the trampoline; `none` for a launch-origin session. */
+    private fun permTrampolineToken(attach: AttachInfo): String =
+        if (attach.origin == Origin.USB_ATTACH) "attach" else "none"
 
     private fun jsonField(json: String, key: String): String =
         if (json.isEmpty()) "none" else runCatching { JSONObject(json).optString(key, "none") }.getOrDefault("none")
@@ -338,9 +346,9 @@ object SessionSummary {
      */
     data class AttachInfo(
         val origin: Origin,
-        /** Null ONLY for [Origin.LAUNCH]: there was no trampoline to sample at. Rendered `none`. A
-         *  `false` here would satisfy `grep perm_trampoline=false` — the fault-1 query — for a session
-         *  in which no grant was ever expected at that point. */
+        /** Null ONLY for [Origin.LAUNCH]: there was no trampoline to sample. The summary token is
+         *  `attach` when the system dispatched the trampoline and `none` otherwise; this boolean is
+         *  the `permission held=` fact on the attach log line. */
         val hasPermissionAtTrampoline: Boolean?,
         val uid: Int,
         val userId: Int,

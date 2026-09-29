@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.Process
 import android.os.SystemClock
 import wasidremin.gmccpa.ocbm.Ocbm
+import wasidremin.gmccpa.ocbm.UsbIdentity
 import wasidremin.gmccpa.logging.CapturePrefs
 import wasidremin.gmccpa.logging.LogCapture
 import wasidremin.gmccpa.logging.SessionSummary
@@ -110,6 +111,12 @@ class UsbAttachActivity : Activity() {
             )
             val serialOutcome = logIdentity(dev)
             if (!isCcpaOcbm) return // not our adapter — do not raise any UI; grant already fired
+            val sinceBootMs = SystemClock.elapsedRealtime()
+            ProbeLog.sub("usb").i(
+                "attach dispatched by system — permission held=$held +${sinceBootMs}ms since boot"
+            )
+            if (held) ProbeLog.sub("usb").i("usb permission granted by attach (no dialog)")
+            val showAlwaysHint = !held && UsbIdentity.shouldShowAlwaysHint(applicationContext)
             // Degraded, and worth a WARN here rather than only in the claim loop later: the attach
             // resolver is SUPPOSED to grant before launching us, so a missing grant at this point
             // means either the cold-start race (young process — see the class KDoc) or a dialog the
@@ -151,6 +158,7 @@ class UsbAttachActivity : Activity() {
                 Intent(this, MainActivity::class.java).apply {
                     action = UsbManager.ACTION_USB_DEVICE_ATTACHED
                     putExtra(UsbManager.EXTRA_DEVICE, dev)
+                    putExtra(UsbIdentity.EXTRA_ALWAYS_HINT, showAlwaysHint)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             )

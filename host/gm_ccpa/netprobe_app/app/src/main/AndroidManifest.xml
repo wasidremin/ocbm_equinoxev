@@ -16,10 +16,12 @@
 
   Reverted 2026-09-08. Impersonating a platform component is a large thing to carry for a benefit
   that never materialised.
-  The ordinary attach resolver is now the only route in — UsbAttachActivity's intent-filter plus
-  res/xml/device_filter.xml — so the standard USB permission dialog appears once per device and
-  "always open" retires it. UsbBulkTransport polls hasPermission() rather than trusting the grant
-  broadcast, so the claim loop just waits for it.
+  The ordinary attach resolver is the route in — UsbAttachActivity's intent-filter plus
+  res/xml/device_filter.xml — so the standard USB permission dialog can appear once per device.
+  "Always open" retires that dialog only when the system actually dispatches USB_DEVICE_ATTACHED
+  to this app. On GM AAOS 14 that dispatch needs the box announce phase: UsbHostManager otherwise
+  marks an unrecognised device "Not Supported" and never hands it to an app. UsbBulkTransport
+  polls hasPermission() rather than trusting the grant broadcast, so the claim loop just waits.
 
   Component android:name values stay FULLY QUALIFIED. They no longer have to be (a leading '.' would
   resolve correctly again), but they are unambiguous and it keeps the diff off every component line.

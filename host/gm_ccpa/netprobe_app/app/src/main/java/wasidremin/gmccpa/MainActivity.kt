@@ -974,8 +974,15 @@ class MainActivity : Activity() {
             .format(dev.vendorId, dev.productId))
         if (dev.vendorId != wasidremin.gmccpa.ocbm.UsbBulkTransport.VID_CARLINKIT) return false
         if (dev.productId != wasidremin.gmccpa.ocbm.UsbBulkTransport.PID_OCBM) {
-            emit("attached 0x%04x is not the OCBM PID — box needs ocbm_boot.sh".format(dev.productId))
+            // Only 0x2d00 is the adapter. An unknown PID (the storage announce phase) must not
+            // print "wrong mode", reclaim, or stamp the 20 s reclaim debounce.
+            val knownOther = dev.productId == wasidremin.gmccpa.ocbm.UsbBulkTransport.PID_NCM ||
+                dev.productId == wasidremin.gmccpa.ocbm.UsbBulkTransport.PID_STOCK
+            if (knownOther) emit("attached 0x%04x is not the OCBM PID — box needs ocbm_boot.sh".format(dev.productId))
             return false
+        }
+        if (i.getBooleanExtra(wasidremin.gmccpa.ocbm.UsbIdentity.EXTRA_ALWAYS_HINT, false)) {
+            ui.noteAlwaysHint()
         }
         // Permission before the command executor sees this attach. A session that is already
         // streaming keeps its startup clock — this relink is not a new attempt.

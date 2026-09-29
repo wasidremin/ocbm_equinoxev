@@ -100,9 +100,16 @@ object UsbDiagnostics {
                         val brief = dev?.let { describeBrief(it, usb) } ?: "(no EXTRA_DEVICE)"
                         log.i("ATTACH ${actionOf(dev)} — $brief")
                         if (dev != null && isOcbmFamily(dev)) {
-                            log.i("ATTACH is the adapter family — OCBM=${dev.productId == UsbBulkTransport.PID_OCBM}, permission held=${usb.hasPermission(dev)}")
-                            if (dev.productId == UsbBulkTransport.PID_OCBM) {
-                                main.post { onOcbmAttached?.invoke() }
+                            when (dev.productId) {
+                                UsbBulkTransport.PID_OCBM -> {
+                                    log.i("ATTACH is the OCBM adapter, permission held=${usb.hasPermission(dev)}")
+                                    main.post { onOcbmAttached?.invoke() }
+                                }
+                                UsbBulkTransport.PID_NCM, UsbBulkTransport.PID_STOCK ->
+                                    log.i("ATTACH is a known non-OCBM Carlinkit mode, permission held=${usb.hasPermission(dev)}")
+                                else -> log.i(
+                                    "ATTACH 0x%04x is not the OCBM adapter — not reclaiming".format(dev.productId)
+                                )
                             }
                             if (verboseWindow) dumpDeep(app, "post-attach")
                         }

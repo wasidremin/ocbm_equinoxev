@@ -703,9 +703,9 @@ adds a launch origin, so:
   these lines are diffed across weeks of captures.
 - `perm_trampoline=none` and `serial=unknown` on a launch-origin session. These are **deliberately
   not fabricated**: there was no trampoline to sample, and `serial=sec_exception` is *defined* as
-  "the attach-time grant did not land", so a launch-time read would mislabel itself. `grep
-  perm_trampoline=false` therefore still matches only sessions where a trampoline really did see a
-  missing grant, which is the fault-1 query.
+  "the attach-time grant did not land", so a launch-time read would mislabel itself. A session the
+  system started by dispatching `USB_DEVICE_ATTACHED` prints `perm_trampoline=attach`. Whether the
+  grant was already held is the line `attach dispatched by system — permission held=`.
 - A launch-origin session superseded by a real attach closes as `exit=launch_superseded_by_attach`,
   distinct from `superseded_by_new_attach`.
 

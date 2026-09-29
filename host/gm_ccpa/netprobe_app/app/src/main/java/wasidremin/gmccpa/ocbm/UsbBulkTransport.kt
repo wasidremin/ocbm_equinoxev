@@ -285,6 +285,7 @@ class UsbBulkTransport(
                 log.i("claimed interface ${itf.id} (class 0x%02x) IN=0x%02x OUT=0x%02x mps=%d"
                     .format(itf.interfaceClass, inEp.address, outEp.address, inEp.maxPacketSize))
                 log.i("no AOA control handshake performed — OCBM is a raw byte pipe")
+                noteClaimedIdentity(dev)
                 SessionTrace.Board.up(OcbmBoard.USB_CLAIM, "${dev.deviceName} $detail")
                 return true
             }
@@ -298,6 +299,34 @@ class UsbBulkTransport(
         SessionTrace.Board.failed(OcbmBoard.USB_CLAIM, "${dev.deviceName}: $lastError")
         c.close()
         return false
+    }
+
+    /** One identity line per successful claim. The serial is not readable before the grant. */
+    private fun noteClaimedIdentity(dev: UsbDevice) {
+        runCatching {
+            val serial = try {
+                dev.serialNumber?.trim().orEmpty()
+            } catch (_: SecurityException) {
+                ""
+            }
+            val ifaces = (0 until dev.interfaceCount).joinToString(" ") { i ->
+                val itf = dev.getInterface(i)
+                "[$i] ${itf.interfaceClass}/${itf.interfaceSubclass}/${itf.interfaceProtocol}"
+            }
+            log.i(
+                "claimed dev: serial=${serial.ifEmpty { "<empty>" }} mfr=${dev.manufacturerName} " +
+                    "product=${dev.productName} class=${dev.deviceClass}/${dev.deviceSubclass}/${dev.deviceProtocol} " +
+                    "ifaces=$ifaces"
+            )
+            if (serial.isEmpty() || serial.startsWith("0123456789")) {
+                log.w("serial is empty or starts with 0123456789")
+            }
+            if (serial.isEmpty()) return@runCatching
+            val prefs = appCtx.getSharedPreferences(UsbIdentity.PREFS, Context.MODE_PRIVATE)
+            val prev = prefs.getString(UsbIdentity.KEY_SERIAL, null)
+            if (prev != null && prev != serial) log.i("serial changed")
+            if (prev != serial) prefs.edit().putString(UsbIdentity.KEY_SERIAL, serial).apply()
+        }.onFailure { log.w("claimed dev: identity read failed: ${it.message}") }
     }
 
     override fun setReadHandler(handler: (ByteArray, Int) -> Unit) { this.handler = handler }
