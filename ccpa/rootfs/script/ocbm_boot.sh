@@ -221,7 +221,7 @@ touch /tmp/UDiskPassThroughMode
     fi
     arm_ocbm
     if [ -e /tmp/ocbm_announce_active ]; then
-      date +%s > /tmp/ocbm_announce_ended
+      uptime_ms > /tmp/ocbm_announce_ended
       rm -f /tmp/ocbm_announce_active
     fi
   }
@@ -303,10 +303,13 @@ touch /tmp/UDiskPassThroughMode
         _before_ocbmd=$(pidof ocbmd 2>/dev/null)
         announce_then_ocbm
         # inittab respawn window: the watchdog must not count these 10 s.
-        _now=$(date +%s)
-        printf '%s\n' "$((_now + 10))" > /tmp/ocbm_announce_respawn_until
+        _now=$(uptime_ms)
+        printf '%s\n' "$((_now + 10000))" > /tmp/ocbm_announce_respawn_until
         i=0
-        while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.1; done
+        while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 100 ]; do
+          i=$((i+1))
+          sleep 0.1
+        done
         if [ -e /dev/usb_accessory ]; then
           bootlog "[ocbm-boot] announce retry accessory node present after ${i} tenths"
         else
@@ -317,7 +320,8 @@ touch /tmp/UDiskPassThroughMode
           _retry_ocbmd_pid=$(pidof ocbmd 2>/dev/null)
           [ -n "$_retry_ocbmd_pid" ] && [ "$_retry_ocbmd_pid" != "$_before_ocbmd" ] && break
           [ "$i" -ge 20 ] && break
-          i=$((i+1)); sleep 0.5
+          i=$((i+1))
+          sleep 0.5
         done
         if [ -n "$_retry_ocbmd_pid" ] && [ "$_retry_ocbmd_pid" != "$OCBMD" ]; then
           bootlog "[ocbm-boot] announce retry ocbmd respawned pid=$_retry_ocbmd_pid after $((i / 2))s"
@@ -402,18 +406,20 @@ touch /tmp/UDiskPassThroughMode
     }
     i=0; while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 60 ]; do i=$((i+1)); sleep 1; done
     [ -e /dev/usb_accessory ] || fail "/dev/usb_accessory never appeared in ${i}s"
-    misses=0; t=0; _ignore_logged=0
+    misses=0
+    t=0
+    _ignore_logged=0
     while [ "$t" -lt 120 ]; do
       _ignore=1
       if [ -e /tmp/ocbm_announce_active ]; then
         :
       else
-        _now=$(date +%s 2>/dev/null)
+        _now=$(uptime_ms)
         _ended=$(cat /tmp/ocbm_announce_ended 2>/dev/null)
         _until=$(cat /tmp/ocbm_announce_respawn_until 2>/dev/null)
         _ignore=0
         if [ -n "$_now" ] && [ -n "$_ended" ]; then
-          [ $((_now - _ended)) -lt 15 ] && _ignore=1
+          [ $((_now - _ended)) -lt 15000 ] && _ignore=1
         fi
         if [ "$_ignore" = 0 ] && [ -n "$_now" ] && [ -n "$_until" ]; then
           [ "$_now" -lt "$_until" ] && _ignore=1
@@ -428,12 +434,15 @@ touch /tmp/UDiskPassThroughMode
         fi
       else
         _ignore_logged=0
-        if pidof ocbmd >/dev/null 2>&1; then misses=0; else
+        if pidof ocbmd >/dev/null 2>&1; then
+          misses=0
+        else
           misses=$((misses+1))
           [ "$misses" -ge 4 ] && fail "ocbmd not running on $misses consecutive checks by ${t}s"
         fi
       fi
-      sleep 5; t=$((t+5))
+      sleep 5
+      t=$((t+5))
     done
     echo "$(date) OCBM healthy at ${t}s (ocbmd pid=$(pidof ocbmd))" >> "$W"
   ) &

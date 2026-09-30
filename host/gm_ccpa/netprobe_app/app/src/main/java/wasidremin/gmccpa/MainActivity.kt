@@ -1237,7 +1237,7 @@ class MainActivity : Activity() {
                 val scriptedReboot = if (i.hasExtra("reboot")) i.getBooleanExtra("reboot", false) else null
                 val linked = ocbmProbe?.client
                 if (linked == null || !linked.helloAcked) {
-                    val r = ocbm().runAll(subscribe = false)
+                    val r = ocbm().connectForFiles()
                     if (!r.helloOk) {
                         emit("usb_announce: link NOT established — ${r.failureDetail()}")
                         return@runAsync

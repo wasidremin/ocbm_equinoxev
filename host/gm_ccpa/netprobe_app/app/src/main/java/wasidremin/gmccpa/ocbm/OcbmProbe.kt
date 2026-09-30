@@ -495,6 +495,10 @@ class OcbmProbe(context: Context) {
     fun runAll(subscribe: Boolean = true): LinkResult =
         ops.submit<LinkResult> { runAllLocked(subscribe) }.get()
 
+    /** Claim and HELLO only, for headless file operations without session bring-up. */
+    fun connectForFiles(): LinkResult =
+        ops.submit<LinkResult> { runAllLocked(subscribe = false, helloOnly = true) }.get()
+
     private companion object {
         /**
          * Fallback poll. The permission grant wakes the loop through the
@@ -704,7 +708,7 @@ class OcbmProbe(context: Context) {
         }
     }
 
-    private fun runAllLocked(subscribe: Boolean = true): LinkResult {
+    private fun runAllLocked(subscribe: Boolean = true, helloOnly: Boolean = false): LinkResult {
         var r = LinkResult()
         sink("")
         sink("==================== OCBM LINK (real adapter) ====================")
@@ -739,7 +743,7 @@ class OcbmProbe(context: Context) {
         // manufacture a second session to be superseded. This is the single choke point for all
         // four runAll() callers, for the same reason the MGMT_INFO start snapshot below is taken
         // here and not at any of them. It never fabricates an attach fact: see beginLaunch.
-        if (wasidremin.gmccpa.logging.SessionSummary.current() == null) {
+        if (!helloOnly && wasidremin.gmccpa.logging.SessionSummary.current() == null) {
             t.findQuiet()?.let { present ->
                 wasidremin.gmccpa.logging.SessionSummary.beginLaunch(present)
                 sink("session begun at link attempt (origin=launch): no USB attach preceded this run")
@@ -794,7 +798,7 @@ class OcbmProbe(context: Context) {
         // separates the box's narration from ours exactly as it did under the CH_FILE poller.
         c.boxLogger = boxLog
         c.onBoxLogDropped = { src, n -> log.w("box dropped $n log lines from ${logSourceName(src)}") }
-        if (adapterWifi) AdapterSession.bind(c, ctx)
+        if (adapterWifi && !helloOnly) AdapterSession.bind(c, ctx)
         client = c
         c.start()
 
@@ -805,6 +809,7 @@ class OcbmProbe(context: Context) {
         }
         r = r.copy(helloOk = true)
         sink("STEP 1 OK — claimed the accessory and completed the OCBM handshake.")
+        if (helloOnly) return r
 
         // Bonded-device snapshot at the top of the session. Taken HERE rather than at any of the
         // four runAll() call sites so every path that brings a link up gets one — the start-vs-end
