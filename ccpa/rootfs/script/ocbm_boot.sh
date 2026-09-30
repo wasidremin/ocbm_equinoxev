@@ -29,7 +29,7 @@ touch /tmp/UDiskPassThroughMode
   USB_ANNOUNCE_PID=2d06
   # The car permission dialog has run out the app's 30 s wait. Retrying the
   # announce at that same mark disconnects the device the driver is granting.
-  USB_ANNOUNCE_RETRY_MS=90000
+  USB_ANNOUNCE_RETRY_MS=75000
   SERIAL_PER_DEVICE=0
   bootlog() { echo "$*" >> "$L"; echo "$*" >> /tmp/box.log; }
   trim_ws() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -78,8 +78,8 @@ touch /tmp/UDiskPassThroughMode
   fi
   # Bound accidental config typos while retaining a generous bench dwell.
   [ "$USB_ANNOUNCE_DWELL_MS" -le 60000 ] 2>/dev/null || USB_ANNOUNCE_DWELL_MS=60000
-  [ "$USB_ANNOUNCE_RETRY_MS" -ge 5000 ] 2>/dev/null || USB_ANNOUNCE_RETRY_MS=90000
-  [ "$USB_ANNOUNCE_RETRY_MS" -le 180000 ] 2>/dev/null || USB_ANNOUNCE_RETRY_MS=180000
+  [ "$USB_ANNOUNCE_RETRY_MS" -ge 15000 ] 2>/dev/null || USB_ANNOUNCE_RETRY_MS=15000
+  [ "$USB_ANNOUNCE_RETRY_MS" -le 300000 ] 2>/dev/null || USB_ANNOUNCE_RETRY_MS=300000
   [ "$SERIAL_PER_DEVICE" = 1 ] || { [ "$USB_ANNOUNCE" = 1 ] && bootlog "[ocbm-boot] E announce disabled — no per-device serial (would match the vendor-generic iSerial)"; USB_ANNOUNCE=0; }
   uptime_ms() { awk '{ printf "%.0f", $1 * 1000 }' /proc/uptime; }
   sleep_ms() { _s=$(( $1 / 1000 )); _ms=$(( $1 % 1000 )); sleep "$(printf '%d.%03d' "$_s" "$_ms")"; }

@@ -1135,10 +1135,20 @@ class OcbmClient(
      * Returns null on timeout, a non-OK status, or a CRC/size mismatch -- never a partial file, so a
      * caller can treat a non-null result as trustworthy.
      */
-    fun filePull(path: String, timeoutMs: Long = 8_000): ByteArray? {
+    /**
+     * A pull that keeps the box status. [bytes] is non-null only on FILE_OK with a matching CRC.
+     * [status] is -1 when the transfer itself failed (timeout, short ack) and otherwise the
+     * FILE_ACK status byte. A path that is not on the box is FILE_ERR_OPEN (metadata) or
+     * FILE_ERR_NOFILE (open).
+     */
+    class FileRead(val bytes: ByteArray?, val status: Int)
+
+    fun filePull(path: String, timeoutMs: Long = 8_000): ByteArray? = fileRead(path, timeoutMs).bytes
+
+    fun fileRead(path: String, timeoutMs: Long = 8_000): FileRead {
         if (!fileLock.tryLock(timeoutMs, TimeUnit.MILLISECONDS)) {
             log.w("!! CH_FILE busy — could not start a pull of $path within ${timeoutMs}ms")
-            return null
+            return FileRead(null, -1)
         }
         try {
             val deadline = System.currentTimeMillis() + timeoutMs
@@ -1147,40 +1157,44 @@ class OcbmClient(
             val req = ByteArray(1 + pathBytes.size)
             req[0] = Ocbm.FILE_PULL
             System.arraycopy(pathBytes, 0, req, 1, pathBytes.size)
-            if (!send(Ocbm.CH_FILE, req)) return null
+            if (!send(Ocbm.CH_FILE, req)) return FileRead(null, -1)
 
             val body = java.io.ByteArrayOutputStream()
             while (true) {
                 val remaining = deadline - System.currentTimeMillis()
-                if (remaining <= 0) { log.w("!! CH_FILE pull of $path timed out"); return null }
+                if (remaining <= 0) {
+                    log.w("!! CH_FILE pull of $path timed out")
+                    return FileRead(null, -1)
+                }
                 val pl = fileQ.poll(remaining, TimeUnit.MILLISECONDS) ?: continue
                 if (pl.isEmpty()) continue
                 when (pl[0]) {
                     Ocbm.FILE_DATA -> body.write(pl, 1, pl.size - 1)
                     Ocbm.FILE_ACK -> {
-                        if (pl.size < 10) { log.w("!! CH_FILE ACK truncated (${pl.size}B)"); return null }
+                        if (pl.size < 10) {
+                            log.w("!! CH_FILE ACK truncated (${pl.size}B)")
+                            return FileRead(null, -1)
+                        }
                         val status = pl[1]
                         if (status != Ocbm.FILE_OK) {
                             // NO_SUCH_FILE is ordinary: a box that never ran wireless has no wl.log.
                             if (status != Ocbm.FILE_ERR_NOFILE)
                                 log.w("!! CH_FILE pull $path: ${Ocbm.fileStatusName(status)}")
-                            return null
+                            return FileRead(null, status.toInt() and 0xFF)
                         }
-                        val wantCrc = (pl[2].toLong() and 0xFF) or ((pl[3].toLong() and 0xFF) shl 8) or
-                            ((pl[4].toLong() and 0xFF) shl 16) or ((pl[5].toLong() and 0xFF) shl 24)
-                        val wantSize = (pl[6].toLong() and 0xFF) or ((pl[7].toLong() and 0xFF) shl 8) or
-                            ((pl[8].toLong() and 0xFF) shl 16) or ((pl[9].toLong() and 0xFF) shl 24)
+                        val wantCrc = le32(pl, 2)
+                        val wantSize = le32(pl, 6)
                         val got = body.toByteArray()
                         if (got.size.toLong() != wantSize) {
                             log.w("!! CH_FILE $path: got ${got.size}B, box said ${wantSize}B — discarding")
-                            return null
+                            return FileRead(null, -1)
                         }
                         val crc = java.util.zip.CRC32().apply { update(got) }.value
                         if (crc != wantCrc) {
                             log.w("!! CH_FILE $path: crc 0x%08x != box 0x%08x — discarding".format(crc, wantCrc))
-                            return null
+                            return FileRead(null, -1)
                         }
-                        return got
+                        return FileRead(got, Ocbm.FILE_OK.toInt() and 0xFF)
                     }
                     else -> { /* not ours */ }
                 }
@@ -1188,6 +1202,85 @@ class OcbmClient(
         } finally {
             fileLock.unlock()
         }
+    }
+
+    /**
+     * Host→box write, the same OPEN / DATA / CLOSE sequence `ocbm-host push` uses.
+     * The box lands bytes in `<path>.ocbm.part` and renames only after the CRC matches.
+     * Returns true when the CLOSE ack is FILE_OK.
+     */
+    fun filePush(path: String, bytes: ByteArray, mode: Int = 420, timeoutMs: Long = 8_000): Boolean {
+        if (!fileLock.tryLock(timeoutMs, TimeUnit.MILLISECONDS)) {
+            log.w("!! CH_FILE busy — could not start a push of $path within ${timeoutMs}ms")
+            return false
+        }
+        try {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (fileQ.poll() != null) { /* drop a stale ack */ }
+            val pathBytes = path.toByteArray(Charsets.UTF_8)
+            val open = ByteArray(5 + pathBytes.size)
+            open[0] = Ocbm.FILE_OPEN
+            putLe32(open, 1, mode.toLong())
+            System.arraycopy(pathBytes, 0, open, 5, pathBytes.size)
+            if (!send(Ocbm.CH_FILE, open)) return false
+            val opened = awaitFileAck(deadline) ?: run {
+                log.w("!! CH_FILE push $path: no OPEN ack")
+                return false
+            }
+            if (opened.first != Ocbm.FILE_OK) {
+                log.w("!! CH_FILE push $path OPEN: ${Ocbm.fileStatusName(opened.first)}")
+                return false
+            }
+            val chunk = Ocbm.MAX_PAYLOAD - 1
+            var off = 0
+            while (off < bytes.size) {
+                val n = minOf(chunk, bytes.size - off)
+                val data = ByteArray(1 + n)
+                data[0] = Ocbm.FILE_DATA
+                System.arraycopy(bytes, off, data, 1, n)
+                if (!send(Ocbm.CH_FILE, data)) {
+                    log.w("!! CH_FILE push $path: DATA send failed")
+                    return false
+                }
+                off += n
+            }
+            val crc = java.util.zip.CRC32().apply { update(bytes) }.value
+            val close = ByteArray(9)
+            close[0] = Ocbm.FILE_CLOSE
+            putLe32(close, 1, crc)
+            putLe32(close, 5, bytes.size.toLong())
+            if (!send(Ocbm.CH_FILE, close)) return false
+            val closed = awaitFileAck(deadline) ?: run {
+                log.w("!! CH_FILE push $path: no CLOSE ack")
+                return false
+            }
+            if (closed.first != Ocbm.FILE_OK) {
+                log.w("!! CH_FILE push $path CLOSE: ${Ocbm.fileStatusName(closed.first)}")
+                return false
+            }
+            return true
+        } finally {
+            fileLock.unlock()
+        }
+    }
+
+    private fun awaitFileAck(deadline: Long): Triple<Byte, Long, Long>? {
+        while (true) {
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) return null
+            val pl = fileQ.poll(remaining, TimeUnit.MILLISECONDS) ?: continue
+            if (pl.isEmpty() || pl[0] != Ocbm.FILE_ACK) continue
+            if (pl.size < 10) return null
+            return Triple(pl[1], le32(pl, 2), le32(pl, 6))
+        }
+    }
+
+    private fun le32(pl: ByteArray, at: Int): Long =
+        (pl[at].toLong() and 0xFF) or ((pl[at + 1].toLong() and 0xFF) shl 8) or
+            ((pl[at + 2].toLong() and 0xFF) shl 16) or ((pl[at + 3].toLong() and 0xFF) shl 24)
+
+    private fun putLe32(dst: ByteArray, at: Int, value: Long) {
+        for (i in 0 until 4) dst[at + i] = ((value shr (8 * i)) and 0xFF).toByte()
     }
 
     // ---- CH_MGMT --------------------------------------------------------------------------------

@@ -1,11 +1,13 @@
 package wasidremin.gmccpa
 
 import wasidremin.gmccpa.ocbm.Ocbm
+import wasidremin.gmccpa.ocbm.UsbAnnounce
 import android.app.Activity
 import android.content.Intent
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Bundle
+import wasidremin.gmccpa.logging.AndroidUser
 import wasidremin.gmccpa.logging.CapturePrefs
 import wasidremin.gmccpa.logging.LogCapture
 import wasidremin.gmccpa.logging.LogExport
@@ -356,6 +358,80 @@ class MainActivity : Activity() {
      * `CarLink-626a`); the rest are implemented in `OcbmClient.mgmtAction` and offered here, but a
      * first run on hardware is an experiment, which is why the destructive two confirm first.
      */
+    @Volatile private var announceBusy = false
+
+    private fun announceMissing(status: Int): Boolean =
+        status == (Ocbm.FILE_ERR_OPEN.toInt() and 0xFF) || status == (Ocbm.FILE_ERR_NOFILE.toInt() and 0xFF)
+
+    /** Pull `/script/ocbm.conf` and show Off / Image / No medium. A missing file is Image. */
+    private fun refreshUsbAnnounce() {
+        if (announceBusy) return
+        val c = ocbmProbe?.client
+        if (c == null || !c.helloAcked) {
+            if (uiAlive()) ui.setUsbAnnounce(false, ui.usbAnnounceIndex(), "Adapter not connected")
+            return
+        }
+        val read = c.fileRead(UsbAnnounce.PATH)
+        val missing = read.bytes == null && announceMissing(read.status)
+        if (read.bytes == null && !missing) {
+            ProbeLog.sub("usb").w("usb-announce: read failed")
+            if (uiAlive()) ui.setUsbAnnounce(true, ui.usbAnnounceIndex(), "Could not read adapter settings")
+            return
+        }
+        val text = if (missing) null else read.bytes?.toString(Charsets.UTF_8)
+        val mode = UsbAnnounce.parse(text)
+        val source = if (text == null) "default" else "file"
+        ProbeLog.sub("usb").i("usb-announce: read mode=${mode.name.lowercase()} source=$source")
+        if (uiAlive()) ui.setUsbAnnounce(true, UsbAnnounce.index(mode), "")
+    }
+
+    /**
+     * Rewrite the two announce keys, pull the file back, and only then offer the reboot.
+     * Cancel keeps the file and says it applies at the next adapter start.
+     */
+    private fun applyUsbAnnounce(index: Int) {
+        val c = ocbmProbe?.client
+        val previous = ui.usbAnnounceIndex()
+        if (c == null || !c.helloAcked) {
+            if (uiAlive()) ui.setUsbAnnounce(false, previous, "Adapter not connected")
+            return
+        }
+        if (announceBusy) return
+        announceBusy = true
+        try {
+            val mode = UsbAnnounce.modeAt(index)
+            val read = c.fileRead(UsbAnnounce.PATH)
+            val missing = read.bytes == null && announceMissing(read.status)
+            if (read.bytes == null && !missing) {
+                ProbeLog.sub("usb").i("usb-announce: wrote ${mode.name.lowercase()} verified=false")
+                if (uiAlive()) ui.setUsbAnnounce(true, previous, "Could not read adapter settings")
+                return
+            }
+            val existing = if (missing) null else read.bytes?.toString(Charsets.UTF_8)
+            val body = UsbAnnounce.rewrite(existing, mode).toByteArray(Charsets.UTF_8)
+            val pushed = c.filePush(UsbAnnounce.PATH, body, 420)
+            val back = if (pushed) c.fileRead(UsbAnnounce.PATH).bytes else null
+            val verified = back != null && back.contentEquals(body)
+            ProbeLog.sub("usb").i("usb-announce: wrote ${mode.name.lowercase()} verified=$verified")
+            if (!verified || !uiAlive()) {
+                if (uiAlive()) ui.setUsbAnnounce(true, previous, "Could not update adapter settings")
+                return
+            }
+            ui.setUsbAnnounce(true, index, "")
+            ui.confirmAnnounceReboot(
+                onConfirm = {
+                    ProbeLog.sub("usb").i("usb-announce: reboot requested")
+                    runAsync { boxAction(BoxAction.REBOOT) }
+                },
+                onCancel = {
+                    if (uiAlive()) ui.setUsbAnnounce(true, index, "Applies at next adapter start")
+                },
+            )
+        } finally {
+            announceBusy = false
+        }
+    }
+
     private fun boxAction(a: BoxAction) {
         val c = ocbmProbe?.client
         if (c == null) {
@@ -481,6 +557,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AndroidUser.noteProcess(applicationContext)
         // A launcher screen, not an instrument panel. The instrument is logcat (`-s NETPROBE`), which
         // is the only channel that survives the CarPlay screen taking over the display anyway — this
         // Activity is backgrounded for the entire session it is meant to report on. What is left is
@@ -522,6 +599,8 @@ class MainActivity : Activity() {
             setAdapterWifi(wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this@MainActivity))
             // The settings screen confirms the destructive verbs before it calls this.
             onBoxAction = { a -> runAsync { boxAction(a) } }
+            onUsbAnnounce = { index -> runAsync { applyUsbAnnounce(index) } }
+            onAdvancedOpened = { runAsync { refreshUsbAnnounce() } }
             onReturnToCarPlay = {
                 DisplayPrefs.holdLauncher = false
                 ui.setReturnToCarPlay(false)
@@ -706,6 +785,7 @@ class MainActivity : Activity() {
             // The supervisor writes the state word from here on. A synchronous setStatus() next to an
             // async supervisor event raced it, and losing that race visibly reverted the status line.
             supervisor.onBoxLinked(r.mfiProven)
+            refreshUsbAnnounce()
             return r
         } catch (t: Throwable) {
             setStatus(LinkState.FAILED, t.message ?: t.javaClass.simpleName)
@@ -716,6 +796,7 @@ class MainActivity : Activity() {
     private fun stopEverything() = try { stopEverythingLocked() } finally { SessionHolder.stopRequested = false }
 
     private fun stopEverythingLocked() {
+        if (uiAlive()) ui.setUsbAnnounce(false, ui.usbAnnounceIndex(), "Adapter not connected")
         val adapterLive = wasidremin.gmccpa.ocbm.AdapterSession.sessionUp
         sessionUp = false   // else onResume would relaunch the CarPlay screen after an explicit Stop
         if (adapterLive) tearDownSessionConsumers("operator stop")
@@ -961,8 +1042,10 @@ class MainActivity : Activity() {
             ocbm()
             ensureEndpoint()
             val r = ocbm().runAll()
-            if (r.helloOk) supervisor.onBoxLinked(r.mfiProven)
-            else emit("adapter reclaim: link NOT established — ${r.failureDetail()}")
+            if (r.helloOk) {
+                supervisor.onBoxLinked(r.mfiProven)
+                refreshUsbAnnounce()
+            } else emit("adapter reclaim: link NOT established — ${r.failureDetail()}")
         }
     }
 
@@ -1011,13 +1094,16 @@ class MainActivity : Activity() {
                 emit("USB re-attach with a live CarPlay session — restoring the link WITHOUT " +
                      "CT_SUBSCRIBE (a fresh subscribe would re-wake the box radios mid-session)")
                 ocbm().runAll(subscribe = false)
+                refreshUsbAnnounce()
                 // Tells the supervisor this is a mid-session return, so it holds the box's radios
                 // down (CT_RADIO) instead of letting BT come up underneath a streaming session.
                 supervisor.onBoxRelinked()
             } else {
                 val r = ocbm().runAll()
-                if (r.helloOk) supervisor.onBoxLinked(r.mfiProven)
-                else emit("USB attach: link NOT established — ${r.failureDetail()}")
+                if (r.helloOk) {
+                    supervisor.onBoxLinked(r.mfiProven)
+                    refreshUsbAnnounce()
+                } else emit("USB attach: link NOT established — ${r.failureDetail()}")
             }
         }
         return true

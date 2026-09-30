@@ -59,6 +59,8 @@ import java.util.concurrent.atomic.AtomicLong
  *    `USB_DEVICE_ATTACHED` prints `attach`. Whether the grant was already held is the log line
  *    `attach dispatched by system — permission held=`, not `true`/`false` on this key. Launch
  *    origin stays `none`.
+ *  - `v=3` (2026-09-29): `unlocked=` appended (`true` | `false` | `unknown`). `user=` is
+ *    `UserHandle.myUserId()` (uid / 100000 on the API 32 stub, where that method is hidden).
  *
  * A lower-frequency `SESSION_DETAIL id=<id> ...` block (session-end only, one key per line) carries the
  * fields too long or too structured for one line: the raw phone-identity JSON and the two `MGMT_INFO`
@@ -77,7 +79,7 @@ import java.util.concurrent.atomic.AtomicLong
 object SessionSummary {
 
     /** Bump on any field-set/order change; never reinterpret an existing key. History in the class KDoc. */
-    const val SCHEMA_VERSION = 2
+    const val SCHEMA_VERSION = 3
 
     /**
      * How long a permission-dialog observation with NO open session waits for a session to claim it.
@@ -148,7 +150,8 @@ object SessionSummary {
         }
         log.i(
             "session id=${s.id} begin origin=${attach.origin.tag} uid=${attach.uid} user=${attach.userId} " +
-                "perm_trampoline=${permTrampolineToken(attach)} serial=${attach.serialOutcome.tag}"
+                "perm_trampoline=${permTrampolineToken(attach)} serial=${attach.serialOutcome.tag} " +
+                "unlocked=${AndroidUser.unlockedToken()}"
         )
         return s
     }
@@ -172,7 +175,7 @@ object SessionSummary {
             origin = Origin.LAUNCH,
             hasPermissionAtTrampoline = null,
             uid = android.os.Process.myUid(),
-            userId = android.os.Process.myUid() / 100_000,
+            userId = AndroidUser.id(),
             processAgeMs = SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime(),
             serialOutcome = SerialOutcome.UNKNOWN,
             descriptorFingerprint = descriptorFingerprint(dev),
@@ -285,6 +288,7 @@ object SessionSummary {
             append(" exit=${sanitize(exitReason)}")
             // v=2: appended at the END, per the format contract — nothing above moved.
             append(" origin=${s.attach.origin.tag}")
+            append(" unlocked=${AndroidUser.unlockedToken()}")
         }
         log.i(line)
 

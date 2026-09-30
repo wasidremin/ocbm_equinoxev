@@ -159,9 +159,10 @@ The persistent configuration is `/script/ocbm.conf` (`usb_announce=1`,
 bypass the announce. `usb_announce_medium=image` prepares and binds the existing 8 MiB FAT image;
 `none` clears the LUN backing file. The image mode is preferred for the first GM emulator test because
 the observed Equinox admission used a populated storage function; whether no-medium storage is admitted
-remains unverified. The boot watcher retries the announce once after 90 s without OCBM `CT_HELLO`
-(`usb_announce_retry_ms`, default 90000), but
-only if no HELLO marker exists and the gadget is not `CONFIGURED`; `ocbmd` writes the internal tmpfs
+remains unverified. The boot watcher retries the announce once after 75 s without OCBM `CT_HELLO`
+(`usb_announce_retry_ms`, default 75000, clamped to 15000..300000), but
+only if no HELLO marker exists. A `CONFIGURED` gadget is not a reason to skip the retry: in the car
+the gadget is `CONFIGURED` while GM refuses it, which is when the retry must fire. `ocbmd` writes the internal tmpfs
 marker without changing OCBM frames. Later `/script/ocbm_udisk.sh` rebinds go directly to OCBM and reuse
 the boot serial. The reserved announce PID must stay excluded from OCBM host filters; only `0x2d00`
 speaks OCBM.

@@ -143,6 +143,9 @@ class LauncherUi(private val act: Activity) {
     var adapterWifi: Boolean = false
         private set
     var onBoxAction: (BoxAction) -> Unit = {}
+    /** Advanced-page USB announce segment. Index 0 Off, 1 Image, 2 No medium. */
+    var onUsbAnnounce: (Int) -> Unit = {}
+    var onAdvancedOpened: () -> Unit = {}
     var onLogAction: (LogAction) -> Unit = {}
     var onCaptureScope: (LogCapture.Scope) -> Unit = {}
     var onReturnToCarPlay: () -> Unit = {}
@@ -181,6 +184,9 @@ class LauncherUi(private val act: Activity) {
     private lateinit var hotspotRow: EqRow
     private lateinit var hotspotValue: TextView
     private lateinit var infoRow: EqRow
+    private lateinit var announceRow: EqRow
+    private lateinit var announceControl: EqSegmented
+    private var announceIndex = 1
     private lateinit var scopeRow: EqRow
     private lateinit var logStatusRow: EqRow
     private lateinit var wifiToggle: EqToggle
@@ -451,11 +457,18 @@ class LauncherUi(private val act: Activity) {
             trailing = EqChevron(act),
             onClick = { onBoxAction(BoxAction.INFO) },
         )
+        announceControl = EqSegmented(act, listOf("Off", "Image", "No medium"), announceIndex) { i ->
+            onUsbAnnounce(i)
+        }
+        announceControl.isEnabled = false
+        announceControl.alpha = 0.4f
+        announceRow = EqRow(act, "USB announce", "Adapter not connected", trailing = announceControl)
         page.addView(eqSectionLabel(act, "Adapter"))
         page.addView(EqCard(act)
             .addRow(EqRow(act, "Adapter Wi-Fi", "The iPhone joins the adapter.", trailing = wifiToggle))
             .addRow(hotspotRow)
             .addRow(infoRow)
+            .addRow(announceRow)
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
             .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() }))
             .addRow(EqRow(
@@ -483,6 +496,31 @@ class LauncherUi(private val act: Activity) {
         }
         if (::rail.isInitialized) rail.select(index)
         if (::scroller.isInitialized) scroller.scrollTo(0, 0)
+        if (index == 4) onAdvancedOpened()
+    }
+
+    /** Reflect a read or a verified write. [subtitle] is replaced when the link is down. */
+    fun setUsbAnnounce(linked: Boolean, index: Int, subtitle: String) = act.runOnUiThread {
+        if (!::announceControl.isInitialized) return@runOnUiThread
+        announceIndex = index
+        announceControl.isEnabled = linked
+        announceControl.alpha = if (linked) 1f else 0.4f
+        announceControl.setSelected(index, animate = false)
+        announceRow.setSubtitle(if (linked) subtitle.ifEmpty { null } else "Adapter not connected")
+    }
+
+    fun usbAnnounceIndex(): Int = announceIndex
+
+    fun confirmAnnounceReboot(onConfirm: () -> Unit, onCancel: () -> Unit) = act.runOnUiThread {
+        EqDialog.confirm(
+            act,
+            "Adapter will restart",
+            "CarPlay disconnects for about 30 seconds.",
+            "Restart",
+            false,
+            onCancel,
+            onConfirm,
+        )
     }
 
     /** A GONE row inside an [EqCard] leaves its hairline. Hide that divider with the row. */

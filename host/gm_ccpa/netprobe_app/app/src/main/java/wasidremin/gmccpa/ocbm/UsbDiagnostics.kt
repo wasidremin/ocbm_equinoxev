@@ -65,9 +65,49 @@ object UsbDiagnostics {
 
     @Volatile private var lastChangeLogAt = 0L
     @Volatile private var lastFingerprint = ""
+    /** Elapsed-realtime stamps for the 2d06→2d00 gap line. Zero means not seen this process. */
+    @Volatile private var announceAttachedAt = 0L
+    @Volatile private var announceDetachedAt = 0L
 
     private fun actionOf(dev: UsbDevice?): String =
         if (dev == null) "unknown" else "0x%04x:0x%04x".format(dev.vendorId, dev.productId)
+
+    private fun isAnnounce(dev: UsbDevice?): Boolean =
+        dev != null && dev.vendorId == UsbBulkTransport.VID_CARLINKIT &&
+            dev.productId == UsbBulkTransport.PID_ANNOUNCE
+
+    private fun isOcbm(dev: UsbDevice?): Boolean =
+        dev != null && dev.vendorId == UsbBulkTransport.VID_CARLINKIT &&
+            dev.productId == UsbBulkTransport.PID_OCBM
+
+    private fun stamp(): String =
+        "elapsed=${SystemClock.elapsedRealtime()}ms wall=${System.currentTimeMillis()}ms"
+
+    private fun noteAnnounceAttach() {
+        announceAttachedAt = SystemClock.elapsedRealtime()
+        log.i("announce ATTACH 0x1314:0x2d06 ${stamp()}")
+    }
+
+    private fun noteAnnounceDetach() {
+        val now = SystemClock.elapsedRealtime()
+        announceDetachedAt = now
+        val onBus = if (announceAttachedAt > 0L) now - announceAttachedAt else -1L
+        log.i("announce DETACH 0x1314:0x2d06 ${stamp()} on_bus=${onBus}ms")
+    }
+
+    /** 2d00 arrived within 10 s of 2d06 leaving. One line, then the stamps are consumed. */
+    private fun noteAnnounceFollowed() {
+        val detached = announceDetachedAt
+        val attached = announceAttachedAt
+        if (detached <= 0L || attached <= 0L) return
+        val now = SystemClock.elapsedRealtime()
+        val gap = now - detached
+        if (gap > 10_000L) return
+        val onBus = detached - attached
+        log.i("usb: announce observed — 2d06 on bus ${onBus}ms, 2d06→2d00 gap ${gap}ms")
+        announceAttachedAt = 0L
+        announceDetachedAt = 0L
+    }
 
     /** Is this one of the CarLinkit identities the app can ever use? */
     private fun isOcbmFamily(dev: UsbDevice): Boolean =
@@ -97,6 +137,8 @@ object UsbDiagnostics {
                         // Always log, regardless of any link: this is the ground truth of what
                         // Android handed our UID, and the reference car failure is exactly that
                         // nothing ever arrives here.
+                        if (isAnnounce(dev)) noteAnnounceAttach()
+                        if (isOcbm(dev)) noteAnnounceFollowed()
                         val brief = dev?.let { describeBrief(it, usb) } ?: "(no EXTRA_DEVICE)"
                         log.i("ATTACH ${actionOf(dev)} — $brief")
                         if (dev != null && isOcbmFamily(dev)) {
@@ -119,6 +161,7 @@ object UsbDiagnostics {
                         // Serial when present: distinguishes a replug of the same unit from a
                         // different one on a multi-port hub, which matters when the car exposes
                         // more than one port through bridge silicon.
+                        if (isAnnounce(dev)) noteAnnounceDetach()
                         log.i("DETACH ${actionOf(dev)} — ${dev?.let { describeBrief(it, usb) } ?: "(no EXTRA_DEVICE)"}")
                         noteChange(app)
                     }
@@ -175,6 +218,7 @@ object UsbDiagnostics {
             dev.vendorId == UsbBulkTransport.VID_CARLINKIT && dev.productId == UsbBulkTransport.PID_OCBM -> "OCBM"
             dev.vendorId == UsbBulkTransport.VID_CARLINKIT && dev.productId == UsbBulkTransport.PID_NCM -> "NCM"
             dev.vendorId == UsbBulkTransport.VID_CARLINKIT && dev.productId == UsbBulkTransport.PID_STOCK -> "stock"
+            dev.vendorId == UsbBulkTransport.VID_CARLINKIT && dev.productId == UsbBulkTransport.PID_ANNOUNCE -> "announce"
             else -> "other"
         }
         "product='${dev.productName}' mfr='${dev.manufacturerName}' serial=${dev.serialNumber ?: "-"} " +

@@ -44,6 +44,8 @@ class UsbBulkTransport(
         const val PID_OCBM = 0x2d00
         const val PID_NCM = 0x1520
         const val PID_STOCK = 0x1521
+        /** Storage-only admission identity. Not an OCBM adapter and not in the attach filter. */
+        const val PID_ANNOUNCE = 0x2d06
 
         const val ACTION_USB_PERMISSION = "wasidremin.gmccpa.USB_PERMISSION"
 
@@ -214,6 +216,7 @@ class UsbBulkTransport(
             dev.vendorId == VID_CARLINKIT && dev.productId == PID_OCBM -> "OCBM"
             dev.vendorId == VID_CARLINKIT && dev.productId == PID_NCM -> "NCM-not-OCBM"
             dev.vendorId == VID_CARLINKIT && dev.productId == PID_STOCK -> "stock-not-OCBM"
+            dev.vendorId == VID_CARLINKIT && dev.productId == PID_ANNOUNCE -> "announce"
             else -> "other"
         }
         "0x%04x:0x%04x %s (%s ifaces=%d class=%d)".format(
@@ -322,8 +325,8 @@ class UsbBulkTransport(
             )
             if (serial.isEmpty() || serial.startsWith("0123456789")) {
                 log.w("serial is empty or starts with 0123456789")
+                return@runCatching
             }
-            if (serial.isEmpty()) return@runCatching
             val prefs = appCtx.getSharedPreferences(UsbIdentity.PREFS, Context.MODE_PRIVATE)
             val prev = prefs.getString(UsbIdentity.KEY_SERIAL, null)
             if (prev != null && prev != serial) log.i("serial changed")

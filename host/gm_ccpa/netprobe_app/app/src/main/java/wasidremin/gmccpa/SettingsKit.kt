@@ -307,6 +307,7 @@ class EqSegmented(
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!isEnabled) return false
         if (e.action == MotionEvent.ACTION_UP) {
             val i = (e.x / segW).toInt().coerceIn(0, options.lastIndex)
             if (i != selected) {
@@ -530,6 +531,7 @@ object EqDialog {
         message: String,
         confirmLabel: String,
         destructive: Boolean,
+        onCancel: (() -> Unit)? = null,
         onConfirm: () -> Unit,
     ) {
         val dialog = Dialog(act)
@@ -549,7 +551,11 @@ object EqDialog {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.END
             }
-            buttons.addView(eqButton(act, "Cancel", EqButtonStyle.SECONDARY) { dialog.dismiss() })
+            buttons.addView(eqButton(act, "Cancel", EqButtonStyle.SECONDARY) {
+                dialog.setOnCancelListener(null)
+                dialog.dismiss()
+                onCancel?.invoke()
+            })
             buttons.addView(
                 eqButton(act, confirmLabel, if (destructive) EqButtonStyle.DANGER else EqButtonStyle.PRIMARY) {
                     dialog.dismiss()
@@ -560,6 +566,7 @@ object EqDialog {
             addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(32f) })
         }
         dialog.setContentView(body, ViewGroup.LayoutParams(EqTheme.px(720f), ViewGroup.LayoutParams.WRAP_CONTENT))
+        dialog.setOnCancelListener { onCancel?.invoke() }
         dialog.show()
     }
 }

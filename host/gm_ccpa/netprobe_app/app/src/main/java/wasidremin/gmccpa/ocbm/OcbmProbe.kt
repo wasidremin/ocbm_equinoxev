@@ -53,6 +53,12 @@ class OcbmProbe(context: Context) {
 
     var client: OcbmClient? = null
         private set
+
+    /** First HELLO_ACK of this process has already logged the box uptime. */
+    private val firstHelloNoted = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** A `[ocbm-boot]` line has arrived on CH_LOG (including backfill). */
+    @Volatile private var bootLineSeen = false
+    private val bootPullScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
     private var usb: UsbBulkTransport? = null
 
     /**
@@ -775,6 +781,7 @@ class OcbmProbe(context: Context) {
         }
         c.onSubscribeEdge = { onSubscribeEdge?.invoke() }
         c.onBoxLog = { _, text, backfill, _, _ ->
+            if (text.contains("[ocbm-boot]")) bootLineSeen = true
             if (adapterWifi) AdapterWifi.observeBoxLine(ctx, text)
             if (!backfill) {
                 StartupClock.noteBoxLine(text)
@@ -849,6 +856,10 @@ class OcbmProbe(context: Context) {
         }
 
         val info = c.mgmtGetInfo()
+        if (info != null && firstHelloNoted.compareAndSet(false, true)) {
+            val up = Regex("\"uptime_s\"\\s*:\\s*(\\d+)").find(info)?.groupValues?.get(1) ?: "unknown"
+            log.i("box: uptime=${up}s at first HELLO")
+        }
         if (info != null) { sink("  MGMT_INFO:"); info.chunked(110).forEach { sink("     $it") } }
         // Degraded, not fatal: bring-up continues, but the session summary loses its bonded-device
         // diff and the box was slow on CH_MGMT for 5 s — worth a WARN, not a silent INFO.
@@ -1354,6 +1365,27 @@ class OcbmProbe(context: Context) {
     fun startBoxLogStream() {
         val c = client ?: return
         c.logCtl(true, BOX_LOG_CAP_KB)
+        if (!bootPullScheduled.compareAndSet(false, true)) return
+        Thread({
+            try {
+                Thread.sleep(3_000)
+                if (bootLineSeen) {
+                    boxLog.i("announce boot lines arrived on CH_LOG")
+                    return@Thread
+                }
+                val body = c.filePull("/tmp/ocbm_boot.log", 8_000)
+                if (body == null) {
+                    boxLog.w("announce boot lines absent from CH_LOG and /tmp/ocbm_boot.log pull failed")
+                    return@Thread
+                }
+                boxLog.i("pulled /tmp/ocbm_boot.log (${body.size}B) — announce lines were not on CH_LOG")
+                String(body, Charsets.UTF_8).lineSequence().filter { it.contains("[ocbm-boot]") }.forEach {
+                    boxLog.i("[box:ocbm_boot.log] $it")
+                }
+            } catch (t: Throwable) {
+                boxLog.w("announce boot log pull: ${t.message}")
+            }
+        }, "announce-boot-log").apply { isDaemon = true }.start()
     }
 
     fun stopBoxLogStream() {

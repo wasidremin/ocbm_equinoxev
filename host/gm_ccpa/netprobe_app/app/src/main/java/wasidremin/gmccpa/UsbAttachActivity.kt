@@ -87,6 +87,8 @@ class UsbAttachActivity : Activity() {
         // attach-time start still recovers the minutes that preceded the app being alive at all.
         runCatching { LogCapture.start(applicationContext, CapturePrefs.config(applicationContext)) }
             .onFailure { ProbeLog.sub("cap").e("capture start failed at attach: ${it.message}") }
+        wasidremin.gmccpa.logging.AndroidUser.noteProcess(applicationContext)
+        ProbeLog.sub("usb").i("dispatch ${wasidremin.gmccpa.logging.AndroidUser.line(this)}")
         try {
             val dev = intentDevice()
             if (dev == null) {
@@ -134,7 +136,7 @@ class UsbAttachActivity : Activity() {
                     origin = SessionSummary.Origin.USB_ATTACH,
                     hasPermissionAtTrampoline = held,
                     uid = Process.myUid(),
-                    userId = Process.myUid() / 100_000,
+                    userId = wasidremin.gmccpa.logging.AndroidUser.id(),
                     processAgeMs = SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime(),
                     serialOutcome = serialOutcome,
                     descriptorFingerprint = SessionSummary.descriptorFingerprint(dev),
@@ -178,7 +180,7 @@ class UsbAttachActivity : Activity() {
         // the same arithmetic the framework does and needs no reflection or hidden-API access.
         val uid = Process.myUid()
         val ageMs = SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime()
-        log.i("attach ctx: uid=$uid user=${uid / 100_000} pid=${Process.myPid()} process_age=${ageMs}ms")
+        log.i("attach ctx: uid=$uid ${wasidremin.gmccpa.logging.AndroidUser.line(this)} pid=${Process.myPid()} process_age=${ageMs}ms")
 
         val pkg = runCatching { packageManager.getPackageInfo(packageName, 0) }.getOrNull()
         log.i("attach ctx: pkg=$packageName v=${pkg?.versionName} src=${applicationInfo.sourceDir}")
