@@ -4,8 +4,8 @@ package wasidremin.gmccpa.ocbm
  * The Advanced-page view of `/script/ocbm.conf`.
  *
  * The boot script defaults to announce on and an 8 MiB FAT image when the file or the key is
- * absent. A missing file must therefore show Image, never Off. Dwell and retry stay out of the
- * app; [rewrite] copies every other line through unchanged.
+ * absent. A missing file must therefore show Image, never Off. Dwell, retry delay, and
+ * `usb_announce_retries` stay out of the app; [rewrite] copies every other line through unchanged.
  */
 object UsbAnnounce {
     const val PATH = "/script/ocbm.conf"

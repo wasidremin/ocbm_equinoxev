@@ -30,6 +30,8 @@ touch /tmp/UDiskPassThroughMode
   # The car permission dialog has run out the app's 30 s wait. Retrying the
   # announce at that same mark disconnects the device the driver is granting.
   USB_ANNOUNCE_RETRY_MS=75000
+  # k × retry_ms after the first OCBM bind. 0 disables the watcher.
+  USB_ANNOUNCE_RETRIES=2
   SERIAL_PER_DEVICE=0
   bootlog() { echo "$*" >> "$L"; echo "$*" >> /tmp/box.log; }
   trim_ws() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -73,6 +75,7 @@ touch /tmp/UDiskPassThroughMode
         usb_announce_dwell_ms) case "$cfgval" in ''|*[!0-9]*) echo "[ocbm-boot] W invalid usb_announce_dwell_ms=$cfgval; keeping $USB_ANNOUNCE_DWELL_MS" >> "$L";; *) USB_ANNOUNCE_DWELL_MS=$cfgval;; esac ;;
         usb_announce_medium) case "$cfgval" in image|none) USB_ANNOUNCE_MEDIUM=$cfgval;; *) echo "[ocbm-boot] W invalid usb_announce_medium=$cfgval; keeping $USB_ANNOUNCE_MEDIUM" >> "$L";; esac ;;
         usb_announce_retry_ms) case "$cfgval" in ''|*[!0-9]*) echo "[ocbm-boot] W invalid usb_announce_retry_ms=$cfgval; keeping $USB_ANNOUNCE_RETRY_MS" >> "$L";; *) USB_ANNOUNCE_RETRY_MS=$cfgval;; esac ;;
+        usb_announce_retries) case "$cfgval" in ''|*[!0-9]*) echo "[ocbm-boot] W invalid usb_announce_retries=$cfgval; keeping $USB_ANNOUNCE_RETRIES" >> "$L";; *) USB_ANNOUNCE_RETRIES=$cfgval;; esac ;;
       esac
     done < /script/ocbm.conf
   fi
@@ -80,6 +83,8 @@ touch /tmp/UDiskPassThroughMode
   [ "$USB_ANNOUNCE_DWELL_MS" -le 60000 ] 2>/dev/null || USB_ANNOUNCE_DWELL_MS=60000
   [ "$USB_ANNOUNCE_RETRY_MS" -ge 15000 ] 2>/dev/null || USB_ANNOUNCE_RETRY_MS=15000
   [ "$USB_ANNOUNCE_RETRY_MS" -le 300000 ] 2>/dev/null || USB_ANNOUNCE_RETRY_MS=300000
+  [ "$USB_ANNOUNCE_RETRIES" -ge 0 ] 2>/dev/null || USB_ANNOUNCE_RETRIES=0
+  [ "$USB_ANNOUNCE_RETRIES" -le 3 ] 2>/dev/null || USB_ANNOUNCE_RETRIES=3
   [ "$SERIAL_PER_DEVICE" = 1 ] || { [ "$USB_ANNOUNCE" = 1 ] && bootlog "[ocbm-boot] E announce disabled — no per-device serial (would match the vendor-generic iSerial)"; USB_ANNOUNCE=0; }
   uptime_ms() { awk '{ printf "%.0f", $1 * 1000 }' /proc/uptime; }
   sleep_ms() { _s=$(( $1 / 1000 )); _ms=$(( $1 % 1000 )); sleep "$(printf '%d.%03d' "$_s" "$_ms")"; }
@@ -138,6 +143,10 @@ touch /tmp/UDiskPassThroughMode
   }
   announce_then_ocbm() {
     if [ "$USB_ANNOUNCE" = 1 ]; then
+      # Before the first enable=0. The failover watchdog treats this file, and the
+      # 15 s after it is removed, as an expected ocbmd gap. Skip paths still reach
+      # arm_ocbm, so the flag stays up until that returns.
+      touch /tmp/ocbm_announce_active
       bootlog "[ocbm-boot] announce medium=$USB_ANNOUNCE_MEDIUM"
       if set_usb_identity "$USB_ANNOUNCE_PID"; then
         _lun_ready=1
@@ -211,9 +220,13 @@ touch /tmp/UDiskPassThroughMode
       fi
     fi
     arm_ocbm
+    if [ -e /tmp/ocbm_announce_active ]; then
+      date +%s > /tmp/ocbm_announce_ended
+      rm -f /tmp/ocbm_announce_active
+    fi
   }
-  echo "[ocbm-boot] usb_announce=$USB_ANNOUNCE usb_announce_dwell_ms=$USB_ANNOUNCE_DWELL_MS usb_announce_medium=$USB_ANNOUNCE_MEDIUM usb_announce_retry_ms=$USB_ANNOUNCE_RETRY_MS pid=$USB_ANNOUNCE_PID" >> "$L"
-  echo "[ocbm-boot] usb_announce=$USB_ANNOUNCE usb_announce_dwell_ms=$USB_ANNOUNCE_DWELL_MS usb_announce_medium=$USB_ANNOUNCE_MEDIUM usb_announce_retry_ms=$USB_ANNOUNCE_RETRY_MS pid=$USB_ANNOUNCE_PID" >> /tmp/box.log
+  echo "[ocbm-boot] usb_announce=$USB_ANNOUNCE usb_announce_dwell_ms=$USB_ANNOUNCE_DWELL_MS usb_announce_medium=$USB_ANNOUNCE_MEDIUM usb_announce_retry_ms=$USB_ANNOUNCE_RETRY_MS usb_announce_retries=$USB_ANNOUNCE_RETRIES pid=$USB_ANNOUNCE_PID" >> "$L"
+  echo "[ocbm-boot] usb_announce=$USB_ANNOUNCE usb_announce_dwell_ms=$USB_ANNOUNCE_DWELL_MS usb_announce_medium=$USB_ANNOUNCE_MEDIUM usb_announce_retry_ms=$USB_ANNOUNCE_RETRY_MS usb_announce_retries=$USB_ANNOUNCE_RETRIES pid=$USB_ANNOUNCE_PID" >> /tmp/box.log
 
   # A self-reboot (supervisor L3) leaves the previous boot's universal log on jffs2 so the host
   # app's CH_LOG backfill streams the post-mortem; /tmp did not survive the reboot, this did.
@@ -264,44 +277,55 @@ touch /tmp/UDiskPassThroughMode
   fi
   /usr/sbin/ocbmd >> /tmp/box.log 2>&1 &
   OCBMD=$!
-  # One bounded retry per boot, timed from the OCBM bind. ocbmd marks the first received CT_HELLO
-  # in /tmp without changing the OCBM protocol; a HELLO suppresses that retry permanently this boot.
-  if [ "$USB_ANNOUNCE" = 1 ]; then
+  # Retries are timed from the FIRST OCBM bind (k × retry_ms). ocbmd marks the first
+  # received CT_HELLO in /tmp without changing the OCBM protocol; a HELLO suppresses
+  # every remaining retry this boot. Gadget CONFIGURED is not a skip: the car holds
+  # that state while it is still refusing the device.
+  if [ "$USB_ANNOUNCE" = 1 ] && [ "$USB_ANNOUNCE_RETRIES" -gt 0 ]; then
     (
-      _retry_delay=$((USB_ANNOUNCE_RETRY_MS - ($(uptime_ms) - OCBM_BOUND_MS)))
-      [ "$_retry_delay" -gt 0 ] && sleep_ms "$_retry_delay"
-      [ -e /tmp/ocbm_hello_seen ] && exit 0
-      if [ "$USB_ANNOUNCE_MEDIUM" = image ] && ! losetup /dev/loop1 >/dev/null 2>&1; then
-        if [ -x /script/ocbm_udisk.sh ] && /script/ocbm_udisk.sh prepare >> "$L" 2>&1 && losetup /dev/loop1 >/dev/null 2>&1; then
-          ANNOUNCE_IMAGE_READY=1
-        else
-          ANNOUNCE_IMAGE_READY=0
-          bootlog "[ocbm-boot] W announce retry image preparation failed"
+      _first_ocbm_ms=$OCBM_BOUND_MS
+      _k=1
+      while [ "$_k" -le "$USB_ANNOUNCE_RETRIES" ]; do
+        _retry_delay=$((_k * USB_ANNOUNCE_RETRY_MS - ($(uptime_ms) - _first_ocbm_ms)))
+        [ "$_retry_delay" -gt 0 ] && sleep_ms "$_retry_delay"
+        [ -e /tmp/ocbm_hello_seen ] && exit 0
+        if [ "$USB_ANNOUNCE_MEDIUM" = image ] && ! losetup /dev/loop1 >/dev/null 2>&1; then
+          if [ -x /script/ocbm_udisk.sh ] && /script/ocbm_udisk.sh prepare >> "$L" 2>&1 && losetup /dev/loop1 >/dev/null 2>&1; then
+            ANNOUNCE_IMAGE_READY=1
+          else
+            ANNOUNCE_IMAGE_READY=0
+            bootlog "[ocbm-boot] W announce retry image preparation failed"
+          fi
         fi
-      fi
-      [ -e /tmp/ocbm_hello_seen ] && exit 0
-      bootlog "[ocbm-boot] announce retry — ocbmd will be respawned by inittab"
-      bootlog "[ocbm-boot] announce retry (no HELLO in $((USB_ANNOUNCE_RETRY_MS / 1000)) s) uptime_ms=$(uptime_ms)"
-      announce_then_ocbm
-      i=0
-      while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.1; done
-      if [ -e /dev/usb_accessory ]; then
-        bootlog "[ocbm-boot] announce retry accessory node present after ${i} tenths"
-      else
-        bootlog "[ocbm-boot] W announce retry accessory node missing after 10 s"
-      fi
-      i=0
-      while :; do
-        _retry_ocbmd_pid=$(pidof ocbmd 2>/dev/null)
-        [ -n "$_retry_ocbmd_pid" ] && [ "$_retry_ocbmd_pid" != "$OCBMD" ] && break
-        [ "$i" -ge 20 ] && break
-        i=$((i+1)); sleep 0.5
+        [ -e /tmp/ocbm_hello_seen ] && exit 0
+        bootlog "[ocbm-boot] announce retry — ocbmd will be respawned by inittab"
+        bootlog "[ocbm-boot] announce retry $_k/$USB_ANNOUNCE_RETRIES (no HELLO in $((_k * USB_ANNOUNCE_RETRY_MS / 1000)) s) uptime_ms=$(uptime_ms)"
+        _before_ocbmd=$(pidof ocbmd 2>/dev/null)
+        announce_then_ocbm
+        # inittab respawn window: the watchdog must not count these 10 s.
+        _now=$(date +%s)
+        printf '%s\n' "$((_now + 10))" > /tmp/ocbm_announce_respawn_until
+        i=0
+        while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.1; done
+        if [ -e /dev/usb_accessory ]; then
+          bootlog "[ocbm-boot] announce retry accessory node present after ${i} tenths"
+        else
+          bootlog "[ocbm-boot] W announce retry accessory node missing after 10 s"
+        fi
+        i=0
+        while :; do
+          _retry_ocbmd_pid=$(pidof ocbmd 2>/dev/null)
+          [ -n "$_retry_ocbmd_pid" ] && [ "$_retry_ocbmd_pid" != "$_before_ocbmd" ] && break
+          [ "$i" -ge 20 ] && break
+          i=$((i+1)); sleep 0.5
+        done
+        if [ -n "$_retry_ocbmd_pid" ] && [ "$_retry_ocbmd_pid" != "$OCBMD" ]; then
+          bootlog "[ocbm-boot] announce retry ocbmd respawned pid=$_retry_ocbmd_pid after $((i / 2))s"
+        else
+          bootlog "[ocbm-boot] W announce retry ocbmd not respawned within 10 s (pid=${_retry_ocbmd_pid:-none})"
+        fi
+        _k=$((_k + 1))
       done
-      if [ -n "$_retry_ocbmd_pid" ] && [ "$_retry_ocbmd_pid" != "$OCBMD" ]; then
-        bootlog "[ocbm-boot] announce retry ocbmd respawned pid=$_retry_ocbmd_pid after $((i / 2))s"
-      else
-        bootlog "[ocbm-boot] W announce retry ocbmd not respawned within 10 s (pid=${_retry_ocbmd_pid:-none})"
-      fi
     ) >/dev/null 2>&1 &
   fi
 
@@ -363,7 +387,9 @@ touch /tmp/UDiskPassThroughMode
   # a bench. Treating that as failure would make the box flap between modes every time it is
   # powered without a host, which is worse than either mode on its own. ocbmd exiting ONCE on
   # a host disconnect is also normal — that is what the respawn wrapper is for — hence a count,
-  # not a single miss.
+  # not a single miss. An announce unbinds the gadget on purpose: while
+  # /tmp/ocbm_announce_active exists, for 15 s after it is removed, and for 10 s after a
+  # retry's announce returns, misses stay at 0.
   #
   # It is one-shot by construction: once /script/ncm_only exists the box boots NCM and stays
   # there until a human removes it, so a persistent fault cannot become a reboot loop.
@@ -376,11 +402,36 @@ touch /tmp/UDiskPassThroughMode
     }
     i=0; while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 60 ]; do i=$((i+1)); sleep 1; done
     [ -e /dev/usb_accessory ] || fail "/dev/usb_accessory never appeared in ${i}s"
-    misses=0; t=0
+    misses=0; t=0; _ignore_logged=0
     while [ "$t" -lt 120 ]; do
-      if pidof ocbmd >/dev/null 2>&1; then misses=0; else
-        misses=$((misses+1))
-        [ "$misses" -ge 4 ] && fail "ocbmd not running on $misses consecutive checks by ${t}s"
+      _ignore=1
+      if [ -e /tmp/ocbm_announce_active ]; then
+        :
+      else
+        _now=$(date +%s 2>/dev/null)
+        _ended=$(cat /tmp/ocbm_announce_ended 2>/dev/null)
+        _until=$(cat /tmp/ocbm_announce_respawn_until 2>/dev/null)
+        _ignore=0
+        if [ -n "$_now" ] && [ -n "$_ended" ]; then
+          [ $((_now - _ended)) -lt 15 ] && _ignore=1
+        fi
+        if [ "$_ignore" = 0 ] && [ -n "$_now" ] && [ -n "$_until" ]; then
+          [ "$_now" -lt "$_until" ] && _ignore=1
+        fi
+      fi
+      if [ "$_ignore" = 1 ]; then
+        misses=0
+        if [ "$_ignore_logged" = 0 ]; then
+          echo "$(date) failover: ignoring ocbmd gap during announce" >> "$W"
+          bootlog "[ocbm-boot] failover: ignoring ocbmd gap during announce"
+          _ignore_logged=1
+        fi
+      else
+        _ignore_logged=0
+        if pidof ocbmd >/dev/null 2>&1; then misses=0; else
+          misses=$((misses+1))
+          [ "$misses" -ge 4 ] && fail "ocbmd not running on $misses consecutive checks by ${t}s"
+        fi
       fi
       sleep 5; t=$((t+5))
     done

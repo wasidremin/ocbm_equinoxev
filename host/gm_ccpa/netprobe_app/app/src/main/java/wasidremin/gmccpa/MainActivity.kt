@@ -388,8 +388,10 @@ class MainActivity : Activity() {
     /**
      * Rewrite the two announce keys, pull the file back, and only then offer the reboot.
      * Cancel keeps the file and says it applies at the next adapter start.
+     *
+     * [scriptedReboot] is the headless `--ez reboot` extra. Null is the on-screen confirm.
      */
-    private fun applyUsbAnnounce(index: Int) {
+    private fun applyUsbAnnounce(index: Int, scriptedReboot: Boolean? = null) {
         val c = ocbmProbe?.client
         val previous = ui.usbAnnounceIndex()
         if (c == null || !c.helloAcked) {
@@ -413,20 +415,32 @@ class MainActivity : Activity() {
             val back = if (pushed) c.fileRead(UsbAnnounce.PATH).bytes else null
             val verified = back != null && back.contentEquals(body)
             ProbeLog.sub("usb").i("usb-announce: wrote ${mode.name.lowercase()} verified=$verified")
-            if (!verified || !uiAlive()) {
+            if (!verified) {
                 if (uiAlive()) ui.setUsbAnnounce(true, previous, "Could not update adapter settings")
                 return
             }
-            ui.setUsbAnnounce(true, index, "")
-            ui.confirmAnnounceReboot(
-                onConfirm = {
+            if (uiAlive()) ui.setUsbAnnounce(true, index, "")
+            when (scriptedReboot) {
+                true -> {
                     ProbeLog.sub("usb").i("usb-announce: reboot requested")
                     runAsync { boxAction(BoxAction.REBOOT) }
-                },
-                onCancel = {
+                }
+                false -> {
                     if (uiAlive()) ui.setUsbAnnounce(true, index, "Applies at next adapter start")
-                },
-            )
+                }
+                null -> {
+                    if (!uiAlive()) return
+                    ui.confirmAnnounceReboot(
+                        onConfirm = {
+                            ProbeLog.sub("usb").i("usb-announce: reboot requested")
+                            runAsync { boxAction(BoxAction.REBOOT) }
+                        },
+                        onCancel = {
+                            if (uiAlive()) ui.setUsbAnnounce(true, index, "Applies at next adapter start")
+                        },
+                    )
+                }
+            }
         } finally {
             announceBusy = false
         }
@@ -1142,6 +1156,7 @@ class MainActivity : Activity() {
      *          | carplay_rx | carplay_stop | carplay_ui | full | mdns_self
      *          | export_log | upload_log | export_log_raw | capture_status | capture_whole_os | capture_own
      *          | usb_probe | clear_log
+     *          | usb_announce  (--es value off|image|none, optional --ez reboot true|false)
      */
     private fun handleRunExtra(intent: Intent?) {
         val i = intent ?: return
@@ -1205,6 +1220,31 @@ class MainActivity : Activity() {
             "ocbm_stop" -> runAsync {
                 ocbmProbe?.let { it.stop(); emit(it.stats()); SessionHolder.lastProbeStopAt = android.os.SystemClock.elapsedRealtime() }
                 ocbmProbe = null
+            }
+            // Same read → rewrite → push → pull-back path as the Advanced row. HELLO_ACK is
+            // enough; CT_SUBSCRIBE would refuse a blank hotspot SSID and wake the radios.
+            "usb_announce" -> runAsync {
+                val raw = i.getStringExtra("value")?.trim()?.lowercase()
+                val mode = when (raw) {
+                    "off" -> UsbAnnounce.Mode.OFF
+                    "image" -> UsbAnnounce.Mode.IMAGE
+                    "none" -> UsbAnnounce.Mode.NONE
+                    else -> {
+                        emit("usb_announce: value must be off, image, or none")
+                        return@runAsync
+                    }
+                }
+                val scriptedReboot = if (i.hasExtra("reboot")) i.getBooleanExtra("reboot", false) else null
+                val linked = ocbmProbe?.client
+                if (linked == null || !linked.helloAcked) {
+                    val r = ocbm().runAll(subscribe = false)
+                    if (!r.helloOk) {
+                        emit("usb_announce: link NOT established — ${r.failureDetail()}")
+                        return@runAsync
+                    }
+                }
+                refreshUsbAnnounce()
+                applyUsbAnnounce(UsbAnnounce.index(mode), scriptedReboot)
             }
             else -> emit("unknown run extra '$what'")
         }
