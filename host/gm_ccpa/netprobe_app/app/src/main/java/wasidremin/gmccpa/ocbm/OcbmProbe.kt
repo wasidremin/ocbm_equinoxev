@@ -609,6 +609,7 @@ class OcbmProbe(context: Context) {
         var lastInv = ""
         var polls = 0
         var requests = 0
+        var reRaiseCapLogged = false
         lastClaimState = "not started"
         val usbHost = ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST)
         sink("USB host feature=$usbHost uid=${Process.myUid()} user=${Process.myUid() / 100_000}")
@@ -670,8 +671,8 @@ class OcbmProbe(context: Context) {
                 val now = android.os.SystemClock.elapsedRealtime()
                 if (now - lastRequestAt >= REQUEST_INTERVAL_MS) {
                     lastRequestAt = now
-                    requests++
-                    if (requests == 1) {
+                    if (requests == 0) {
+                        requests = 1
                         // Do NOT raise the dialog yet. The system's own attach dispatch — the
                         // ACTION_USB_DEVICE_ATTACHED resolver (UsbAttachActivity) or a remembered
                         // "always open" — can grant within seconds of the attach, and our dialog
@@ -680,9 +681,17 @@ class OcbmProbe(context: Context) {
                         sink("  no grant held — waiting up to 8s for the system attach dispatch before raising the dialog")
                         SessionTrace.expect(OcbmExpect.USB_PERMISSION, REQUEST_INTERVAL_MS + UsbBulkTransport.SYSTEM_DISPATCH_WAIT_MS,
                             "adapter 0x1314:0x2d00 is on the bus with no grant held; the app waits 8s for the system attach dispatch, then raises the permission dialog — until it is accepted (or a replug grants it) nothing in the app can proceed")
-                        UsbBulkTransport.logAttachHandlerDiagnostics(ctx)
+                        UsbBulkTransport.logAttachHandlerDiagnostics(ctx, dev)
                         UsbBulkTransport.deferToSystemDispatch(ctx, dev)
+                    } else if (requests >= 3) {
+                        if (!reRaiseCapLogged) {
+                            reRaiseCapLogged = true
+                            log.w("still no USB permission after ${(now - startedAt) / 1000}s — dialog re-raise cap (3) reached for this attach episode; waiting for a grant or a replug")
+                        }
+                    } else if (!UsbBulkTransport.isDisplayOn(ctx)) {
+                        UsbBulkTransport.logDisplayOffDeferred()
                     } else {
+                        requests++
                         log.w("still no USB permission after ${(now - startedAt) / 1000}s — re-raising the dialog (#$requests); the app is idle until it is accepted or the adapter is replugged")
                         // We only reach here because no grant is held — neither the attach-time grant
                         // the ordinary resolver gives a launched handler nor a remembered "always open"

@@ -145,6 +145,7 @@ class LauncherUi(private val act: Activity) {
     var onBoxAction: (BoxAction) -> Unit = {}
     /** Advanced-page USB announce segment. Index 0 Off, 1 Image, 2 No medium. */
     var onUsbAnnounce: (Int) -> Unit = {}
+    var onUsbAnnounceRetries: (Int) -> Unit = {}
     var onAdvancedOpened: () -> Unit = {}
     var onLogAction: (LogAction) -> Unit = {}
     var onCaptureScope: (LogCapture.Scope) -> Unit = {}
@@ -187,6 +188,9 @@ class LauncherUi(private val act: Activity) {
     private lateinit var announceRow: EqRow
     private lateinit var announceControl: EqSegmented
     private var announceIndex = 1
+    private lateinit var announceRetriesRow: EqRow
+    private lateinit var announceRetriesControl: EqSegmented
+    private var announceRetriesIndex = 0
     private lateinit var scopeRow: EqRow
     private lateinit var logStatusRow: EqRow
     private lateinit var wifiToggle: EqToggle
@@ -463,12 +467,19 @@ class LauncherUi(private val act: Activity) {
         announceControl.isEnabled = false
         announceControl.alpha = 0.4f
         announceRow = EqRow(act, "USB announce", "Adapter not connected", trailing = announceControl)
+        announceRetriesControl = EqSegmented(act, listOf("0", "1", "2"), announceRetriesIndex) { i ->
+            onUsbAnnounceRetries(i)
+        }
+        announceRetriesControl.isEnabled = false
+        announceRetriesControl.alpha = 0.4f
+        announceRetriesRow = EqRow(act, "Announce retries", "Adapter not connected", trailing = announceRetriesControl)
         page.addView(eqSectionLabel(act, "Adapter"))
         page.addView(EqCard(act)
             .addRow(EqRow(act, "Adapter Wi-Fi", "The iPhone joins the adapter.", trailing = wifiToggle))
             .addRow(hotspotRow)
             .addRow(infoRow)
             .addRow(announceRow)
+            .addRow(announceRetriesRow)
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
             .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() }))
             .addRow(EqRow(
@@ -510,6 +521,17 @@ class LauncherUi(private val act: Activity) {
     }
 
     fun usbAnnounceIndex(): Int = announceIndex
+
+    fun setUsbAnnounceRetries(linked: Boolean, index: Int, subtitle: String) = act.runOnUiThread {
+        if (!::announceRetriesControl.isInitialized) return@runOnUiThread
+        announceRetriesIndex = index
+        announceRetriesControl.isEnabled = linked
+        announceRetriesControl.alpha = if (linked) 1f else 0.4f
+        announceRetriesControl.setSelected(index, animate = false)
+        announceRetriesRow.setSubtitle(if (linked) subtitle.ifEmpty { null } else "Adapter not connected")
+    }
+
+    fun usbAnnounceRetriesIndex(): Int = announceRetriesIndex
 
     fun confirmAnnounceReboot(onConfirm: () -> Unit, onCancel: () -> Unit) = act.runOnUiThread {
         EqDialog.confirm(

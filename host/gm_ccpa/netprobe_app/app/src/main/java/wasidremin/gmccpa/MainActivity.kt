@@ -196,7 +196,7 @@ class MainActivity : Activity() {
             it.vendorId == wasidremin.gmccpa.ocbm.UsbBulkTransport.VID_CARLINKIT &&
                 it.productId == wasidremin.gmccpa.ocbm.UsbBulkTransport.PID_OCBM
         } ?: return
-        wasidremin.gmccpa.ocbm.UsbBulkTransport.logAttachHandlerDiagnostics(applicationContext)
+        wasidremin.gmccpa.ocbm.UsbBulkTransport.logAttachHandlerDiagnostics(applicationContext, d)
         if (!usb.hasPermission(d)) {
             wasidremin.gmccpa.ocbm.UsbBulkTransport.deferToSystemDispatch(applicationContext, d)
         }
@@ -369,21 +369,31 @@ class MainActivity : Activity() {
         if (announceBusy) return
         val c = ocbmProbe?.client
         if (c == null || !c.helloAcked) {
-            if (uiAlive()) ui.setUsbAnnounce(false, ui.usbAnnounceIndex(), "Adapter not connected")
+            if (uiAlive()) {
+                ui.setUsbAnnounce(false, ui.usbAnnounceIndex(), "Adapter not connected")
+                ui.setUsbAnnounceRetries(false, ui.usbAnnounceRetriesIndex(), "Adapter not connected")
+            }
             return
         }
         val read = c.fileRead(UsbAnnounce.PATH)
         val missing = read.bytes == null && announceMissing(read.status)
         if (read.bytes == null && !missing) {
             ProbeLog.sub("usb").w("usb-announce: read failed")
-            if (uiAlive()) ui.setUsbAnnounce(true, ui.usbAnnounceIndex(), "Could not read adapter settings")
+            if (uiAlive()) {
+                ui.setUsbAnnounce(true, ui.usbAnnounceIndex(), "Could not read adapter settings")
+                ui.setUsbAnnounceRetries(true, ui.usbAnnounceRetriesIndex(), "Could not read adapter settings")
+            }
             return
         }
         val text = if (missing) null else read.bytes?.toString(Charsets.UTF_8)
         val mode = UsbAnnounce.parse(text)
         val source = if (text == null) "default" else "file"
-        ProbeLog.sub("usb").i("usb-announce: read mode=${mode.name.lowercase()} source=$source")
-        if (uiAlive()) ui.setUsbAnnounce(true, UsbAnnounce.index(mode), "")
+        val retries = UsbAnnounce.parseRetries(text)
+        ProbeLog.sub("usb").i("usb-announce: read mode=${mode.name.lowercase()} retries=$retries source=$source")
+        if (uiAlive()) {
+            ui.setUsbAnnounce(true, UsbAnnounce.index(mode), "")
+            ui.setUsbAnnounceRetries(true, retries, "")
+        }
     }
 
     /**
@@ -442,6 +452,39 @@ class MainActivity : Activity() {
                     )
                 }
             }
+        } finally {
+            announceBusy = false
+        }
+    }
+
+    private fun applyUsbAnnounceRetries(index: Int) {
+        val c = ocbmProbe?.client
+        val previous = ui.usbAnnounceRetriesIndex()
+        if (c == null || !c.helloAcked) {
+            if (uiAlive()) ui.setUsbAnnounceRetries(false, previous, "Adapter not connected")
+            return
+        }
+        if (announceBusy) return
+        announceBusy = true
+        try {
+            val read = c.fileRead(UsbAnnounce.PATH)
+            val missing = read.bytes == null && announceMissing(read.status)
+            if (read.bytes == null && !missing) {
+                ProbeLog.sub("usb").i("usb-announce: wrote retries=$index verified=false")
+                if (uiAlive()) ui.setUsbAnnounceRetries(true, previous, "Could not read adapter settings")
+                return
+            }
+            val existing = if (missing) null else read.bytes?.toString(Charsets.UTF_8)
+            val body = UsbAnnounce.rewriteRetries(existing, index).toByteArray(Charsets.UTF_8)
+            val pushed = c.filePush(UsbAnnounce.PATH, body, 420)
+            val back = if (pushed) c.fileRead(UsbAnnounce.PATH).bytes else null
+            val verified = back != null && back.contentEquals(body)
+            ProbeLog.sub("usb").i("usb-announce: wrote retries=$index verified=$verified")
+            if (!verified) {
+                if (uiAlive()) ui.setUsbAnnounceRetries(true, previous, "Could not update adapter settings")
+                return
+            }
+            if (uiAlive()) ui.setUsbAnnounceRetries(true, index, "Applies at next adapter start")
         } finally {
             announceBusy = false
         }
@@ -615,6 +658,7 @@ class MainActivity : Activity() {
             // The settings screen confirms the destructive verbs before it calls this.
             onBoxAction = { a -> runAsync { boxAction(a) } }
             onUsbAnnounce = { index -> runAsync { applyUsbAnnounce(index) } }
+            onUsbAnnounceRetries = { index -> runAsync { applyUsbAnnounceRetries(index) } }
             onAdvancedOpened = { runAsync { refreshUsbAnnounce() } }
             onReturnToCarPlay = {
                 DisplayPrefs.holdLauncher = false

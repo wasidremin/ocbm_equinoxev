@@ -159,10 +159,10 @@ The persistent configuration is `/script/ocbm.conf` (`usb_announce=1`,
 bypass the announce. `usb_announce_medium=image` prepares and binds the existing 8 MiB FAT image;
 `none` clears the LUN backing file. The image mode is preferred for the first GM emulator test because
 the observed Equinox admission used a populated storage function; whether no-medium storage is admitted
-remains unverified. The boot watcher retries the announce `usb_announce_retries` times (default 2, clamped 0..3) at
+remains unverified. The boot watcher retries the announce `usb_announce_retries` times (default 0, clamped 0..3) at
 k × `usb_announce_retry_ms` after the first OCBM bind (default 75 s then 150 s) without
 OCBM `CT_HELLO`. `usb_announce_retry_ms` defaults to 75000 and is clamped to 15000..300000.
-Each retry is suppressed when `/tmp/ocbm_hello_seen` exists. A `CONFIGURED` gadget is not a reason
+Each retry is suppressed when `/tmp/ocbm_hello_seen` exists. 2026-10-01 car observation: GM admits the adapter on the boot announce (no 'USB not supported' toast; UsbManager lists the device), so retries serve no admission purpose there. Worse, a retry re-enumerates the gadget under an open permission dialog (04:16:18 dialog raised, 04:17:41 retry DETACH 2d00, dialog lost); overnight, 20+ dialogs were raised in a parked car. Keep the default 0 on the car; the bench can still set `usb_announce_retries` in `/script/ocbm.conf`. A `CONFIGURED` gadget is not a reason
 to skip the retry: in the car the gadget is `CONFIGURED` while GM refuses it, which is when the
 retry must fire. While `/tmp/ocbm_announce_active` exists, for 15 s after it is removed, and for
 10 s after a retry's announce returns, the NCM failover watchdog does not count an ocbmd miss and

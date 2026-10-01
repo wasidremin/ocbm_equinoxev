@@ -4,8 +4,8 @@ package wasidremin.gmccpa.ocbm
  * The Advanced-page view of `/script/ocbm.conf`.
  *
  * The boot script defaults to announce on and an 8 MiB FAT image when the file or the key is
- * absent. A missing file must therefore show Image, never Off. Dwell, retry delay, and
- * `usb_announce_retries` stay out of the app; [rewrite] copies every other line through unchanged.
+ * absent. A missing file must therefore show Image, never Off. Dwell and retry delay
+ * stay out of the app; [rewrite] and [rewriteRetries] each touch only their own key(s) and copy every other line through unchanged.
  */
 object UsbAnnounce {
     const val PATH = "/script/ocbm.conf"
@@ -31,6 +31,42 @@ object UsbAnnounce {
         if (announce == "0") return Mode.OFF
         if (medium == "none") return Mode.NONE
         return Mode.IMAGE
+    }
+
+    /** Read the usb_announce_retries key; absent or invalid is 0 (the boot default). */
+    fun parseRetries(text: String?): Int {
+        if (text == null) return 0
+        for (line in text.split('\n')) {
+            val t = line.trim()
+            if (t.isEmpty() || t.startsWith("#")) continue
+            val eq = t.indexOf('=')
+            if (eq <= 0) continue
+            if (t.substring(0, eq).trim() == "usb_announce_retries") {
+                return t.substring(eq + 1).trim().toIntOrNull()?.coerceIn(0, 2) ?: 0
+            }
+        }
+        return 0
+    }
+
+    /** Replace only the retries key. Every other line is copied as read. */
+    fun rewriteRetries(existing: String?, retries: Int): String {
+        val lines = if (existing == null) mutableListOf()
+        else existing.split('\n').toMutableList()
+        if (lines.isNotEmpty() && lines.last().isEmpty()) lines.removeAt(lines.lastIndex)
+        fun setKey(key: String, value: String) {
+            var hit = false
+            for (i in lines.indices) {
+                val t = lines[i].trim()
+                if (t.isEmpty() || t.startsWith("#") || !t.contains("=")) continue
+                if (t.substringBefore("=").trim() == key) {
+                    lines[i] = key + "=" + value
+                    hit = true
+                }
+            }
+            if (!hit) lines.add(key + "=" + value)
+        }
+        setKey("usb_announce_retries", retries.coerceIn(0, 2).toString())
+        return lines.joinToString("\n") + "\n"
     }
 
     /** Replace only the two announce keys. Every other line is copied as read. */

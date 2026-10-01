@@ -31,7 +31,10 @@ touch /tmp/UDiskPassThroughMode
   # announce at that same mark disconnects the device the driver is granting.
   USB_ANNOUNCE_RETRY_MS=75000
   # k × retry_ms after the first OCBM bind. 0 disables the watcher.
-  USB_ANNOUNCE_RETRIES=2
+  # Default 0: GM admits the adapter on the boot announce, and a retry re-enumerates
+  # the gadget under an open permission dialog, killing the grant the driver is
+  # tapping. The bench can still set usb_announce_retries in /script/ocbm.conf.
+  USB_ANNOUNCE_RETRIES=0
   SERIAL_PER_DEVICE=0
   bootlog() { echo "$*" >> "$L"; echo "$*" >> /tmp/box.log; }
   trim_ws() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }

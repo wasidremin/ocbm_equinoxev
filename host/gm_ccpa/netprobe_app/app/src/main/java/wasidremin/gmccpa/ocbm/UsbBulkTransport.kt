@@ -93,6 +93,8 @@ class UsbBulkTransport(
         /** Dedupes the "waiting for system dispatch" and handler-diagnostic lines across callers. */
         @Volatile private var lastDispatchWaitLogAt = 0L
         @Volatile private var lastHandlerDiagAt = 0L
+        @Volatile private var attachHandlersLoggedOnce = false
+        @Volatile private var displayOffDeferLogged = false
 
         /**
          * How long the attach paths wait for the system's own attach dispatch (UsbAttachActivity,
@@ -120,7 +122,7 @@ class UsbBulkTransport(
          * android.car.usb.handler for THIS user — the two facts that decide whether the system can
          * dispatch the adapter at all.
          */
-        fun logAttachHandlerDiagnostics(ctx: Context) {
+        fun logAttachHandlerDiagnostics(ctx: Context, dev: UsbDevice? = null) {
             val now = android.os.SystemClock.elapsedRealtime()
             synchronized(permLock) {
                 if (now - lastHandlerDiagAt < 10_000L) return
@@ -140,6 +142,30 @@ class UsbBulkTransport(
                 )
             }.onFailure {
                 log.w("usb: attach-handler query failed: ${it.javaClass.simpleName}: ${it.message}")
+            }
+            runCatching {
+                val all = app.packageManager.queryIntentActivities(
+                    Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED),
+                    PackageManager.MATCH_ALL,
+                )
+                val list = all.joinToString(", ") { it.activityInfo.packageName + "/" + it.activityInfo.name }
+                log.i("usb: ACTION_USB_DEVICE_ATTACHED handlers, all packages (${all.size}): $list")
+                synchronized(permLock) {
+                    if (!attachHandlersLoggedOnce) {
+                        attachHandlersLoggedOnce = true
+                        log.i("usb: attach handlers on this build: $list")
+                    }
+                }
+                if (dev != null) {
+                    val probe = Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED).apply {
+                        putExtra(UsbManager.EXTRA_DEVICE, dev)
+                    }
+                    val ri = app.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo
+                    log.i("usb: resolveActivity for attach intent with device extra: " +
+                        if (ri != null) ri.packageName + "/" + ri.name else "none")
+                }
+            }.onFailure {
+                log.w("usb: all-handlers query failed: ${it.javaClass.simpleName}: ${it.message}")
             }
             runCatching {
                 val s = app.packageManager.getApplicationEnabledSetting("android.car.usb.handler")
@@ -171,6 +197,27 @@ class UsbBulkTransport(
          * `primeUsbPermission` AND the claim loop's first request both reach here within the same
          * window — only the first spawns the thread, or the driver gets two dialogs at t+8s.
          */
+        /** No permission dialog while the head-unit display is off (parked car). Fail-open. */
+        fun isDisplayOn(ctx: Context): Boolean = runCatching {
+            val pm = ctx.applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            pm.isInteractive
+        }.getOrDefault(true)
+
+        /** One line when a dialog is deferred for a dark display; re-arms when the display returns. */
+        fun logDisplayOffDeferred() {
+            synchronized(permLock) {
+                if (displayOffDeferLogged) return
+                displayOffDeferLogged = true
+            }
+            wasidremin.gmccpa.ProbeLog.sub("usb").i(
+                "usb: deferring permission dialog — display off",
+            )
+        }
+
+        private fun noteDisplayOn() {
+            synchronized(permLock) { displayOffDeferLogged = false }
+        }
+
         fun deferToSystemDispatch(ctx: Context, dev: UsbDevice) {
             val now = android.os.SystemClock.elapsedRealtime()
             synchronized(permLock) {
@@ -189,6 +236,11 @@ class UsbBulkTransport(
                 }
                 synchronized(permLock) { deferInProgressUntil = 0L }
                 if (granted) return@Thread
+                if (!isDisplayOn(app)) {
+                    logDisplayOffDeferred()
+                    return@Thread
+                }
+                noteDisplayOn()
                 wasidremin.gmccpa.ProbeLog.sub("usb").i(
                     "usb: no system dispatch in ${SYSTEM_DISPATCH_WAIT_MS / 1000}s — self-requesting",
                 )
