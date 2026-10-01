@@ -655,8 +655,7 @@ class OcbmProbe(context: Context) {
                     "present-no-permission" -> {
                         sink("adapter present; waiting for USB permission ...")
                         SessionTrace.Board.down(OcbmBoard.USB_CLAIM, "adapter ${dev?.deviceName} present — USB permission NOT held")
-                    }
-                    else -> sink("adapter present and permission held")
+                    }                    else -> sink("adapter present and permission held")
                 }
             }
             if (dev != null && state == "claimable") {
@@ -673,23 +672,30 @@ class OcbmProbe(context: Context) {
                     lastRequestAt = now
                     requests++
                     if (requests == 1) {
-                        sink("  requesting USB permission (accept on the head unit; a replug also grants it)")
-                        SessionTrace.expect(OcbmExpect.USB_PERMISSION, REQUEST_INTERVAL_MS,
-                            "adapter 0x1314:0x2d00 is on the bus with no grant held and the permission dialog was requested — until it is accepted (or a replug grants it) nothing in the app can proceed")
+                        // Do NOT raise the dialog yet. The system's own attach dispatch — the
+                        // ACTION_USB_DEVICE_ATTACHED resolver (UsbAttachActivity) or a remembered
+                        // "always open" — can grant within seconds of the attach, and our dialog
+                        // pre-empts its "always use" choice (car-observed 2026-09-30). Give it
+                        // 8 s; if it lands, this loop sees the grant and no dialog ever appears.
+                        sink("  no grant held — waiting up to 8s for the system attach dispatch before raising the dialog")
+                        SessionTrace.expect(OcbmExpect.USB_PERMISSION, REQUEST_INTERVAL_MS + UsbBulkTransport.SYSTEM_DISPATCH_WAIT_MS,
+                            "adapter 0x1314:0x2d00 is on the bus with no grant held; the app waits 8s for the system attach dispatch, then raises the permission dialog — until it is accepted (or a replug grants it) nothing in the app can proceed")
+                        UsbBulkTransport.logAttachHandlerDiagnostics(ctx)
+                        UsbBulkTransport.deferToSystemDispatch(ctx, dev)
                     } else {
                         log.w("still no USB permission after ${(now - startedAt) / 1000}s — re-raising the dialog (#$requests); the app is idle until it is accepted or the adapter is replugged")
+                        // We only reach here because no grant is held — neither the attach-time grant
+                        // the ordinary resolver gives a launched handler nor a remembered "always open"
+                        // — so this is the moment the driver gets a dialog. Recording it here rather than
+                        // scraping SystemUI out of the log stream makes `prompted=` a first-hand fact.
+                        // (Until 2026-09-10 this said "the silent fixed-handler grant did NOT land"; that
+                        // grant path went with the package squat, reverted 2026-09-08 — UsbAttachActivity.)
+                        // Object-level, not `current()?.`: with no session open yet (launched with the
+                        // adapter absent, box plugged in later) this poll can raise the dialog before the
+                        // trampoline's begin() runs, and `current()?.` dropped the observation on the floor.
+                        wasidremin.gmccpa.logging.SessionSummary.permissionDialogObserved()
+                        t.requestPermissionAsync(dev)
                     }
-                    // We only reach here because no grant is held — neither the attach-time grant
-                    // the ordinary resolver gives a launched handler nor a remembered "always open"
-                    // — so this is the moment the driver gets a dialog. Recording it here rather than
-                    // scraping SystemUI out of the log stream makes `prompted=` a first-hand fact.
-                    // (Until 2026-09-10 this said "the silent fixed-handler grant did NOT land"; that
-                    // grant path went with the package squat, reverted 2026-09-08 — UsbAttachActivity.)
-                    // Object-level, not `current()?.`: with no session open yet (launched with the
-                    // adapter absent, box plugged in later) this poll can raise the dialog before the
-                    // trampoline's begin() runs, and `current()?.` dropped the observation on the floor.
-                    wasidremin.gmccpa.logging.SessionSummary.permissionDialogObserved()
-                    t.requestPermissionAsync(dev)
                 }
             }
             polls++

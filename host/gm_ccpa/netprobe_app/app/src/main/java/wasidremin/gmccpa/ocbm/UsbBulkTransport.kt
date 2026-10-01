@@ -11,6 +11,7 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import android.content.pm.PackageManager
 import android.os.Build
 import java.util.concurrent.atomic.AtomicBoolean
 import wasidremin.gmccpa.logging.SessionTrace
@@ -61,6 +62,9 @@ class UsbBulkTransport(
          */
         fun requestPermissionEarly(ctx: Context, dev: UsbDevice) {
             lastPermissionRequestAt = android.os.SystemClock.elapsedRealtime()
+            // Marks the result broadcast (the permission receiver) as OURS, so its one-line
+            // attribution reads via=self_request rather than via=system_dispatch.
+            selfRequestInFlight = true
             val app = ctx.applicationContext
             val mgr = app.getSystemService(Context.USB_SERVICE) as UsbManager
             try {
@@ -83,6 +87,117 @@ class UsbBulkTransport(
         private var permWatchArmed = false
         private var permWatch: BroadcastReceiver? = null
 
+        /** A requestPermission dialog raised by THIS app (vs the system's attach resolver) is in flight. */
+        @Volatile private var selfRequestInFlight = false
+
+        /** Dedupes the "waiting for system dispatch" and handler-diagnostic lines across callers. */
+        @Volatile private var lastDispatchWaitLogAt = 0L
+        @Volatile private var lastHandlerDiagAt = 0L
+
+        /**
+         * How long the attach paths wait for the system's own attach dispatch (UsbAttachActivity,
+         * an "always open" remembered grant) to deliver permission before raising our own dialog.
+         * The car case that forced this: our self-request pre-empted the system's attach dispatch
+         * and its "always use" option, so the driver never got the choice that retires the dialog.
+         */
+        const val SYSTEM_DISPATCH_WAIT_MS = 8_000L
+
+        /** One "waiting for system dispatch" line per ~10 s, however many paths reach it. */
+        fun logSystemDispatchWait() {
+            val now = android.os.SystemClock.elapsedRealtime()
+            synchronized(permLock) {
+                if (now - lastDispatchWaitLogAt < 10_000L) return
+                lastDispatchWaitLogAt = now
+            }
+            wasidremin.gmccpa.ProbeLog.sub("usb").i(
+                "usb: waiting ${SYSTEM_DISPATCH_WAIT_MS / 1000}s for system attach dispatch before self-requesting permission",
+            )
+        }
+
+        /**
+         * One diagnostic block per attach (deduped to one per ~10 s): does an ACTION_USB_DEVICE_ATTACHED
+         * handler exist for OUR package (the trampoline), and what is the enabled state of the car's
+         * android.car.usb.handler for THIS user — the two facts that decide whether the system can
+         * dispatch the adapter at all.
+         */
+        fun logAttachHandlerDiagnostics(ctx: Context) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            synchronized(permLock) {
+                if (now - lastHandlerDiagAt < 10_000L) return
+                lastHandlerDiagAt = now
+            }
+            val app = ctx.applicationContext
+            val log = wasidremin.gmccpa.ProbeLog.sub("usb")
+            runCatching {
+                val acts = app.packageManager.queryIntentActivities(
+                    Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED),
+                    PackageManager.GET_META_DATA,
+                )
+                val ours = acts.filter { it.activityInfo.packageName == app.packageName }
+                log.i(
+                    "usb: ACTION_USB_DEVICE_ATTACHED handlers for our package (${ours.size}): " +
+                        ours.joinToString(", ") { "${it.activityInfo.packageName}/${it.activityInfo.name}" },
+                )
+            }.onFailure {
+                log.w("usb: attach-handler query failed: ${it.javaClass.simpleName}: ${it.message}")
+            }
+            runCatching {
+                val s = app.packageManager.getApplicationEnabledSetting("android.car.usb.handler")
+                val name = when (s) {
+                    PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> "DEFAULT"
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> "ENABLED"
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED -> "DISABLED"
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER -> "DISABLED_USER"
+                    else -> s.toString()
+                }
+                log.i("usb: android.car.usb.handler enabled setting = $s ($name)")
+            }.onFailure {
+                log.w("usb: android.car.usb.handler state query failed (package absent?): " +
+                    "${it.javaClass.simpleName}: ${it.message}")
+            }
+        }
+
+        /** A defer-to-system-dispatch window is open until this uptime-ms (dedupes concurrent callers). */
+        @Volatile private var deferInProgressUntil = 0L
+
+        /**
+         * Give the system's attach dispatch [SYSTEM_DISPATCH_WAIT_MS] to grant permission before
+         * raising our own dialog. Background thread: the callers ([wasidremin.gmccpa.MainActivity]
+         * reclaim/attach paths) run on the main thread and must not block on it. Permission already
+         * held (or granted while waiting, by either path) means no dialog and no log beyond the
+         * one "waiting" line.
+         *
+         * Idempotent across callers: on the attach path [wasidremin.gmccpa.MainActivity]
+         * `primeUsbPermission` AND the claim loop's first request both reach here within the same
+         * window — only the first spawns the thread, or the driver gets two dialogs at t+8s.
+         */
+        fun deferToSystemDispatch(ctx: Context, dev: UsbDevice) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            synchronized(permLock) {
+                if (now < deferInProgressUntil) return
+                deferInProgressUntil = now + SYSTEM_DISPATCH_WAIT_MS + 1_000L
+            }
+            logSystemDispatchWait()
+            Thread({
+                val app = ctx.applicationContext
+                val mgr = app.getSystemService(Context.USB_SERVICE) as UsbManager
+                val end = android.os.SystemClock.elapsedRealtime() + SYSTEM_DISPATCH_WAIT_MS
+                var granted = false
+                while (android.os.SystemClock.elapsedRealtime() < end) {
+                    if (mgr.hasPermission(dev)) { granted = true; break }
+                    if (awaitPermissionSignal(250)) { granted = true; break }
+                }
+                synchronized(permLock) { deferInProgressUntil = 0L }
+                if (granted) return@Thread
+                wasidremin.gmccpa.ProbeLog.sub("usb").i(
+                    "usb: no system dispatch in ${SYSTEM_DISPATCH_WAIT_MS / 1000}s — self-requesting",
+                )
+                // The dialog IS about to be on screen: record it, whoever asked for the defer.
+                wasidremin.gmccpa.logging.SessionSummary.permissionDialogObserved()
+                requestPermissionEarly(app, dev)
+            }, "usb-perm-defer").start()
+        }
+
         /**
          * Listen for [ACTION_USB_PERMISSION] before the dialog is raised. The claim loop waits
          * on [awaitPermissionSignal] instead of sleeping out a full poll. The first arm of an
@@ -101,6 +216,11 @@ class UsbBulkTransport(
                     override fun onReceive(c: Context?, intent: Intent?) {
                         if (intent?.action != ACTION_USB_PERMISSION) return
                         val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        val via = if (selfRequestInFlight) "self_request" else "system_dispatch"
+                        wasidremin.gmccpa.ProbeLog.sub("usb").i(
+                            "usb: permission result granted=$granted via=$via",
+                        )
+                        selfRequestInFlight = false
                         synchronized(permLock) {
                             if (granted) grantedViaBroadcast = true
                             permLock.notifyAll()

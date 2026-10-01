@@ -115,7 +115,7 @@ class UsbAttachActivity : Activity() {
             if (!isCcpaOcbm) return // not our adapter — do not raise any UI; grant already fired
             val sinceBootMs = SystemClock.elapsedRealtime()
             ProbeLog.sub("usb").i(
-                "attach dispatched by system — permission held=$held +${sinceBootMs}ms since boot"
+                "attach dispatched by system via=system_dispatch — permission held=$held +${sinceBootMs}ms since boot"
             )
             if (held) ProbeLog.sub("usb").i("usb permission granted by attach (no dialog)")
             val showAlwaysHint = !held && UsbIdentity.shouldShowAlwaysHint(applicationContext)

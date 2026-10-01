@@ -196,8 +196,9 @@ class MainActivity : Activity() {
             it.vendorId == wasidremin.gmccpa.ocbm.UsbBulkTransport.VID_CARLINKIT &&
                 it.productId == wasidremin.gmccpa.ocbm.UsbBulkTransport.PID_OCBM
         } ?: return
+        wasidremin.gmccpa.ocbm.UsbBulkTransport.logAttachHandlerDiagnostics(applicationContext)
         if (!usb.hasPermission(d)) {
-            wasidremin.gmccpa.ocbm.UsbBulkTransport.requestPermissionEarly(applicationContext, d)
+            wasidremin.gmccpa.ocbm.UsbBulkTransport.deferToSystemDispatch(applicationContext, d)
         }
     }
 
@@ -1049,7 +1050,9 @@ class MainActivity : Activity() {
         lastDeadLinkReclaimAt.set(now)
         emit("adapter is back and the link is down — reclaiming")
         // Before the command executor. The permission dialog and the startup clock start at
-        // the attach, not after whatever else is queued on netprobe-cmd.
+        // the attach, not after whatever else is queued on netprobe-cmd. When no grant is held,
+        // wait for the system's attach dispatch first — our own dialog pre-empts the resolver
+        // and its "always use" choice (car-observed 2026-09-30).
         primeUsbPermission(null)
         applyHotspotFields()
         runAsync {
@@ -1171,7 +1174,12 @@ class MainActivity : Activity() {
             "upload_log" -> uploadLogs()
             // Deep USB dump + 60 s replug window. The car-side discriminator for the "USB not
             // supported / looking for adapter" failure: press, replug the dongle, wait, Upload Logs.
-            "usb_probe" -> runAsync { wasidremin.gmccpa.ocbm.UsbDiagnostics.runProbe(applicationContext) }
+            "usb_probe" -> runAsync {
+                wasidremin.gmccpa.ocbm.UsbDiagnostics.runProbe(applicationContext)
+                // Handler diagnostics ride the probe too: on a bench with no adapter this is
+                // the only way to exercise the same lines the attach paths log in the car.
+                wasidremin.gmccpa.ocbm.UsbBulkTransport.logAttachHandlerDiagnostics(applicationContext)
+            }
             // The scripted form skips the confirmation the button shows: a shell that asked for it
             // meant it, and a drive-reproduction script needs the wipe to happen unattended.
             "clear_log" -> runAsync {
