@@ -721,14 +721,20 @@ class OcbmProbe(context: Context) {
                     lastRequestAt = now
                     if (requests == 0) {
                         requests = 1
-                        // Do NOT raise the dialog yet. The system's own attach dispatch — the
-                        // ACTION_USB_DEVICE_ATTACHED resolver (UsbAttachActivity) or a remembered
-                        // "always open" — can grant within seconds of the attach, and our dialog
-                        // pre-empts its "always use" choice (car-observed 2026-09-30). Give it
-                        // 8 s; if it lands, this loop sees the grant and no dialog ever appears.
-                        sink("  no grant held — waiting up to 8s for the system attach dispatch before raising the dialog")
+                        // The 8 s wait is for the platform's own USB handler to dispatch the
+                        // attach (car-observed 2026-09-30: our dialog pre-empted its "always use"
+                        // choice). That handler is absent on this build, so the wait is skipped
+                        // and the dialog is requested immediately.
+                        val handlerPresent = UsbBulkTransport.isSystemUsbHandlerPresent(ctx)
+                        if (handlerPresent) {
+                            sink("  no grant held — waiting up to 8s for the system attach dispatch before raising the dialog")
+                        } else {
+                            sink("  no grant held — android.car.usb.handler absent, requesting permission immediately (no 8s wait)")
+                        }
                         SessionTrace.expect(OcbmExpect.USB_PERMISSION, REQUEST_INTERVAL_MS + UsbBulkTransport.SYSTEM_DISPATCH_WAIT_MS,
-                            "adapter 0x1314:0x2d00 is on the bus with no grant held; the app waits 8s for the system attach dispatch, then raises the permission dialog — until it is accepted (or a replug grants it) nothing in the app can proceed")
+                            "adapter 0x1314:0x2d00 is on the bus with no grant held; the app raises the permission dialog" +
+                                (if (handlerPresent) " after an 8s wait for the system attach dispatch" else " immediately (no system USB handler on this build)") +
+                                " — until it is accepted (or a replug grants it) nothing in the app can proceed")
                         UsbBulkTransport.logAttachHandlerDiagnostics(ctx, dev)
                         UsbBulkTransport.deferToSystemDispatch(ctx, dev)
                     } else if (requests >= 3) {

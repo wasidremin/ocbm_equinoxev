@@ -78,7 +78,11 @@ fn run(args: &[&str]) -> std::io::Result<()> {
     // Captured (not inherited) so a failure's stderr lands in the SAME log line as the argv and exit
     // status -- `hciconfig`'s own stderr is a few words with no context, and split across a raw
     // process's inherited stdio it is unattributable once other daemons are logging concurrently.
+    let t0 = std::time::Instant::now();
     let out = Command::new("hciconfig").args(args).output()?;
+    // Per-step timing (2026-10-02): the 11:01 cold start spent 10.5 s between "BT already
+    // converged" and "HCI bring-up OK" vs 1 s at 15:41 — this decomposes that gap.
+    eprintln!("[btd] hciconfig {args:?} took {}ms", t0.elapsed().as_millis());
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         eprintln!("[btd] hciconfig {args:?} failed: status={} stderr={stderr:?}", out.status);
@@ -252,8 +256,21 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
         return Ok(());
     }
 
-    let _ = run(&[hci_dev, "down"]);
-    run(&[hci_dev, "up"])?;
+    // The HAL's boot path already completed DOWN->UP + SCO restore and a real
+    // HCI round-trip with scanning disabled. Consume that one-shot proof only
+    // while this same controller is still UP; otherwise retain the proven reset.
+    let prewarmed = std::fs::read_to_string("/tmp/.radio_bt_prewarmed")
+        .map(|s| s.trim() == hci_dev)
+        .unwrap_or(false)
+        && Command::new("hciconfig").arg(hci_dev).output()
+            .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("UP RUNNING"))
+            .unwrap_or(false);
+    let _ = std::fs::remove_file("/tmp/.radio_bt_prewarmed");
+    eprintln!("[btd] prewarm proof consumed={prewarmed} dev={hci_dev}");
+    if !prewarmed {
+        let _ = run(&[hci_dev, "down"]);
+        run(&[hci_dev, "up"])?;
+    }
     // Force Simple Pairing mode ON at the HCI level (HCI Write_Simple_Pairing_Mode). The NXP IW416
     // firmware defaults SSP OFF and the mgmt SET_SSP path can be rejected silently, leaving "Simple
     // Pairing mode: Disabled" → pairing degrades to legacy PIN → iOS refuses the iAP2/CarPlay handshake
@@ -263,8 +280,10 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
     run(&[hci_dev, "class", &format!("0x{CLASS_OF_DEVICE:06x}")])?;
     run(&[hci_dev, "name", name])?;
     run(&[hci_dev, "inqdata", &eir_hex(name)])?;
+    if !prewarmed {
+        restore_sco_setup();
+    }
     run(&[hci_dev, "piscan"])?;
-    restore_sco_setup();
     eprintln!("[btd] HCI bring-up OK dev={hci_dev} name={name}");
     Ok(())
 }

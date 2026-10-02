@@ -339,9 +339,21 @@ impl MfiLock {
             return None;
         }
         let start = std::time::Instant::now();
+        let mut logged_wait = false;
         loop {
             if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                let owner = format!("ocbmd/CH_MFI pid={}\n", std::process::id());
+                unsafe {
+                    libc::ftruncate(fd, 0);
+                    libc::write(fd, owner.as_ptr().cast(), owner.len());
+                }
+                eprintln!("[mfi-lock] acquired {}", owner.trim());
                 return Some(MfiLock(fd));
+            }
+            if !logged_wait {
+                let holder = std::fs::read_to_string("/tmp/carplay_mfi.lock").unwrap_or_default();
+                eprintln!("[mfi-lock] ocbmd waiting; last recorded holder={}", holder.trim());
+                logged_wait = true;
             }
             if start.elapsed() >= DEADLINE {
                 eprintln!("[mfi] lock busy >10s — another chip user is wedged; refusing");
@@ -927,6 +939,11 @@ fn pair_answer_request(accept: bool) -> String {
 const HOST_PRESENT_FLAG: &str = "/tmp/host_present";
 #[cfg(test)]
 const HOST_PRESENT_FLAG: &str = "/tmp/ocbmd_selftest_host_present";
+/// Marks a synthetic re-arm edge so the supervisor's wireless_up bypasses its idempotent guard.
+#[cfg(not(test))]
+const HOST_REARMED_FLAG: &str = "/tmp/host_rearmed";
+#[cfg(test)]
+const HOST_REARMED_FLAG: &str = "/tmp/ocbmd_selftest_host_rearmed";
 
 /// The wireless SSP Numeric-Comparison code the ssp_agent publishes during pairing (absent = none).
 const PAIRING_CODE_FILE: &str = "/tmp/pairing_code";
@@ -1890,6 +1907,11 @@ impl Daemon {
     /// sends it, which is true and sufficient.
     fn rearm_presence_silently(&mut self) {
         write_flag_atomic(HOST_PRESENT_FLAG, false);
+        // This 1->0->1 is a re-arm, not a real disconnect: the supervisor's wireless_up must
+        // bypass its idempotent guard and ALWAYS rebuild. (2026-10-02: the guard saw btd still
+        // mid-SIGTERM from the synthetic teardown, skipped CLEAN bring-up, and btd then died —
+        // no advertiser until the 12 s watchdog fired MGMT_RESTART_WIRELESS.)
+        write_flag_atomic(HOST_REARMED_FLAG, true);
         // The host IS present — only the flag dips, and only long enough to be observable.
         self.present = true;
         self.rearm_deadline = Some(std::time::Instant::now() + REARM_HOLD);
@@ -3513,6 +3535,9 @@ impl Daemon {
         match ch {
             p::CH_CTRL => {
                 if pl.first() == Some(&p::CT_HELLO) {
+                    // Wake from a legitimately idle pre-HELLO dispatcher: do not let
+                    // the supervisor mistake its old idle stamp for a live-session wedge.
+                    touch_alive_file();
                     // Internal boot-local signal for the USB admission trampoline; no OCBM frame or
                     // host-visible behavior changes. The boot watcher uses this to avoid rebinding
                     // the gadget once any host has reached the OCBM phase.
@@ -3675,6 +3700,10 @@ impl Daemon {
                         ok = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } == 0;
                         if ok {
                             eprintln!("[ocbmd] settime: settimeofday failed ({first}); clock_settime applied");
+                            // The wall clock just jumped — re-stamp liveness now (in the uptime
+                            // domain, which the jump did not move) rather than waiting for the
+                            // 1 Hz dispatch-loop touch.
+                            touch_alive_file();
                         } else {
                             // Report BOTH errnos. The old code discarded them entirely, which made a
                             // one-line "rejected" the only symptom and cost a session to diagnose.
@@ -3734,6 +3763,9 @@ impl Daemon {
                         eth::close(fd);
                     }
                 } else if pl.first() == Some(&p::CT_SUBSCRIBE) {
+                    // Write-time stamp, not the CH_LOG tailer's later read time: the
+                    // startup bench compares this with btd's discoverable/SDP stamps.
+                    eprintln!("@{} [ocbmd] session: SUBSCRIBE received", now_unix_ms());
                     // A replaced host — one whose predecessor died WITHOUT CT_STOP — owes a clean
                     // re-arm: its carplayd is gone (or bound to the dead host) and presence never
                     // dropped, so only a forced GONE->PRESENT edge makes the supervisor spawn a new
@@ -4017,9 +4049,13 @@ fn acquire_pid_lock(path: &str) -> std::io::Result<RawFd> {
 
 /// Liveness stamp for the supervisor.
 ///
-/// CONTRACT: mtime older than 15 s while the accessory is configured ⇒ ocbmd is wedged;
-/// `session_supervisor.sh` escalates (a separate change ships that). Absent = ocbmd is not running,
+/// CONTRACT: uptime-ms content older than the supervisor's threshold while the accessory is
+/// configured ⇒ ocbmd is wedged; `session_supervisor.sh` escalates. Absent = ocbmd is not running,
 /// which the supervisor already detects via [`PID_LOCK_FILE`] and handles differently.
+///
+/// The stamp is monotonic `/proc/uptime` milliseconds, NOT wall-clock mtime: CT_SETTIME jumps
+/// the wall clock, which made the old mtime check misfire (forward jump = false wedge
+/// escalation; backward jump = missed wedge).
 ///
 /// It exists because the hang this file's [`BtProbe`] fixes had NO outward symptom the supervisor
 /// could see: the process was alive and holding its pid lock, `/tmp/host_present` still read 1, and
@@ -4030,13 +4066,17 @@ const ALIVE_FILE: &str = "/tmp/ocbmd_alive";
 /// the supervisor polls at ~1 Hz, so more than 1 Hz here is pure syscall overhead.
 const ALIVE_TOUCH_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Set `ALIVE_FILE`'s mtime to now. One `utimensat` with a NULL `times` — no open, no write, no
-/// buffer, and no `time_t` to get wrong on 32-bit musl (the kernel supplies the timestamp).
+/// Write the monotonic uptime (ms) into `ALIVE_FILE`. Atomic tmp+rename like
+/// [`write_flag_atomic`], so the supervisor never reads a torn stamp.
 fn touch_alive_file() {
-    if let Ok(c) = std::ffi::CString::new(ALIVE_FILE) {
-        unsafe {
-            libc::utimensat(libc::AT_FDCWD, c.as_ptr(), std::ptr::null(), 0);
-        }
+    let ms = std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+        .map(|secs| (secs * 1000.0) as u64)
+        .unwrap_or(0);
+    let tmp = format!("{ALIVE_FILE}.tmp");
+    if std::fs::write(&tmp, ms.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, ALIVE_FILE);
     }
 }
 

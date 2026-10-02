@@ -626,7 +626,18 @@ WEDGE_RATE_LIMIT=60     # do not re-escalate a wedge within this many seconds of
 wedge_escalate_ts=0     # epoch(uptime) of the last wedge-triggered L2, 0 = never
 ocbmd_wedged() {
   [ -e /tmp/ocbmd_alive ] || return 1
-  [ -n "$(find /tmp/ocbmd_alive -maxdepth 0 -mmin +0 2>/dev/null)" ] || return 1
+  # Retain wedge recovery while idle: allow 300 seconds before the first HELLO,
+  # then the existing one-minute threshold.
+  _alive_ms=300000
+  [ -e /tmp/ocbm_hello_seen ] && _alive_ms=60000
+  # Uptime-domain liveness (2026-10-02): the stamp is /proc/uptime ms written by ocbmd,
+  # immune to the CT_SETTIME wall-clock jumps that made the old find -mmin check misfire
+  # (forward jump = false wedge escalation; backward jump = missed wedge).
+  _now_ms=$(awk '{printf "%.0f", $1*1000}' /proc/uptime 2>/dev/null)
+  _stamp_ms=$(cat /tmp/ocbmd_alive 2>/dev/null)
+  case "$_stamp_ms" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$_now_ms" ] || return 1
+  [ "$((_now_ms - _stamp_ms))" -ge "$_alive_ms" ] || return 1
   [ "$(cat "$ACC_STATE" 2>/dev/null)" = "CONFIGURED" ] || return 1
   [ -n "$(pidof ocbmd 2>/dev/null)" ] || return 1
   return 0
@@ -913,7 +924,19 @@ wireless_up() {
     echo "[sup] wireless_up SUPPRESSED — a wired Android Auto phone owns/claims the box"
     return
   fi
-  wireless_running && return   # idempotent guard (checked HERE, before the wrapper exists)
+  if [ -e /tmp/host_rearmed ]; then
+    # Re-arm path (ocbmd saw a new host instance while present): the synthetic 1->0 edge's
+    # teardown may still be SIGTERM-ing btd when this 0->1 lands. Out-wait it, then ALWAYS run
+    # CLEAN bring-up — the idempotent guard must not short-circuit here. (2026-10-02: the guard
+    # saw btd mid-teardown, skipped bring-up, btd died, and nothing advertised until the 12 s
+    # watchdog fired MGMT_RESTART_WIRELESS.)
+    rm -f /tmp/host_rearmed
+    echo "[sup] re-arm: forcing CLEAN bring-up past the idempotent guard"
+    _i=0
+    while [ "$_i" -lt 50 ] && wireless_running; do _i=$((_i + 1)); sleep 0.2; done
+  else
+    wireless_running && return   # idempotent guard (checked HERE, before the wrapper exists)
+  fi
   # Clean slate before a fresh bring-up: reap any orphaned A/V children left by a prior session so the
   # new stack can NEVER latch onto / collide with a stale carplayd (the observed
   # "connection unsuccessful" after an app close+reopen). Safe here because this runs only on the
@@ -955,7 +978,8 @@ wireless_up() {
   # av.rs, which is a Rust change.
   AV_SUPPRESS=''
   echo "[sup] host PRESENT + wireless enabled -> CLEAN bring-up of wireless stack (detached, pairing=$mode, wifi_ap=$ap, av_suppress=no)"
-  # Detached session; sequential WiFi AP -> BT radio -> CarLink advertiser, each redirected (not piped).
+  # Detached session; BT radio -> CarLink advertiser, with the WiFi AP brought up in parallel
+  # (it is only needed at WIFI_HANDOFF, ~2.5 s after the phone connects). Each redirected (not piped).
   # NO inner pgrep guard: the wrapper `sh -c` argv itself contains "/usr/sbin/btd", so an
   # inner `pgrep -f /usr/sbin/btd` self-matches the wrapper and SKIPS the launch (the bug
   # that left btd never started). The outer `wireless_running && return` above is the guard.
@@ -971,15 +995,25 @@ wireless_up() {
     # scripts, which simply do not exist on a Realtek or Broadcom unit, so wireless bring-up
     # failed SILENTLY here (the calls sit in this detached wrapper, redirected, exit status
     # unread) while wired projection kept working and nothing looked wrong.
+    # BT FIRST (2026-10-02): the phone connects over BT, so the radio must converge before
+    # anything else. hostapd runs in the background — the SoftAP is only needed at WIFI_HANDOFF,
+    # ~2.5 s after the phone connects, by which time the parallel bring-up has finished. If BT
+    # fails below, the backgrounded AP bring-up still completes (idempotent on retry).
     if [ "$BOX_WIFI_AP" = "0" ]; then
       echo "[sup] wifi_ap:false -> box SoftAP SUPPRESSED (BT-only bridge role; the head-unit app owns Wi-Fi)" >/tmp/wlan.log
     else
-      sh /script/radio_hal.sh wifi_ap_on >/tmp/wlan.log 2>&1
+      sh /script/radio_hal.sh wifi_ap_on >/tmp/wlan.log 2>&1 &
     fi
     # bt.log stays the small truncated per-attempt status file that docs/wireless/01_BT_AND_RADIO.md
-    # tells an operator to cat directly. This call is foreground (no trailing ampersand), so teeing
-    # its combined stdout/stderr into the universal log costs nothing and changes no lifecycle.
-    sh /script/radio_hal.sh bt_on 2>&1 | tee -a /tmp/box.log >/tmp/bt.log
+    # tells an operator to cat directly. Capture the real exit status before copying
+    # output into the universal log; a pipeline would hide failed attach behind tee.
+    sh /script/radio_hal.sh bt_on >/tmp/bt.log 2>&1
+    _bt_rc=$?
+    cat /tmp/bt.log >>/tmp/box.log
+    case "$_bt_rc" in
+      0|2) ;;
+      *) echo "[sup] BT bring-up failed rc=$_bt_rc — not launching advertiser" >>/tmp/box.log; exit 1 ;;
+    esac
     # BENCH LEVER (2026-09-03): opt-in btmon capture for this wireless session. Armed by either the
     # file flag or the env var -- the outer `env BT_PAIRING_MODE=... setsid sh -c` wrapper
     # above only lists the vars it OVERRIDES, so CARPLAY_BTMON, if exported by the caller, still
@@ -1134,6 +1168,22 @@ if [ "$(cat "$FLAG" 2>/dev/null)" != 1 ]; then
     echo "[sup] startup reconciliation: app absent but radio state up -> wireless_down (stranded by a prior crash)"
     wireless_down
   fi
+fi
+
+# Owner-approved boot optimization: attach/initialize BT only. No advertiser,
+# SoftAP or AA bridge until host_present. Single-flight HAL serializes an early
+# subscribe with this work; failure leaves the existing host-present retry path.
+if [ ! -e /tmp/.radio_bt_prewarm_started ]; then
+  touch /tmp/.radio_bt_prewarm_started
+  setsid sh -c '
+    sh /script/radio_hal.sh bt_prewarm >/tmp/bt_boot.log 2>&1
+    _rc=$?
+    cat /tmp/bt_boot.log >>/tmp/box.log
+    case "$_rc" in
+      0|2) ;;
+      *) echo "[sup] boot BT prewarm failed rc=$_rc; host-present fallback" >>/tmp/box.log ;;
+    esac
+  ' </dev/null >/dev/null 2>&1 &
 fi
 
 while :; do
@@ -1454,7 +1504,8 @@ while :; do
     if [ $((_now - wedge_escalate_ts)) -ge "$WEDGE_RATE_LIMIT" ]; then
       wedge_escalate_ts=$_now
       _old_pid=$(pidof ocbmd 2>/dev/null)
-      echo "[sup] ocbmd wedged (alive mtime stale >=1min, gadget CONFIGURED, pid=$_old_pid) — L2 restart" >> /tmp/box.log
+      _wmin=1; [ -e /tmp/ocbm_hello_seen ] || _wmin=5
+      echo "[sup] ocbmd wedged (alive stamp stale >=${_wmin}min, gadget CONFIGURED, pid=$_old_pid) — L2 restart" >> /tmp/box.log
       restart_ocbmd_daemon
       _waited=0
       while [ "$_waited" -lt 10 ]; do

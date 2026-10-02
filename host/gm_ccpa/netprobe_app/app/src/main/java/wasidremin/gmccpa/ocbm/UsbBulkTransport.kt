@@ -197,6 +197,15 @@ class UsbBulkTransport(
          * `primeUsbPermission` AND the claim loop's first request both reach here within the same
          * window — only the first spawns the thread, or the driver gets two dialogs at t+8s.
          */
+        /**
+         * Whether the platform's own USB handler exists. The 8 s system-dispatch wait only makes
+         * sense when it does — on this build the package is absent ("Unknown package"), so the
+         * wait always times out and is skipped.
+         */
+        fun isSystemUsbHandlerPresent(ctx: Context): Boolean = runCatching {
+            ctx.packageManager.getApplicationInfo("android.car.usb.handler", 0)
+        }.isSuccess
+
         /** No permission dialog while the head-unit display is off (parked car). Fail-open. */
         fun isDisplayOn(ctx: Context): Boolean = runCatching {
             val pm = ctx.applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
@@ -224,15 +233,26 @@ class UsbBulkTransport(
                 if (now < deferInProgressUntil) return
                 deferInProgressUntil = now + SYSTEM_DISPATCH_WAIT_MS + 1_000L
             }
-            logSystemDispatchWait()
+            val app = ctx.applicationContext
+            // The wait is for the platform's own handler to dispatch the attach. Absent on this
+            // build, so waiting always times out — request immediately instead.
+            val handlerPresent = isSystemUsbHandlerPresent(app)
+            if (handlerPresent) logSystemDispatchWait()
+            else wasidremin.gmccpa.ProbeLog.sub("usb").i(
+                "usb: android.car.usb.handler absent — skipping ${SYSTEM_DISPATCH_WAIT_MS / 1000}s system-dispatch wait, requesting permission now",
+            )
             Thread({
-                val app = ctx.applicationContext
                 val mgr = app.getSystemService(Context.USB_SERVICE) as UsbManager
-                val end = android.os.SystemClock.elapsedRealtime() + SYSTEM_DISPATCH_WAIT_MS
                 var granted = false
-                while (android.os.SystemClock.elapsedRealtime() < end) {
-                    if (mgr.hasPermission(dev)) { granted = true; break }
-                    if (awaitPermissionSignal(250)) { granted = true; break }
+                if (handlerPresent) {
+                    val end = android.os.SystemClock.elapsedRealtime() + SYSTEM_DISPATCH_WAIT_MS
+                    while (android.os.SystemClock.elapsedRealtime() < end) {
+                        if (mgr.hasPermission(dev)) { granted = true; break }
+                        if (awaitPermissionSignal(250)) { granted = true; break }
+                    }
+                } else {
+                    // No wait, but a grant may already be held (remembered "always open").
+                    granted = mgr.hasPermission(dev)
                 }
                 synchronized(permLock) { deferInProgressUntil = 0L }
                 if (granted) return@Thread
@@ -241,9 +261,11 @@ class UsbBulkTransport(
                     return@Thread
                 }
                 noteDisplayOn()
-                wasidremin.gmccpa.ProbeLog.sub("usb").i(
-                    "usb: no system dispatch in ${SYSTEM_DISPATCH_WAIT_MS / 1000}s — self-requesting",
-                )
+                if (handlerPresent) {
+                    wasidremin.gmccpa.ProbeLog.sub("usb").i(
+                        "usb: no system dispatch in ${SYSTEM_DISPATCH_WAIT_MS / 1000}s — self-requesting",
+                    )
+                }
                 // The dialog IS about to be on screen: record it, whoever asked for the defer.
                 wasidremin.gmccpa.logging.SessionSummary.permissionDialogObserved()
                 requestPermissionEarly(app, dev)
