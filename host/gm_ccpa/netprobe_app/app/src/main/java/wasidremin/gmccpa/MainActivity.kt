@@ -645,6 +645,7 @@ class MainActivity : Activity() {
             }
             onRecover = { runAsync { userRecover() } }
             onRestart = { requestRestart() }
+            onRestartApp = { restartApp() }
             // Credentials confirmed in the dialog reach the probe immediately, so a Start that
             // follows cannot use the previous values.
             onCredentials = { _, _, _ -> runAsync { applyHotspotFields() } }
@@ -708,7 +709,7 @@ class MainActivity : Activity() {
         setContentView(ui.root)
         ui.root.viewTreeObserver.addOnGlobalLayoutListener {
             val w = ui.root.width
-            if (w >= 640) wasidremin.gmccpa.VideoFrame.noteWindow(w)
+            if (w >= 640) wasidremin.gmccpa.VideoFrame.noteWindow(w, ui.root.height)
         }
         // BEFORE anything decides whether to start a session: the receiver and the OCBM probe are
         // process-scoped and may already be running from a previous Activity generation (see
@@ -925,6 +926,20 @@ class MainActivity : Activity() {
     }
 
     /** The Restart Session button. UI thread. Safe in any state, any number of times. */
+    /**
+     * Restart the whole app process so screen changes (mode, custom top bar, scale) apply
+     * from a clean slate. `finishAffinity` alone would leave VideoFrame's latched size and
+     * the session singletons behind.
+     */
+    private fun restartApp() {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        if (intent != null) startActivity(intent)
+        finishAffinity()
+        android.os.Process.killProcess(android.os.Process.myPid())
+    }
+
     private fun requestRestart() {
         if (!restartInProgress.compareAndSet(false, true)) {
             emit("restart already in progress — ignoring the repeat press")
@@ -1238,6 +1253,23 @@ class MainActivity : Activity() {
             "capture_whole_os" -> setCaptureScope(LogCapture.Scope.WHOLE_OS)
             "capture_own" -> setCaptureScope(LogCapture.Scope.OWN_PROCESS)
             "ocbm_selftest" -> runAsync { ocbm().selfTest() }
+            // Hardware-free preview: real insets + real vehicle reads, no OCBM
+            // claim or SUBSCRIBE. Never report this as a live CarPlay negotiation.
+            "topbar_preview" -> {
+                if (cpRx?.sessionLive == true || wasidremin.gmccpa.ocbm.AdapterSession.sessionUp) {
+                    emit("topbar: preview refused during a live session")
+                } else {
+                    wasidremin.gmccpa.av.CarPlayActivity.closePreview()
+                    DisplayPrefs.setCustomTopBar(this, i.getBooleanExtra("enabled", true))
+                    DisplayPrefs.setMode(this, ScreenMode.FULLSCREEN)
+                    if (i.hasExtra("sidebar")) DisplayPrefs.setSidebar(this, i.getBooleanExtra("sidebar", false))
+                    if (i.hasExtra("scale")) DisplayPrefs.setUiScale(this, i.getIntExtra("scale", 125))
+                    if (i.hasExtra("safe_right")) DisplayPrefs.setSafeRightPx(this, i.getIntExtra("safe_right", 48))
+                    startActivity(Intent(this, wasidremin.gmccpa.av.CarPlayActivity::class.java)
+                        .putExtra("topbar_preview", true)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
             "ocbm_link" -> runAsync {
                 wasidremin.gmccpa.ocbm.StartupClock.beginAttempt()
                 ocbm().runAll()

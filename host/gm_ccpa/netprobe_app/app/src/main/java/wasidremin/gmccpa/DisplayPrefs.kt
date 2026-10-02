@@ -33,6 +33,7 @@ object DisplayPrefs {
     private const val KEY_UI_SCALE = "ui_scale"
     private const val KEY_SAFE_RIGHT = "safe_right"
     private const val KEY_PHONE = "last_phone_name"
+    private const val KEY_CUSTOM_TOP_BAR = "custom_top_bar"
 
     /** Percentages the screen page offers. 100 is today's advertised size. */
     val SCALE_PRESETS = intArrayOf(100, 115, 125, 133, 150)
@@ -53,6 +54,14 @@ object DisplayPrefs {
         ScreenMode.from(prefs(ctx).getInt(KEY_MODE, ScreenMode.FULLSCREEN.value))
 
     fun sidebar(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_SIDEBAR, false)
+    /**
+     * The custom top bar lives in the space freed when the system hides GM's status bar
+     * (measured at layout time in CarPlayActivity). Off is today's behavior exactly.
+     */
+    fun customTopBar(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_CUSTOM_TOP_BAR, false)
+    fun setCustomTopBar(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_CUSTOM_TOP_BAR, on).apply()
+    }
 
     fun setMode(ctx: Context, mode: ScreenMode) {
         prefs(ctx).edit().putInt(KEY_MODE, mode.value).apply()
@@ -135,6 +144,7 @@ object VideoFrame {
         private set
     /** Laid-out activity width. The other app reads this after the window is up. */
     @Volatile private var laidOutWidth: Int = 0
+    @Volatile private var laidOutHeight: Int = 0
 
     /**
      * Latch the size the next adapter subscribe will advertise.
@@ -142,6 +152,11 @@ object VideoFrame {
      * [advertise] is false on the Silverado path: that session's `/info` is a static 2400×960
      * document, so shrinking the surface here would scale the picture. The Equinox adapter path
      * is the one that sends [width] in the vehicle config.
+     */
+    /**
+     * Latch the size the next adapter subscribe will advertise. The advertised height is
+     * always the panel height — the custom top bar (if enabled) is a layout-time overlay
+     * in space the hidden status bar freed, and never shrinks what the phone lays out.
      */
     fun capture(ctx: Context, advertise: Boolean) {
         val percent = if (advertise) DisplayPrefs.uiScale(ctx) else 100
@@ -181,8 +196,9 @@ object VideoFrame {
     }
 
     /** Record the activity's laid-out width. [MainActivity] calls this once the decor has a size. */
-    fun noteWindow(width: Int) {
+    fun noteWindow(width: Int, height: Int = 0) {
         if (width >= 640) laidOutWidth = width
+        if (height >= 480) laidOutHeight = height
     }
 
     /**

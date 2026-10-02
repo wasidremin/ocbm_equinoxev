@@ -329,6 +329,54 @@ class OcbmProbe(context: Context) {
                 wasidremin.gmccpa.DisplayScale.even(960, 133) == 720 &&
                 wasidremin.gmccpa.DisplayScale.even(2494, 150) == 1662 &&
                 wasidremin.gmccpa.DisplayScale.even(960, 150) == 640)
+        // The custom top bar is layout-time only: the advertised size must never depend on it.
+        val savedCustomTop = wasidremin.gmccpa.DisplayPrefs.customTopBar(ctx)
+        val savedMode = wasidremin.gmccpa.DisplayPrefs.mode(ctx)
+        val savedSidebar = wasidremin.gmccpa.DisplayPrefs.sidebar(ctx)
+        val savedScale = wasidremin.gmccpa.DisplayPrefs.uiScale(ctx)
+        val savedSafe = wasidremin.gmccpa.DisplayPrefs.safeRightPx(ctx)
+        try {
+            wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, true)
+            wasidremin.gmccpa.DisplayPrefs.setMode(ctx, wasidremin.gmccpa.ScreenMode.FULLSCREEN)
+            wasidremin.gmccpa.DisplayPrefs.setSidebar(ctx, false)
+            wasidremin.gmccpa.DisplayPrefs.setUiScale(ctx, 125)
+            VideoFrame.noteWindow(2400, 960)
+            VideoFrame.capture(ctx, advertise = true)
+            check("advertised height ignores the custom top bar",
+                VideoFrame.viewHeight == 960 && VideoFrame.height == 768)
+            wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, false)
+            VideoFrame.capture(ctx, advertise = true)
+            check("advertised height identical with the bar off",
+                VideoFrame.viewHeight == 960 && VideoFrame.height == 768)
+            for (scale in wasidremin.gmccpa.DisplayPrefs.SCALE_PRESETS) {
+                for (sidebar in listOf(false, true)) {
+                    for (safe in wasidremin.gmccpa.DisplayPrefs.SAFE_PRESETS) {
+                        wasidremin.gmccpa.DisplayPrefs.setUiScale(ctx, scale)
+                        wasidremin.gmccpa.DisplayPrefs.setSidebar(ctx, sidebar)
+                        wasidremin.gmccpa.DisplayPrefs.setSafeRightPx(ctx, safe)
+                        wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, true)
+                        VideoFrame.capture(ctx, advertise = true)
+                        val doc = VehicleConfigYaml.renderAdapter("adapterpass1", width = VideoFrame.width,
+                            height = VideoFrame.height, safeRight = VideoFrame.safeRightPx).toString(Charsets.UTF_8)
+                        check("capture scale=$scale sidebar=$sidebar safe=$safe",
+                            VideoFrame.viewHeight == 960 &&
+                                VideoFrame.height == wasidremin.gmccpa.DisplayScale.even(960, scale) &&
+                                VideoFrame.width % 2 == 0 && VideoFrame.height % 2 == 0 &&
+                                VehicleConfigYaml.structuralError(doc, true) == null)
+                    }
+                }
+            }
+            VideoFrame.capture(ctx, advertise = false)
+            check("wired static advertisement stays 2400x960",
+                VideoFrame.viewHeight == 960 && VideoFrame.height == 960)
+        } finally {
+            wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, savedCustomTop)
+            wasidremin.gmccpa.DisplayPrefs.setMode(ctx, savedMode)
+            wasidremin.gmccpa.DisplayPrefs.setSidebar(ctx, savedSidebar)
+            wasidremin.gmccpa.DisplayPrefs.setUiScale(ctx, savedScale)
+            wasidremin.gmccpa.DisplayPrefs.setSafeRightPx(ctx, savedSafe)
+            VideoFrame.capture(ctx, advertise = true)
+        }
         val inset = runCatching {
             VehicleConfigYaml.renderAdapter("adapterpass1", width = 1996, height = 768, safeRight = 38)
         }.getOrNull()?.toString(Charsets.UTF_8) ?: ""
@@ -925,6 +973,8 @@ class OcbmProbe(context: Context) {
             throw IllegalStateException("refusing credential-less CT_SUBSCRIBE ($missing missing) " +
                 "— would pin 0x5703 to the box's stock credentials for the whole session")
         }
+        // The custom top bar is layout-time only (CarPlayActivity measures the freed space
+        // after the bars are applied). The advertised size never depends on it.
         VideoFrame.capture(ctx, advertise = adapterWifi)
         log.i("display: ui scale ${VideoFrame.uiScalePercent}% → advertise ${VideoFrame.width}x${VideoFrame.height} into view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}")
         logPhysicalSize()

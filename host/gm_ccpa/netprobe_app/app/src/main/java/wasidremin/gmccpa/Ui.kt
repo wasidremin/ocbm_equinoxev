@@ -151,6 +151,7 @@ class LauncherUi(private val act: Activity) {
     var onCaptureScope: (LogCapture.Scope) -> Unit = {}
     var onReturnToCarPlay: () -> Unit = {}
     var onScreenChanged: () -> Unit = {}
+    var onRestartApp: () -> Unit = {}
     var onSidebarChanged: () -> Unit = {}
     var sessionIsLive: () -> Boolean = { false }
     var onClose: () -> Unit = {}
@@ -397,6 +398,14 @@ class LauncherUi(private val act: Activity) {
                 onSidebarChanged()
             },
         ))
+        card.addRow(EqRow(
+            act, "Custom top bar",
+            "GM-style controls in the space freed when the top bar hides. Off is today's behavior.",
+            trailing = EqSegmented(act, listOf("Off", "On"), if (DisplayPrefs.customTopBar(act)) 1 else 0) { i ->
+                DisplayPrefs.setCustomTopBar(act, i == 1)
+                refreshDynamic()
+            },
+        ))
         page.addView(card)
         applyRow = EqRow(
             act, "Apply size now",
@@ -404,6 +413,11 @@ class LauncherUi(private val act: Activity) {
             trailing = eqButton(act, "Restart", EqButtonStyle.SECONDARY) { onRestart() },
         )
         page.addView(applyRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(16f) })
+        page.addView(EqRow(
+            act, "Restart app",
+            "Restarts the app so screen changes apply from a clean slate.",
+            trailing = eqButton(act, "Restart", EqButtonStyle.SECONDARY) { onRestartApp() },
+        ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(16f) })
     }
 
     private fun buildAudio(page: LinearLayout) {

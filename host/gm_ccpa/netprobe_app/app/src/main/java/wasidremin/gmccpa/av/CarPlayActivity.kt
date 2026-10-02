@@ -57,6 +57,118 @@ import java.util.concurrent.atomic.AtomicReference
 class CarPlayActivity : Activity() {
 
     private val log = ProbeLog.sub("cpui")
+    private var previewOnly = false
+    private var previewCaptured = false
+    /** Layout-time strip: freed space above the 960-tall CarPlay picture. 0 = no custom bar. */
+    private var topStripPx: Int = 0
+    private var lastDisplayLogKey: String? = null
+    private var lastTopBarLog: String? = null
+    private var topBar: wasidremin.gmccpa.GmTopBarView? = null
+    private var topBarData: wasidremin.gmccpa.TopBarVehicleData? = null
+    private enum class CarPlayApp { MAPS, PHONE, MUSIC, HOME }
+
+    private fun requestCarPlayApp(kind: CarPlayApp) {
+        if (previewOnly) { log.i("topbar: preview request ${kind.name.lowercase()} — no command sent"); return }
+        if (kind == CarPlayApp.HOME) sendNav(wasidremin.gmccpa.ocbm.Ocbm.NAV_HOME)
+        else log.i("topbar: ${kind.name.lowercase()} requested — box support pending")
+    }
+
+    /**
+     * Step 1: measure the window after the bars are applied and log the geometry once per
+     * (window, screen mode). Step 2: place the custom top bar in the freed space.
+     *
+     * The strip is windowHeight - 960 - bottomInset: the window grows when the status bar
+     * hides, and the climate bar (if shown) still occupies the bottom. The advertised
+     * CarPlay size never changes — the phone keeps laying out 2494x960 (or the scaled/
+     * sidebar variant); only this activity's layout shifts down by the strip.
+     */
+    private fun measureAndLayout() {
+        if (isDestroyed) return
+        val decor = window.decorView
+        val mode = effectiveMode()
+        val wm = windowManager
+        val insets = if (Build.VERSION.SDK_INT >= 30) decor.rootWindowInsets else null
+        val current = if (Build.VERSION.SDK_INT >= 30)
+            wm.currentWindowMetrics.bounds.let { "${it.width()}x${it.height()}" } else "n/a"
+        val max = if (Build.VERSION.SDK_INT >= 30)
+            wm.maximumWindowMetrics.bounds.let { "${it.width()}x${it.height()}" } else "n/a"
+        val status = insets?.getInsets(WindowInsets.Type.statusBars())
+        val nav = insets?.getInsets(WindowInsets.Type.navigationBars())
+        val statusVisible = insets?.isVisible(WindowInsets.Type.statusBars()) ?: true
+        val navVisible = insets?.isVisible(WindowInsets.Type.navigationBars()) ?: true
+        val key = "${System.identityHashCode(window)}:${mode.name}"
+        if (lastDisplayLogKey != key) {
+            lastDisplayLogKey = key
+            log.i("display: window=${decor.width}x${decor.height} current=$current max=$max " +
+                "statusBars=$status navBars=$nav statusVisible=$statusVisible navVisible=$navVisible")
+        }
+        val winH = decor.height
+        val wantBar = DisplayPrefs.customTopBar(this)
+        val navBottom = if (navVisible) (nav?.bottom ?: 0) else 0
+        val strip = if (wantBar && !statusVisible && winH > 960)
+            (winH - 960 - navBottom).coerceAtLeast(0) else 0
+        val reason = when {
+            !wantBar -> "custom top bar off"
+            statusVisible -> "status bar visible"
+            winH <= 960 -> "no extra height (window $winH)"
+            strip <= 0 -> "no freed space after bottom inset"
+            else -> "ok"
+        }
+        placeTopBar(strip, reason)
+    }
+
+    /** Put GmTopBarView at y=0 in the freed strip; shift the rail + surface down by it. */
+    private fun placeTopBar(strip: Int, reason: String) {
+        val placed = strip > 0 && viewAreaIndex == 0
+        if (placed) {
+            var bar = topBar
+            if (bar == null) {
+                bar = wasidremin.gmccpa.GmTopBarView(this)
+                bar.onButton = { button ->
+                    log.i("topbar: ${button.name} button requested")
+                    requestCarPlayApp(when (button) {
+                        wasidremin.gmccpa.GmTopBarView.Button.NAV -> CarPlayApp.MAPS
+                        wasidremin.gmccpa.GmTopBarView.Button.MUSIC -> CarPlayApp.MUSIC
+                        wasidremin.gmccpa.GmTopBarView.Button.PHONE -> CarPlayApp.PHONE
+                        else -> CarPlayApp.HOME
+                    })
+                }
+                bar.elevation = dp(10).toFloat()
+                root.addView(bar, android.widget.FrameLayout.LayoutParams(-1, strip, Gravity.TOP))
+                topBar = bar
+                topBarData = wasidremin.gmccpa.TopBarVehicleData(bar).also { it.start() }
+                log.i("topbar: attached height=${strip}px; clock follows system 12/24h setting")
+            } else {
+                val lp = bar.layoutParams as android.widget.FrameLayout.LayoutParams
+                if (lp.height != strip) { lp.height = strip; bar.layoutParams = lp }
+                bar.visibility = View.VISIBLE
+            }
+        } else {
+            topBar?.visibility = View.GONE
+        }
+        topStripPx = if (placed) strip else 0
+        syncChrome()
+        val logKey = "$strip:$placed:$reason"
+        if (lastTopBarLog != logKey) {
+            lastTopBarLog = logKey
+            log.i("topbar: strip=${strip}px placed=$placed reason=$reason")
+        }
+        if (previewOnly && !previewCaptured) {
+            previewCaptured = true
+            root.post {
+                if (!isDestroyed) {
+                    val fits = strip == 0 || (surfaceView.top == strip &&
+                        surfaceView.bottom == strip + VideoFrame.viewHeight &&
+                        surfaceView.left == VideoFrame.railPx &&
+                        topBar?.height == strip)
+                    log.i("topbar: preview layout ${if (fits) "PASS" else "FAIL"} " +
+                        "root=${root.width}x${root.height} " +
+                        "video=[${surfaceView.left},${surfaceView.top},${surfaceView.right},${surfaceView.bottom}] " +
+                        "bar=${topBar?.height ?: 0}")
+                }
+            }
+        }
+    }
 
     companion object {
         /**
@@ -67,6 +179,11 @@ class CarPlayActivity : Activity() {
          * process. Cleared in [onDestroy] too — the weak ref is the backstop, not the plan.
          */
         @Volatile private var live: java.lang.ref.WeakReference<CarPlayActivity>? = null
+
+        /** A fresh preview must not reuse an old task's latched geometry. Main-thread only. */
+        fun closePreview() {
+            live?.get()?.let { if (it.previewOnly) it.finish() }
+        }
 
         /**
          * The CarPlay session ended — take the screen down with it.
@@ -249,6 +366,7 @@ class CarPlayActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        previewOnly = intent.getBooleanExtra("topbar_preview", false)
         live = java.lang.ref.WeakReference(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         surfaceView = SurfaceView(this)
@@ -264,19 +382,33 @@ class CarPlayActivity : Activity() {
         // compositor scales the picture up. Touch is normalised to the view.
         surfaceView.holder.setFixedSize(VideoFrame.width, VideoFrame.height)
         setContentView(root)
+        if (Build.VERSION.SDK_INT >= 30) {
+            // If GM's bar comes back (a swipe shows the bars transiently), the freed space is
+            // gone: hide our bar until the next applySystemUi re-measures. Re-hiding GM's bars
+            // stays on onResume / onWindowFocusChanged.
+            window.decorView.setOnApplyWindowInsetsListener { v, insets ->
+                if (insets.isVisible(WindowInsets.Type.statusBars()) && topStripPx > 0) {
+                    log.i("topbar: GM status bar reappeared — hiding custom bar")
+                    placeTopBar(0, "status bar reappeared")
+                }
+                v.onApplyWindowInsets(insets)
+            }
+        }
         applySystemUi()
-        maybeShowIntro()
+        if (!previewOnly) maybeShowIntro()
 
         touchThread = HandlerThread("cp-touch").also { it.start(); touchHandler = Handler(it.looper) }
 
         // Seams + audio start HERE, not on surfaceCreated: they must outlive the Surface. Anything
         // that backgrounds this Activity (a GM dialog, reverse gear, a stray `am start`) destroys the
         // Surface, and if the sockets went with it the CarPlay session would be gone for good.
-        if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this)) startAdapterSession() else startSession()
+        if (!previewOnly) {
+            if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this)) startAdapterSession() else startSession()
+        } else log.i("topbar: preview only — no session, renderer, audio or USB claim")
 
         surfaceView.setOnTouchListener { v, ev -> onTouch(v, ev) }
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(h: SurfaceHolder) { attachRenderer(h) }
+            override fun surfaceCreated(h: SurfaceHolder) { if (!previewOnly) attachRenderer(h) }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {
                 log.i("surface ${w}x$ht (advertised ${VideoFrame.width}x${VideoFrame.height}, view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}, rail ${VideoFrame.railPx})")
                 // The view system owns this SurfaceControl and resets its geometry on relayout, so a
@@ -319,7 +451,8 @@ class CarPlayActivity : Activity() {
      * whatever the driver picked for the full panel. Area 0 uses the saved screen mode.
      */
     private fun effectiveMode(): ScreenMode =
-        if (viewAreaIndex != 0) ScreenMode.SYSTEM_UI else DisplayPrefs.mode(this)
+        if (viewAreaIndex != 0) ScreenMode.SYSTEM_UI
+        else DisplayPrefs.mode(this)
 
     private fun applySystemUi() {
         val mode = effectiveMode()
@@ -354,6 +487,10 @@ class CarPlayActivity : Activity() {
                 c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
         }
+        // Measure after the bars are applied: the insets the strip depends on are only valid
+        // once the decor has laid out with the new visibility.
+        window.decorView.requestApplyInsets()
+        window.decorView.post { measureAndLayout() }
         syncChrome()
     }
 
@@ -368,26 +505,42 @@ class CarPlayActivity : Activity() {
         val resized = VideoFrame.railPx > 0 && viewAreaIndex == 0
         val rail = resized || (DisplayPrefs.sidebar(this) && viewAreaIndex == 0 && !wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this))
         applyVideoFrame()
-        if (chromeIsRail == rail && chrome != null) return
+        if (chromeIsRail == rail && chrome != null) {
+            chrome!!.layoutParams = chromeParams(rail)
+            return
+        }
         chromeIsRail = rail
         chrome?.let { root.removeView(it) }
         val view = if (rail) buildRail() else buildGear()
         chrome = view
         view.elevation = dp(8).toFloat()
-        if (rail) {
-            val railW = if (resized) VideoFrame.railPx else dp(VideoFrame.RAIL_DP)
-            root.addView(view, android.widget.FrameLayout.LayoutParams(railW, android.widget.FrameLayout.LayoutParams.MATCH_PARENT, Gravity.START))
+        root.addView(view, chromeParams(rail))
+    }
+
+    /**
+     * Rail or gear layout. When the custom bar owns the freed strip, the rail sits at y=strip
+     * and is exactly the CarPlay block tall; otherwise it keeps today's full-height geometry.
+     */
+    private fun chromeParams(rail: Boolean): android.widget.FrameLayout.LayoutParams {
+        return if (rail) {
+            val railW = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.railPx else dp(VideoFrame.RAIL_DP)
+            android.widget.FrameLayout.LayoutParams(railW, android.widget.FrameLayout.LayoutParams.MATCH_PARENT, Gravity.START).apply {
+                if (topStripPx > 0 && viewAreaIndex == 0) {
+                    topMargin = topStripPx
+                    height = VideoFrame.viewHeight
+                }
+            }
         } else {
             // Top-left, same corner as the other app's Settings button. Top-right is where CarPlay
             // draws Home / Work / Now Playing, and a control there covers those cards.
-            val lp = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.START,
-            )
-            lp.topMargin = dp(16)
-            lp.marginStart = dp(16)
-            root.addView(view, lp)
+            ).apply {
+                topMargin = dp(16) + if (viewAreaIndex == 0) topStripPx else 0
+                marginStart = dp(16)
+            }
         }
     }
 
@@ -401,28 +554,31 @@ class CarPlayActivity : Activity() {
     private fun applyVideoFrame() {
         val lp = surfaceView.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return
         val rail = VideoFrame.railPx > 0 && viewAreaIndex == 0
+        val top = topStripPx > 0 && viewAreaIndex == 0
         val scaled = VideoFrame.uiScalePercent != 100 && viewAreaIndex == 0
         val viewW = when {
             viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).width()
-            rail || scaled -> VideoFrame.viewWidth
+            rail || top || scaled -> VideoFrame.viewWidth
             else -> DISPLAY_W
         }
         val viewH = when {
             viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).height()
-            rail || scaled -> VideoFrame.viewHeight
+            rail || top || scaled -> VideoFrame.viewHeight
             else -> DISPLAY_H
         }
-        val bufW = if (viewAreaIndex == 0 && (rail || scaled)) VideoFrame.width else viewW
-        val bufH = if (viewAreaIndex == 0 && (rail || scaled)) VideoFrame.height else viewH
+        val bufW = if (viewAreaIndex == 0 && (rail || top || scaled)) VideoFrame.width else viewW
+        val bufH = if (viewAreaIndex == 0 && (rail || top || scaled)) VideoFrame.height else viewH
         // Flush against the rail. The on-screen width is the measured window minus the rail, so
         // this rectangle and the rail together are the whole window.
         val gravity = Gravity.TOP or Gravity.START
         val inset = if (rail) VideoFrame.railPx else 0
-        if (lp.width == viewW && lp.height == viewH && lp.gravity == gravity && lp.marginStart == inset) return
+        val topInset = if (top) topStripPx else 0
+        if (lp.width == viewW && lp.height == viewH && lp.gravity == gravity && lp.marginStart == inset && lp.topMargin == topInset) return
         lp.width = viewW
         lp.height = viewH
         lp.gravity = gravity
         lp.marginStart = inset
+        lp.topMargin = topInset
         surfaceView.layoutParams = lp
         surfaceView.holder.setFixedSize(bufW, bufH)
         log.i("video frame view ${viewW}x$viewH fixed ${bufW}x$bufH rail ${if (rail) VideoFrame.railPx else 0}")
@@ -432,8 +588,8 @@ class CarPlayActivity : Activity() {
     private fun declaredViewArea(index: Int): android.graphics.Rect {
         val t = VIEW_AREAS[index]
         val percent = VideoFrame.uiScalePercent
-        if (percent == 100) return t
         if (index == 0) return android.graphics.Rect(0, 0, VideoFrame.width, VideoFrame.height)
+        if (percent == 100) return t
         val x = wasidremin.gmccpa.DisplayScale.even(t.left, percent)
         val y = wasidremin.gmccpa.DisplayScale.even(t.top, percent)
         val w = wasidremin.gmccpa.DisplayScale.even(t.width(), percent)
@@ -1222,6 +1378,13 @@ class CarPlayActivity : Activity() {
      * UP while the first is still down, and iOS sees the gesture end mid-drag.
      */
     private fun onTouch(v: View, ev: MotionEvent): Boolean {
+        if (previewOnly) {
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN || ev.actionMasked == MotionEvent.ACTION_UP) {
+                log.i("topbar: preview video touch n=(%.3f, %.3f) — no command sent".format(
+                    ev.x / v.width.coerceAtLeast(1), ev.y / v.height.coerceAtLeast(1)))
+            }
+            return true
+        }
         if (v.width <= 0 || v.height <= 0) return false
         val action = ev.actionMasked
         val pid = ev.getPointerId(ev.actionIndex)
@@ -1250,7 +1413,7 @@ class CarPlayActivity : Activity() {
         // View area / full panel: the phone was told the display is the whole 2400x960 panel, and a
         // view area is a sub-rect inside it. `nativeTouch` scales by DISPLAY_W/H. Using the view's
         // own width there would report the video's left edge as x=0 instead of the view area's origin.
-        val framed = VideoFrame.railPx > 0 && viewAreaIndex == 0
+        val framed = (VideoFrame.railPx > 0 || topStripPx > 0) && viewAreaIndex == 0
         val nx = (if (framed) ev.getX(idx) / v.width.toFloat()
             else (v.left + ev.getX(idx)) / DISPLAY_W.toFloat()).coerceIn(0f, 1f)
         val ny = (if (framed) ev.getY(idx) / v.height.toFloat()
@@ -1291,8 +1454,8 @@ class CarPlayActivity : Activity() {
             else if (phase != 1) log.i("touch ${phaseName(phase)} n=(%.3f, %.3f) sent=true".format(nx, ny))
             return
         }
-        val tw = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.width else DISPLAY_W
-        val th = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.height else DISPLAY_H
+        val tw = if ((VideoFrame.railPx > 0 || topStripPx > 0) && viewAreaIndex == 0) VideoFrame.width else DISPLAY_W
+        val th = if ((VideoFrame.railPx > 0 || topStripPx > 0) && viewAreaIndex == 0) VideoFrame.height else DISPLAY_H
         val sent = NativeCore.touch(phase, nx, ny, tw, th)
         // Log every DOWN/UP and every failure — a dying event channel is otherwise invisible mid-drag.
         // A refused send is a W: it IS the dying event channel, and at I it was indistinguishable
@@ -1306,12 +1469,18 @@ class CarPlayActivity : Activity() {
 
     private fun phaseName(p: Int) = when (p) { 0 -> "down"; 1 -> "move"; else -> "up" }
 
+    override fun onResume() {
+        super.onResume()
+        applySystemUi()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) applySystemUi()
     }
 
     override fun onDestroy() {
+        topBarData?.stop(); topBarData = null
         intro?.removeCallbacks(introLate)
         intro = null
         introGear = null
