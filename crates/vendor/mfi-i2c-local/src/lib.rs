@@ -73,7 +73,7 @@ pub const MFI_LOCK_PATH: &[u8] = b"/tmp/carplay_mfi.lock\0";
 /// opened and [`MfiError::LockBusy`] if it can't be locked in time (caller then aborts the op).
 struct MfiLock(i32);
 impl MfiLock {
-    fn acquire() -> Result<MfiLock, MfiError> {
+    fn acquire(caller: &str) -> Result<MfiLock, MfiError> {
         let fd = unsafe {
             libc::open(
                 MFI_LOCK_PATH.as_ptr() as *const libc::c_char,
@@ -104,9 +104,21 @@ impl MfiLock {
         // x 3 MFi retries ~= 6.3 s, so 10 s is a real ceiling rather than an arbitrary one.
         const DEADLINE: Duration = Duration::from_secs(10);
         let start = Instant::now();
+        let mut logged_wait = false;
         loop {
             if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                let owner = format!("mfi-i2c-local/{caller} pid={}\n", std::process::id());
+                unsafe {
+                    libc::ftruncate(fd, 0);
+                    libc::write(fd, owner.as_ptr().cast(), owner.len());
+                }
+                eprintln!("[mfi-lock] acquired {} wait_ms={}", owner.trim(), start.elapsed().as_millis());
                 return Ok(MfiLock(fd));
+            }
+            if !logged_wait {
+                let holder = std::fs::read_to_string("/tmp/carplay_mfi.lock").unwrap_or_default();
+                eprintln!("[mfi-lock] {caller} waiting; last recorded holder={}", holder.trim());
+                logged_wait = true;
             }
             if start.elapsed() >= DEADLINE {
                 eprintln!(
@@ -252,7 +264,7 @@ pub fn try_cert() -> Result<Vec<u8>, MfiError> {
     if let Some(addr) = mfi_wire::client::addr() {
         return mfi_wire::client::cert(addr).map_err(|e| remote_err("cert", e));
     }
-    let _lock = MfiLock::acquire()?;
+    let _lock = MfiLock::acquire("AuthenticationCertificate")?;
     cert_locked().ok_or(MfiError::Chip)
 }
 
@@ -261,7 +273,7 @@ pub fn try_sign(chal: &[u8]) -> Result<Vec<u8>, MfiError> {
     if let Some(addr) = mfi_wire::client::addr() {
         return mfi_wire::client::sign(addr, chal).map_err(|e| remote_err("sign", e));
     }
-    let _lock = MfiLock::acquire()?;
+    let _lock = MfiLock::acquire("AuthenticationResponse")?;
     sign_locked(chal).ok_or(MfiError::Chip)
 }
 
@@ -273,18 +285,69 @@ pub fn sign(chal: &[u8]) -> Option<Vec<u8>> {
     try_sign(chal).ok()
 }
 
+/// Pause before re-reading a length register that came back implausible.
+///
+/// The coprocessor's length registers are 2 BE bytes, and a read can return a value no buffer could
+/// hold — measured on the bench box, `AuthenticationCertificate` returns **40113** (0x9CB1) instead
+/// of 945, and `i2c_rd` reports SUCCESS for it (the ioctl moved both messages), so the garbage is
+/// indistinguishable from a real length at the transport layer. It is not a slow chip: the caller
+/// re-reads microseconds later and gets the right answer, which is why every one of the eight
+/// handshakes in car-logs-delta-20261002 recovered on `mfi_retry`'s immediate second attempt — at
+/// the cost of a failed attempt per handshake, and of a 12,000 ms `cert: NO RESPONSE` to the app on
+/// a cold start.
+///
+/// The trigger is having *just* served another chip user, not process start: bench-measured with
+/// `tools`-style A/B, a fresh process at rest reads 945 (good), and the very next process — i.e.
+/// one whose read follows the previous process's 0x30→0x31 transaction — reads 40113. So this waits
+/// for the bus/chip to settle and re-reads rather than trusting the first sample. 20 ms is far more
+/// than the observed microsecond-scale recovery needs and costs nothing on the happy path.
+const LEN_SETTLE_US: libc::c_uint = 20_000;
+
+/// Total length reads before giving up: the first sample plus two settles. One bad read is the
+/// measured pattern; the third is cheap insurance on a failure path that otherwise costs the whole
+/// handshake, and the bound keeps the worst case at 40 ms under a 10 s lock deadline.
+const LEN_ATTEMPTS: usize = 3;
+
+/// Read a 2-byte BE length register, re-reading with a [`LEN_SETTLE_US`] settle if the value is
+/// implausible for `what`. Returns `None` only when every attempt fails or is out of range.
+///
+/// `max` is the largest payload the caller can accept; it is what makes a garbage length detectable
+/// at all. Re-reading is safe for both length registers in use because neither changes once the chip
+/// has computed it (the certificate is static; the signature is fixed once status bit4 is set).
+fn read_len(reg: u8, what: &str, max: usize) -> Option<usize> {
+    for attempt in 1..=LEN_ATTEMPTS {
+        let mut lb = [0u8; 2];
+        if !i2c_rd(reg, &mut lb) {
+            eprintln!(
+                "[mfi-i2c-local] {what} length register read failed (attempt {attempt}/{LEN_ATTEMPTS})"
+            );
+        } else {
+            let n = ((lb[0] as usize) << 8) | lb[1] as usize;
+            if n != 0 && n <= max {
+                if attempt > 1 {
+                    eprintln!(
+                        "[mfi-i2c-local] {what} length settled to {n} after {attempt} reads"
+                    );
+                }
+                return Some(n);
+            }
+            eprintln!(
+                "[mfi-i2c-local] {what} invalid length {n} (attempt {attempt}/{LEN_ATTEMPTS}), settling"
+            );
+        }
+        if attempt < LEN_ATTEMPTS {
+            unsafe { libc::usleep(LEN_SETTLE_US) };
+        }
+    }
+    None
+}
+
 /// Fetch the accessory certificate. CopyCertificate: reg `0x30` len (2 BE), reg `0x31` cert.
 fn cert_locked() -> Option<Vec<u8>> {
-    let mut lb = [0u8; 2];
-    if !i2c_rd(0x30, &mut lb) {
-        return None;
-    }
-    let n = ((lb[0] as usize) << 8) | lb[1] as usize;
-    if n == 0 || n > 2048 {
-        return None;
-    }
+    let n = read_len(0x30, "AuthenticationCertificate", 2048)?;
     let mut o = vec![0u8; n];
     if !i2c_rd(0x31, &mut o) {
+        eprintln!("[mfi-i2c-local] AuthenticationCertificate payload read failed under exclusive lock");
         return None;
     }
     Some(o)
@@ -327,14 +390,10 @@ fn sign_locked(chal: &[u8]) -> Option<Vec<u8>> {
     if !done {
         return None;
     }
-    let mut sl = [0u8; 2];
-    if !i2c_rd(0x11, &mut sl) {
-        return None;
-    }
-    let n = ((sl[0] as usize) << 8) | sl[1] as usize;
-    if n == 0 || n > 256 {
-        return None;
-    }
+    // Same settle as the certificate length: this read follows a successful status poll, so it is
+    // not the first-transaction case, but a garbage length here is rejected just as silently and a
+    // signature that is computed-then-reread cannot change under us.
+    let n = read_len(0x11, "AuthenticationResponse", 256)?;
     let mut sig = vec![0u8; n];
     if !i2c_rd(0x12, &mut sig) {
         return None;

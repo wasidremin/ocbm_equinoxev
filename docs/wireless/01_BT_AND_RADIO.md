@@ -6,6 +6,68 @@
 
 ## Radio HAL — chipset-agnostic bring-up
 
+### Boot BT prewarm — source change, bench verification pending (2026-10-01)
+
+Owner-approved exception to host-present power gating: the supervisor starts
+`radio_hal.sh bt_prewarm` once per boot. It uses the unit-derived attach mapping
+(not the owned path that starts vendor advertising daemons), initializes the kernel
+with DOWN→UP, restores the unit's SCO setup, and leaves scan disabled. No SoftAP,
+`btd`, or AA bridge is started by that boot job. Missing mapping/failed attach retains
+the existing host-present fallback. The HAL lock and an under-lock host-present
+check prevent a late boot job from resetting a session that already started.
+
+The one-shot `/tmp/.radio_bt_prewarmed` proof lets `btd` skip its redundant
+DOWN→UP/SCO restore on the first session, provided the same controller remains UP.
+Explicit BT teardown clears that proof and still powers down. The reconnect loop
+no longer sleeps five seconds before its first attempt; later backoff is unchanged.
+The supervisor retains stale ocbmd liveness recovery before the first HELLO with
+a 300-second threshold (`-mmin +4`), then uses the existing one-minute threshold.
+HELLO refreshes the stamp before publishing that first-HELLO signal.
+
+MFi cert/sign paths already serialize. One uncovered read was carplayd's startup
+DeviceVersion probe; it now takes the same lock. Acquisition logs identify caller
+and PID; tunnel certificate failures distinguish length, payload, and invalid
+length under exclusive lock. Lock-file text is the last recorded holder, not proof
+of a currently live holder.
+
+**The first-certificate retry is now explained and fixed (bench-measured
+2026-10-03).** The `AuthenticationCertificate` length register (2 BE bytes at
+`0x30`) intermittently returns **40113 (0x9CB1)** instead of 945, and `i2c_rd`
+reports success for it, so the garbage is indistinguishable from a real length at
+the transport layer. It is not a slow chip and not process start: a fresh process
+reading a chip at rest gets 945, and the next process — i.e. the one whose read
+*follows* another chip user's `0x30`→`0x31` transaction — gets 40113. Measured on
+the bench box with `mfid` (`--force`, one fresh process and one cert request per
+run): **5 of 10 succeeded before the fix, 10 of 10 after**, every recovery
+settling on the second read. `mfi-i2c-local::read_len` now rejects an
+implausible length, waits 20 ms, and re-reads (3 attempts, 40 ms worst case under
+the 10 s lock deadline); the same settle guards the signature length at `0x11`.
+The fix is in `mfi-i2c-local` only — `carplayd`'s `LocalMfiSigner`, `iap2d` and
+`btd`'s `mfi_local` each carry their own copy of the same register sequence and are
+structurally exposed to the same read; only the tunnel path has been observed
+failing, because only it reads the certificate immediately after `btd` has used
+the chip.
+
+Local syntax/typecheck/unit tests do not establish the latency targets. Hardware
+console verification subsequently succeeded (shell prompt, uptime and DONE_MARKER).
+The production armv7 cross-build subsequently passed with the existing FDK-AAC
+prefix and default ELD enabled. SUBSCRIBE receipt now has a write-time stamp for
+comparison with btd's existing discoverable and SDP-query stamps; log read times
+must not be used as milestone times. All four binaries and both shell scripts
+were staged on the box at their destination `.new` paths; all six MD5s matched the
+host and both scripts passed box-side `sh -n`. **Installed by owner request on
+2026-10-02**: those files were renamed into their final paths, chmod 755, verified
+again, and synced with failover present. Post-install console/HELLO succeeded;
+rootfs has 3748 KiB free. No reboot or process restart was performed, so the coherent
+new startup stack takes effect at the next power cycle. Verified host-side rollback
+copies remain at `/tmp/ocbm-startup-before-*`; on-box copies at
+`/tmp/ocbm-startup-rollback/` are tmpfs and disappear on power loss. Hardware testing
+is still pending because the bonded phone is not ready at the bench. The MFi
+certificate retry is separately bench-verified above; no end-to-end latency
+success is claimed, and the cold-start tap-to-picture target remains a car-run
+measurement.
+
+
 <!-- absorbed: ../wireless/01_BT_AND_RADIO.md -->
 
 Status: **wireless CarPlay demonstrated end-to-end on an RTL8822CS unit (2026-08-15)** — a

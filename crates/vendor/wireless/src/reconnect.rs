@@ -50,9 +50,6 @@ use crate::{bt_driver, control, hfp_hf, sco_audio, sdp_client};
 const CONNECT_TIMEOUT_SECS: i64 = 8;
 const BACKOFF_START_SECS: u64 = 10;
 const BACKOFF_MAX_SECS: u64 = 60;
-/// Let bring-up/SSP/SDP settle and give the phone a moment to connect IN on its own before we start
-/// paging it ourselves.
-const INITIAL_SETTLE_SECS: u64 = 5;
 
 /// `@<unix_ms> ` write-time stamp (docs/carplay/01_OCBM_PROTOCOL.md CH_LOG): the box.log tailer
 /// parses this prefix and uses it instead of the millisecond it happened to READ the line at.
@@ -770,11 +767,8 @@ pub fn run(
     session_active: &Arc<AtomicBool>,
     ctrl: &Arc<Control>,
 ) {
-    // Settle before the first probe (bring-up/SSP/SDP, and give the phone a chance to connect IN first).
-    if !interruptible_sleep(INITIAL_SETTLE_SECS, shutdown) {
-        return;
-    }
-
+    // First bonded-phone attempt is immediate; subsequent attempts retain the
+    // existing bounded backoff. The session claim still arbitrates incoming RFCOMM.
     let mut backoff = BACKOFF_START_SECS;
     // Log only on a change in the bonded/idle state, so the per-round re-read below doesn't spam the log.
     // `None` = nothing logged yet; `Some(true)` = had bonds; `Some(false)` = idle.

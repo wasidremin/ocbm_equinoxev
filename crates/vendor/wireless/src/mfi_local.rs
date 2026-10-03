@@ -76,9 +76,21 @@ impl MfiLock {
         // case is the sign path's ~2.1s poll x 3 retries ~= 6.3s, so 10s is a real ceiling.
         const DEADLINE: Duration = Duration::from_secs(10);
         let start = Instant::now();
+        let mut logged_wait = false;
         loop {
             if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                let owner = format!("btd/mfi_local pid={}\n", std::process::id());
+                unsafe {
+                    libc::ftruncate(fd, 0);
+                    libc::write(fd, owner.as_ptr().cast(), owner.len());
+                }
+                eprintln!("[mfi-lock] acquired {}", owner.trim());
                 return Some(MfiLock(fd));
+            }
+            if !logged_wait {
+                let holder = std::fs::read_to_string("/tmp/carplay_mfi.lock").unwrap_or_default();
+                eprintln!("[mfi-lock] btd waiting; last recorded holder={}", holder.trim());
+                logged_wait = true;
             }
             if start.elapsed() >= DEADLINE {
                 eprintln!(
