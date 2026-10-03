@@ -3700,10 +3700,6 @@ impl Daemon {
                         ok = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } == 0;
                         if ok {
                             eprintln!("[ocbmd] settime: settimeofday failed ({first}); clock_settime applied");
-                            // The wall clock just jumped — re-stamp liveness now (in the uptime
-                            // domain, which the jump did not move) rather than waiting for the
-                            // 1 Hz dispatch-loop touch.
-                            touch_alive_file();
                         } else {
                             // Report BOTH errnos. The old code discarded them entirely, which made a
                             // one-line "rejected" the only symptom and cost a session to diagnose.
@@ -3713,6 +3709,13 @@ impl Daemon {
                                 std::io::Error::last_os_error()
                             );
                         }
+                    }
+                    if ok {
+                        // The wall clock just jumped — re-stamp liveness now (in the uptime
+                        // domain, which the jump did not move) rather than waiting for the
+                        // 1 Hz dispatch-loop touch. Runs for BOTH the direct settimeofday
+                        // success and the clock_settime fallback (2026-10-02 fix).
+                        touch_alive_file();
                     }
                     let mut a = [0u8; 10];
                     a[0] = p::CT_SETTIME;

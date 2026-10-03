@@ -262,9 +262,16 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
     let prewarmed = std::fs::read_to_string("/tmp/.radio_bt_prewarmed")
         .map(|s| s.trim() == hci_dev)
         .unwrap_or(false)
-        && Command::new("hciconfig").arg(hci_dev).output()
-            .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("UP RUNNING"))
-            .unwrap_or(false);
+        && {
+            // Timed like every other hciconfig step (2026-10-02 fix) — this validation
+            // used to run untimed through Command directly.
+            let t0 = std::time::Instant::now();
+            let ok = Command::new("hciconfig").arg(hci_dev).output()
+                .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("UP RUNNING"))
+                .unwrap_or(false);
+            eprintln!("[btd] hciconfig [{hci_dev}] (prewarm validation) took {}ms", t0.elapsed().as_millis());
+            ok
+        };
     let _ = std::fs::remove_file("/tmp/.radio_bt_prewarmed");
     eprintln!("[btd] prewarm proof consumed={prewarmed} dev={hci_dev}");
     if !prewarmed {
