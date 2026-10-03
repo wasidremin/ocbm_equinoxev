@@ -506,6 +506,26 @@ struct Daemon {
     seq: u32,
     mfi: Option<Mfi>,
     ptm: Option<File>,
+    /// Pid of the console shell [`Daemon::start_console`] forked, so a new attach can tell a LIVE
+    /// shell from a dead one still pinned open by a stale master.
+    ///
+    /// This is the wedge fix (2026-10-02). The master fd alone cannot answer that question: a
+    /// console shell that exits while some backgrounded job it started still holds the PTY *slave*
+    /// open never produces an EOF on the master (`Ok(0)`, already handled) and never produces a
+    /// POLLHUP (also already handled) — because the slave is not actually closed. So `ptm` stays
+    /// `Some` and `start_console()` early-returns forever on a master whose shell is long gone:
+    /// the box's only out-of-band channel is dead until `ocbmd` itself restarts, and the
+    /// supervisor's liveness watchdog cannot help because `ocbmd` is perfectly healthy.
+    ///
+    /// Tracked as a pid rather than a `waitpid` status because `SIGCHLD = SIG_IGN` is set process-wide
+    /// (see the auto-reap note above), so children are reaped by the kernel immediately and there is
+    /// no zombie to `waitpid` on. Under that disposition a reaped child is simply gone, so
+    /// `kill(pid, 0)` is a sound liveness test.
+    console_pid: Option<i32>,
+    /// Process group of the console shell, so a reset can take down anything the shell spawned
+    /// that is still holding the slave (`start_console` does `setsid`, so the shell leads its own
+    /// group and a negative-pid `kill` reaches exactly that tree).
+    console_pgid: Option<i32>,
     file: FileState,
     eth: Option<RawFd>, // AF_PACKET raw socket bridging ncm0 <-> CH_ETH (host-driven, on demand)
     // Local A/V ingest seam: the box AirPlay session (carplayd / AvSession) connects to these local
@@ -2809,6 +2829,79 @@ impl Daemon {
         }
     }
 
+    /// Is the console shell we forked still running? `kill(pid, 0)` is the right test here
+    /// because `SIGCHLD = SIG_IGN` means the kernel reaps children immediately (see
+    /// [`Daemon::console_pid`]), so a dead shell leaves no zombie and `ESRCH` is exact.
+    /// `EPERM` would mean alive-but-not-ours, which cannot happen for our own child, and is
+    /// reported as alive so we never kill a stranger's process group.
+    fn console_shell_alive(&self) -> Option<bool> {
+        let pid = self.console_pid?;
+        Some(unsafe { libc::kill(pid, 0) } == 0)
+    }
+
+    /// Drop a console PTY whose shell is gone, along with anything that shell left holding the
+    /// slave open. Returns true if a reset happened (so the caller can log it).
+    ///
+    /// RECOVERY DOES NOT DEPEND ON THE GROUP KILL. Dropping the master is what fixes the console:
+    /// the next `start_console` allocates a brand-new pty, so its shell gets a brand-new slave and
+    /// is unaffected by whatever still holds the OLD one. Signalling the group is hygiene only —
+    /// without it, a `tail -f` that outlived its shell keeps running and pins a file descriptor.
+    ///
+    /// It is worth doing because that descendant is exactly what CAUSED the wedge: `start_console`
+    /// calls `setsid`, so the shell leads its own group and `kill(-pgid, …)` reaches the whole
+    /// tree, including a `setsid sh -c …` grandchild that re-parented away from the shell but kept
+    /// the slave fd. SIGHUP first so well-behaved children can exit on their own, SIGKILL after,
+    /// because we cannot rely on them cooperating. The group is only signalled when it is provably
+    /// not ours (see [`Daemon::safe_to_signal_pgid`]).
+    fn reset_stale_console(&mut self) -> bool {
+        if self.ptm.is_none() {
+            return false;
+        }
+        let alive = self.console_shell_alive().unwrap_or(false);
+        if alive {
+            return false;
+        }
+        // Drop the master FIRST: once it is closed the slave side gets a hangup, which is a
+        // second, independent chance to release the fd even if the signalling below is slow.
+        self.ptm = None;
+        if let Some(pgid) = self.console_pgid.take().filter(|g| Self::safe_to_signal_pgid(*g)) {
+            for sig in [libc::SIGHUP, libc::SIGKILL] {
+                unsafe { libc::kill(-pgid, sig) };
+                if sig == libc::SIGHUP {
+                    // Give SIGHUP a moment to be delivered and honoured before escalating.
+                    for _ in 0..20 {
+                        if unsafe { libc::kill(-pgid, 0) } != 0 {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                }
+            }
+        }
+        self.console_pid = None;
+        true
+    }
+
+    /// True if `pgid` is safe to signal as a process group. Belt-and-braces second safeguard behind
+    /// the `kill(-child_pid, …)` construction, which cannot target our own group by construction:
+    /// this additionally refuses the init/pgid sentinels and any group that happens to be ours.
+    fn safe_to_signal_pgid(pgid: i32) -> bool {
+        if pgid <= 1 {
+            return false;
+        }
+        let own = unsafe { libc::getpgrp() };
+        pgid != own && pgid != unsafe { libc::getpid() }
+    }
+
+    /// Entry point for every new console attach. Drops a PTY whose shell has died (the wedge
+    /// case) and then spawns a shell if there is not a live one.
+    fn ensure_console(&mut self) {
+        if self.reset_stale_console() {
+            eprintln!("[ocbmd] console: reset stale pty (shell alive=false)");
+        }
+        self.start_console();
+    }
+
     fn start_console(&mut self) {
         if self.ptm.is_some() {
             return;
@@ -2859,6 +2952,14 @@ impl Daemon {
             let mfl = libc::fcntl(m, libc::F_GETFL);
             libc::fcntl(m, libc::F_SETFL, mfl | libc::O_NONBLOCK);
             master = m;
+            // The child calls setsid(), so its process group is ALWAYS its own pid. Use that directly
+            // rather than calling getpgid(): read too early — before the child's setsid() has
+            // landed — and getpgid still reports OUR group, and `kill(-pgid, SIGKILL)` would then
+            // take down ocbmd AND the supervisor, a far worse outcome than the console wedge this
+            // exists to fix. `kill(-child_pid, …)` has no such race: before setsid() lands that
+            // group does not exist yet and the kill simply fails with ESRCH.
+            self.console_pid = Some(pid);
+            self.console_pgid = Some(pid);
         }
         self.ptm = Some(unsafe { File::from_raw_fd(master) });
         self.send(
@@ -3575,6 +3676,15 @@ impl Daemon {
                             self.host_instance = Some(inst);
                         }
                     }
+                    // A new host attaching is exactly when a console shell can have died out from
+                    // under us, so reap a stale PTY here too (see [`Daemon::ensure_console`]).
+                    // MODE_CONSOLE, which arrives moments later, repeats the check — this hook
+                    // just frees the stale fd and logs it as early as possible, and it also covers
+                    // a host that attaches without ever selecting console mode. A no-op whenever
+                    // there is no console or its shell is still alive.
+                    if self.reset_stale_console() {
+                        eprintln!("[ocbmd] console: reset stale pty (shell alive=false) on new host attach");
+                    }
                     // Optional host label after the nonce. Additive and length-tolerant in both
                     // directions: an older host sends nothing and is unchanged, and an older box
                     // ignores the extra bytes exactly as this one used to.
@@ -3660,7 +3770,7 @@ impl Daemon {
                     };
                     self.send(p::CH_CTRL, p::F_SOM | p::F_EOM, &a);
                 } else if pl.len() >= 2 && pl[0] == p::CT_MODE_SELECT && pl[1] == p::MODE_CONSOLE {
-                    self.start_console();
+                    self.ensure_console();
                 } else if pl.len() >= 9 && pl[0] == p::CT_SETTIME {
                     // host->box clock sync (no RTC battery): apply the wall clock, then ack
                     // back the seconds actually set so the host can confirm.
@@ -4197,6 +4307,8 @@ fn main() {
         seq: 0,
         mfi,
         ptm: None,
+        console_pid: None,
+        console_pgid: None,
         file: FileState::default(),
         eth: None,
         av_listeners,
@@ -4410,7 +4522,14 @@ fn main() {
                 // PTY detached.) Actively drop the dead fd so it leaves the pollset next rebuild.
                 if re & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
                     match kinds[i] {
-                        Kind::Pty => d.ptm = None, // console shell exited → drop the master pty
+                        // Console shell exited → drop the master pty. Forget the pid/pgid too: the
+                        // shell is gone, and a recycled pid must never be signalled as if it were
+                        // still our shell's group (see `reset_stale_console`).
+                        Kind::Pty => {
+                            d.ptm = None;
+                            d.console_pid = None;
+                            d.console_pgid = None;
+                        }
                         Kind::Eth => {
                             if let Some(fd) = d.eth.take() {
                                 unsafe { libc::close(fd) };
@@ -4492,11 +4611,19 @@ fn main() {
                     // Read into a temporary first: the borrow of d.ptm ends here, before the arms
                     // reassign d.ptm / call d.send.
                     let res = ptm.read(&mut t);
+                    let mut dropped = false;
                     match res {
-                        Ok(0) => d.ptm = None, // true EOF: console shell exited
+                        Ok(0) => dropped = true, // true EOF: console shell exited
                         Ok(n) => d.send(p::CH_CONSOLE, p::F_SOM | p::F_EOM, &t[..n]),
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {} // no data yet
-                        Err(_) => d.ptm = None,
+                        Err(_) => dropped = true,
+                    }
+                    if dropped {
+                        d.ptm = None;
+                        // Forget the pid/pgid with the fd: the shell is gone, and a recycled pid
+                        // must never later be signalled as if it were still our shell's group.
+                        d.console_pid = None;
+                        d.console_pgid = None;
                     }
                 }
                 Kind::Eth => {
@@ -4709,6 +4836,8 @@ mod tests {
             seq: 0,
             mfi: None,
             ptm: None,
+            console_pid: None,
+            console_pgid: None,
             file: FileState::default(),
             eth: None,
             av_listeners: Vec::new(),

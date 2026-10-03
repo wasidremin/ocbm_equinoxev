@@ -22,6 +22,11 @@ use std::process::Command;
 /// real CarPlay dongle presents, which is what iOS's CarPlay accessory filter looks for).
 pub const CLASS_OF_DEVICE: u32 = 0x200408;
 
+/// Boot-prewarm proof file, written by `radio_hal.sh`'s prewarm verb and consumed here. Its
+/// presence asserts "this controller was brought up and round-tripped THIS boot"; its CONTENT
+/// names the device it applies to, so a proof for `hci0` is never applied to another adapter.
+pub const PREWARM_PROOF_FILE: &str = "/tmp/.radio_bt_prewarmed";
+
 /// The iAP2 service UUID (128-bit) a CarPlay-capable accessory advertises, and the CarPlay
 /// discovery marker UUID, byte-exact from the reference project's own capture-verified EIR.
 const IAP2_SERVICE_UUID: [u8; 16] = [
@@ -259,7 +264,7 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
     // The HAL's boot path already completed DOWN->UP + SCO restore and a real
     // HCI round-trip with scanning disabled. Consume that one-shot proof only
     // while this same controller is still UP; otherwise retain the proven reset.
-    let prewarmed = std::fs::read_to_string("/tmp/.radio_bt_prewarmed")
+    let prewarmed = std::fs::read_to_string(PREWARM_PROOF_FILE)
         .map(|s| s.trim() == hci_dev)
         .unwrap_or(false)
         && {
@@ -272,7 +277,22 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
             eprintln!("[btd] hciconfig [{hci_dev}] (prewarm validation) took {}ms", t0.elapsed().as_millis());
             ok
         };
-    let _ = std::fs::remove_file("/tmp/.radio_bt_prewarmed");
+    // KEEP the proof while the controller is still UP (2026-10-02 fix). This used to delete the
+    // file unconditionally, which contradicted the comment directly above: the proof describes the
+    // controller's CURRENT state (powered up, proven by a real round-trip), not a one-shot event.
+    // Deleting it on a successful consume meant a SECOND bring-up in the same boot — the re-arm
+    // after an app-process restart, which is the exact case item #3 is about — could never benefit,
+    // and paid a destructive `down` (194ms) + `up` (316ms) reset cycle for a controller that was
+    // never actually powered down between the two. Measured on the bench: prewarm proof
+    // consumed=true on the first bring-up, consumed=false on the re-arm that followed ~30s later.
+    //
+    // The proof is dropped only when it does NOT describe this controller's live state: either the
+    // file named a different device, or the validation found it DOWN (in which case the down/up
+    // cycle below is about to invalidate it anyway), or it did not validate. Genuine power-down
+    // paths must clear it themselves — see `clear_prewarm_proof` and its callers in go_quiet/teardown.
+    if !prewarmed {
+        clear_prewarm_proof();
+    }
     eprintln!("[btd] prewarm proof consumed={prewarmed} dev={hci_dev}");
     if !prewarmed {
         let _ = run(&[hci_dev, "down"]);
@@ -303,6 +323,20 @@ pub fn go_quiet(hci_dev: &str) -> std::io::Result<()> {
         return crate::hci::set_scan(dev, crate::hci::SCAN_NONE);
     }
     run(&[hci_dev, "noscan"])
+}
+
+/// Drop the boot-prewarm proof because it no longer describes this controller.
+///
+/// Called when a bring-up finds the proof absent, naming a different device, or failing its
+/// `UP RUNNING` validation — and, from the shell side, by `radio_hal.sh`'s `do_bt_off`, which is
+/// the path that genuinely powers the controller down (`noscan` then `hciconfig <dev> down`).
+///
+/// Deliberately NOT called by [`go_quiet`]: that only does `noscan` and leaves the controller
+/// powered up, which is precisely the state the proof describes. Keeping it there is what lets the
+/// re-arm after an app-process restart skip a redundant `down`/`up` reset cycle — except in the
+/// real teardown, which powers the radio down and therefore correctly invalidates it.
+pub fn clear_prewarm_proof() {
+    let _ = std::fs::remove_file(PREWARM_PROOF_FILE);
 }
 
 #[cfg(test)]

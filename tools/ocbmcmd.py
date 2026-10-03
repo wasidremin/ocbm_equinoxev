@@ -48,6 +48,7 @@ def run(cmd: str, timeout: float = 15.0, raw: bool = False):
     # hard-wrapped at the PTY's 80 columns, which no amount of string-matching unwraps reliably.
     # Phase 2: run the command fenced by exact-line markers.
     buf, deadline, phase = b"", time.time() + timeout, 0
+    started, nudged = time.time(), False
     try:
         feed("\n")
         while time.time() < deadline:
@@ -60,6 +61,25 @@ def run(cmd: str, timeout: float = 15.0, raw: bool = False):
                 feed("stty -echo\n")
                 phase, buf = 1, b""
                 time.sleep(0.25)
+            elif phase == 0 and not nudged and time.time() - started > 2.0:
+                # No prompt after a grace period. The box-side shell is SHARED and persists across
+                # attaches, so one earlier command with an unbalanced quote leaves it parked at a
+                # `>` continuation prompt, silently swallowing everything typed at it: no prompt,
+                # no output, and this call returns nothing until it times out. Verified on the
+                # bench to be indistinguishable from a dead console.
+                #
+                # Ctrl-C ALONE DOES NOT CLEAR IT in this busybox ash — measured, it echoes `^C` and
+                # re-prints `>` indefinitely. Ctrl-C followed by EOF does clear it. So escalate
+                # once, and only because the prompt never appeared: sending EOF to a HEALTHY shell
+                # would log it out (recoverable — ocbmd re-spawns it on the next attach — but it
+                # would churn the shared shell on every single command).
+                nudged = True
+                feed("\x03")
+                time.sleep(0.4)
+                feed("\x04")
+                time.sleep(0.4)
+                feed("\n")
+                buf = b""
             elif phase == 1:
                 feed(f"printf '{begin}\\n'\n{cmd}\nprintf '{done}%s\\n' \"$?\"\n")
                 phase, buf = 2, b""
@@ -71,7 +91,14 @@ def run(cmd: str, timeout: float = 15.0, raw: bool = False):
             p.stdin.close()
         except Exception:
             pass
-        p.wait(timeout=5)
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # `ocbm-host console` holds the box PTY (and the USB interface) until it is killed;
+            # closing our stdin is not enough to end it. Leaving it orphaned made every later
+            # call fail with "claim IF0: Resource busy", so kill it instead of waiting for it.
+            p.kill()
+            p.wait(timeout=5)
 
     text = buf.decode("utf-8", "replace")
     if not raw:

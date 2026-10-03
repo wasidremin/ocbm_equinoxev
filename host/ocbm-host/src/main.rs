@@ -427,6 +427,38 @@ fn mode_ncm(link: &mut Link) {
     std::process::exit(1);
 }
 
+/// `MGMT_REBOOT` — ask the box to reboot, and wait for it to come back on USB-OCBM.
+///
+/// WHY THIS EXISTS: `ncm` covers the mode flip, but the plain restart had no CLI path, and a
+/// plain restart is the only recovery that clears a wedged `ocbmd` state. That matters because
+/// `ocbmd`'s CONSOLE PTY is spawned once and reused: `start_console()` returns early while the
+/// master fd is still held, and a master whose read returns EOF is never cleared (the poll drain
+/// treats `Ok(0)` as an empty read, not as a dead PTY). One lost console attach therefore bricks
+/// CH_CONSOLE until ocbmd restarts, and the supervisor's liveness watchdog cannot help — the
+/// dispatch loop keeps `/tmp/ocbmd_alive` fresh at 1 Hz precisely because ocbmd is healthy.
+///
+/// The box ACKs then reboots (`sleep 1; sync; reboot`), so an ACK means "accepted", not "already
+/// rebooting". The box needs IF0 released before it can re-enumerate, so this verb returns on the
+/// ACK and the caller polls for the device — the same contract as `ncm`.
+fn mode_reboot(link: &mut Link) {
+    link.send(p::CH_MGMT, p::F_SOM | p::F_EOM, &[p::MGMT_REBOOT]);
+    let mut out = vec![0u8; p::MAX_PAYLOAD];
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let Some((ch, _flags, l)) = link.recv(&mut out, deadline) else { break };
+        if ch == p::CH_MGMT && l >= 3 && out[0] == p::MGMT_ACK && out[1] == p::MGMT_REBOOT {
+            if out[2] == 0 {
+                println!("REBOOT accepted — releasing IF0; the caller polls for the device to come back.");
+                return;
+            }
+            eprintln!("REBOOT refused by the box (status {})", out[2]);
+            std::process::exit(1);
+        }
+    }
+    eprintln!("REBOOT: no ACK within 5 s — the box did not accept it; NOT assuming it rebooted");
+    std::process::exit(1);
+}
+
 fn mode_console(link: &mut Link) {
     link.send(
         p::CH_CTRL,
@@ -548,13 +580,35 @@ fn recv_file_ack(link: &mut Link, secs: u64) -> Option<(u8, u32, u32)> {
 /// end-to-end CRC-32 + size, and write `local`. Returns true on success. `mode` is applied to the
 /// written file. A stalled/absent box CH_FILE handler → timeout → false (nothing written).
 fn mode_pull(link: &mut Link, remote: &str, local: &str, mode: u32) -> bool {
+    let t0 = Instant::now();
+    let Some((data, rsize, rcrc)) = pull_bytes(link, remote) else {
+        return false;
+    };
+    if let Err(e) = std::fs::write(local, &data) {
+        eprintln!("[pull] write {local}: {e}");
+        return false;
+    }
+    let _ = std::fs::set_permissions(local, std::fs::Permissions::from_mode(mode));
+    let dt = t0.elapsed().as_secs_f64();
+    println!(
+        "[pull] {} -> {} : {} bytes, crc32=0x{:08x}, mode={:o}, {:.2}s ({:.1} Mbps)",
+        remote, local, rsize, rcrc, mode, dt,
+        rsize as f64 * 8.0 / 1e6 / dt.max(1e-6)
+    );
+    true
+}
+
+/// Pull `remote` into memory over CH_FILE, CRC-verified against the box's own ack. Returns
+/// `(data, size, crc)`. Split out of [`mode_pull`] so `probe` can re-read a log on a timer over the
+/// SAME link it is already driving the control plane on -- IF0 is claimed exclusively, so a second
+/// process cannot watch the box while a session runs.
+fn pull_bytes(link: &mut Link, remote: &str) -> Option<(Vec<u8>, u32, u32)> {
     let mut req = vec![p::FILE_PULL];
     req.extend_from_slice(remote.as_bytes());
     if !link.send(p::CH_FILE, p::F_SOM | p::F_EOM, &req) {
         eprintln!("[pull] request send failed");
-        return false;
+        return None;
     }
-    let t0 = Instant::now();
     let mut data: Vec<u8> = Vec::new();
     let mut out = vec![0u8; p::MAX_PAYLOAD];
     // Overall deadline is generous (a large binary over the console-shared link); each recv waits until
@@ -570,7 +624,7 @@ fn mode_pull(link: &mut Link, remote: &str, local: &str, mode: u32) -> bool {
                     let rsize = u32::from_le_bytes(out[6..10].try_into().unwrap());
                     if status != p::FILE_OK {
                         eprintln!("[pull] box refused (status {status}) — bad path / not found?");
-                        return false;
+                        return None;
                     }
                     let crc = p::crc32(&data);
                     if crc != rcrc || data.len() as u32 != rsize {
@@ -578,30 +632,84 @@ fn mode_pull(link: &mut Link, remote: &str, local: &str, mode: u32) -> bool {
                             "[pull] VERIFY FAILED: got crc=0x{:08x} size={} vs box crc=0x{:08x} size={}",
                             crc, data.len(), rcrc, rsize
                         );
-                        return false;
+                        return None;
                     }
-                    if let Err(e) = std::fs::write(local, &data) {
-                        eprintln!("[pull] write {local}: {e}");
-                        return false;
-                    }
-                    let _ = std::fs::set_permissions(local, std::fs::Permissions::from_mode(mode));
-                    let dt = t0.elapsed().as_secs_f64();
-                    println!(
-                        "[pull] {} -> {} : {} bytes, crc32=0x{:08x}, mode={:o}, {:.2}s ({:.1} Mbps)",
-                        remote, local, rsize, rcrc, mode, dt,
-                        rsize as f64 * 8.0 / 1e6 / dt.max(1e-6)
-                    );
-                    return true;
+                    return Some((data, rsize, rcrc));
                 }
                 _ => {}
             },
             Some(_) => {} // other channel traffic — ignore
             None => {
                 eprintln!("[pull] timeout ({} bytes received)", data.len());
-                return false;
+                return None;
             }
         }
     }
+}
+
+/// `probe` — drive a real CT_SUBSCRIBE and, on the SAME link, re-read the box's log on a timer,
+/// printing each new line with the host-side elapsed time it was first seen at.
+///
+/// WHY THIS EXISTS: the box's `/tmp/box.log` is untimestamped, so the startup-round acceptance
+/// criteria ("subscribe -> discoverable < 3 s", "discoverable within 5 s of the new subscribe")
+/// cannot be read off it. The obvious fix -- a box-side `tail -f` follower stamping lines with
+/// `/proc/uptime` -- is not usable: the only way to start it is the OCBM CONSOLE, and backgrounding
+/// a job from that console wedges it (reproduced twice; see the `reboot` verb's doc comment).
+///
+/// Doing both over one link sidesteps that entirely and needs no box-side change at all. IF0 is
+/// claimed exclusively per process, so watching from a second process is impossible; this is the
+/// only way to hold the control plane open and observe the box at the same time. Sample resolution
+/// is the poll interval, and the box's own log lines carry the sub-second detail (`hciconfig ...
+/// took Nms`).
+///
+/// `session` remains the plain SUBSCRIBE + heartbeat + CT_STOP driver; `probe` is the instrumented
+/// variant, and the two share the subscribe construction so they cannot drift.
+fn mode_probe(link: &mut Link, secs: u64, cfg_path: Option<&str>, poll: Duration) {
+    let sub = subscribe_payload(cfg_path);
+    // Prime the log BEFORE the subscribe, so the bring-up lines it provokes are all reported. The
+    // supervisor notices host_present on its ~1 Hz poll, so pulling first costs a few hundred ms
+    // but guarantees nothing between SUBSCRIBE and the baseline is silently swallowed.
+    let mut seen = match pull_bytes(link, "/tmp/box.log") {
+        Some((d, _, _)) => String::from_utf8_lossy(&d).lines().count(),
+        None => 0,
+    };
+    let start = Instant::now();
+    link.send(p::CH_CTRL, p::F_SOM | p::F_EOM, &sub);
+    println!(
+        "[probe] baseline /tmp/box.log lines = {seen}; SUBSCRIBE sent; all +times are relative to it"
+    );
+
+    let deadline = start + Duration::from_secs(secs);
+    let mut next_hb = Instant::now() + Duration::from_secs(1);
+    let mut next_poll = Instant::now() + poll;
+    while Instant::now() < deadline {
+        if Instant::now() >= next_hb {
+            link.send(p::CH_CTRL, p::F_SOM | p::F_EOM, &[p::CT_HEARTBEAT]);
+            next_hb = Instant::now() + Duration::from_secs(1);
+        }
+        if Instant::now() < next_poll {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        next_poll = Instant::now() + poll;
+        let Some((data, _, _)) = pull_bytes(link, "/tmp/box.log") else { continue };
+        let text = String::from_utf8_lossy(&data);
+        let lines: Vec<&str> = text.lines().collect();
+        for ln in lines.iter().skip(seen) {
+            println!("[probe] +{:>6}ms  {}", start.elapsed().as_millis(), ln);
+        }
+        seen = lines.len();
+    }
+    // One last sweep so nothing in the final poll window is lost.
+    if let Some((data, _, _)) = pull_bytes(link, "/tmp/box.log") {
+        let text = String::from_utf8_lossy(&data);
+        let lines: Vec<&str> = text.lines().collect();
+        for ln in lines.iter().skip(seen) {
+            println!("[probe] +{:>6}ms  {}", start.elapsed().as_millis(), ln);
+        }
+    }
+    link.send(p::CH_CTRL, p::F_SOM | p::F_EOM, &[p::CT_STOP]);
+    println!("[probe] STOP sent at +{}ms", start.elapsed().as_millis());
 }
 
 /// Push a local file to the box over CH_FILE: OPEN -> stream DATA -> CLOSE(crc,size).
@@ -794,19 +902,26 @@ fn mode_bridge(link: &mut Link, iface: &str, secs: u64) {
 /// YAML config file), HEARTBEAT ~1/s to prove liveness, print the box's SESSION_EVENTs, and STOP cleanly
 /// on exit. Killing this process instead (no STOP) simulates a host crash → the box's heartbeat watchdog
 /// declares the host gone after the grace. Drives the box's presence state machine end to end.
-fn mode_session(link: &mut Link, secs: u64, cfg_path: Option<&str>) {
+/// Build the CT_SUBSCRIBE payload: the opcode, then the app-driven VehicleConfig bytes if the
+/// caller supplied one. Shared by `session` and `probe` so the two cannot drift.
+fn subscribe_payload(cfg_path: Option<&str>) -> Vec<u8> {
     let mut sub = vec![p::CT_SUBSCRIBE];
     match cfg_path.and_then(|p| std::fs::read(p).ok()) {
         Some(bytes) => {
             eprintln!(
-                "[session] SUBSCRIBE with {} B config from {}",
+                "[subscribe] SUBSCRIBE with {} B config from {}",
                 bytes.len(),
                 cfg_path.unwrap()
             );
             sub.extend_from_slice(&bytes);
         }
-        None => eprintln!("[session] SUBSCRIBE (no config)"),
+        None => eprintln!("[subscribe] SUBSCRIBE (no config)"),
     }
+    sub
+}
+
+fn mode_session(link: &mut Link, secs: u64, cfg_path: Option<&str>) {
+    let sub = subscribe_payload(cfg_path);
     link.send(p::CH_CTRL, p::F_SOM | p::F_EOM, &sub);
     let mut out = vec![0u8; p::MAX_PAYLOAD];
     let deadline = if secs > 0 {
@@ -1609,6 +1724,24 @@ fn main() {
         "mfi" => mode_mfi(&mut link),
         "console" => mode_console(&mut link),
         "ncm" => mode_ncm(&mut link),
+        "reboot" => mode_reboot(&mut link),
+        "probe" => {
+            // `probe <secs> [cfg] [--poll-ms N]`: the cfg path is the first non-flag positional at
+            // or after index 5, so the flag may appear on either side of it.
+            let poll = args
+                .iter()
+                .position(|a| a == "--poll-ms")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|ms| Duration::from_millis(ms))
+                .unwrap_or(Duration::from_millis(250));
+            mode_probe(
+                &mut link,
+                args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30),
+                args.iter().skip(5).find(|a| !a.starts_with("--")).map(String::as_str),
+                poll,
+            )
+        }
         "ip" => mode_ip(
             &mut link,
             args.get(4).map(String::as_str).unwrap_or("127.0.0.1:22"),

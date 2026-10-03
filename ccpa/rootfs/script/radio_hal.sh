@@ -4,7 +4,7 @@
 # the Rust daemons) asks for "wifi up" / "bt up" and never names a chip, a module, a firmware
 # path or an attach helper.
 #
-# VERBS   probe | status | wifi_ap_on | wifi_ap_off | bt_on | bt_off | sco_on
+# VERBS   probe | status | wifi_ap_on | wifi_ap_off | bt_prewarm | bt_on | bt_off | sco_on
 # EXIT    0 converged now   1 ran and failed   2 already converged   3 unsupported on this unit
 #
 # ---------------------------------------------------------------------------------------------
@@ -117,8 +117,27 @@ publish() {  # $1 = state file, rest = KEY=VALUE...
 }
 
 caps() {
-  # Refresh the descriptor unless a caller pre-loaded one. Detection is read-only and cheap.
-  [ -x /script/radio_detect.sh ] && sh /script/radio_detect.sh -q >/dev/null 2>&1
+  # DERIVE THE DESCRIPTOR ONLY WHEN WE ACTUALLY NEED TO (2026-10-02).
+  #
+  # This used to re-run detection on every single call, on the reasoning that it is "read-only
+  # and cheap". Measured on a CCPA it is NEITHER: `radio_detect.sh` walks /sys, /proc and the
+  # module list, and cost ~2.05 s per bring-up. That made it the single largest item in
+  # subscribe -> discoverable — larger than every hciconfig step in btd's bring-up put together,
+  # and it was paid on the wireless path where BT was ALREADY converged and the whole answer was
+  # "skipping preload".
+  #
+  # Why skipping is safe: $CAPS lives on /tmp, which is tmpfs, so an existing descriptor was
+  # necessarily written during THIS boot — and a unit's chipset cannot change without a reboot
+  # (docs/wireless/01_BT_AND_RADIO.md: only the driver set for a unit's own chip is in its
+  # rootfs). Re-deriving it mid-session therefore cannot produce a different answer, only a
+  # slower one.
+  #
+  # The force-redetect escape hatch exists because detection is the thing that REPAIRS a stale or
+  # half-written descriptor, and a failed bring-up is exactly when you want a second opinion.
+  # Callers set RADIO_REDETECT=1 on that path (see do_bt_on's failure branches).
+  if [ ! -s "$CAPS" ] || [ "${RADIO_REDETECT:-0}" = 1 ]; then
+    [ -x /script/radio_detect.sh ] && sh /script/radio_detect.sh -q >/dev/null 2>&1
+  fi
   [ -f "$CAPS" ] || { log "no descriptor at $CAPS and radio_detect.sh is missing"; return 1; }
 
   # A MALFORMED DESCRIPTOR MUST NEVER ABORT THIS SCRIPT. Measured: an extracted vendor line
@@ -494,7 +513,7 @@ do_bt_on() {
 
   _d=$(hci_dev 2>/dev/null) || _d=""
   if [ -n "$_d" ] && bt_responsive_confirmed "$_d"; then
-    log "already converged ($_d responsive)"
+    log "BT already converged — skipping preload"
     publish "$BT_STATE" "result=ok" "backend=$RADIO_BACKEND" "hci_dev=$_d" \
             "bt_mac=$(cat /sys/class/bluetooth/$_d/address 2>/dev/null)"
     return 2
@@ -520,6 +539,12 @@ do_bt_on() {
     log "$_d still unresponsive after power-up - recovery is warranted"
   fi
 
+  # Boot prewarm must never launch the owned vendor advertising daemons. Use only
+  # the unit-derived attach mapping; an unresolved mapping falls back at host_present.
+  if [ "${BT_PREWARM:-0}" = 1 ]; then
+    [ -n "$RADIO_BT_ATTACH_CMD" ] || { log "boot prewarm unavailable — host-present fallback"; return 3; }
+    RADIO_BACKEND=mapped
+  fi
   case "$RADIO_BACKEND" in
     owned)
       log "backend=owned -> /script/bt_on.sh"
@@ -530,6 +555,10 @@ do_bt_on() {
                 "bt_mac=$(cat /sys/class/bluetooth/$_d/address 2>/dev/null)"
         return 0
       fi
+      # A failed owned-backend bring-up is the other case where the cached descriptor deserves a
+      # second opinion (see caps()): arm the re-detect for the next call.
+      RADIO_REDETECT=1
+      export RADIO_REDETECT
       publish "$BT_STATE" "result=fail" "backend=owned" "detail=bt_on.sh rc=$_rc, not responsive"
       return 1
       ;;
@@ -704,6 +733,12 @@ do_bt_on() {
       # setsid-backgrounded attach daemon, and piping that daemon's own stdout would change its
       # lifecycle. Only this readback (the tail below) is universal-logged, via `tee -a`.
       tail -5 /tmp/radio_bt_attach.log 2>/dev/null | sed "s/^/$LOGP   /" | tee -a /tmp/box.log
+      # A non-converging bring-up is the one case where the cached descriptor deserves a second
+      # opinion: caps() no longer re-detects on the happy path, so a stale or half-written
+      # /tmp/radio_caps would otherwise be trusted forever. Arm the re-detect for the NEXT call.
+      RADIO_REDETECT=1
+      export RADIO_REDETECT
+      log "  arming RADIO_REDETECT=1 so the next bring-up re-derives the descriptor"
       publish "$BT_STATE" "result=fail" "backend=mapped" "chipset=$RADIO_SDIO_DEVICE" "detail=no-convergence"
       return 1
       ;;
@@ -715,7 +750,35 @@ do_bt_on() {
   esac
 }
 
+do_bt_prewarm() {
+  # Checked under the BT lock: an early subscribe may have won the lock before
+  # this detached boot job. Never reset a controller now owned by a session.
+  [ "$(cat /tmp/host_present 2>/dev/null)" = 1 ] && return 2
+  rm -f /tmp/.radio_bt_prewarmed
+  BT_PREWARM=1
+  do_bt_on
+  _warm_rc=$?
+  case "$_warm_rc" in
+    0|2) ;;
+    *) log "boot BT attach failed rc=$_warm_rc — retry on host_present"; return "$_warm_rc" ;;
+  esac
+  _warm_dev=$(hci_dev 2>/dev/null) || return 1
+  # Initialize the kernel event mask here, not on the subscribe critical path.
+  # No stock advertising daemons were started by the mapped attach path.
+  hciconfig "$_warm_dev" noscan 2>/dev/null || return 1
+  hciconfig "$_warm_dev" down 2>/dev/null || return 1
+  hciconfig "$_warm_dev" up 2>/dev/null || return 1
+  hciconfig "$_warm_dev" noscan 2>/dev/null || return 1
+  apply_sco "$_warm_dev" >/dev/null 2>&1 || true
+  bt_responsive_confirmed "$_warm_dev" || return 1
+  echo "$_warm_dev" > /tmp/.radio_bt_prewarmed
+  _warm_ms=$(awk '{printf "%.0f", $1 * 1000}' /proc/uptime)
+  log "BT pre-warmed at boot +$_warm_ms"
+  return 0
+}
+
 do_bt_off() {
+  rm -f /tmp/.radio_bt_prewarmed
   # End state: powered down but STILL ATTACHED. Never rmmod the line discipline and never -9 the
   # attach helper - re-attach is the wedge-prone half, which is why the supervisor stops at
   # `hciconfig down` rather than calling bt_off.sh.
@@ -747,10 +810,11 @@ case "$VERB" in
     exit 0 ;;
   wifi_ap_on)  lock_take wlan || exit 1; do_wifi_ap_on;  _r=$?; lock_drop wlan; exit $_r ;;
   wifi_ap_off) lock_take wlan || exit 1; do_wifi_ap_off; _r=$?; lock_drop wlan; exit $_r ;;
+  bt_prewarm)  lock_take bt   || exit 1; do_bt_prewarm;  _r=$?; lock_drop bt;   exit $_r ;;
   bt_on)       lock_take bt   || exit 1; do_bt_on;       _r=$?; lock_drop bt;   exit $_r ;;
   bt_off)      lock_take bt   || exit 1; do_bt_off;      _r=$?; lock_drop bt;   exit $_r ;;
   # Best-effort and idempotent: the daemon calls it after every bring-up DOWN->UP, and a unit
   # whose branch carries no SCO mapping must report that (3) rather than fail the caller.
   sco_on)      lock_take bt   || exit 1; do_sco_on;      _r=$?; lock_drop bt;   exit $_r ;;
-  *) echo "$LOGP usage: radio_hal.sh probe|status|wifi_ap_on|wifi_ap_off|bt_on|bt_off|sco_on" >&2; exit 64 ;;
+  *) echo "$LOGP usage: radio_hal.sh probe|status|wifi_ap_on|wifi_ap_off|bt_prewarm|bt_on|bt_off|sco_on" >&2; exit 64 ;;
 esac
