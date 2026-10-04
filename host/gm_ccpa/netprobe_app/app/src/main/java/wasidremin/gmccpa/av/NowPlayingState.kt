@@ -109,6 +109,28 @@ class NowPlayingState {
     }
 
     @Volatile var snapshot: Snapshot = Snapshot(); private set
+    private val calls = mutableMapOf<String, Int>()
+    @Volatile var onCallChanged: (() -> Unit)? = null
+
+    @Synchronized fun phoneAction(): Byte? = when {
+        calls.values.any { it == 2 } -> wasidremin.gmccpa.ocbm.Ocbm.TEL_ANSWER
+        calls.values.any { it in 1..5 } -> wasidremin.gmccpa.ocbm.Ocbm.TEL_END
+        else -> null
+    }
+
+    fun onCallState(json: JSONObject) {
+        synchronized(this) {
+            if (!json.has("status")) return
+            val status = json.optInt("status", -1)
+            if (status !in 0..6) return
+            val id = json.optString("callUuid").ifEmpty { json.optString("remoteId", "unknown") }
+            if (status == 0 && id == "unknown") calls.clear()
+            else if (status == 0 || status == 6) calls.remove(id)
+            else calls[id] = status
+        }
+        log.i("call-state: action=${phoneAction()}")
+        onCallChanged?.invoke()
+    }
 
     /** The displayed picture changed. Expensive path: a full `MediaMetadata` rebuild. */
     @Volatile var onMetadataChanged: ((Snapshot) -> Unit)? = null
@@ -132,6 +154,7 @@ class NowPlayingState {
                 // The seam also carries routeGuidance, maneuver, callState, artworkReady and more.
                 // Only the media picture is consumed — by scope decision there is no navigation or
                 // telephony surface in this app, and half-handling a kind is worse than ignoring it.
+                if (json.optString("kind") == "callState") { onCallState(json); return }
                 if (json.optString("kind") != "nowPlaying") return
                 val changed = onNowPlaying(json)
                 if (changed != null) emit(changed)
@@ -206,10 +229,12 @@ class NowPlayingState {
     fun clear(why: String) {
         val cleared = synchronized(this) {
             art.clear()
+            calls.clear()
             snapshot = Snapshot()
             log.i("np: cleared — $why")
             snapshot
         }
+        onCallChanged?.invoke()
         emit(cleared)
     }
 

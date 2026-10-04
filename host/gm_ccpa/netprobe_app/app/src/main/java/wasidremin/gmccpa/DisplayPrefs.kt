@@ -27,6 +27,47 @@ enum class ScreenMode(val value: Int, val label: String) {
 }
 
 object DisplayPrefs {
+    /** Match the sister app's edge-to-edge policy BEFORE measuring the activity.
+     * Hiding bars alone leaves DEFAULT cutout policy, which can clip the window outside
+     * the old GM status-bar region even when visible bar insets are zero.
+     */
+    fun applyWindow(activity: android.app.Activity, mode: ScreenMode = mode(activity)) {
+        val window = activity.window
+        val hideStatus = mode == ScreenMode.FULLSCREEN || mode == ScreenMode.STATUS_HIDDEN
+        val hideNav = mode == ScreenMode.FULLSCREEN || mode == ScreenMode.NAV_HIDDEN
+        if (hideStatus) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            val cutout = when {
+                mode == ScreenMode.SYSTEM_UI -> android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+                android.os.Build.VERSION.SDK_INT >= 30 -> android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                else -> android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            if (window.attributes.layoutInDisplayCutoutMode != cutout) {
+                window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = cutout }
+            }
+        }
+        @Suppress("DEPRECATION")
+        var flags = android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        if (hideStatus || hideNav) flags = flags or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        if (hideStatus) flags = flags or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+        if (hideNav) flags = flags or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = flags
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let {
+                val status = android.view.WindowInsets.Type.statusBars()
+                val nav = android.view.WindowInsets.Type.navigationBars()
+                if (hideStatus) it.hide(status) else it.show(status)
+                if (hideNav) it.hide(nav) else it.show(nav)
+                it.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }
+        window.decorView.requestApplyInsets()
+    }
+
     private const val PREFS = "carplay_screen"
     private const val KEY_MODE = "mode"
     private const val KEY_SIDEBAR = "sidebar"
@@ -55,8 +96,8 @@ object DisplayPrefs {
 
     fun sidebar(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_SIDEBAR, false)
     /**
-     * The custom top bar lives in the space freed when the system hides GM's status bar
-     * (measured at layout time in CarPlayActivity). Off is today's behavior exactly.
+     * Reserve a custom top strip before the next adapter subscription when GM's status
+     * bar is hidden. The negotiated video size stays fixed until reconnect.
      */
     fun customTopBar(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_CUSTOM_TOP_BAR, false)
     fun setCustomTopBar(ctx: Context, on: Boolean) {
@@ -118,7 +159,14 @@ object VideoFrame {
     const val PANEL_W = 2400
     const val PANEL_H = 960
     /** Matches the rail drawn in `CarPlayActivity`. Kept here so the advertised gap and the view agree. */
-    const val RAIL_DP = 108
+    const val RAIL_DP = 128
+
+    /** Reserved before SUBSCRIBE, then used unchanged by layout and touch. */
+    @Volatile var topPx: Int = 0
+        private set
+
+    fun topBarPixels(height: Int, enabled: Boolean): Int =
+        if (enabled) ((height * GmTopBarView.HEIGHT_FRACTION + 1f).toInt() and 1.inv()) else 0
 
     /** Advertised picture, after [DisplayPrefs.uiScale]. This is the decoder and the YAML size. */
     @Volatile var width: Int = PANEL_W
@@ -143,39 +191,191 @@ object VideoFrame {
     @Volatile var panelPx: Int = PANEL_W
         private set
     /** Laid-out activity width. The other app reads this after the window is up. */
-    @Volatile private var laidOutWidth: Int = 0
-    @Volatile private var laidOutHeight: Int = 0
+    data class Measurement(
+        val mode: ScreenMode,
+        val width: Int,
+        val height: Int,
+        val x: Int,
+        val y: Int,
+        val stableStatusTop: Int,
+        val cutoutTop: Int,
+        val visibleBottom: Int,
+    )
+
+    private const val GEOMETRY_PREFS = "display_geometry"
+    @Volatile private var launcherMeasurement: Measurement? = null
+    @Volatile private var testingMeasurement: Measurement? = null
+    @Volatile var captureSource: String = "default"
+        private set
+    @Volatile var captureX: Int = 0
+        private set
+    @Volatile var captureY: Int = 0
+        private set
+    @Volatile var bottomPx: Int = 0
+        private set
+    @Volatile var captureTopSource: String = "fraction"
+        private set
+    @Volatile private var statusRegionHeight: Int = 0
+
+    private fun geometryKey(mode: ScreenMode, part: String) = "${mode.value}_$part"
+
+    private fun persistMeasurement(ctx: Context, m: Measurement) {
+        if (m.width < 640 || m.height < 480) return
+        ctx.applicationContext.getSharedPreferences(GEOMETRY_PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(geometryKey(m.mode, "width"), m.width)
+            .putInt(geometryKey(m.mode, "height"), m.height)
+            .putInt(geometryKey(m.mode, "x"), m.x)
+            .putInt(geometryKey(m.mode, "y"), m.y)
+            .putInt(geometryKey(m.mode, "status"), m.stableStatusTop)
+            .putInt(geometryKey(m.mode, "cutout"), m.cutoutTop)
+            .putInt(geometryKey(m.mode, "bottom"), m.visibleBottom)
+            .apply()
+    }
+
+    private fun persistedMeasurement(ctx: Context, mode: ScreenMode): Measurement? {
+        val p = ctx.applicationContext.getSharedPreferences(GEOMETRY_PREFS, Context.MODE_PRIVATE)
+        val w = p.getInt(geometryKey(mode, "width"), 0)
+        val h = p.getInt(geometryKey(mode, "height"), 0)
+        if (w < 640 || h < 480) return null
+        return Measurement(mode, w, h, p.getInt(geometryKey(mode, "x"), 0),
+            p.getInt(geometryKey(mode, "y"), 0), p.getInt(geometryKey(mode, "status"), 0),
+            p.getInt(geometryKey(mode, "cutout"), 0), p.getInt(geometryKey(mode, "bottom"), 0))
+    }
+
+    private fun measurement(mode: ScreenMode, width: Int, height: Int, x: Int, y: Int,
+                            insets: android.view.WindowInsets?): Measurement {
+        val stable = if (insets != null && android.os.Build.VERSION.SDK_INT >= 30)
+            insets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.statusBars()).top else 0
+        val cutout = if (android.os.Build.VERSION.SDK_INT >= 28) insets?.displayCutout?.safeInsetTop ?: 0 else 0
+        val bottom = if (insets != null && android.os.Build.VERSION.SDK_INT >= 30 &&
+            insets.isVisible(android.view.WindowInsets.Type.navigationBars()))
+            insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom else 0
+        return Measurement(mode, width, height, x, y, stable, cutout, bottom)
+    }
+
+    /** Called by the launcher only after this mode's insets have been dispatched. */
+    fun noteLauncherWindow(ctx: Context, mode: ScreenMode, width: Int, height: Int,
+                           x: Int, y: Int, insets: android.view.WindowInsets?) {
+        if (testingGeometry || width < 640 || height < 480) return
+        val m = measurement(mode, width, height, x, y, insets)
+        launcherMeasurement = m
+        persistMeasurement(ctx, m)
+        statusRegionHeight = maxOf(m.stableStatusTop, m.cutoutTop)
+    }
+
+    /** CarPlay measurements update next-session geometry, but never the already latched frame. */
+    fun noteCarPlayWindow(ctx: Context, mode: ScreenMode, width: Int, height: Int,
+                          x: Int, y: Int, insets: android.view.WindowInsets?) {
+        if (testingGeometry || width < 640 || height < 480) return
+        val m = measurement(mode, width, height, x, y, insets)
+        persistMeasurement(ctx, m)
+    }
+
+    /** Retained for deterministic, hardware-free geometry checks. */
+    fun noteWindow(width: Int, height: Int = 0, statusRegion: Int = 0) {
+        if (!testingGeometry || width < 640 || height < 480) return
+        testingMeasurement = Measurement(ScreenMode.FULLSCREEN, width, height, 0, 0,
+            statusRegion, 0, 0)
+        statusRegionHeight = statusRegion.coerceAtLeast(0)
+    }
+
+    fun visibleBottom(insets: android.view.WindowInsets?): Int =
+        if (insets != null && android.os.Build.VERSION.SDK_INT >= 30 &&
+            insets.isVisible(android.view.WindowInsets.Type.navigationBars()))
+            insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom else 0
+
+    private fun measurementForCapture(ctx: Context, mode: ScreenMode): Measurement? {
+        if (testingGeometry) return testingMeasurement?.takeIf { it.mode == mode }
+        launcherMeasurement?.takeIf { it.mode == mode && it.width >= 640 && it.height >= 480 }
+            ?.let { return it }
+        return persistedMeasurement(ctx, mode)
+    }
+
+    fun logCaptureSource(mode: ScreenMode): String = "$captureSource mode=${mode.name}"
+
+    fun topBarSource(m: Measurement): String {
+        val values = listOf(m.stableStatusTop to "stableStatus", m.cutoutTop to "cutout",
+            m.y.coerceAtLeast(0) to "origin")
+        val best = values.maxByOrNull { it.first }
+        return if (best == null || best.first <= 0) "fraction" else best.second
+    }
+
+    private fun reserveTop(m: Measurement, height: Int, enabled: Boolean): Int {
+        if (!enabled) { captureTopSource = "fraction"; return 0 }
+        val measured = maxOf(m.stableStatusTop, m.cutoutTop, m.y.coerceAtLeast(0))
+        captureTopSource = when {
+            measured <= 0 -> "fraction"
+            measured == m.stableStatusTop -> "stableStatus"
+            measured == m.cutoutTop -> "cutout"
+            else -> "origin"
+        }
+        return if (measured > 0) (measured + 1) and 1.inv() else topBarPixels(height, true)
+    }
+
+    /** The capture-selected root bounds; always from a laid-out window, never maximum metrics. */
+    private fun selectMeasurement(ctx: Context, mode: ScreenMode): Measurement {
+        val live = measurementForCapture(ctx, mode)
+        captureSource = when {
+            testingGeometry && live != null -> "live"
+            !testingGeometry && launcherMeasurement?.mode == mode && live != null -> "live"
+            live != null -> "persisted"
+            else -> "default"
+        }
+        val selected = live ?: Measurement(mode, PANEL_W, PANEL_H, 0, 0, 0, 0, 0)
+        captureX = selected.x
+        captureY = selected.y
+        return selected
+    }
+
+    @Volatile var testingGeometry: Boolean = false
 
     /**
-     * Latch the size the next adapter subscribe will advertise.
+     * Latch size for the next adapter subscribe; never called during a live session.
      *
      * [advertise] is false on the Silverado path: that session's `/info` is a static 2400×960
      * document, so shrinking the surface here would scale the picture. The Equinox adapter path
      * is the one that sends [width] in the vehicle config.
-     */
-    /**
-     * Latch the size the next adapter subscribe will advertise. The advertised height is
-     * always the panel height — the custom top bar (if enabled) is a layout-time overlay
-     * in space the hidden status bar freed, and never shrinks what the phone lays out.
+     *
+     * The latched rectangle is the actual laid-out panel minus the custom bar and rail. Hiding
+     * GM's bars does not guarantee extra height (the vehicle measured 967 px, not 960 plus a
+     * status bar), so the phone must lay out in the remaining rectangle.
      */
     fun capture(ctx: Context, advertise: Boolean) {
         val percent = if (advertise) DisplayPrefs.uiScale(ctx) else 100
         val inset = if (advertise) DisplayPrefs.safeRightPx(ctx) else 0
-        if (!advertise || !DisplayPrefs.sidebar(ctx)) {
+        val mode = DisplayPrefs.mode(ctx)
+        if (!advertise) {
+            captureSource = "default"
+            captureX = 0; captureY = 0; bottomPx = 0; topPx = 0
             latch(PANEL_W, PANEL_H, 0, PANEL_W, percent, inset)
             return
         }
-        // The other Carlink app sizes from the activity window after layout, not from the
-        // maximum WindowMetrics. On this Equinox those disagree: the window lays out at 2479
-        // and currentWindowMetrics reports 2914, which encoded a picture past the right edge.
-        val panel = measuredPanelWidth(ctx)
-        val rail = railPixels(ctx)
-        val w = (panel - rail).coerceAtLeast(2) and 1.inv()
-        if (w < 640) {
+        val m = selectMeasurement(ctx, mode)
+        val panelW = if (captureSource == "default") PANEL_W else m.width
+        val panelH = if (captureSource == "default") PANEL_H else m.height
+        val enabled = DisplayPrefs.customTopBar(ctx) &&
+            (mode == ScreenMode.FULLSCREEN || mode == ScreenMode.STATUS_HIDDEN)
+        val top = reserveTop(m, panelH, enabled)
+        val bottom = m.visibleBottom.coerceIn(0, (panelH - top).coerceAtLeast(0))
+        var videoH = (panelH - top - bottom) and 1.inv()
+        var actualTop = top
+        var actualBottom = bottom
+        if (videoH < 480) {
+            actualTop = 0; actualBottom = 0
+            videoH = if (panelH >= 480) panelH and 1.inv() else PANEL_H
+        }
+        topPx = actualTop
+        bottomPx = actualBottom
+        statusRegionHeight = maxOf(m.stableStatusTop, m.cutoutTop)
+        val rail = if (DisplayPrefs.sidebar(ctx)) railPixels(ctx) else 0
+        val videoW = ((panelW - rail).coerceAtLeast(2)) and 1.inv()
+        if (videoW < 640 || videoH < 480) {
+            captureSource = "default"
+            captureX = 0; captureY = 0; bottomPx = 0; topPx = 0
             latch(PANEL_W, PANEL_H, 0, PANEL_W, percent, inset)
             return
         }
-        latch(w, PANEL_H, panel - w, panel, percent, inset)
+        latch(videoW, videoH, if (rail > 0) panelW - videoW else 0, panelW, percent, inset)
     }
 
     /**
@@ -195,26 +395,8 @@ object VideoFrame {
         safeRightPx = scaled.coerceIn(0, (width - 2).coerceAtLeast(0)) and 1.inv()
     }
 
-    /** Record the activity's laid-out width. [MainActivity] calls this once the decor has a size. */
-    fun noteWindow(width: Int, height: Int = 0) {
-        if (width >= 640) laidOutWidth = width
-        if (height >= 480) laidOutHeight = height
-    }
-
-    /**
-     * Pixel width of the window the picture has to fill.
-     *
-     * Prefer the laid-out activity, which is what the other app uses (`currentWindowMetrics`
-     * read from the activity after display mode is applied). The application WindowManager's
-     * current metrics on this head unit are the maximum bounds, 2914, and a picture that wide
-     * runs off the right of the 2479 window.
-     */
-    fun measuredPanelWidth(ctx: Context): Int {
-        val laid = laidOutWidth
-        if (laid >= 640) return laid
-        val px = ctx.resources.displayMetrics.widthPixels
-        return if (px in 640..2560) px else PANEL_W
-    }
+    /** Pixel width from the same current-mode measurement used for the panel height. */
+    fun measuredPanelWidth(ctx: Context): Int = selectMeasurement(ctx, DisplayPrefs.mode(ctx)).width
 
     /**
      * Pixel width of the 108 dp rail, the same conversion the other Carlink app uses

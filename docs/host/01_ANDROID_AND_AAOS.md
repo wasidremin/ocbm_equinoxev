@@ -4,6 +4,134 @@
 
 The Android projection app and the AAOS integration points.
 
+## GM app top bar — vehicle failure diagnosed, revised emulator verification (2026-10-03)
+
+The 2026-10-03 upload (sessions `20261003-124244` and `20261003-124326`)
+confirms the adapter settle fix: rejected length 40113 recovered to 945 within the
+same request. First video was 14.468 s (3.242 s USB permission), then 10.440 s;
+the longer seam rendered 4,673 frames with zero dropped AUs. These logs do not
+prove binary MD5 provenance or every adapter feature, but show the new settle
+code executing and successful projection.
+
+The top-bar failure was geometric: live decor was **2629×967**, while metrics
+reported 2914×1134. Subtracting a hardcoded 960 produced a **7 px bar**; its icons
+and text scaled down with it. Do not use that layout-time "freed space" scheme.
+The revised adapter path reserves an even ~8.3% strip BEFORE SUBSCRIBE using the
+laid-out window. At 2629×967 it reserves 80 px and uses an 886 px video height;
+layout, advertisement and touch share the negotiated snapshot. Wired static
+advertisement is unchanged. Geometry diagnostics log changes rather than every
+layout. Preview is hardware-free and sends no input commands.
+
+The sidebar now has five controls: Home, Settings, Siri, Play/Pause, and one
+Answer/End button. Rail width is 128 dp, circles up to 96 dp (adapted to available
+height). Reset, Previous, Next and the separate Back/phone-home buttons are gone.
+The phone button consumes existing per-call metadata: ringing takes Answer
+priority, active/held/outgoing calls select End, no call disables it; session
+teardown clears state. Adapter config explicitly advertises telephony HID.
+Actual answer/hang-up behavior still requires the owner's phone and dongle.
+
+Verification: API-32 APK compilation; Tier-0 receiver/pairing/protocol checks;
+154 hardware-free app checks passed. All ten scale/sidebar combinations passed
+actual preview bounds at the **2629×967 vehicle-sized emulator window**. This
+proves layout, not GM compositor behavior or live phone commands.
+Published by owner request to `automotive:internal`, COMPLETED, versionCode
+**91**, versionName **4.0+topbar-sidebar-fix**. Upload and Play edit commit succeeded.
+
+### Follow-up: reclaim the former GM status-bar region (source-only, 2026-10-03)
+
+Version 91 made the custom bar visible, but the owner reports it occupies video
+space rather than the old GM bar's empty region. Latest upload at 13:34 UTC,
+session `20261003-133233`, confirms version `4.0+topbar-sidebar-fix`: decor stays
+2629×967 versus 2914×1134 metrics, with an 80 px strip and 2468×886 video.
+Those numbers alone do not establish the window's screen origin or the cause.
+
+The sister app's `applyDisplayMode` sets `layoutInDisplayCutoutMode=ALWAYS` for
+hidden-bar modes BEFORE measuring. GM CCPA had left that at DEFAULT and only
+hidden the bars/set decor-fits false. The revised shared `DisplayPrefs.applyWindow`
+applies the cutout policy to BOTH launcher (pre-SUBSCRIBE measurement) and picture
+activity; it retains the existing edge-to-edge layout flags. Hidden status-bar
+height now comes from stable status/cutout top insets, with the fraction only a
+fallback when the platform provides neither. No metrics-derived expansion,
+negative offsets, privileged overlay or runtime renegotiation is used.
+
+New diagnostics include root screen origin, cutout policy/description and stable
+status insets. **Cutout avoidance is a candidate vehicle cause, not established
+by the uploaded logs.** On the AAOS emulator with a synthetic top/right cutout,
+DEFAULT produces a 949×678 window at (0,90); ALWAYS exposes 1024×768 at (0,0),
+with the custom strip using the measured 90 px top region.
+
+Re-verified 2026-10-03 with a synthetic **top+left** cutout (safe insets 90/90):
+FULLSCREEN and STATUS_HIDDEN both latch `strip=(90,cutout)`, put the bar at y=0,
+and lay the video at `[0,90,1024,672]` (bar 90, video 582, bottom inset 96 above
+the nav bar); all four screen-mode previews report `preview layout PASS`.
+Four surface-corner taps normalize to `(0.003,0.009)`, `(0.996,0.009)`,
+`(0.003,0.993)`, `(0.996,0.993)` within the video rectangle and send no command;
+bar taps emit button callbacks only. A live display resize logs one
+`topbar geometry mismatch root=1180x900 latched=1024x768` and centers the block;
+a transient status bar logs `GM status bar reappeared — hiding custom bar without
+moving video` and leaves the latched rectangle unchanged, then restores the bar.
+Overlay disabled and resolution restored to 1024×768 (density 160) afterwards.
+All four screen-mode preview checks pass; 155 hardware-free self-tests pass after
+preventing live launcher measurements from racing the synthetic geometry tests.
+API-32 APK build, diff whitespace check and documentation budget pass.
+
+Published by owner request on 2026-10-03 to `automotive:internal`, COMPLETED,
+versionCode **92**, versionName **4.0+topbar-space**; upload and Play edit commit
+succeeded (the AAB was re-checked in place: its dex carries the new
+`topbar geometry mismatch` / `display_geometry` symbols). Actual GM-region
+recovery on the vehicle remains unverified — the emulator proves layout, not GM
+compositor behavior.
+
+### Earlier top-bar release (2026-10-02)
+
+`wasidremin.gmccpa` has an opt-in Display → Top bar setting (default off,
+next connection). The supplied `GmTopBarView.kt` drawing class is unchanged.
+Only the adapter's app-pushed YAML path reserves the strip: measured panel height
+× `HEIGHT_FRACTION` rounded even, then the remaining video height is UI-scaled.
+At 2400×960 this is an 80 px strip, an 880 px video view, and 704 advertised pixels
+at 125%. Wired static advertisement reserves nothing. Touch uses the video view's
+own origin, not the top strip. Active negotiated geometry stays fixed until reconnect.
+
+Before SUBSCRIBE, the actual bound activity must report zero status-bar insets
+following full-screen application. Unknown/visible/timed-out insets reserve nothing.
+The CarPlay window checks again before showing custom chrome; if a reserved strip
+cannot safely be shown there, it returns to settings rather than draw duplicate bars
+or silently alter negotiated geometry. A failed guard is not a perpetual
+“next connection” setting change.
+
+Clock uses the system 12/24-hour format. Profile initial comes from the saved phone
+name (blank if absent). Outside temperature is read through CarPropertyManager with
+vehicle display units; the read-only, `normal` `READ_CAR_DISPLAY_UNITS` permission is
+declared, not climate-control permission. Denied/unavailable/invalid values hide the
+field. Cellular signal remains omitted without requesting phone-state permission.
+All seven button callbacks are wired: Home uses the existing navigation command;
+Maps/Phone/Music requests log pending box support and do not invent opcodes.
+
+Verification: API-32 compile, signed x86_64 APK, and **99/99 hardware-free app
+self-tests passed** initially on the AAOS 14 emulator, user 10; the expanded
+scale/sidebar/safe-area and screen-mode matrix now passes **153/153**. Real emulator window 1024×768
+reported zero status-bar insets; preview reserved 64 px, view 1024×704, advertisement
+820×564 at 125%. All seven taps emitted the expected callbacks; outside temperature
+read **77°** using the emulator's vehicle units after the permission fix. Off preview
+reserved zero. At an emulator display override of **2400×960**, all ten UI-scale /
+sidebar combinations passed actual view-bound assertions: video `[0,80,2400,960]`
+without rail and `[108,80,2400,960]` with the 160-dpi rail. Full-panel 125% advertises
+1920×704; the rail version advertises 1834×704. Top-edge and bottom-right taps normalized
+to approximately `(0.333,0.001)` and `(0.999,0.998)`; bar taps only emitted button
+callbacks. Repeated Back/relaunch and Home/new-preview passed; that latter path exposed
+old-task geometry reuse, fixed by closing only the previous preview before relaunch.
+No CarPlaySessionService was present in preview. The small size-change trial did not
+prove Activity recreation, and no leak audit is claimed. Emulator resolution restored
+to 1024×768, top bar/sidebar off, scale 125%, safe-right 48 px after testing.
+Preview creates no session, audio, renderer, or USB claim, and refuses a live session. No real phone projection, GM-window hideability, or visual photo
+comparison is claimed. **Published by owner request on 2026-10-02** to
+`automotive:internal`, COMPLETED, versionCode **86**, versionName
+`4.0+7532873-topbar-test`; upload and Play edit commit both succeeded.
+
+APK: `host/gm_ccpa/apk/gmccpa-debug-7532873-dirty.apk` (versionCode 85).
+Hardware-free preview: `adb -s emulator-5554 shell am start --user 10 -n
+wasidremin.gmccpa/.MainActivity --es run topbar_preview --ez enabled true`.
+
 ## The Android app is a THIRD-PARTY app, by decision (verified 2026-09-18)
 
 `host/CarlinkAndroid` is two Gradle modules, and today's session settled which one is the AAOS

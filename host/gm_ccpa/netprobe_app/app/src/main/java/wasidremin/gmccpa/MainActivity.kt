@@ -54,6 +54,33 @@ class MainActivity : Activity() {
         set(v) { SessionHolder.cpRx = v }
     /** Set once the phone has a live session, so [onResume] can restore the CarPlay screen. */
     @Volatile private var sessionUp = false
+    private var lastLauncherGeometry: String? = null
+
+    private fun noteLauncherGeometry() {
+        if (!::ui.isInitialized || !ui.root.isLaidOut) return
+        val root = ui.root
+        val mode = DisplayPrefs.mode(this)
+        val insets = root.rootWindowInsets
+        val location = IntArray(2).also { root.getLocationOnScreen(it) }
+        VideoFrame.noteLauncherWindow(this, mode, root.width, root.height,
+            location[0], location[1], insets)
+        val max = if (android.os.Build.VERSION.SDK_INT >= 30)
+            windowManager.maximumWindowMetrics.bounds.let { "${it.width()}x${it.height()}" } else "n/a"
+        val cutout = if (android.os.Build.VERSION.SDK_INT >= 28) insets?.displayCutout else null
+        val stable = if (android.os.Build.VERSION.SDK_INT >= 30 && insets != null)
+            insets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.statusBars()).top else 0
+        val nav = VideoFrame.visibleBottom(insets)
+        val sig = "mode=${mode.name} root=${root.width}x${root.height}@${location[0]},${location[1]} max=$max " +
+            "cutoutPolicy=${window.attributes.layoutInDisplayCutoutMode} cutout=${cutout?.boundingRects}/" +
+            "${cutout?.safeInsetLeft},${cutout?.safeInsetTop},${cutout?.safeInsetRight},${cutout?.safeInsetBottom} " +
+            "stableStatus=$stable visibleNav=$nav strip=${VideoFrame.topPx} bottom=${VideoFrame.bottomPx} " +
+            "advertised=${VideoFrame.width}x${VideoFrame.height} video=${VideoFrame.viewWidth}x${VideoFrame.viewHeight} " +
+            "rail=${VideoFrame.railPx} captureSource=${VideoFrame.captureSource}"
+        if (sig != lastLauncherGeometry) {
+            lastLauncherGeometry = sig
+            ProbeLog.sub("display").i(sig)
+        }
+    }
 
     /**
      * Period of the `## STATUS` anchor while the receiver is up. Slower than SessionTrace's 30 s
@@ -666,7 +693,11 @@ class MainActivity : Activity() {
                 ui.setReturnToCarPlay(false)
                 if (sessionUp) launchCarPlayUi()
             }
-            onScreenChanged = { wasidremin.gmccpa.av.CarPlayActivity.refreshChrome() }
+            onScreenChanged = {
+                DisplayPrefs.applyWindow(this@MainActivity)
+                ui.root.post { noteLauncherGeometry() }
+                wasidremin.gmccpa.av.CarPlayActivity.refreshChrome()
+            }
             onSidebarChanged = { onSidebarToggled() }
             onClose = {
                 SessionHolder.stopRequested = true
@@ -706,11 +737,33 @@ class MainActivity : Activity() {
             }
         }
         if (ui.sessionIsLive()) ui.concealIntro()
+        DisplayPrefs.applyWindow(this)
         setContentView(ui.root)
-        ui.root.viewTreeObserver.addOnGlobalLayoutListener {
-            val w = ui.root.width
-            if (w >= 640) wasidremin.gmccpa.VideoFrame.noteWindow(w, ui.root.height)
+        val baseLeft = ui.root.paddingLeft
+        val baseTop = ui.root.paddingTop
+        val baseRight = ui.root.paddingRight
+        val baseBottom = ui.root.paddingBottom
+        ui.root.setOnApplyWindowInsetsListener { v, insets ->
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val types = android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.navigationBars()
+                val visible = insets.getInsets(types)
+                val showStatus = insets.isVisible(android.view.WindowInsets.Type.statusBars())
+                val showNav = insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                v.setPadding(baseLeft + if (showStatus) visible.left else 0,
+                    baseTop + if (showStatus) visible.top else 0,
+                    baseRight + if (showStatus) visible.right else 0,
+                    baseBottom + if (showNav) visible.bottom else 0)
+            } else {
+                @Suppress("DEPRECATION")
+                v.setPadding(baseLeft + insets.systemWindowInsetLeft,
+                    baseTop + insets.systemWindowInsetTop, baseRight + insets.systemWindowInsetRight,
+                    baseBottom + insets.systemWindowInsetBottom)
+            }
+            noteLauncherGeometry()
+            insets
         }
+        ui.root.viewTreeObserver.addOnGlobalLayoutListener { noteLauncherGeometry() }
+        ui.root.requestApplyInsets()
         // BEFORE anything decides whether to start a session: the receiver and the OCBM probe are
         // process-scoped and may already be running from a previous Activity generation (see
         // SessionHolder). Re-attach them to THIS generation, or their callbacks keep driving a dead
@@ -1261,7 +1314,8 @@ class MainActivity : Activity() {
                 } else {
                     wasidremin.gmccpa.av.CarPlayActivity.closePreview()
                     DisplayPrefs.setCustomTopBar(this, i.getBooleanExtra("enabled", true))
-                    DisplayPrefs.setMode(this, ScreenMode.FULLSCREEN)
+                    DisplayPrefs.setMode(this, ScreenMode.from(i.getIntExtra("mode", ScreenMode.FULLSCREEN.value)))
+                    DisplayPrefs.applyWindow(this)
                     if (i.hasExtra("sidebar")) DisplayPrefs.setSidebar(this, i.getBooleanExtra("sidebar", false))
                     if (i.hasExtra("scale")) DisplayPrefs.setUiScale(this, i.getIntExtra("scale", 125))
                     if (i.hasExtra("safe_right")) DisplayPrefs.setSafeRightPx(this, i.getIntExtra("safe_right", 48))
@@ -1566,6 +1620,11 @@ class MainActivity : Activity() {
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         vehicle.onConfigurationChanged(newConfig)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) DisplayPrefs.applyWindow(this)
     }
 
     override fun onDestroy() {

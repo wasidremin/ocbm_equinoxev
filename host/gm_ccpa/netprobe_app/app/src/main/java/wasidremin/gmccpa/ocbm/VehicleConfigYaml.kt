@@ -50,6 +50,7 @@ data class VehicleConfigSpec(
     /** Steering-wheel media keys reach CarPlay through this HID, not a steering-wheel device. */
     val mediaButtonsSupport: Boolean = true,
     val dPadSupport: Boolean = false,
+    val telephonyButtonsSupport: Boolean = false,
     /**
      * `touchScreenSupportsMultiTouch` — advertise Apple's TWO-finger touchscreen descriptor
      * (`HIDTouchScreenMultiCreateDescriptor`) instead of the single-finger one.
@@ -177,7 +178,7 @@ object VehicleConfigYaml {
         line("      knobSupportsHomeAndBackButton: false")
         line("      knobSupportsNudge: false")
         line("      mediaButtonsSupport: ${s.mediaButtonsSupport}")
-        line("      telephonyButtonsSupport: false")
+        line("      telephonyButtonsSupport: ${s.telephonyButtonsSupport}")
         line("      touchpadSupport: false")
         line("      touchpadButtonsSupport: false")
         line("      touchScreenMode: High Fidelty")
@@ -418,6 +419,7 @@ object VehicleConfigYaml {
         width: Int = 2400,
         height: Int = 960,
         safeRight: Int = 0,
+        telephony: Boolean = false,
     ): ByteArray {
         require(passphrase.length >= 8 && passphrase.all { it.isLetterOrDigit() }) {
             "adapter passphrase must be at least 8 letters or digits"
@@ -441,13 +443,14 @@ object VehicleConfigYaml {
         // at this indent, and serde then rejects the whole subscribe — including wifi_ap — so the
         // phone is never handed the adapter network.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
-        val doc = if (width == 2400 && height == 960 && inset == 0) pinned
+        val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony) pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
                 height = height,
                 safeWidth = width - inset,
                 safeHeight = height,
+                telephonyButtonsSupport = telephony,
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

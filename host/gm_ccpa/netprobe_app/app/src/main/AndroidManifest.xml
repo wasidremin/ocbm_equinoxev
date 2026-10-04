@@ -75,6 +75,8 @@
          2026-09-08. GM does not propagate vehicle night state into Android's uiMode here, so the
          Compose `isSystemInDarkTheme()` signal carlink_native uses reads day with night active. -->
     <uses-permission android:name="android.car.permission.CAR_EXTERIOR_ENVIRONMENT"/>
+    <!-- Read-only, normal Car permission: outside-temperature display units; no climate control. -->
+    <uses-permission android:name="android.car.permission.READ_CAR_DISPLAY_UNITS"/>
     <uses-permission android:name="android.permission.READ_LOGS"/>
 
     <!-- Lets capture start at boot rather than waiting for the first USB attach. Coverage does NOT

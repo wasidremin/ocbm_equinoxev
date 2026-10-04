@@ -59,28 +59,98 @@ class CarPlayActivity : Activity() {
     private val log = ProbeLog.sub("cpui")
     private var previewOnly = false
     private var previewCaptured = false
+    private var previewReady = false
     /** Layout-time strip: freed space above the 960-tall CarPlay picture. 0 = no custom bar. */
     private var topStripPx: Int = 0
     private var lastDisplayLogKey: String? = null
     private var lastTopBarLog: String? = null
+    private var lastGeometryLog: String? = null
+    private var lastMismatchLog: String? = null
+    private var centerBlockX: Int = 0
+    private var centerBlockY: Int = 0
     private var topBar: wasidremin.gmccpa.GmTopBarView? = null
     private var topBarData: wasidremin.gmccpa.TopBarVehicleData? = null
-    private enum class CarPlayApp { MAPS, PHONE, MUSIC, HOME }
+    private enum class CarPlayApp { NAV, MUSIC, PHONE, APPS, CAR, CONTROLS, ENERGY }
+    private var gmCandidatesLogged = false
 
     private fun requestCarPlayApp(kind: CarPlayApp) {
         if (previewOnly) { log.i("topbar: preview request ${kind.name.lowercase()} — no command sent"); return }
-        if (kind == CarPlayApp.HOME) sendNav(wasidremin.gmccpa.ocbm.Ocbm.NAV_HOME)
-        else log.i("topbar: ${kind.name.lowercase()} requested — box support pending")
+        when (kind) {
+            CarPlayApp.APPS -> launchAppsGrid()
+            CarPlayApp.CAR, CarPlayApp.CONTROLS, CarPlayApp.ENERGY -> launchVehicleDestination(kind)
+            CarPlayApp.NAV, CarPlayApp.MUSIC, CarPlayApp.PHONE ->
+                log.i("topbar: ${kind.name.lowercase()} requested — box support pending")
+        }
+    }
+
+    private fun startResolved(intent: Intent, label: String): Boolean = runCatching {
+        if (intent.resolveActivity(packageManager) == null) return false
+        startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        log.i("topbar: launched $label ${intent.component ?: intent.action}")
+        true
+    }.getOrElse { log.w("topbar: launch $label failed: ${it.message}"); false }
+
+    private fun launchAppsGrid() {
+        // ACTION_ALL_APPS is newer than this app's API-32 compile target: refer to its action string.
+        val allApps = runCatching { Intent("android.intent.action.ALL_APPS") }.getOrNull()
+        if (allApps != null && startResolved(allApps, "ACTION_ALL_APPS")) return
+        val pm = packageManager
+        val candidates = listOf(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                .setPackage("com.android.car.carlauncher").putExtra("show_all_apps", true),
+            Intent(Intent.ACTION_MAIN).setClassName("com.android.car.carlauncher",
+                "com.android.car.carlauncher.AppGridActivity"),
+        )
+        for (candidate in candidates) {
+            val resolved = runCatching { pm.resolveActivity(candidate, 0) }.getOrNull()
+            if (resolved?.activityInfo != null) {
+                if (startResolved(candidate.setClassName(resolved.activityInfo.packageName,
+                        resolved.activityInfo.name), "AAOS app grid")) return
+            }
+        }
+        startResolved(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "CATEGORY_HOME")
+    }
+
+    private fun launchVehicleDestination(kind: CarPlayApp) {
+        val pm = packageManager
+        val probes = listOf(Intent(Intent.ACTION_MAIN), Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_DEFAULT))
+        val hits = LinkedHashMap<String, android.content.pm.ResolveInfo>()
+        for (probe in probes) {
+            for (ri in runCatching { pm.queryIntentActivities(probe, 0) }.getOrDefault(emptyList())) {
+                val pkg = ri.activityInfo?.packageName ?: continue
+                if (pkg.startsWith("com.gm.") || pkg.startsWith("com.android.car."))
+                    hits["$pkg/${ri.activityInfo.name}"] = ri
+            }
+        }
+        if (!gmCandidatesLogged) {
+            gmCandidatesLogged = true
+            hits.forEach { (name, ri) -> log.i("topbar: vehicle candidate $name label=${ri.loadLabel(pm)}") }
+            if (hits.isEmpty()) log.i("topbar: no com.gm./com.android.car. activity candidates")
+        }
+        val terms = when (kind) {
+            CarPlayApp.CAR -> listOf("vehicle", "carsettings", "car_settings")
+            CarPlayApp.CONTROLS -> listOf("controls", "climate", "hvac")
+            else -> listOf("energy", "charging", "charge")
+        }
+        val match = hits.values.firstOrNull { ri ->
+            val info = ri.activityInfo
+            val searchable = "${info.packageName} ${info.name} ${ri.loadLabel(pm)}".lowercase()
+            terms.any { searchable.contains(it) }
+        }
+        if (match != null) {
+            val target = Intent(Intent.ACTION_MAIN).setClassName(match.activityInfo.packageName, match.activityInfo.name)
+            if (startResolved(target, "${kind.name.lowercase()} screen")) return
+        }
+        startResolved(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "CATEGORY_HOME (${kind.name.lowercase()} fallback)")
     }
 
     /**
      * Step 1: measure the window after the bars are applied and log the geometry once per
      * (window, screen mode). Step 2: place the custom top bar in the freed space.
      *
-     * The strip is windowHeight - 960 - bottomInset: the window grows when the status bar
-     * hides, and the climate bar (if shown) still occupies the bottom. The advertised
-     * CarPlay size never changes — the phone keeps laying out 2494x960 (or the scaled/
-     * sidebar variant); only this activity's layout shifts down by the strip.
+     * The strip was reserved before SUBSCRIBE. Hiding the status bar does not guarantee
+     * additional window pixels: the Equinox's laid-out height was only 967, so subtracting
+     * a hardcoded 960 produced a nearly invisible 7-pixel bar. Never renegotiate here.
      */
     private fun measureAndLayout() {
         if (isDestroyed) return
@@ -102,16 +172,51 @@ class CarPlayActivity : Activity() {
             log.i("display: window=${decor.width}x${decor.height} current=$current max=$max " +
                 "statusBars=$status navBars=$nav statusVisible=$statusVisible navVisible=$navVisible")
         }
-        val winH = decor.height
-        val wantBar = DisplayPrefs.customTopBar(this)
+        val location = IntArray(2).also { root.getLocationOnScreen(it) }
+        if (insets != null && root.width >= 640 && root.height >= 480) {
+            VideoFrame.noteCarPlayWindow(this, mode, root.width, root.height,
+                location[0], location[1], insets)
+        }
+        val wantBar = DisplayPrefs.customTopBar(this) &&
+            (mode == ScreenMode.FULLSCREEN || mode == ScreenMode.STATUS_HIDDEN)
         val navBottom = if (navVisible) (nav?.bottom ?: 0) else 0
-        val strip = if (wantBar && !statusVisible && winH > 960)
-            (winH - 960 - navBottom).coerceAtLeast(0) else 0
+        val strip = if (wantBar) VideoFrame.topPx else 0
+        val cutout = insets?.displayCutout
+        val stableStatus = if (insets != null && Build.VERSION.SDK_INT >= 30)
+            insets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top else 0
+        val visibleNav = if (navVisible) (nav?.bottom ?: 0) else 0
+        val latchedW = VideoFrame.railPx + VideoFrame.viewWidth
+        val latchedH = VideoFrame.topPx + VideoFrame.viewHeight + VideoFrame.bottomPx
+        val mismatch = root.width != latchedW || root.height != latchedH
+        val mismatchKey = "${System.identityHashCode(window)}:${root.width}x${root.height}:$latchedW x$latchedH"
+        if (mismatch) {
+            centerBlockX = ((root.width - latchedW) / 2).coerceAtLeast(0)
+            centerBlockY = ((root.height - latchedH) / 2).coerceAtLeast(0)
+            if (lastMismatchLog != mismatchKey) {
+                lastMismatchLog = mismatchKey
+                log.w("topbar geometry mismatch root=${root.width}x${root.height} latched=${latchedW}x$latchedH")
+            }
+        } else {
+            centerBlockX = 0
+            centerBlockY = 0
+            lastMismatchLog = null
+        }
+        val maxBounds = if (Build.VERSION.SDK_INT >= 30)
+            wm.maximumWindowMetrics.bounds.let { "${it.width()}x${it.height()}" } else "n/a"
+        val cutoutText = "${cutout?.boundingRects ?: emptyList<android.graphics.Rect>()}/" +
+            "${cutout?.safeInsetLeft ?: 0},${cutout?.safeInsetTop ?: 0}," +
+            "${cutout?.safeInsetRight ?: 0},${cutout?.safeInsetBottom ?: 0}"
+        val geometry = "display: mode=${mode.name} root=${root.width}x${root.height}@${location[0]},${location[1]} " +
+            "max=$maxBounds cutoutPolicy=${window.attributes.layoutInDisplayCutoutMode} cutout=$cutoutText " +
+            "stableStatus=$stableStatus visibleNav=$visibleNav strip=($strip,${VideoFrame.captureTopSource}) " +
+            "bottom=${VideoFrame.bottomPx} advertised=${VideoFrame.width}x${VideoFrame.height} " +
+            "video=${VideoFrame.viewWidth}x${VideoFrame.viewHeight} rail=${VideoFrame.railPx} " +
+            "captureSource=${VideoFrame.captureSource}"
+        if (lastGeometryLog != geometry) { lastGeometryLog = geometry; log.i(geometry) }
         val reason = when {
             !wantBar -> "custom top bar off"
-            statusVisible -> "status bar visible"
-            winH <= 960 -> "no extra height (window $winH)"
-            strip <= 0 -> "no freed space after bottom inset"
+            statusVisible -> "status bar transient"
+            strip <= 0 -> "not reserved at subscription (reconnect to apply)"
             else -> "ok"
         }
         placeTopBar(strip, reason)
@@ -127,10 +232,13 @@ class CarPlayActivity : Activity() {
                 bar.onButton = { button ->
                     log.i("topbar: ${button.name} button requested")
                     requestCarPlayApp(when (button) {
-                        wasidremin.gmccpa.GmTopBarView.Button.NAV -> CarPlayApp.MAPS
+                        wasidremin.gmccpa.GmTopBarView.Button.CAR -> CarPlayApp.CAR
+                        wasidremin.gmccpa.GmTopBarView.Button.APPS -> CarPlayApp.APPS
+                        wasidremin.gmccpa.GmTopBarView.Button.CONTROLS -> CarPlayApp.CONTROLS
+                        wasidremin.gmccpa.GmTopBarView.Button.ENERGY -> CarPlayApp.ENERGY
+                        wasidremin.gmccpa.GmTopBarView.Button.NAV -> CarPlayApp.NAV
                         wasidremin.gmccpa.GmTopBarView.Button.MUSIC -> CarPlayApp.MUSIC
                         wasidremin.gmccpa.GmTopBarView.Button.PHONE -> CarPlayApp.PHONE
-                        else -> CarPlayApp.HOME
                     })
                 }
                 bar.elevation = dp(10).toFloat()
@@ -143,6 +251,8 @@ class CarPlayActivity : Activity() {
                 if (lp.height != strip) { lp.height = strip; bar.layoutParams = lp }
                 bar.visibility = View.VISIBLE
             }
+            bar.visibility = if (window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.statusBars()) == true)
+                View.GONE else View.VISIBLE
         } else {
             topBar?.visibility = View.GONE
         }
@@ -153,7 +263,7 @@ class CarPlayActivity : Activity() {
             lastTopBarLog = logKey
             log.i("topbar: strip=${strip}px placed=$placed reason=$reason")
         }
-        if (previewOnly && !previewCaptured) {
+        if (previewOnly && previewReady && !previewCaptured) {
             previewCaptured = true
             root.post {
                 if (!isDestroyed) {
@@ -387,14 +497,35 @@ class CarPlayActivity : Activity() {
             // gone: hide our bar until the next applySystemUi re-measures. Re-hiding GM's bars
             // stays on onResume / onWindowFocusChanged.
             window.decorView.setOnApplyWindowInsetsListener { v, insets ->
-                if (insets.isVisible(WindowInsets.Type.statusBars()) && topStripPx > 0) {
-                    log.i("topbar: GM status bar reappeared — hiding custom bar")
-                    placeTopBar(0, "status bar reappeared")
+                val transientVisible = insets.isVisible(WindowInsets.Type.statusBars())
+                if (transientVisible && topStripPx > 0 && topBar?.visibility != View.GONE) {
+                    log.i("topbar: GM status bar reappeared — hiding custom bar without moving video")
+                    topBar?.visibility = View.GONE
+                } else if (!transientVisible && topStripPx > 0 && topBar?.visibility != View.VISIBLE) {
+                    log.i("topbar: GM status bar hidden — showing custom bar at stable geometry")
+                    topBar?.visibility = View.VISIBLE
                 }
                 v.onApplyWindowInsets(insets)
             }
         }
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> measureAndLayout() }
         applySystemUi()
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val mode = effectiveMode()
+            val location = IntArray(2).also { root.getLocationOnScreen(it) }
+            VideoFrame.noteCarPlayWindow(this, mode, root.width, root.height,
+                location[0], location[1], insets)
+            v.onApplyWindowInsets(insets)
+        }
+        root.requestApplyInsets()
+        if (previewOnly) root.post {
+            val location = IntArray(2).also { root.getLocationOnScreen(it) }
+            VideoFrame.noteCarPlayWindow(this, effectiveMode(), root.width, root.height,
+                location[0], location[1], root.rootWindowInsets)
+            VideoFrame.capture(this, advertise = true)
+            previewReady = true
+            measureAndLayout()
+        }
         if (!previewOnly) maybeShowIntro()
 
         touchThread = HandlerThread("cp-touch").also { it.start(); touchHandler = Handler(it.looper) }
@@ -456,37 +587,7 @@ class CarPlayActivity : Activity() {
 
     private fun applySystemUi() {
         val mode = effectiveMode()
-        val hideStatus = mode == ScreenMode.FULLSCREEN || mode == ScreenMode.STATUS_HIDDEN
-        val hideNav = mode == ScreenMode.FULLSCREEN || mode == ScreenMode.NAV_HIDDEN
-        // FLAG_FULLSCREEN is what hides GM's top bar on the Silverado; the hide-navigation bit is
-        // what brings the left bar back when cleared. Both stay, and the insets controller below
-        // is what API 34 (the Equinox) actually honours — the legacy flags alone left the car's
-        // bars on screen over a 2400x960 picture.
-        if (hideStatus) window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        else window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        @Suppress("DEPRECATION")
-        var vis =
-            // ALWAYS: keeps the root at (0,0) 2400x960 so the surface and the crop stay in panel space.
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
-            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        if (hideStatus || hideNav) vis = vis or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        if (hideStatus) vis = vis or View.SYSTEM_UI_FLAG_FULLSCREEN
-        if (hideNav) vis = vis or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = vis
-        if (Build.VERSION.SDK_INT >= 30) {
-            // Never let the decor inset the content. A fit-to-bars layout is what displaced the
-            // picture on 2026-09-08. Bar visibility is a separate question from window geometry.
-            window.setDecorFitsSystemWindows(false)
-            window.insetsController?.let { c ->
-                val status = WindowInsets.Type.statusBars()
-                val nav = WindowInsets.Type.navigationBars()
-                if (hideStatus) c.hide(status) else c.show(status)
-                if (hideNav) c.hide(nav) else c.show(nav)
-                c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        }
+        DisplayPrefs.applyWindow(this, mode)
         // Measure after the bars are applied: the insets the strip depends on are only valid
         // once the decor has laid out with the new visibility.
         window.decorView.requestApplyInsets()
@@ -524,10 +625,11 @@ class CarPlayActivity : Activity() {
     private fun chromeParams(rail: Boolean): android.widget.FrameLayout.LayoutParams {
         return if (rail) {
             val railW = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.railPx else dp(VideoFrame.RAIL_DP)
-            android.widget.FrameLayout.LayoutParams(railW, android.widget.FrameLayout.LayoutParams.MATCH_PARENT, Gravity.START).apply {
-                if (topStripPx > 0 && viewAreaIndex == 0) {
-                    topMargin = topStripPx
-                    height = VideoFrame.viewHeight
+            android.widget.FrameLayout.LayoutParams(railW, VideoFrame.viewHeight,
+                Gravity.TOP or Gravity.START).apply {
+                if (viewAreaIndex == 0) {
+                    topMargin = centerBlockY + topStripPx
+                    marginStart = centerBlockX
                 }
             }
         } else {
@@ -571,9 +673,10 @@ class CarPlayActivity : Activity() {
         // Flush against the rail. The on-screen width is the measured window minus the rail, so
         // this rectangle and the rail together are the whole window.
         val gravity = Gravity.TOP or Gravity.START
-        val inset = if (rail) VideoFrame.railPx else 0
-        val topInset = if (top) topStripPx else 0
-        if (lp.width == viewW && lp.height == viewH && lp.gravity == gravity && lp.marginStart == inset && lp.topMargin == topInset) return
+        val inset = if (viewAreaIndex == 0) centerBlockX + if (rail) VideoFrame.railPx else 0 else 0
+        val topInset = if (top) centerBlockY + topStripPx else centerBlockY
+        if (lp.width == viewW && lp.height == viewH && lp.gravity == gravity &&
+            lp.marginStart == inset && lp.topMargin == topInset) return
         lp.width = viewW
         lp.height = viewH
         lp.gravity = gravity
@@ -581,7 +684,7 @@ class CarPlayActivity : Activity() {
         lp.topMargin = topInset
         surfaceView.layoutParams = lp
         surfaceView.holder.setFixedSize(bufW, bufH)
-        log.i("video frame view ${viewW}x$viewH fixed ${bufW}x$bufH rail ${if (rail) VideoFrame.railPx else 0}")
+        log.i("video frame view ${viewW}x$viewH fixed ${bufW}x$bufH rail ${if (rail) VideoFrame.railPx else 0} gravity=$gravity origin=${VideoFrame.captureX},${VideoFrame.captureY}")
     }
 
     /** [VIEW_AREAS] at 100%. Otherwise the same rectangles divided by the UI scale. Area 0 is the advertised frame. */
@@ -632,23 +735,28 @@ class CarPlayActivity : Activity() {
         }
         val top = railGroup()
         val bottom = railGroup()
-        val gap = dp(12)
+        val gap = dp(20)
+        val buttons = mutableListOf<View>()
+        rail.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val size = minOf(dp(96), ((rail.height - dp(32) - gap * 3) / 5).coerceAtLeast(1))
+            buttons.forEach { button ->
+                if (button.layoutParams.width != size) {
+                    button.layoutParams = (button.layoutParams as LinearLayout.LayoutParams).apply {
+                        width = size; height = size
+                    }
+                }
+            }
+        }
         fun add(parent: LinearLayout, child: View, first: Boolean) {
-            parent.addView(child, LinearLayout.LayoutParams(dp(72), dp(72)).apply {
+            buttons.add(child)
+            parent.addView(child, LinearLayout.LayoutParams(dp(96), dp(96)).apply {
                 if (!first) topMargin = gap
                 gravity = Gravity.CENTER_HORIZONTAL
             })
         }
         add(top, railButton(RailIcon.HOME, "AAOS Home", RailTone.Default) { _ -> openHome() }, true)
         add(top, railButton(RailIcon.SETTINGS, "Settings", RailTone.Default) { _ -> openSettings() }, false)
-        add(top, railButton(RailIcon.RESET, "Reset Device", RailTone.Alert) { reset ->
-            reset.isEnabled = false
-            requestSessionRestart()
-        }, false)
         add(bottom, railButton(RailIcon.VOICE, "Voice Assistant", RailTone.Default) { _ -> sendSiri() }, true)
-        add(bottom, railButton(RailIcon.PREV, "Previous", RailTone.Default) { _ ->
-            sendMedia(wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PREV)
-        }, false)
         val play = railButton(RailIcon.PLAY, "Play", RailTone.Highlight) { button ->
             val wasPlaying = railAssumedPlaying
             railAssumedPlaying = !wasPlaying
@@ -657,15 +765,27 @@ class CarPlayActivity : Activity() {
             sendMedia(if (wasPlaying) wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE else wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY)
         }
         add(bottom, play, false)
-        add(bottom, railButton(RailIcon.NEXT, "Next", RailTone.Default) { _ ->
-            sendMedia(wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_NEXT)
-        }, false)
-        add(bottom, railButton(RailIcon.PHONE, "Phone Home", RailTone.Default) { _ ->
-            sendNav(wasidremin.gmccpa.ocbm.Ocbm.NAV_HOME)
-        }, false)
-        add(bottom, railButton(RailIcon.BACK, "Back", RailTone.Alert) { _ ->
-            sendNav(wasidremin.gmccpa.ocbm.Ocbm.NAV_BACK)
-        }, false)
+        val phone = railButton(RailIcon.PHONE, "Phone — no call", RailTone.Default) { _ ->
+            val action = nowPlaying.phoneAction()
+            if (previewOnly) log.i("phone preview: $action")
+            else if (action != null) touchHandler?.post {
+                val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendTelephony(action)
+                log.i("phone button $action sent=$sent")
+            }
+        }
+        fun updatePhone() {
+            val action = nowPlaying.phoneAction()
+            phone.icon = if (action == wasidremin.gmccpa.ocbm.Ocbm.TEL_END) RailIcon.BACK else RailIcon.PHONE
+            phone.contentDescription = when (action) {
+                wasidremin.gmccpa.ocbm.Ocbm.TEL_ANSWER -> "Answer call"
+                wasidremin.gmccpa.ocbm.Ocbm.TEL_END -> "End call"
+                else -> "Phone — no call"
+            }
+            phone.isEnabled = action != null || previewOnly
+        }
+        updatePhone()
+        nowPlaying.onCallChanged = { runOnUiThread { if (!isDestroyed) updatePhone() } }
+        add(bottom, phone, false)
         rail.addView(top, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         rail.addView(View(this), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         rail.addView(bottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -718,6 +838,7 @@ class CarPlayActivity : Activity() {
 
     /** Media keys share the event-channel lock with touch. Never send them on the UI thread. */
     private fun sendMedia(index: Byte) {
+        if (previewOnly) { log.i("rail preview: media $index — no command sent"); return }
         touchHandler?.post {
             val sent = if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this))
                 wasidremin.gmccpa.ocbm.AdapterSession.sendMediaButton(index)
@@ -730,6 +851,7 @@ class CarPlayActivity : Activity() {
 
     /** Siri is a press and a release. A bare requestSiri is ignored by iOS. */
     private fun sendSiri() {
+        if (previewOnly) { log.i("rail preview: Siri — no command sent"); return }
         val h = touchHandler ?: return
         h.post {
             if (!dispatchCommand(wasidremin.gmccpa.ocbm.Ocbm.CMD_SIRI_DOWN)) return@post
@@ -738,6 +860,7 @@ class CarPlayActivity : Activity() {
     }
 
     private fun sendNav(nav: Byte) {
+        if (previewOnly) { log.i("rail preview: nav $nav — no command sent"); return }
         touchHandler?.post { dispatchNav(nav) }
     }
 
@@ -1487,7 +1610,10 @@ class CarPlayActivity : Activity() {
         // Only clear the shared handle if it still points at US. A newer generation may already have
         // published itself (launch of the replacement can precede this teardown), and clearing it
         // unconditionally would leave the LIVE screen unreachable from [onSessionEnded].
-        if (live?.get() === this) live = null
+        if (live?.get() === this) {
+            nowPlaying.onCallChanged = null
+            live = null
+        }
         stopSession("activity destroyed")
         touchThread?.quitSafely(); touchThread = null; touchHandler = null
         super.onDestroy()

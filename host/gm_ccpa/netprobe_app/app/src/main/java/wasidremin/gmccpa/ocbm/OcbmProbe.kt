@@ -335,6 +335,7 @@ class OcbmProbe(context: Context) {
         val savedSidebar = wasidremin.gmccpa.DisplayPrefs.sidebar(ctx)
         val savedScale = wasidremin.gmccpa.DisplayPrefs.uiScale(ctx)
         val savedSafe = wasidremin.gmccpa.DisplayPrefs.safeRightPx(ctx)
+        VideoFrame.testingGeometry = true
         try {
             wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, true)
             wasidremin.gmccpa.DisplayPrefs.setMode(ctx, wasidremin.gmccpa.ScreenMode.FULLSCREEN)
@@ -342,12 +343,18 @@ class OcbmProbe(context: Context) {
             wasidremin.gmccpa.DisplayPrefs.setUiScale(ctx, 125)
             VideoFrame.noteWindow(2400, 960)
             VideoFrame.capture(ctx, advertise = true)
-            check("advertised height ignores the custom top bar",
-                VideoFrame.viewHeight == 960 && VideoFrame.height == 768)
+            check("custom bar reserves 80px before advertisement",
+                VideoFrame.topPx == 80 && VideoFrame.viewHeight == 880 && VideoFrame.height == 704)
             wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, false)
             VideoFrame.capture(ctx, advertise = true)
             check("advertised height identical with the bar off",
                 VideoFrame.viewHeight == 960 && VideoFrame.height == 768)
+            wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, true)
+            VideoFrame.noteWindow(2914, 1134, 167)
+            VideoFrame.capture(ctx, advertise = true)
+            check("expanded window uses the old status strip instead of shrinking 967px content",
+                VideoFrame.topPx == 168 && VideoFrame.viewHeight == 966 && VideoFrame.panelPx == 2914)
+            VideoFrame.noteWindow(2400, 960)
             for (scale in wasidremin.gmccpa.DisplayPrefs.SCALE_PRESETS) {
                 for (sidebar in listOf(false, true)) {
                     for (safe in wasidremin.gmccpa.DisplayPrefs.SAFE_PRESETS) {
@@ -359,8 +366,8 @@ class OcbmProbe(context: Context) {
                         val doc = VehicleConfigYaml.renderAdapter("adapterpass1", width = VideoFrame.width,
                             height = VideoFrame.height, safeRight = VideoFrame.safeRightPx).toString(Charsets.UTF_8)
                         check("capture scale=$scale sidebar=$sidebar safe=$safe",
-                            VideoFrame.viewHeight == 960 &&
-                                VideoFrame.height == wasidremin.gmccpa.DisplayScale.even(960, scale) &&
+                            VideoFrame.viewHeight == 880 &&
+                                VideoFrame.height == wasidremin.gmccpa.DisplayScale.even(880, scale) &&
                                 VideoFrame.width % 2 == 0 && VideoFrame.height % 2 == 0 &&
                                 VehicleConfigYaml.structuralError(doc, true) == null)
                     }
@@ -370,6 +377,7 @@ class OcbmProbe(context: Context) {
             check("wired static advertisement stays 2400x960",
                 VideoFrame.viewHeight == 960 && VideoFrame.height == 960)
         } finally {
+            VideoFrame.testingGeometry = false
             wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, savedCustomTop)
             wasidremin.gmccpa.DisplayPrefs.setMode(ctx, savedMode)
             wasidremin.gmccpa.DisplayPrefs.setSidebar(ctx, savedSidebar)
@@ -377,6 +385,22 @@ class OcbmProbe(context: Context) {
             wasidremin.gmccpa.DisplayPrefs.setSafeRightPx(ctx, savedSafe)
             VideoFrame.capture(ctx, advertise = true)
         }
+        check("phone HID is declared in the adapter config",
+            VehicleConfigYaml.renderAdapter("adapterpass1", telephony = true)
+                .toString(Charsets.UTF_8).contains("telephonyButtonsSupport: true"))
+        check("vehicle 967px window gets a usable 80px bar, not 7px",
+            VideoFrame.topBarPixels(967, true) == 80)
+        val calls = wasidremin.gmccpa.av.NowPlayingState()
+        calls.onCallState(org.json.JSONObject("{\"kind\":\"callState\",\"callUuid\":\"a\",\"status\":2}"))
+        check("ringing phone answers", calls.phoneAction() == Ocbm.TEL_ANSWER)
+        calls.onCallState(org.json.JSONObject("{\"callUuid\":\"a\",\"status\":4}"))
+        check("active phone hangs up", calls.phoneAction() == Ocbm.TEL_END)
+        calls.onCallState(org.json.JSONObject("{\"callUuid\":\"b\",\"status\":2}"))
+        check("waiting call takes answer priority", calls.phoneAction() == Ocbm.TEL_ANSWER)
+        calls.onCallState(org.json.JSONObject("{\"callUuid\":\"b\",\"status\":0}"))
+        check("disconnect one call preserves the other", calls.phoneAction() == Ocbm.TEL_END)
+        calls.clear("self-test")
+        check("session end clears call action", calls.phoneAction() == null)
         val inset = runCatching {
             VehicleConfigYaml.renderAdapter("adapterpass1", width = 1996, height = 768, safeRight = 38)
         }.getOrNull()?.toString(Charsets.UTF_8) ?: ""
@@ -979,8 +1003,8 @@ class OcbmProbe(context: Context) {
             throw IllegalStateException("refusing credential-less CT_SUBSCRIBE ($missing missing) " +
                 "— would pin 0x5703 to the box's stock credentials for the whole session")
         }
-        // The custom top bar is layout-time only (CarPlayActivity measures the freed space
-        // after the bars are applied). The advertised size never depends on it.
+        // Reserve custom chrome before negotiation, using the launcher's laid-out window.
+        // The live surface, decoder advertisement and touch mapping share this snapshot.
         VideoFrame.capture(ctx, advertise = adapterWifi)
         log.i("display: ui scale ${VideoFrame.uiScalePercent}% → advertise ${VideoFrame.width}x${VideoFrame.height} into view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}")
         logPhysicalSize()
@@ -994,6 +1018,7 @@ class OcbmProbe(context: Context) {
                 VideoFrame.width,
                 VideoFrame.height,
                 VideoFrame.safeRightPx,
+                telephony = true,
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)

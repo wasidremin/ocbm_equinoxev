@@ -103,6 +103,8 @@ object AdapterSession {
     fun sendTouch(phase: Byte, nx: Float, ny: Float): Boolean =
         client?.sendTouch(phase, nx, ny) == true
 
+    fun sendTelephony(index: Byte): Boolean = client?.sendTelephony(index) == true
+
     fun sendMediaButton(index: Byte): Boolean =
         client?.sendMediaButton(index) == true
 

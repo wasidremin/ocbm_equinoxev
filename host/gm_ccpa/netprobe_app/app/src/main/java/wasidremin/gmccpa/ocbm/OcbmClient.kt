@@ -1488,6 +1488,11 @@ class OcbmClient(
         return subscribed
     }
 
+    fun sendTelephony(index: Byte): Boolean {
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_TELEPHONY, index))
+        return subscribed
+    }
+
     fun sendMediaButton(index: Byte): Boolean {
         enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_MEDIA_BTN, index))
         return subscribed
