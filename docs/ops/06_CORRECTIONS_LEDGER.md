@@ -10,6 +10,23 @@
 This file holds the **reasoning** behind every correction, retraction and supersession applied
 to a document in `docs/`. The documents themselves keep only a short signal that points here.
 
+## Corrections requested in the October field pass (2026-10-04)
+
+- **Console wedge:** Ok(0)/EOF was already handled. A background child retained the
+  PTY after shell death, so EOF need not arrive. The fix is stale-console reset on
+  new host attach; never background a job from the OCBM console. See lifecycle/testing.
+- **Top bar:** GM's system bar **is hideable**. The local layout wrongly assumed a
+  hard-coded 960-pixel height; that was not proof GM refused hiding. Emulator geometry
+  is checked, real-car geometry remains open (see host/01 and the open-items index).
+- **“Box keeps paging”:** do not infer continued BT paging from repeated host-side
+  connecting/status lines. Those are not radio observations. The earlier assumption
+  is withdrawn; establish daemon lifetime and SDP/RFCOMM activity from box timestamps.
+- **“Storage-only is what GM checks”:** still **open**. The announce/composite sequence
+  was observed working; it does not isolate which identity/descriptor GM admits.
+  Do not upgrade that hypothesis to a platform requirement without a controlled test.
+- **MFi 40113 bytes:** retry recovery is observed, but the root cause is **unproven**.
+  Following another chip transaction is a correlation, not a demonstrated bus/chip mechanism.
+
 ## Why the split
 
 A correction block does two jobs with opposite retrieval needs:

@@ -4,6 +4,33 @@
 
 **Contents:** the lifecycle model → hardening → real-world comparison → start ordering → the app-driven SETUP relay → session management as it stands. Historical captures and the peer-wipe postmortem are kept at the end as evidence.
 
+## Startup implementation notes (2026-10-04)
+
+The supervisor boot job prewarms BT without advertising or starting a session.
+`/tmp/.radio_bt_prewarmed` is a controller-specific initialization proof, retained
+while that controller remains UP and cleared on BT teardown/new prewarm/reboot.
+`btd` reuses a valid proof rather than repeating DOWN→UP/SCO setup.
+On host_present the BT/advertiser critical path does not wait for SoftAP (AP bring-up
+runs in parallel); a BT failure prevents advertising. `caps()` caches nonempty
+`/tmp/radio_caps`, with `RADIO_REDETECT=1` forcing re-detection. Re-arm explicitly
+forces CLEAN bring-up instead of returning through the already-running guard.
+The measured ~2.3-second re-arm dip remains deferred until btd can survive a host change.
+
+ocbmd liveness is `/proc/uptime` milliseconds written into `/tmp/ocbmd_alive`, not
+wall-clock mtime: 300 seconds allowed before first HELLO, 60 seconds afterwards.
+This prevents CT_SETTIME from faking a wedge. On new host attach ocbmd checks and
+resets a stale console PTY whose shell died; **Ok(0) was already handled**. A
+background child keeping the PTY open can prevent EOF, so reset-on-attach is the
+recovery seam, not a new EOF branch. Never background jobs from this console.
+
+All MFi cert/sign transactions serialize on `/tmp/carplay_mfi.lock`; carplayd's
+startup DeviceVersion probe also takes it. The tunnel signer rejects implausible
+certificate/signature lengths and retries under the same exclusive lock (20 ms
+settle, three attempts). Recovery from **40113 to 945 bytes is measured; the
+40113-byte root cause is UNPROVEN**. Do not call a sequential-use correlation a
+chip/bus diagnosis. See [Bluetooth/radio notes](../wireless/01_BT_AND_RADIO.md)
+for the bench record and the other signer implementations' exposure.
+
 ## Session management — current model
 
 <!-- absorbed: ../carplay/02_SESSION_LIFECYCLE.md -->

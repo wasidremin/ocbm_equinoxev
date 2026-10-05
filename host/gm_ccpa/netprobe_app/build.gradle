@@ -10,4 +10,7 @@ buildscript {
 
 allprojects {
     repositories { google(); mavenCentral() }
+    // Build output must not enter an iCloud-synced checkout or the publication mirror.
+    def cacheRoot = System.getenv('GM_BUILD_DIR') ?: "${System.getProperty('user.home')}/.cache/carlink-artifacts/gm_ccpa/gradle"
+    buildDir = file("${cacheRoot}/${project == rootProject ? 'root' : project.name}")
 }

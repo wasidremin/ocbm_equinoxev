@@ -6,7 +6,7 @@
 
 ## Radio HAL — chipset-agnostic bring-up
 
-### Boot BT prewarm — source change, bench verification pending (2026-10-01)
+### Boot BT prewarm and startup guards (updated 2026-10-04)
 
 Owner-approved exception to host-present power gating: the supervisor starts
 `radio_hal.sh bt_prewarm` once per boot. It uses the unit-derived attach mapping
@@ -16,13 +16,23 @@ with DOWN→UP, restores the unit's SCO setup, and leaves scan disabled. No Soft
 the existing host-present fallback. The HAL lock and an under-lock host-present
 check prevent a late boot job from resetting a session that already started.
 
-The one-shot `/tmp/.radio_bt_prewarmed` proof lets `btd` skip its redundant
-DOWN→UP/SCO restore on the first session, provided the same controller remains UP.
-Explicit BT teardown clears that proof and still powers down. The reconnect loop
-no longer sleeps five seconds before its first attempt; later backoff is unchanged.
-The supervisor retains stale ocbmd liveness recovery before the first HELLO with
-a 300-second threshold (`-mmin +4`), then uses the existing one-minute threshold.
-HELLO refreshes the stamp before publishing that first-HELLO signal.
+`/tmp/.radio_bt_prewarmed` names the verified controller; `btd` skips redundant
+DOWN→UP/SCO restore only while that same controller is still UP. The valid proof is
+kept while the controller stays initialized; explicit BT teardown clears it, as does
+starting a new prewarm attempt (and reboot clears tmpfs). The reconnect loop no longer
+sleeps five seconds before its first attempt; later backoff is unchanged.
+`caps()` reuses a nonempty `/tmp/radio_caps` instead of detecting on every verb;
+`RADIO_REDETECT=1` forces fresh detection after a failed mapping/convergence.
+
+On host_present the BT convergence/advertiser path no longer waits for SoftAP:
+AP bring-up is launched in parallel, and a failed BT return prevents advertiser launch.
+“BT-first” describes the session critical path, not literal serialization of the two
+HAL invocations. Re-arm forces **CLEAN** bring-up past the idempotent guard.
+
+ocbmd writes `/tmp/ocbmd_alive` as monotonic `/proc/uptime` milliseconds, not mtime.
+The supervisor allows 300 seconds before the first HELLO, then 60 seconds; HELLO
+refreshes the stamp before publishing its signal. CT_SETTIME cannot create a false
+wedge or hide a real one by jumping the wall clock.
 
 MFi cert/sign paths already serialize. One uncovered read was carplayd's startup
 DeviceVersion probe; it now takes the same lock. Acquisition logs identify caller
@@ -30,13 +40,14 @@ and PID; tunnel certificate failures distinguish length, payload, and invalid
 length under exclusive lock. Lock-file text is the last recorded holder, not proof
 of a currently live holder.
 
-**The first-certificate retry is now explained and fixed (bench-measured
-2026-10-03).** The `AuthenticationCertificate` length register (2 BE bytes at
+**The bad-length retry is bench-verified (2026-10-03), but the 40113-byte root
+cause is UNPROVEN.** The `AuthenticationCertificate` length register (2 BE bytes at
 `0x30`) intermittently returns **40113 (0x9CB1)** instead of 945, and `i2c_rd`
 reports success for it, so the garbage is indistinguishable from a real length at
-the transport layer. It is not a slow chip and not process start: a fresh process
-reading a chip at rest gets 945, and the next process — i.e. the one whose read
-*follows* another chip user's `0x30`→`0x31` transaction — gets 40113. Measured on
+the transport layer. A fresh process reading a chip at rest was observed getting 945, and a process
+following another chip user's `0x30`→`0x31` transaction got 40113. This correlation
+supports a settling/retry mitigation; it does not establish the chip, bus or driver
+mechanism, nor rule out timing or other causes. Measured on
 the bench box with `mfid` (`--force`, one fresh process and one cert request per
 run): **5 of 10 succeeded before the fix, 10 of 10 after**, every recovery
 settling on the second read. `mfi-i2c-local::read_len` now rejects an
@@ -222,7 +233,7 @@ rewrite; an unknown SDIO id refuses both lines.
 
 #### `ccpa/rootfs/script/radio_hal.sh` — the seam
 
-Verbs `probe | status | wifi_ap_on | wifi_ap_off | bt_on | bt_off | sco_on`.
+Verbs `probe | status | wifi_ap_on | wifi_ap_off | bt_on | bt_prewarm | bt_off | sco_on`.
 Exit `0` converged now · `1` ran and failed · `2` already converged · `3` unsupported on this
 unit. Single-flight `mkdir` locks per subsystem; state published atomically to
 `/tmp/.radio_wlan_state` and `/tmp/.radio_bt_state`.

@@ -11,6 +11,40 @@ this file is the *external* evidence and the platform map that write-up rests on
 
 ---
 
+## Current Equinox field behavior (2026-10-04)
+
+- Boot announce is controlled by `/script/ocbm.conf`: `usb_announce=1`,
+  `usb_announce_medium=image|none` (default image), `usb_announce_dwell_ms=1500`,
+  `usb_announce_retry_ms=75000`, and **`usb_announce_retries=0` by default**.
+  The announce briefly presents storage before the OCBM composite. Retries are disabled because
+  an unsolicited gadget rebind tears down the host claim and can restart permission/startup while
+  the driver is already using the app. An absent HELLO is not proof another announce will help.
+  Whether storage-only identity is specifically what GM checks remains **open**, not established
+  by a successful composite. The app exposes `usb_announce` and a separate retry setting.
+- On Equinox **VCUUM-274.4**, `android.car.usb.handler` is absent. The app skips the otherwise
+  8-second wait for system dispatch and asks for permission itself. Its `requestPermission`
+  dialog is **not** the system USB app dispatch: selecting “Always” there does not persist a
+  default attach handler. Seen attach candidates: `com.gm.isaplugin`,
+  `com.seekingthescenery.carlinknative`, and `wasidremin.gmccpa`.
+- The 2026-10-03 log distinguishes **`com.gm.car.media.gmcarmediaservice`**, GM's real media UI,
+  from **`com.android.car`**, which sends source-change pause/stop probes. Steering-wheel caller
+  identity is still not proven. The focus-pause implementation forwards real commands even in
+  the initial five-second arbitration window. Only `com.android.car` pause/stop callbacks or an
+  opposite pause+stop callback pair within 100 ms are dropped; explicit media keys bypass filtering.
+  A lone callback pause waits 100 ms to rule out a pair, then travels over CarPlay media HID.
+  A live session with no HID channel retries that pause for up to three seconds.
+- Media permanent focus LOSS mutes locally and pauses the phone once; it does **not** auto-resume
+  on release or stream restart. User PLAY/source-selection PLAY requests focus before phone PLAY.
+  Transient LOSS pauses and resumes on GAIN only if the user has not paused in between.
+  Focus-driven HID commands are spaced by two seconds and honor the phone's PLAY/PAUSE/STOP status.
+  Siri, call and navigation voice sinks are exempt; CAN_DUCK only lowers media gain. The card
+  publishes PAUSED immediately on a successful focus pause, freezes its position, and retains
+  known state rather than reverting to BUFFERING after content. Emulator verification is separate
+  from a real-car/phone confirmation.
+- The car's own Bluetooth **media** connection to the iPhone can steal the audio intended for
+  CarPlay. Workaround: configure that link as **calls-only**, or turn it off. Do not mistake
+  streaming at local gain zero for an AAC decode failure.
+
 ## 1. Sources — who is who, where things live
 
 | Name | Who / what | Where |
@@ -56,7 +90,7 @@ The GM app also ships on the Play internal track.
 | USB port hardware | direct host port | **USB24915P** automotive CarPlay multi-host bridge in front of the host port. It passes composites through; it is *not* iPhone-only (we believed that for a week — wrong). |
 | Cluster maneuver icons | App-supplied icons **do** reach the cluster via the unregistered `ClusterIconContentProvider` authority (Tachi91 owns it on Play — nobody else can claim it) | GM VMSPlugin **ignores** supplied icons, renders from the maneuver enum (`setManeuverType`). Text-only nav for any third-party app. |
 | NCM (`functions=ncm`) on the radio | Recognised as NCM-capable, **never brought up** — sits idle, interface locked to system | Same (Tachi91, p.25, Jul 8 2026) |
-| "Always allow" for the USB app | broken: dangling `config_UsbDeviceConnectionHandling_component` (`android.car.usb.handler`) | not yet characterised — first get the device to appear |
+| "Always allow" for the USB app | broken: dangling `config_UsbDeviceConnectionHandling_component` (`android.car.usb.handler`) | absent `android.car.usb.handler` on VCUUM-274.4; app-requested permission “Always” does not persist |
 
 Tachi91's own statement of the contract (p.26, Sep 2026): *"It's always going to be an accessory that needs to be claimed by an app. The OCBM/Bulk Message is the only way an app can claim it. If left in NCM mode the radio's stock CarPlay service will not bring up the network interface for it. Even in EVs the CarPlay service is running, just not exposed."* — i.e. USB bulk, claimed by the app, is the path on both platforms; the VCU platform just needs the composite to get there.
 

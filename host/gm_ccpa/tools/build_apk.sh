@@ -87,13 +87,11 @@ ASSETS="$PROJ/app/src/main/assets"
 # tree stays clean and a dirty asset never shows up in `git status`.
 STAMP_SHA="$(cd "$GM_ROOT" && git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 (cd "$GM_ROOT" && git diff --quiet HEAD 2>/dev/null) || STAMP_SHA="$STAMP_SHA-dirty"
-ASSET_ARG=()
-if [ -d "$ASSETS" ]; then
-    cp -R "$ASSETS" "$WORK/assets"
-    printf '%s\n' "$STAMP_SHA" > "$WORK/assets/build_sha"
-    ASSET_ARG=(-A "$WORK/assets")
-    echo "    stamped assets/build_sha = $STAMP_SHA"
-fi
+mkdir -p "$WORK/assets"
+if [ -d "$ASSETS" ]; then cp -R "$ASSETS/." "$WORK/assets/"; fi
+printf '%s\n' "$STAMP_SHA" > "$WORK/assets/build_sha"
+ASSET_ARG=(-A "$WORK/assets")
+echo "    stamped assets/build_sha = $STAMP_SHA"
 # versionCode/versionName are INJECTED here, not written in the manifest — `aapt2 link` only honours
 # --version-code when the manifest carries none, so the attributes were removed from AndroidManifest.xml
 # on 2026-09-11 to hand this script the authority. The code is the commit count, which is monotonic
@@ -226,8 +224,9 @@ if ! (cd "$REPO" && git diff --quiet HEAD 2>/dev/null); then SHA="$SHA-dirty"; f
 # apk/ is BUILD OUTPUT and is not tracked — the historical sha-stamped builds and the golden APK
 # stayed behind in the standalone gm_ccpa checkout when this project moved under ccpa_custom/host.
 # Create it on demand so a fresh clone builds without a manual step.
-mkdir -p "$REPO/apk"
-OUT="$REPO/apk/gmccpa-debug-$SHA.apk"
+ARTIFACTS="${CARLINK_ARTIFACTS_DIR:-$HOME/.cache/carlink-artifacts/gm_ccpa}"
+mkdir -p "$ARTIFACTS"
+OUT="$ARTIFACTS/gmccpa-debug-$SHA.apk"
 cp "$WORK/gmccpa-debug.apk" "$OUT"
 echo "[done] $OUT ($(stat -c%s "$OUT") bytes)"
 echo "[install] adb install -i com.android.vending -r -g --user 10 $OUT"

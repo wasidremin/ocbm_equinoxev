@@ -18,3 +18,13 @@
 
 # Google Play publisher service-account key (tools/build_aab.sh --publish). Never commit.
 play-service-account.json
+
+# Local review bundles and bench/scratch output (leave existing files on disk).
+*.zip
+*.zip.txt
+bench-logs-*.txt
+car-logs-*/
+scratchpad/
+topbar-review-*
+startup-bench-review*
+.kotlin

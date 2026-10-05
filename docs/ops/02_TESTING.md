@@ -4,6 +4,39 @@
 
 What must be exercised on hardware, and the order that makes a failure legible.
 
+## Bench console and focus-pause checks (2026-10-04)
+
+Use `ocbm-host hello 1314 2d00` for discovery/HELLO only. For a timed startup
+bench, use `ocbm-host probe 1314 2d00 30 <config> --poll-ms 250`: it sends a real
+SUBSCRIBE, polls `/tmp/box.log` on the same link with relative timestamps, then STOP.
+It can bring up radios/a phone session; do not call it a read-only HELLO test.
+Use `ocbm-host reboot 1314 2d00` (or `tools/ocbmcmd.py 'reboot'`) only for an
+explicitly intended bench reboot, then HELLO/probe after re-enumeration. A reboot can end the command connection before its
+completion sentinel; reconnection/HELLO and low uptime prove recovery, not the old
+command's exit status alone.
+
+**Never background a job from the OCBM console.** A child retaining the shared PTY
+can hide shell death, wedge later commands, and keep an old console alive across
+host changes. Use the platform supervisor for long-running jobs, not shell `&`.
+`ocbmcmd.py` waits for a prompt, then exact completion sentinels. If the prompt does
+not appear after two seconds it sends **^C then ^D** once; ^C alone does not escape
+BusyBox ash's unfinished-quote continuation prompt. EOF on a healthy shell would
+log it out, so this is recovery only. ocbmd resets a stale PTY on host attach.
+
+`host/gm_ccpa/tools/test_focus_pause.sh` builds platform-only emulator instrumentation
+against the APK build's `WORKDIR/classes` (`FOCUS_APP_CLASSES=...`). Its separate
+fake GM media package sends real MediaController callbacks and grabs permanent or
+transient Android audio focus; the target app substitutes only its HID sink, since
+an emulator has no iPhone/HID channel. `com.android.car` is a real emulator system
+package and is never replaced: that caller-label filter is exercised directly.
+Also exercise `adb shell cmd media_session dispatch pause`, `play`, `play-pause`,
+`next`, `previous`, and `headsethook`, and run the `--es run ocbm_selftest` hook.
+On the AAOS emulator shell dispatch uses user 0 while the projection app runs as user 10;
+if the command does not route to its session, use that user's MediaController token for
+explicit key dispatch and report the shell-routing limitation. Check card state/position
+through MediaController/dumpsys, not build success alone.
+An accepted fake HID send proves host policy, **not** delivery to a physical phone.
+
 ## Live session test plan
 
 <!-- absorbed: ../ops/02_TESTING.md -->

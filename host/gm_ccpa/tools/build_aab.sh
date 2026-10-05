@@ -70,13 +70,18 @@ X86_JNILIB="$CARGO_TARGET_DIR/x86_64-linux-android/release/libcarplayjni.so"
 ARM64_JNILIB="$CARGO_TARGET_DIR/aarch64-linux-android/release/libcarplayjni.so"
 [ -f "$X86_JNILIB" ] || { echo "FATAL: x86_64 JNI library missing: $X86_JNILIB" >&2; exit 1; }
 [ -f "$ARM64_JNILIB" ] || { echo "FATAL: arm64 JNI library missing: $ARM64_JNILIB" >&2; exit 1; }
-rm -rf "$APP_ROOT/build/jniLibs"
-mkdir -p "$APP_ROOT/build/jniLibs/x86_64" "$APP_ROOT/build/jniLibs/arm64-v8a"
-cp "$X86_JNILIB" "$APP_ROOT/build/jniLibs/x86_64/libcarplayjni.so"
-cp "$ARM64_JNILIB" "$APP_ROOT/build/jniLibs/arm64-v8a/libcarplayjni.so"
+export GM_BUILD_DIR="${GM_BUILD_DIR:-$HOME/.cache/carlink-artifacts/gm_ccpa/gradle}"
+export GM_JNI_DIR="$GM_BUILD_DIR/root/jniLibs"
+mkdir -p "$GM_JNI_DIR/x86_64" "$GM_JNI_DIR/arm64-v8a"
+cp "$X86_JNILIB" "$GM_JNI_DIR/x86_64/libcarplayjni.so"
+cp "$ARM64_JNILIB" "$GM_JNI_DIR/arm64-v8a/libcarplayjni.so"
 
 STAMP_SHA="$(cd "$GM_ROOT" && git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 (cd "$GM_ROOT" && git diff --quiet HEAD 2>/dev/null) || STAMP_SHA="$STAMP_SHA-dirty"
+export GM_ASSETS_DIR="$GM_BUILD_DIR/root/assets"
+mkdir -p "$GM_ASSETS_DIR"
+cp -R "$APP_ROOT/app/src/main/assets/." "$GM_ASSETS_DIR/"
+printf '%s\n' "$STAMP_SHA" > "$GM_ASSETS_DIR/build_sha"
 export AAB_VERSION_CODE="${AAB_VERSION_CODE:-$(cd "$GM_ROOT" && git rev-list --count HEAD 2>/dev/null || echo 1)}"
 export AAB_VERSION_NAME="${AAB_VERSION_NAME:-4.0+$STAMP_SHA}"
 case "$AAB_VERSION_CODE" in ''|*[!0-9]*) echo "FATAL: AAB_VERSION_CODE must be numeric: $AAB_VERSION_CODE" >&2; exit 1;; esac
@@ -88,11 +93,12 @@ printf '[2/5] Gradle bundlePlayRelease\n'
   "$GRADLE" --offline --no-daemon --stacktrace :app:bundlePlayRelease
 )
 
-AAB="$APP_ROOT/app/build/outputs/bundle/playRelease/app-play-release.aab"
+AAB="$GM_BUILD_DIR/app/outputs/bundle/playRelease/app-play-release.aab"
 [ -f "$AAB" ] || { echo "FATAL: Gradle did not produce $AAB" >&2; exit 1; }
 
-OUT="$GM_ROOT/apk/gmccpa-play-$STAMP_SHA.aab"
-mkdir -p "$GM_ROOT/apk"
+ARTIFACTS="${CARLINK_ARTIFACTS_DIR:-$HOME/.cache/carlink-artifacts/gm_ccpa}"
+OUT="$ARTIFACTS/gmccpa-play-$STAMP_SHA.aab"
+mkdir -p "$ARTIFACTS"
 cp "$AAB" "$OUT"
 
 printf '[3/5] verify AAB signature\n'

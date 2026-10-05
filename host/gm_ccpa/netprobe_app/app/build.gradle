@@ -28,7 +28,8 @@ android {
 
     sourceSets {
         main.java.srcDirs = ["src/main/java"]
-        main.jniLibs.srcDirs = ["${rootProject.projectDir}/build/jniLibs"]
+        main.jniLibs.srcDirs = [System.getenv('GM_JNI_DIR') ?: "${rootProject.buildDir}/jniLibs"]
+        main.assets.srcDirs = [System.getenv('GM_ASSETS_DIR') ?: 'src/main/assets']
     }
 
     signingConfigs {

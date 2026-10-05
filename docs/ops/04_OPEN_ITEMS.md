@@ -52,6 +52,26 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 
 ---
 
+### Equinox follow-up gates (2026-10-04)
+
+- **Top-bar geometry:** emulator previews pass, but placement/insets remain unproven on
+  hardware. GM's bar is hideable; the earlier hard-coded 960-pixel height caused the mismatch.
+  Do not change the advertised video size to fix local chrome.
+- **MFi first-read root cause:** bad-length settle retry is bench-measured; why 0x30
+  sometimes returns 40113 rather than 945 remains unproven. Keep mitigation distinct from diagnosis.
+- **`nativeSetLimitedUI` JNI resolution:** the production library exports the old
+  `Java_zeno_gmccpa_pair_NativeCore_nativeSetLimitedUI` name, not the current
+  `wasidremin` binding. The current app's entry point is missing; do not claim driving
+  restrictions are sent merely because the Kotlin call exists.
+- **HEVC decoder stalls:** investigate observed 4–5-second stalls with codec/input/output
+  timestamps; no proven root cause or hardware fix yet.
+- **Exported `--es run` verbs:** need gating. Production launcher intent extras currently
+  expose debug/control/export actions; emulator test instrumentation is separate from those verbs.
+- **Re-arm dip (~2.3 s):** deferred until btd survives a host change. CLEAN bring-up is the
+  present correctness path, not evidence that restart latency is closed.
+- **Steering-wheel Siri:** requires a car test and caller/key capture **before any code**.
+  GM media UI identity is evidence for media controls, not proof of the voice-button contract.
+
 ### Box daemons — `ocbmd` / `carplayd` / `iap2d` / the supervisor
 
 > **Also see [../ops/04_OPEN_ITEMS.md](../ops/04_OPEN_ITEMS.md) Phase 4**
