@@ -131,6 +131,23 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
 
         fun noteGain(gain: Float) { playbackGain = gain }
 
+        fun requestUserFocus(): Boolean {
+            val player = live?.get() ?: return false
+            player.requestFocus()
+            return player.focus != null && player.focusState == android.media.AudioManager.AUDIOFOCUS_GAIN
+        }
+
+        fun voiceOwnsFocus(): Boolean = live?.get()?.let {
+            it.pausedForAssistant || synchronized(it.duckLock) { it.voiceDuck } ||
+                VoiceRouter.voiceFocusActive || CarPlayActivity.nowPlaying.phoneAction() != null
+        } ?: VoiceRouter.voiceFocusActive
+
+        /** Stream restarts must not reclaim a permanent loss without driver intent. */
+        @Volatile var permanentFocusLoss = false
+            private set
+
+        fun clearPermanentLoss() { permanentFocusLoss = false }
+
         fun settingsFocusLine(): String =
             "focus while settings is in front: focus=$focusLabel gain=$playbackGain"
 
@@ -305,6 +322,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     fun start() {
         configureFailedAt = 0L
         running.set(true)
+        permanentFocusLoss = false
         Companion.live = WeakReference(this)
         if (wasidremin.gmccpa.AudioRoute.bluetooth) {
             setFocusGain(0f)
@@ -353,8 +371,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * GAIN. [start] does not.
      *
      * A LOSS_TRANSIENT keeps the request so Siri or a call can hand it back. A permanent
-     * LOSS clears it; the next media stream is what asks again. Asking again inside the
-     * listener is the fight that tore stream 102 down.
+     * LOSS clears it; only explicit user PLAY may reclaim a permanent loss. Subsequent
+     * stream starts do not fight the new owner by asking again.
      *
      * # Two windows closed 2026-09-10 (both were in the build on the truck)
      *
@@ -467,16 +485,18 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * A permanent LOSS drops the cached request and leaves the gain at 0. On AOSP and the
      * AAOS car stack that LOSS already removed this app from the focus stack, so keeping the
      * [AudioFocusRequest] made [requestFocus] return at `focus != null` for the rest of the
-     * session — the "request kept" line was playback with no focus. The next [onStreamStart]
-     * is what asks again. Asking again inside this listener is the `4.0+mirror` fight (pid 1173
+     * session — the "request kept" line was playback with no focus. Explicit user PLAY
+     * is now what asks again after permanent loss. Asking again inside this listener is the `4.0+mirror` fight (pid 1173
      * abandoned and re-requested, then the phone tore stream 102 down after 630 frames).
      *
      * LOSS_TRANSIENT keeps the request so the later GAIN unmutes. Siri still pauses the
      * track through [setAssistantSpeaking]. [setFocusGain] takes `duckLock` and stays
      * outside `this` (see [publishTrack]). This callback does not abandon and does not
-     * request. [onStreamStart] is what asks again.
+     * request. The media service handles phone pause/resume outside this player's monitor.
      */
     private val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { change ->
+        val voice = voiceOwnsFocus()
+        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS && !voice) permanentFocusLoss = true
         val gain = when (change) {
             android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> DUCK_GAIN
             android.media.AudioManager.AUDIOFOCUS_LOSS,
@@ -490,8 +510,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             if (permanent) {
                 if (focus != null) droppedRequest = focus
                 focus = null
-                log.i("media focus LOSS — request cleared; re-request on next stream start")
-                SessionTrace.Board.up(BOARD_FOCUS, "LOSS — request cleared, playback gain $gain (next stream asks again)")
+                log.i("media focus LOSS — request cleared; waiting for user play")
+                SessionTrace.Board.up(BOARD_FOCUS, "LOSS — request cleared, playback gain $gain (user play required)")
             } else {
                 log.i("media focus ${focusName(focusState)} -> ${focusName(change)} (playback gain $gain, track stays in PLAY, request kept)")
                 SessionTrace.Board.up(BOARD_FOCUS, "${focusName(change)} — request kept, playback gain $gain (USAGE_MEDIA)")
@@ -501,6 +521,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         }
         CarPlayMediaBrowserService.noteArbitration("focus $label")
         noteFocus(label, gain)
+        CarPlayMediaBrowserService.onMediaFocus(change, voice)
         if (wasidremin.gmccpa.DisplayPrefs.holdLauncher) {
             log.i("focus while settings is in front: focus=$label gain=$gain")
         }
@@ -571,6 +592,10 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
         log.i("stream start scid=$scid — focus=${focusName(state)} held=$held gain=$gain")
         if (wasidremin.gmccpa.AudioRoute.bluetooth) {
             log.i("stream start scid=$scid — Bluetooth route, focus not requested")
+            return
+        }
+        if (permanentFocusLoss) {
+            log.i("stream start — permanent focus loss; waiting for user play")
             return
         }
         if (held && state == android.media.AudioManager.AUDIOFOCUS_GAIN) return

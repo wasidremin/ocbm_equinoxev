@@ -141,7 +141,10 @@ class VoiceRouter(
             AudioAttributes.CONTENT_TYPE_SPEECH, "nav", 8_000L),
     }
 
-    private companion object {
+    companion object {
+        private val voiceFocusOwners = HashSet<Any>()
+        internal val voiceFocusActive: Boolean
+            get() = synchronized(voiceFocusOwners) { voiceFocusOwners.isNotEmpty() }
         /**
          * AAC-ELD AudioSpecificConfig as the shipping fdk-aac encoder actually emits it
          * (`ccpa_custom/docs/50`): SBR enabled by fdk auto-mode, frameLength 480. NOT the
@@ -889,6 +892,8 @@ class VoiceRouter(
                     .setAudioAttributes(attrs)
                     .setOnAudioFocusChangeListener(focusListener)
                     .build()
+                // Mark before the binder call: media's LOSS callback can precede its return.
+                synchronized(voiceFocusOwners) { voiceFocusOwners.add(this) }
                 val fr = am.requestAudioFocus(req)
                 // The result was discarded until 2026-09-10. This head unit enforces focus at the
                 // HAL (`Use hal ducking signals true`), so a refused request is a sink AAOS may keep
@@ -957,6 +962,7 @@ class VoiceRouter(
                 runCatching { tk?.release() }
                 runCatching { focus?.let { am.abandonAudioFocusRequest(it) } }
                 focus = null
+                synchronized(voiceFocusOwners) { voiceFocusOwners.remove(this) }
                 configureFailedAt = now
                 log.e("${p.label}: configure failed (retry in ${CONFIGURE_RETRY_MS}ms): ${e.message}")
                 // note(), not failed(): the E above is the severity.
@@ -1098,6 +1104,7 @@ class VoiceRouter(
                 runCatching { c?.stop() }; runCatching { c?.release() }
                 runCatching { focus?.let { am.abandonAudioFocusRequest(it) } }
                 focus = null
+                synchronized(voiceFocusOwners) { voiceFocusOwners.remove(this) }
                 rate = 0; channels = 0; isConfigured = false
                 if (wasConfigured) {
                     if (!firstOutSeen) SessionTrace.cancel(expectName, "${p.label} released first — $why")

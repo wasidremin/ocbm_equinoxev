@@ -349,7 +349,10 @@ class CarPlayActivity : Activity() {
          * unreachable from it. Session scope is restored by CLEARING it in [stopSession] instead.
          */
         val nowPlaying = NowPlayingState().apply {
-            onMetadataChanged = { CarPlayMediaBrowserService.publish(it) }
+            onMetadataChanged = { snapshot ->
+                CarPlayMediaBrowserService.publish(snapshot)
+                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
+            }
             onPlaybackTick = { CarPlayMediaBrowserService.publishPlaybackState(it) }
         }
 
@@ -757,13 +760,16 @@ class CarPlayActivity : Activity() {
         add(top, railButton(RailIcon.HOME, "AAOS Home", RailTone.Default) { _ -> openHome() }, true)
         add(top, railButton(RailIcon.SETTINGS, "Settings", RailTone.Default) { _ -> openSettings() }, false)
         add(bottom, railButton(RailIcon.VOICE, "Voice Assistant", RailTone.Default) { _ -> sendSiri() }, true)
-        val play = railButton(RailIcon.PLAY, "Play", RailTone.Highlight) { button ->
-            val wasPlaying = railAssumedPlaying
-            railAssumedPlaying = !wasPlaying
-            button.icon = if (railAssumedPlaying) RailIcon.PAUSE else RailIcon.PLAY
-            button.contentDescription = if (railAssumedPlaying) "Pause" else "Play"
-            sendMedia(if (wasPlaying) wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE else wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY)
+        val play = railButton(RailIcon.PLAY, "Play", RailTone.Highlight) { _ ->
+            val index = when (nowPlaying.snapshot.playbackStatus) {
+                NowPlayingState.PLAY -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
+                null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
+                else -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY
+            }
+            sendMedia(index)
         }
+        railPlayButton = play
+        updateRailPlayback()
         add(bottom, play, false)
         val phone = railButton(RailIcon.PHONE, "Phone — no call", RailTone.Default) { _ ->
             val action = nowPlaying.phoneAction()
@@ -792,8 +798,15 @@ class CarPlayActivity : Activity() {
         return rail
     }
 
-    /** Local play/pause, same as the other app: the phone has no button-state we can read from here. */
-    private var railAssumedPlaying = false
+    private var railPlayButton: RailButton? = null
+
+    private fun updateRailPlayback() {
+        val playing = nowPlaying.snapshot.playbackStatus == NowPlayingState.PLAY
+        railPlayButton?.let {
+            it.icon = if (playing) RailIcon.PAUSE else RailIcon.PLAY
+            it.contentDescription = if (playing) "Pause" else "Play"
+        }
+    }
 
     private fun railGroup() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -839,14 +852,7 @@ class CarPlayActivity : Activity() {
     /** Media keys share the event-channel lock with touch. Never send them on the UI thread. */
     private fun sendMedia(index: Byte) {
         if (previewOnly) { log.i("rail preview: media $index — no command sent"); return }
-        touchHandler?.post {
-            val sent = if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this))
-                wasidremin.gmccpa.ocbm.AdapterSession.sendMediaButton(index)
-            else
-                wasidremin.gmccpa.pair.NativeCore.mediaButton(index.toInt())
-            if (!sent) log.w("media button $index refused — no live session")
-            else log.i("media button $index sent")
-        }
+        CarPlayMediaBrowserService.userMediaButton(index)
     }
 
     /** Siri is a press and a release. A bare requestSiri is ignored by iOS. */

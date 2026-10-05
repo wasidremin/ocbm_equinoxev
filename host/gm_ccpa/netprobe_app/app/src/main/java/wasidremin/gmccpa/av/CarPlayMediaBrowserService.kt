@@ -40,7 +40,7 @@ import java.util.concurrent.Executors
  * constant title "CarPlay" and `STATE_STOPPED` while HEVC and AAC were streaming. Title, art,
  * and position follow the phone. At connect time the card reports `STATE_BUFFERING` with
  * rate 1, which is how the original app gets CarMediaService to select it before FM is
- * already playing. A head-unit pause or stop is logged and left on the car.
+ * already playing. Real user controls follow the phone over HID; source-change probes stay local.
  *
  * ## Framework class, not the AndroidX one
  *
@@ -85,7 +85,29 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * Transport sends block on the native event-channel lock, and callbacks arrive on a binder thread.
      * One daemon thread keeps a slow phone from tying up the binder pool.
      */
-    private val tx = Executors.newSingleThreadExecutor { Thread(it, "cp-media-btn").apply { isDaemon = true } }
+    private val tx = Executors.newSingleThreadScheduledExecutor { Thread(it, "cp-media-btn").apply { isDaemon = true } }
+    private var pendingTransport: java.util.concurrent.ScheduledFuture<*>? = null
+    private var pendingCommand: String? = null
+    private var pendingCaller: String? = null
+    private var pendingAt = 0L
+    private var commandGeneration = 0
+    private var lastFocusCommandAt = -2_000L
+    private var focusGeneration = 0
+    private var pausedByFocusLoss = false
+    private var pausedByTransientLoss = false
+    private var focusLossAt = 0L
+    private var userPaused = false
+    private var focusPaused = false
+    private var seenContent = false
+    private var knownStatus: Int? = null
+    private var stateLogLine: String? = null
+    private var frozenPosition = 0L
+    // Not exported: instrumentation can substitute only the HID sink, leaving policy/framework real.
+    private var hidSender: (Int) -> Boolean = { index ->
+        if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this))
+            wasidremin.gmccpa.ocbm.AdapterSession.sendMediaButton(index.toByte())
+        else NativeCore.mediaButton(index)
+    }
 
     companion object {
         /** Any stable non-empty id. AAOS only uses it to scope onLoadChildren. */
@@ -123,19 +145,18 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         /** Reset on every session. A status-less track warns once per session, not once per process. */
         @Volatile private var warnedNoPlaybackStatus = false
         /**
-         * Elapsed realtime when the arbitration window ends. Pause-type keys from anyone except
-         * [STEERING_WHEEL_PACKAGE] are dropped until then.
+         * Diagnostic arbitration interval only. It must never suppress real user commands.
          */
         @Volatile private var arbitrationUntil = 0L
         private const val ARBITRATION_MS = 5_000L
-        /**
-         * Still empty. Capture 20260927-100549 (pid 17091) saw both `com.android.car` (uid 1000)
-         * and `com.gm.car.media.gmcarmediaservice` send arbitration pause and stop through
-         * [MediaSession.Callback.onPause] / [MediaSession.Callback.onStop], not media keys.
-         * The steering-wheel source is still unknown, so this stays empty and every pause-type
-         * key is dropped during the arbitration window.
-         */
-        private const val STEERING_WHEEL_PACKAGE = ""
+        fun onMediaFocus(change: Int, voice: Boolean) {
+            live?.get()?.let { service -> service.tx.execute { service.handleFocus(change, voice) } }
+        }
+
+        /** Sidebar and car card share user-intent bookkeeping and focus-before-PLAY ordering. */
+        fun userMediaButton(index: Byte, caller: String = "sidebar") {
+            live?.get()?.let { service -> service.tx.execute { service.forward(index.toInt(), caller) } }
+        }
         private val seenCallers = HashSet<String>()
         /**
          * Null until the first `setMediaSource` lookup. False means this process already learned
@@ -163,7 +184,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         fun publishPlaybackState(s: NowPlayingState.Snapshot) {
             last = s
             if (!sessionUp) return
-            live?.get()?.publishState(s)
+            live?.get()?.publishState(s, "tick")
         }
 
         /**
@@ -186,9 +207,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          * after that would restart the arbitration window.
          */
         fun needsPreparing(): Boolean =
-            !wasidremin.gmccpa.AudioRoute.bluetooth && last?.playbackStatus == null
+            !wasidremin.gmccpa.AudioRoute.bluetooth && last?.playbackStatus == null && last?.hasContent != true
 
-        /** Opens the 5 s window in which head-unit pause keys are not forwarded. */
+        /** Records the initial source-arbitration interval; transport filtering is pattern-only. */
         fun noteArbitration(why: String) {
             arbitrationUntil = SystemClock.elapsedRealtime() + ARBITRATION_MS
             ProbeLog.sub("mbs").i("arbitration window ${ARBITRATION_MS}ms — $why")
@@ -227,6 +248,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         fun onSessionDown() {
             sessionUp = false; last = null; wantPreparing = false
+            AacPlayer.clearPermanentLoss()
+            live?.get()?.let { service -> service.tx.execute { service.resetTransport() } }
             cardDropLogged = false
             warnedNoPlaybackStatus = false
             live?.get()?.resetCardLog()
@@ -455,7 +478,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private fun publishPreparing() {
         val sess = session ?: return
         if (wasidremin.gmccpa.AudioRoute.bluetooth) return
-        if (last?.playbackStatus != null) return
+        if (last?.playbackStatus != null || last?.hasContent == true || seenContent) return
         sess.setMetadata(
             MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, "CarPlay")
@@ -517,7 +540,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         }
         runCatching { sess.setMetadata(b.build()) }.onFailure { log.e("setMetadata failed: ${it.message}") }
         }
-        publishState(s)
+        publishState(s, "status")
     }
 
     /**
@@ -525,27 +548,37 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * a `MediaMetadata` at that rate would churn every subscribed controller for a value that belongs
      * in the playback state.
      *
-     * The state is the phone's PlaybackAttributes once iOS has named one. Until then the
-     * card stays [PlaybackState.STATE_BUFFERING] at rate 1 (see [publishPreparing]). An
-     * unknown status used to fall through to PAUSED, which handed the slot back.
+     * Retain the last PlaybackAttributes across null updates. BUFFERING is preparing-only:
+     * once content is seen, unknown state must not reclaim another source. Focus pauses
+     * override stale phone ticks at a frozen position until explicit play or transient resume.
      */
-    private fun publishState(s: NowPlayingState.Snapshot) {
+    @Synchronized
+    private fun publishState(s: NowPlayingState.Snapshot, source: String = "replay") {
         val sess = session ?: return
         if (s.playbackStatus == null && s.hasContent && !warnedNoPlaybackStatus) {
             warnedNoPlaybackStatus = true
             log.w("track with no iAP2 playbackStatus — check NowPlayingUpdate PlaybackAttributes are subscribed")
         }
-        val state = when (s.playbackStatus) {
+        seenContent = seenContent || s.hasContent
+        s.playbackStatus?.let { knownStatus = it }
+        val status = if (focusPaused) NowPlayingState.PAUSE else knownStatus
+        val state = when (status) {
             NowPlayingState.STOP -> PlaybackState.STATE_STOPPED
             NowPlayingState.PAUSE -> PlaybackState.STATE_PAUSED
             NowPlayingState.PLAY, NowPlayingState.SEEK_FWD, NowPlayingState.SEEK_BACK -> PlaybackState.STATE_PLAYING
-            else -> PlaybackState.STATE_BUFFERING
+            else -> if (seenContent) PlaybackState.STATE_PAUSED else PlaybackState.STATE_BUFFERING
         }
-        val rate = if (s.playing || s.playbackStatus == null) 1f else 0f
+        val rate = if (status == NowPlayingState.PLAY) 1f else 0f
+        val pos = if (focusPaused) frozenPosition else s.elapsedMs
         val ps = PlaybackState.Builder().setActions(ACTIONS)
-            .setState(state, s.elapsedMs, rate, SystemClock.elapsedRealtime())
+            .setState(state, pos, rate, SystemClock.elapsedRealtime())
             .build()
         runCatching { sess.setPlaybackState(ps) }.onFailure { log.e("setPlaybackState failed: ${it.message}") }
+        val line = "card: state=$state pos=$pos rate=$rate"
+        if (line != stateLogLine) {
+            stateLogLine = line
+            log.i("$line source=$source")
+        }
     }
 
     private fun bitmapFor(jpeg: ByteArray?): Bitmap? {
@@ -587,42 +620,31 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * the active `MediaSession` — this one — where the previously empty callback swallowed them. The
      * buttons were dead twice over.
      *
-     * No local state changes here: iOS owns playback, and [publishState] repeats the
-     * status the phone already sent. A head-unit pause or stop stays on the car. During
-     * the arbitration window a pause-type key is dropped unless it comes from the
-     * steering-wheel package. Outside that window, play, next and previous still go to the phone.
+     * iOS owns playback. Only source-change callback probes stay on the car; all explicit
+     * media keys and real transport commands use HID, independent of arbitration timing.
+     * Focus pause is reflected immediately on the card, ahead of the phone's status response.
      */
     private val callback = object : MediaSession.Callback() {
         override fun onPlay() {
             val caller = callerLabel()
-            send(NativeCore.MediaBtn.PLAY, "play $caller")
+            tx.execute { forward(NativeCore.MediaBtn.PLAY, caller) }
         }
-        // GM binds every media source and sends pause, then pause+stop, as arbitration.
-        // Those callbacks are never HID. A steering-wheel pause is a media key, and it is
-        // forwarded outside the arbitration window.
-        override fun onPause() {
-            val why = if (inArbitration()) "arbitration window" else "head unit probe, not sent to the phone"
-            log.i("transport: pause ${callerLabel()} dropped — $why")
-        }
-        override fun onStop() {
-            val why = if (inArbitration()) "arbitration window" else "head unit probe, not sent to the phone"
-            log.i("transport: stop ${callerLabel()} dropped — $why")
-        }
+        override fun onPause() { transport("pause", callerLabel()) }
+        override fun onStop() { transport("stop", callerLabel()) }
         override fun onSkipToNext() {
             val caller = callerLabel()
-            send(NativeCore.MediaBtn.NEXT, "next $caller")
+            tx.execute { forward(NativeCore.MediaBtn.NEXT, caller) }
         }
         override fun onSkipToPrevious() {
             val caller = callerLabel()
-            send(NativeCore.MediaBtn.PREV, "prev $caller")
+            tx.execute { forward(NativeCore.MediaBtn.PREV, caller) }
         }
 
         /**
          * Handled explicitly so PLAY_PAUSE reaches iOS as the dedicated toggle rather than being
          * guessed into play-or-pause from a state we do not own.
          *
-         * Pause, play/pause, headset-hook and stop are dropped during the arbitration window
-         * unless they come from [STEERING_WHEEL_PACKAGE]. PLAY, NEXT and PREV always go through.
+         * Explicit key events are always user controls, even during source arbitration.
          */
         override fun onMediaButtonEvent(intent: Intent): Boolean {
             @Suppress("DEPRECATION")
@@ -630,29 +652,16 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 ?: return super.onMediaButtonEvent(intent)
             if (ev.action != KeyEvent.ACTION_DOWN) return true
             val caller = callerLabel()
-            val detail = "key ${ev.keyCode} source=${ev.source} flags=0x${Integer.toHexString(ev.flags)} device=${ev.deviceId} $caller"
-            val pauseType = ev.keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE ||
-                ev.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
-                ev.keyCode == KeyEvent.KEYCODE_HEADSETHOOK ||
-                ev.keyCode == KeyEvent.KEYCODE_MEDIA_STOP
-            if (pauseType && dropPauseKey(caller)) {
-                log.i("transport: $detail dropped — arbitration window")
-                return true
-            }
             val idx = when (ev.keyCode) {
                 KeyEvent.KEYCODE_MEDIA_PLAY -> NativeCore.MediaBtn.PLAY
                 KeyEvent.KEYCODE_MEDIA_PAUSE -> NativeCore.MediaBtn.PAUSE
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> NativeCore.MediaBtn.PLAY_PAUSE
                 KeyEvent.KEYCODE_MEDIA_NEXT -> NativeCore.MediaBtn.NEXT
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS -> NativeCore.MediaBtn.PREV
-                KeyEvent.KEYCODE_MEDIA_STOP -> {
-                    log.i("transport: $detail dropped — stop is not sent to the phone")
-                    return true
-                }
+                KeyEvent.KEYCODE_MEDIA_STOP -> NativeCore.MediaBtn.PAUSE
                 else -> return super.onMediaButtonEvent(intent)
             }
-            log.i("transport: $detail forwarded")
-            send(idx, detail)
+            tx.execute { forward(idx, caller) }
             return true
         }
     }
@@ -667,30 +676,150 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         return "caller=package=$pkg uid=${info.uid}"
     }
 
-    /**
-     * True when a pause-type key should stay on the car. The wheel package is forwarded
-     * even inside the window, once [STEERING_WHEEL_PACKAGE] is known. Capture 20260927-100549
-     * did not identify it: both seen packages used onPause/onStop, not media keys.
-     */
-    private fun dropPauseKey(caller: String): Boolean {
-        if (!inArbitration()) return false
-        if (STEERING_WHEEL_PACKAGE.isEmpty()) return true
-        return !caller.contains("package=$STEERING_WHEEL_PACKAGE ")
+    /** Hold callback pauses/stops briefly so neither half of a probe reaches the phone. Keys bypass. */
+    private fun transport(cmd: String, caller: String) {
+        val arrived = SystemClock.elapsedRealtime()
+        tx.execute {
+            if (caller.contains("package=com.android.car ")) {
+                log.i("transport: $cmd $caller dropped — source-change probe")
+                return@execute
+            }
+            if (pendingCommand != null && pendingCommand != cmd && arrived - pendingAt <= 100L) {
+                pendingTransport?.cancel(false)
+                log.i("transport: $pendingCommand $pendingCaller dropped — source-change probe")
+                log.i("transport: $cmd $caller dropped — source-change probe")
+                pendingCommand = null
+                return@execute
+            }
+            pendingTransport?.cancel(false)
+            pendingCommand?.let { forward(NativeCore.MediaBtn.PAUSE, pendingCaller ?: "caller=package=?", it) }
+            pendingCommand = cmd; pendingCaller = caller; pendingAt = arrived
+            pendingTransport = tx.schedule({
+                pendingCommand = null
+                forward(NativeCore.MediaBtn.PAUSE, caller, cmd)
+            }, 100L, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }
     }
 
-    private fun send(index: Int, what: String) {
-        runCatching {
-            tx.execute {
-                val ok = if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this@CarPlayMediaBrowserService))
-                    wasidremin.gmccpa.ocbm.AdapterSession.sendMediaButton(index.toByte())
-                else NativeCore.mediaButton(index)
-                // A refused send on a LIVE session is a dead event channel under a wheel button —
-                // a W. With no session it is AAOS probing the source at bind time (2026-09-09,
-                // 22:51:14.898, `play -> sent=false` four minutes before any phone) and stays I.
-                if (ok) log.i("transport: $what -> HID media $index sent=true")
-                else if (sessionUp) log.w("transport: $what -> HID media $index sent=false — the event channel refused it on a live session")
-                else log.i("transport: $what -> HID media $index sent=false (no session; nothing to send to)")
+    private fun forward(index: Int, caller: String, name: String = when (index) {
+        NativeCore.MediaBtn.PLAY -> "play"
+        NativeCore.MediaBtn.PAUSE -> "pause"
+        NativeCore.MediaBtn.NEXT -> "next"
+        NativeCore.MediaBtn.PREV -> "previous"
+        else -> "play-pause"
+    }) {
+        log.i("transport: $name $caller forwarded")
+        val changesPlayback = index == NativeCore.MediaBtn.PLAY || index == NativeCore.MediaBtn.PAUSE ||
+            index == NativeCore.MediaBtn.PLAY_PAUSE
+        if (changesPlayback) { commandGeneration++; focusGeneration++ }
+        val pause = index == NativeCore.MediaBtn.PAUSE ||
+            (index == NativeCore.MediaBtn.PLAY_PAUSE && last?.playbackStatus == NowPlayingState.PLAY)
+        val play = index == NativeCore.MediaBtn.PLAY ||
+            (index == NativeCore.MediaBtn.PLAY_PAUSE && last?.playbackStatus != NowPlayingState.PLAY)
+        if (pause) { userPaused = true; pausedByTransientLoss = false }
+        if (play) {
+            userPaused = false
+            pausedByFocusLoss = false; pausedByTransientLoss = false
+            AacPlayer.clearPermanentLoss()
+            if (!AacPlayer.requestUserFocus()) {
+                log.w("focus: GAIN → phone PLAY sent=false reason=user-play (focus not granted)")
+                return
             }
-        }.onFailure { log.e("transport $what dropped: ${it.message}") }
+        }
+        val status = last?.playbackStatus
+        val duplicate = (index == NativeCore.MediaBtn.PLAY && status == NowPlayingState.PLAY) ||
+            (index == NativeCore.MediaBtn.PAUSE && status in listOf(NowPlayingState.PAUSE, NowPlayingState.STOP))
+        if (play) synchronized(this) { focusPaused = false }
+        val ok = !duplicate && hid(index)
+        if (ok && play) last?.let { publishState(it.copy(playbackStatus = NowPlayingState.PLAY), "status") }
+        if (play) log.i("focus: GAIN → phone PLAY sent=$ok reason=user-play")
+        log.i("transport: $name $caller -> HID media $index sent=$ok")
+        if (!ok && !duplicate && pause && sessionUp) {
+            val generation = commandGeneration
+            val deadline = SystemClock.elapsedRealtime() + 3_000L
+            log.i("transport: $name $caller queued for 3000ms — no HID channel yet")
+            retryPause(index, caller, generation, deadline)
+        }
+    }
+
+    private fun retryPause(index: Int, caller: String, generation: Int, deadline: Long) {
+        tx.schedule({
+            if (!sessionUp || generation != commandGeneration) return@schedule
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                log.w("transport: pause $caller expired — no HID channel within 3000ms")
+            } else if (hid(index)) log.i("transport: pause $caller -> HID media $index sent=true (queued)")
+            else retryPause(index, caller, generation, deadline)
+        }, 100L, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    private fun hid(index: Int): Boolean = hidSender(index)
+
+    /** All intent/command decisions run on tx; card publication has its own short monitor. */
+    private fun handleFocus(change: Int, voice: Boolean) {
+        val permanent = change == android.media.AudioManager.AUDIOFOCUS_LOSS
+        val transient = change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+        if (permanent || transient) {
+            focusGeneration++
+            if (voice) {
+                log.i("focus: LOSS(${if (permanent) "permanent" else "transient"}) → phone PAUSE sent=false (status was ${last?.playbackStatus}; voice sink active)")
+                return
+            }
+            if (permanent) { pausedByFocusLoss = true; pausedByTransientLoss = false }
+            else if (!pausedByFocusLoss && !userPaused &&
+                last?.playbackStatus != NowPlayingState.PAUSE && last?.playbackStatus != NowPlayingState.STOP)
+                pausedByTransientLoss = true
+            focusLossAt = SystemClock.elapsedRealtime()
+            focusCommand(NativeCore.MediaBtn.PAUSE, focusGeneration,
+                "focus: LOSS(${if (permanent) "permanent" else "transient"}) → phone PAUSE")
+        } else if (change == android.media.AudioManager.AUDIOFOCUS_GAIN &&
+            pausedByTransientLoss && !userPaused && !pausedByFocusLoss) {
+            focusGeneration++ // Cancel a rate-limited PAUSE if focus returned before it ran.
+            focusCommand(NativeCore.MediaBtn.PLAY, focusGeneration,
+                "focus: GAIN → phone PLAY", "transient-resume")
+        }
+    }
+
+    private fun focusCommand(index: Int, generation: Int, prefix: String, reason: String? = null) {
+        if (!sessionUp || generation != focusGeneration) return
+        val status = last?.playbackStatus
+        val duplicate = if (index == NativeCore.MediaBtn.PAUSE)
+            status == NowPlayingState.PAUSE || status == NowPlayingState.STOP
+        else status == NowPlayingState.PLAY
+        val now = SystemClock.elapsedRealtime()
+        val wait = (2_000L - (now - lastFocusCommandAt)).coerceAtLeast(0L)
+        if (!duplicate && wait > 0L) {
+            tx.schedule({ focusCommand(index, generation, prefix, reason) }, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
+            return
+        }
+        val ok = !duplicate && hid(index)
+        if (index == NativeCore.MediaBtn.PLAY && duplicate) {
+            pausedByTransientLoss = false
+            synchronized(this) { focusPaused = false; last?.let { publishState(it, "focus") } }
+        }
+        if (ok) {
+            lastFocusCommandAt = now
+            synchronized(this) {
+                if (index == NativeCore.MediaBtn.PAUSE) {
+                    frozenPosition = session?.controller?.playbackState?.let { ps ->
+                        ps.position + ((now - ps.lastPositionUpdateTime) * ps.playbackSpeed).toLong()
+                    } ?: last?.elapsedMs ?: 0L
+                    focusPaused = true
+                } else {
+                    focusPaused = false; pausedByTransientLoss = false
+                }
+                last?.let { publishState(if (index == NativeCore.MediaBtn.PLAY)
+                    it.copy(playbackStatus = NowPlayingState.PLAY) else it, "focus") }
+            }
+        }
+        log.i("$prefix sent=$ok" + if (reason != null) " reason=$reason" else " (status was $status)")
+    }
+
+    private fun resetTransport() {
+        commandGeneration++; focusGeneration++
+        pendingTransport?.cancel(false); pendingCommand = null
+        pausedByFocusLoss = false; pausedByTransientLoss = false; userPaused = false
+        synchronized(this) {
+            focusPaused = false; seenContent = false; knownStatus = null; stateLogLine = null
+        }
     }
 }
