@@ -111,6 +111,7 @@ class HevcRenderer(
     }
 
     fun start() {
+        VideoPresentation.size(width, height)
         // A restart must not carry parameter sets or keyframe state across streams: mixing a new VPS
         // with a stale SPS/PPS configures a codec that cannot decode what follows.
         vps = null; sps = null; pps = null
@@ -428,6 +429,7 @@ class HevcRenderer(
                     c.releaseOutputBuffer(outIdx, info.size != 0)
                     if (info.size != 0) {
                         lastRenderAt.set(SystemClock.elapsedRealtime())
+                        VideoPresentation.frames.incrementAndGet()
                         val n = framesRendered.incrementAndGet()
                         if (!firstFrameThisConn) {
                             // Per-connection latch: one branch per frame, one met() per connection.
@@ -447,7 +449,13 @@ class HevcRenderer(
                         if (n % 300 == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
                     }
                 }
-                outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> log.i("output format: ${c.outputFormat}")
+                outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val f = c.outputFormat
+                    val w = if (f.containsKey("crop-right")) f.getInteger("crop-right") - f.getInteger("crop-left") + 1 else f.getInteger(MediaFormat.KEY_WIDTH)
+                    val h = if (f.containsKey("crop-bottom")) f.getInteger("crop-bottom") - f.getInteger("crop-top") + 1 else f.getInteger(MediaFormat.KEY_HEIGHT)
+                    VideoPresentation.size(w, h)
+                    log.i("output format: $f")
+                }
                 outIdx == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {}
                 else -> return   // INFO_TRY_AGAIN_LATER
             }

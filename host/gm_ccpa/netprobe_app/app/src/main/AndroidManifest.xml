@@ -77,6 +77,19 @@
     <uses-permission android:name="android.car.permission.CAR_EXTERIOR_ENVIRONMENT"/>
     <!-- Read-only, normal Car permission: outside-temperature display units; no climate control. -->
     <uses-permission android:name="android.car.permission.READ_CAR_DISPLAY_UNITS"/>
+    <!-- TEMPORARY read-only telemetry capability probe. Undefined OEM permissions are reported,
+         never assumed granted; no HVAC/control permissions. Remove with telemetry package. -->
+    <uses-permission android:name="android.car.permission.CAR_INFO"/>
+    <uses-permission android:name="android.car.permission.CAR_SPEED"/>
+    <uses-permission android:name="android.car.permission.CAR_ENERGY"/>
+    <uses-permission android:name="android.car.permission.CAR_ENERGY_PORTS"/>
+    <uses-permission android:name="android.car.permission.CAR_TIRES"/>
+    <uses-permission android:name="android.car.permission.CAR_DYNAMICS_STATE"/>
+    <uses-permission android:name="android.car.permission.READ_CAR_STEERING"/>
+    <uses-permission android:name="android.car.permission.CAR_MILEAGE"/>
+    <uses-permission android:name="android.car.permission.CAR_DRIVING_STATE"/>
+    <uses-permission android:name="android.car.permission.CAR_IDENTIFICATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.READ_LOGS"/>
 
     <!-- Lets capture start at boot rather than waiting for the first USB attach. Coverage does NOT
@@ -150,6 +163,14 @@
             <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/device_filter"/>
         </activity>
+
+        <!-- Temporary parked-only diagnostics, not a launcher and not distraction optimized. -->
+        <activity android:name="wasidremin.gmccpa.telemetry.ProbeActivity"
+            android:exported="false" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <meta-data android:name="distractionOptimized" android:value="false"/>
+        </activity>
+        <service android:name="wasidremin.gmccpa.telemetry.ProbeService"
+            android:exported="false" android:foregroundServiceType="dataSync"/>
 
         <activity
             android:name="wasidremin.gmccpa.MainActivity"

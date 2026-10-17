@@ -769,6 +769,9 @@ pub struct DisplayPanelConfig {
     pub display_panel_id: String,
     #[serde(default, rename = "pixelDimensions")]
     pub pixel_dimensions: PixelDimensions,
+    /// Apple panel physicalDimensions in mm, independent of coded pixels.
+    #[serde(default, rename = "physicalDimensions")]
+    pub physical_dimensions: PixelDimensions,
     /// Apple's `DisplayPanelProperty` has EXACTLY three cases (docs/carplay/03_SDK_GROUND_TRUTH.md §5): `dpManaged`,
     /// `additionalContent`, `showsInstruments` — and only the last appears in any stock template.
     /// Parsed as free strings so an unrecognised value degrades to "ignored" at the point of USE
@@ -825,6 +828,11 @@ impl VehicleConfig {
         if d.width > 0 && d.height > 0 {
             base.display_width = d.width;
             base.display_height = d.height;
+        }
+        let mm = &self.display_panels_config.main_display_panel.physical_dimensions;
+        if (1..=2000).contains(&mm.width) && (1..=2000).contains(&mm.height) {
+            base.display_width_mm = mm.width;
+            base.display_height_mm = mm.height;
         }
         // maxFPS (30/60) — iOS caps encode at this. 0 / out-of-range keeps the box default.
         let fps = self.video_streams_config.main_video_stream.max_fps;

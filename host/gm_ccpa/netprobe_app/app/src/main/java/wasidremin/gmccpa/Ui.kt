@@ -119,12 +119,26 @@ enum class LogAction(val label: String) {
      * no adb needed.
      */
     USB_PROBE("USB Probe"),
+    VEHICLE_PROBE("Vehicle Telemetry Probe"),
     /** Wipes captured log files on the head unit and restarts capture. Confirmation-gated. */
     CLEAR("Clear Logs"),
 }
 
 /** dp -> px, against the density the Activity is actually running at. */
 fun Context.dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
+
+/**
+ * Pure normal-path launcher status: built-ins are automatic, user templates are optional
+ * overrides, so no overrides is Ready — never "uncalibrated". A genuinely missing set
+ * (no built-in AND no override) is a profile error. Host-testable; the Activity wrapper
+ * in [LauncherUi] only supplies the missing-role list.
+ */
+fun launcherStatusText(missingRoles: List<String>): String =
+    if (missingRoles.isEmpty()) {
+        "Built-in Equinox templates are used automatically. Custom templates are optional overrides."
+    } else {
+        "Profile error: no template for ${missingRoles.joinToString(", ")} (built-in missing and no override)"
+    }
 
 /**
  * The launcher screen.
@@ -194,7 +208,22 @@ class LauncherUi(private val act: Activity) {
     private var announceRetriesIndex = 0
     private lateinit var scopeRow: EqRow
     private lateinit var logStatusRow: EqRow
+    private lateinit var uploadLogsButton: wasidremin.gmccpa.upload.UploadActionButton
+    private lateinit var launcherStatusRow: EqRow
+    private lateinit var latestLaunchRow: EqRow
+    private lateinit var captureCurrentRow: EqRow
+    private lateinit var captureCurrentButton: wasidremin.gmccpa.upload.UploadActionButton
+    private lateinit var captureFullRow: EqRow
+    private lateinit var captureFullButton: wasidremin.gmccpa.upload.UploadActionButton
+    private lateinit var testConnectionRow: EqRow
+    private lateinit var testConnectionButton: wasidremin.gmccpa.upload.UploadActionButton
+    private lateinit var baseUrlRow: EqRow
+    private lateinit var queueStatusRow: EqRow
+    private lateinit var drainQueueButton: wasidremin.gmccpa.upload.UploadActionButton
+    private lateinit var iconTemplateRow: EqRow
+    private val calib by lazy { CalibrationUi(act, { safeDialogWidth(it) }) { setDetail(it) } }
     private lateinit var wifiToggle: EqToggle
+    private val queueListener: (Int) -> Unit = { _ -> refreshUploadQueueRow() }
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
 
@@ -211,6 +240,14 @@ class LauncherUi(private val act: Activity) {
     private var lastAnimStage: StartupAnimationView.Stage? = null
     private var builtWidthPx = 0
     private var rebuilding = false
+    private var safeLeft = 0
+    private var safeRight = 0
+    private var safeBottom = 0
+
+    /** Tabs already layout-audited. Declared BEFORE [root]: [buildRoot] -> [showTab] ->
+     * [auditLayout] touches it during construction, and a property declared after [root]
+     * would still hold null at that point (startup NPE, 2026-10-16). */
+    private val auditedTabs = mutableSetOf<Int>()
 
     val root: View = buildRoot()
 
@@ -251,15 +288,37 @@ class LauncherUi(private val act: Activity) {
         }
         frame.addView(intro, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        frame.addView(introGear, FrameLayout.LayoutParams(act.dp(72), act.dp(72), Gravity.TOP or Gravity.END).apply {
-            topMargin = act.dp(20)
-            marginEnd = act.dp(28)
+        frame.addView(introGear, FrameLayout.LayoutParams(act.dp(72), act.dp(72), Gravity.BOTTOM or Gravity.START).apply {
+            leftMargin = act.dp(24)
+            bottomMargin = act.dp(24)
         })
+        frame.setOnApplyWindowInsetsListener { _, insets ->
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val cut = insets.getInsets(android.view.WindowInsets.Type.displayCutout())
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                safeLeft = maxOf(cut.left, bars.left)
+                safeRight = maxOf(cut.right, bars.right)
+                safeBottom = maxOf(cut.bottom, bars.bottom)
+            }
+            settingsHost.setPadding(safeLeft, settingsHost.paddingTop, safeRight, safeBottom)
+            (introGear.layoutParams as FrameLayout.LayoutParams).let { lp ->
+                lp.leftMargin = safeLeft + act.dp(24)
+                lp.bottomMargin = safeBottom + act.dp(24)
+                introGear.layoutParams = lp
+            }
+            uiLog.i("settings safe insets l=$safeLeft r=$safeRight b=$safeBottom")
+            insets
+        }
+        frame.requestApplyInsets()
         settingsHost.addOnLayoutChangeListener { _, l, _, r, _, _, _, _, _ ->
-            considerWidth(r - l)
+            considerWidth(r - l - settingsHost.paddingLeft - settingsHost.paddingRight)
         }
         return frame
     }
+
+    fun safeDialogWidth(desired: Int): Int =
+        minOf(desired, act.resources.displayMetrics.widthPixels - safeLeft - safeRight - act.dp(48))
+            .coerceAtLeast(act.dp(320))
 
     private fun considerWidth(w: Int) {
         if (w <= 0 || rebuilding) return
@@ -284,7 +343,7 @@ class LauncherUi(private val act: Activity) {
         val version = runCatching {
             act.packageManager.getPackageInfo(act.packageName, 0).versionName
         }.getOrNull() ?: ""
-        rail = EqNavRail(act, listOf("Connection", "Display", "Audio", "Logs", "Advanced"), { showTab(it) }, version)
+        rail = EqNavRail(act, listOf("Settings", "Troubleshooting", "Advanced"), { showTab(it) }, version)
         settingsHost.addView(rail, LinearLayout.LayoutParams(
             EqTheme.px(300f), ViewGroup.LayoutParams.MATCH_PARENT))
 
@@ -299,16 +358,12 @@ class LauncherUi(private val act: Activity) {
         strip = EqStatusStrip(act)
         column.addView(strip, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = EqTheme.px(8f) })
 
-        val connection = page("Connection")
-        val display = page("Display")
-        val audio = page("Audio")
-        val logs = page("Logs")
+        val settings = page("Settings")
+        val trouble = page("Troubleshooting")
         val advanced = page("Advanced")
-        pages = listOf(connection, display, audio, logs, advanced)
-        buildConnection(connection)
-        buildDisplay(display)
-        buildAudio(audio)
-        buildLogs(logs)
+        pages = listOf(settings, trouble, advanced)
+        buildSettings(settings)
+        buildTroubleshooting(trouble)
         buildAdvanced(advanced)
         for (p in pages) column.addView(p, LinearLayout.LayoutParams(-1, -2))
         this.scroller.addView(column, ViewGroup.LayoutParams(-1, -2))
@@ -325,66 +380,23 @@ class LauncherUi(private val act: Activity) {
         })
     }
 
-    private fun buildConnection(page: LinearLayout) {
-        pairRow = EqRow(act, pairingCode.ifEmpty { " " })
-        pairRow.titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(40f))
-        pairRow.titleView.typeface = EqTheme.Weight.LIGHT.face
-        pairRow.titleView.letterSpacing = 0.18f
-        page.addView(pairRow, 0)
-
-        phoneRow = EqRow(act, phoneTitle(), lastDetail)
-        restartButton = eqButton(act, if (restartBusy) "Restarting…" else "Restart", EqButtonStyle.SECONDARY) {
-            onRestart()
-        }
-        val restart = EqRow(
-            act, "Restart CarPlay",
-            "Reconnects the adapter and your iPhone (about 15 s)",
-            trailing = restartButton,
-        )
-        val stop = EqRow(act, "Stop CarPlay", onClick = { onStop() })
-        startRow = EqRow(act, "Start", onClick = { onStart() })
-        page.addView(eqSectionLabel(act, "Status"))
-        page.addView(EqCard(act).addRow(phoneRow).addRow(restart).addRow(stop).addRow(startRow))
-        page.addView(eqSectionLabel(act, "Phone"))
-        page.addView(EqCard(act).addRow(EqRow(
-            act, "Forget pairing",
-            "Clears the adapter and this app. Also forget this car on the iPhone.",
-            titleColor = EqTheme.DANGER,
-            onClick = { confirmForget() },
-        )))
-    }
-
-    private fun buildDisplay(page: LinearLayout) {
-        val scales = DisplayPrefs.SCALE_PRESETS
-        val scaleLabels = scales.map { "$it%" }
-        val scaleIndex = scales.indexOf(DisplayPrefs.uiScale(act)).coerceAtLeast(0)
-        val margins = DisplayPrefs.SAFE_PRESETS
-        val marginLabels = listOf("Off", "Small", "Medium", "Large", "Max")
-        val marginIndex = margins.indexOf(DisplayPrefs.safeRightPx(act)).let { if (it < 0) 2 else it }
+    /**
+     * Everyday settings: normal, understandable preferences only. Anything numeric,
+     * probe-like, or destructive lives under Troubleshooting or Advanced.
+     */
+    private fun buildSettings(page: LinearLayout) {
+        page.addView(eqSectionLabel(act, "Visual app launcher"))
+        launcherStatusRow = EqRow(act, "Visual app launcher", launcherStatusSubtitle())
+        page.addView(EqCard(act).addRow(launcherStatusRow))
+        page.addView(eqSectionLabel(act, "Display"))
+        val card = EqCard(act)
         val modes = listOf(
             ScreenMode.SYSTEM_UI, ScreenMode.STATUS_HIDDEN, ScreenMode.NAV_HIDDEN, ScreenMode.FULLSCREEN,
         )
         val modeIndex = modes.indexOf(DisplayPrefs.mode(act)).let { if (it < 0) 3 else it }
-        page.addView(eqSectionLabel(act, "Picture"))
-        val card = EqCard(act)
-        card.addRow(EqRow(
-            act, "CarPlay size",
-            "Bigger icons and text. Applies at the next connection.",
-            trailing = EqSegmented(act, scaleLabels, scaleIndex) { i ->
-                DisplayPrefs.setUiScale(act, scales[i])
-                refreshDynamic()
-            },
-        ))
-        card.addRow(EqRow(
-            act, "Right margin",
-            "Keeps Now Playing off the right edge. Applies at the next connection.",
-            trailing = EqSegmented(act, marginLabels, marginIndex) { i ->
-                DisplayPrefs.setSafeRightPx(act, margins[i])
-                refreshDynamic()
-            },
-        ))
         card.addRow(EqRow(
             act, "Screen layout",
+            "Which car bars stay visible around CarPlay.",
             trailing = EqSegmented(act, listOf("Car bars", "No top", "No bottom", "Full"), modeIndex) { i ->
                 DisplayPrefs.setMode(act, modes[i])
                 onScreenChanged()
@@ -400,9 +412,129 @@ class LauncherUi(private val act: Activity) {
         ))
         card.addRow(EqRow(
             act, "Custom top bar",
-            "GM-style controls in the space freed when the top bar hides. Off is today's behavior.",
+            "GM-style controls above CarPlay when the car hides its top bar. Off keeps today's picture.",
             trailing = EqSegmented(act, listOf("Off", "On"), if (DisplayPrefs.customTopBar(act)) 1 else 0) { i ->
                 DisplayPrefs.setCustomTopBar(act, i == 1)
+                refreshDynamic()
+            },
+        ))
+        page.addView(card)
+        val bt = AudioRoute.bluetooth
+        audioRow = EqRow(
+            act, "Audio source", audioSubtitle(bt),
+            trailing = EqSegmented(act, listOf("Adapter", "Bluetooth"), if (bt) 1 else 0) { i ->
+                AudioRoute.set(act, i == 1)
+                audioRow.setSubtitle(audioSubtitle(i == 1))
+            },
+        )
+        page.addView(eqSectionLabel(act, "Playback"))
+        page.addView(EqCard(act).addRow(audioRow))
+    }
+
+    /**
+     * Normal launcher status. Built-in Equinox templates are automatic; user templates
+     * are optional overrides — so a device with no overrides is Ready, not uncalibrated.
+     * Only a genuinely missing template set (no built-in AND no override) is a profile error.
+     */
+    private fun launcherStatusSubtitle(): String {
+        val missing = wasidremin.gmccpa.match.ScreenModel.ROLES.filter {
+            !wasidremin.gmccpa.av.VisionLauncher.isCalibrated(act, it)
+        }
+        return launcherStatusText(missing)
+    }
+
+    private fun refreshLauncherStatusRow() = act.runOnUiThread {
+        if (act.isFinishing || act.isDestroyed) return@runOnUiThread
+        if (::launcherStatusRow.isInitialized) {
+            val err = launcherStatusSubtitle().startsWith("Profile error")
+            launcherStatusRow.subtitleView.setTextColor(if (err) EqTheme.DANGER else EqTheme.TEXT_DIM)
+            launcherStatusRow.setSubtitle(launcherStatusSubtitle())
+        }
+    }
+
+    private var displayDraft: DisplayPrefs.Controls? = null
+
+    /** Geometry overrides and legacy numeric controls. Advanced only; Settings keeps the three
+     * presentation rows (moved to buildSettings with unchanged callbacks and stored values). */
+    private fun buildDisplayOverrides(page: LinearLayout) {
+        var pending = displayDraft ?: DisplayPrefs.controls(act)
+        fun update(c: DisplayPrefs.Controls) { pending = c; displayDraft = c }
+        val preview = object : View(act) {
+            private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                paint.color = EqTheme.TEXT_FAINT
+                canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+                val metrics = act.resources.displayMetrics
+                val panelW = VideoFrame.viewWidth.takeIf { VideoFrame.captureSource != "default" } ?: metrics.widthPixels
+                val panelH = VideoFrame.viewHeight.takeIf { VideoFrame.captureSource != "default" } ?: metrics.heightPixels
+                val box = DisplayGeometry.content(panelW, panelH, metrics.density, pending)
+                paint.color = EqTheme.ACCENT
+                canvas.drawRect(box.x * width / panelW.toFloat(), box.y * height / panelH.toFloat(),
+                    (box.x + box.width) * width / panelW.toFloat(), (box.y + box.height) * height / panelH.toFloat(), paint)
+            }
+        }
+        page.addView(eqSectionLabel(act, "Safe controls · pending until saved"))
+        page.addView(preview, LinearLayout.LayoutParams(-1, EqTheme.px(140f)))
+        fun slider(title: String, value: Int, max: Int, offset: Int = 0, changed: (Int) -> Unit) {
+            val row = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+            val label = EqTheme.text(act, 18f, EqTheme.TEXT).apply { text = "$title: ${value + offset}" }
+            row.addView(label)
+            row.addView(android.widget.SeekBar(act).apply {
+                this.max = max; progress = value; contentDescription = title
+                setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(bar: android.widget.SeekBar, v: Int, user: Boolean) {
+                        if (user) { changed(v); label.text = "$title: ${v + offset}"; preview.invalidate() }
+                    }
+                    override fun onStartTrackingTouch(bar: android.widget.SeekBar) = Unit
+                    override fun onStopTrackingTouch(bar: android.widget.SeekBar) = Unit
+                })
+            }, LinearLayout.LayoutParams(-1, EqTheme.px(48f)))
+            page.addView(row)
+        }
+        slider("Top inset (dp)", pending.top, 160) { update(pending.copy(top = it)) }
+        slider("Bottom inset (dp)", pending.bottom, 160) { update(pending.copy(bottom = it)) }
+        slider("Left inset (dp)", pending.left, 160) { update(pending.copy(left = it)) }
+        slider("Right inset (dp)", pending.right, 160) { update(pending.copy(right = it)) }
+        if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(act)) {
+            slider("CarPlay UI · Smaller ↔ Larger (50–150%)", pending.uiPercent - 50, 100, 50) {
+                update(pending.copy(uiPercent = it + 50))
+            }
+        } else page.addView(EqRow(act, "CarPlay UI calibration",
+            "Available with adapter Wi-Fi and an updated receiver. The legacy host uses static display capabilities."))
+        page.addView(EqRow(act, "Video sizing", "Preserves decoded aspect ratio inside the safe rectangle.",
+            trailing = EqSegmented(act, listOf("Stretch", "Fit to window"), if (pending.fit) 1 else 0) {
+                update(pending.copy(fit = it == 1))
+            }))
+        page.addView(EqRow(act, "Floating stats", "Drag the pill during projection; position is remembered.",
+            trailing = EqToggle(act, pending.stats) { update(pending.copy(stats = it)) }))
+        page.addView(EqRow(act, "Save & Reconnect", "Saves calibration and restarts the projection session, not the app.",
+            trailing = eqButton(act, "Save & Reconnect", EqButtonStyle.SECONDARY) {
+                if (DisplayPrefs.saveControls(act, pending)) {
+                    displayDraft = null
+                    onRestart()
+                } else android.widget.Toast.makeText(act, "Could not save display settings; session unchanged", android.widget.Toast.LENGTH_LONG).show()
+            }))
+        val scales = DisplayPrefs.SCALE_PRESETS
+        val scaleLabels = scales.map { "$it%" }
+        val scaleIndex = scales.indexOf(DisplayPrefs.uiScale(act)).coerceAtLeast(0)
+        val margins = DisplayPrefs.SAFE_PRESETS
+        val marginLabels = listOf("Off", "Small", "Medium", "Large", "Max")
+        val marginIndex = margins.indexOf(DisplayPrefs.safeRightPx(act)).let { if (it < 0) 2 else it }
+        page.addView(eqSectionLabel(act, "Picture"))
+        val card = EqCard(act)
+        card.addRow(EqRow(
+            act, "Legacy video resolution scale",
+            "Changes coded resolution. Separate from the new CarPlay UI calibration above.",
+            trailing = EqSegmented(act, scaleLabels, scaleIndex) { i ->
+                DisplayPrefs.setUiScale(act, scales[i])
+                refreshDynamic()
+            },
+        ))
+        card.addRow(EqRow(
+            act, "Right margin",
+            "Keeps Now Playing off the right edge. Applies at the next connection.",
+            trailing = EqSegmented(act, marginLabels, marginIndex) { i ->
+                DisplayPrefs.setSafeRightPx(act, margins[i])
                 refreshDynamic()
             },
         ))
@@ -420,38 +552,339 @@ class LauncherUi(private val act: Activity) {
         ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(16f) })
     }
 
-    private fun buildAudio(page: LinearLayout) {
-        val bt = AudioRoute.bluetooth
-        audioRow = EqRow(
-            act, "Audio source", audioSubtitle(bt),
-            trailing = EqSegmented(act, listOf("Adapter", "Bluetooth"), if (bt) 1 else 0) { i ->
-                AudioRoute.set(act, i == 1)
-                audioRow.setSubtitle(audioSubtitle(i == 1))
-            },
-        )
-        page.addView(eqSectionLabel(act, "Playback"))
-        page.addView(EqCard(act).addRow(audioRow))
-    }
 
-    private fun buildLogs(page: LinearLayout) {
-        val granted = readLogsGranted()
-        val scope = CapturePrefs.scope(act)
-        scopeControl = EqSegmented(act, listOf("This app", "Whole car"), if (scope == LogCapture.Scope.WHOLE_OS) 1 else 0) { i ->
-            onScopePicked(i)
+
+    /**
+     * User-triggered support actions. No preferences live here except the session-only
+     * diagnostics switch (never persisted, OFF after process restart).
+     */
+    private fun buildTroubleshooting(page: LinearLayout) {
+        pairRow = EqRow(act, pairingCode.ifEmpty { " " })
+        pairRow.titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(40f))
+        pairRow.titleView.typeface = EqTheme.Weight.LIGHT.face
+        pairRow.titleView.letterSpacing = 0.18f
+        page.addView(pairRow, 0)
+
+        phoneRow = EqRow(act, phoneTitle(), lastDetail)
+        restartButton = eqButton(act, if (restartBusy) "Restarting…" else "Restart", EqButtonStyle.SECONDARY) {
+            onRestart()
         }
-        scopeRow = EqRow(act, "Log scope", scopeSubtitle(granted), trailing = scopeControl)
+        val restart = EqRow(
+            act, "Restart CarPlay",
+            "Reconnects the adapter and your iPhone (about 15 s)",
+            trailing = restartButton,
+        )
+        val stop = EqRow(act, "Stop CarPlay", onClick = { onStop() })
+        startRow = EqRow(act, "Start", onClick = { onStart() })
         logStatusRow = EqRow(act, "Log status", logStatusText.ifEmpty { null }, onClick = { onLogAction(LogAction.STATUS) })
+        page.addView(eqSectionLabel(act, "Status"))
+        page.addView(EqCard(act).addRow(phoneRow).addRow(restart).addRow(stop).addRow(startRow)
+            .addRow(logStatusRow)
+            .addRow(EqRow(act, "Recover", "Tries the automatic recovery steps now.", onClick = { onRecover() })))
+
+        latestLaunchRow = EqRow(act, "Launch diagnostics", "No launches yet",
+            trailing = EqChevron(act), onClick = { showLaunchDiagnosticsDialog() })
+        page.addView(eqSectionLabel(act, "Launch diagnostics"))
+        page.addView(EqCard(act).addRow(latestLaunchRow))
+        refreshLatestLaunchRow()
+
+        captureCurrentButton = wasidremin.gmccpa.upload.UploadActionButton(
+            ctx = act,
+            defaultLabel = "Capture Current Screen",
+            defaultIcon = wasidremin.gmccpa.upload.UploadIcon.CAMERA,
+            onStatusAnnounce = { msg -> setDetail(msg) },
+            onTrigger = {
+                triggerCalibrationCapture(captureCurrentButton)
+            },
+        ).apply {
+            onRetry = {
+                wasidremin.gmccpa.upload.UploadCenter.drainPendingCaptures(act) { st ->
+                    captureCurrentButton.setState(st)
+                }
+            }
+        }
+        captureCurrentRow = EqRow(
+            act,
+            "Capture current CarPlay screen",
+            "Open the screen you want in CarPlay, then capture it.",
+            trailing = captureCurrentButton,
+        )
+        captureFullButton = wasidremin.gmccpa.upload.UploadActionButton(
+            ctx = act,
+            defaultLabel = "Capture Full Screen",
+            defaultIcon = wasidremin.gmccpa.upload.UploadIcon.CAMERA,
+            onStatusAnnounce = { msg -> setDetail(msg) },
+            onTrigger = {
+                triggerCalibrationCapture(
+                    captureFullButton,
+                    wasidremin.gmccpa.av.CarPlayFrameGrabber.CaptureButtonKind.CAPTURE_FULL_WINDOW,
+                    captureFullRow,
+                    "Capturing full screen…",
+                )
+            },
+        ).apply {
+            onRetry = {
+                wasidremin.gmccpa.upload.UploadCenter.drainPendingCaptures(act) { st ->
+                    captureFullButton.setState(st)
+                }
+            }
+        }
+        captureFullRow = EqRow(
+            act,
+            "Capture full screen",
+            "Whole window including the top bar and sidebar, with the CarPlay picture placed in it.",
+            trailing = captureFullButton,
+        )
         page.addView(eqSectionLabel(act, "Capture"))
+        page.addView(EqCard(act).addRow(captureCurrentRow).addRow(captureFullRow))
+
+        uploadLogsButton = wasidremin.gmccpa.upload.UploadActionButton(
+            ctx = act,
+            defaultLabel = "Upload Logs",
+            defaultIcon = wasidremin.gmccpa.upload.UploadIcon.UPLOAD,
+            onStatusAnnounce = { msg -> setDetail(msg) },
+            onTrigger = { onLogAction(LogAction.UPLOAD) },
+        )
+        page.addView(eqSectionLabel(act, "Logs"))
         page.addView(EqCard(act)
             .addRow(EqRow(
                 act, "Upload logs",
-                trailing = eqButton(act, "Upload", EqButtonStyle.PRIMARY) { onLogAction(LogAction.UPLOAD) },
+                "Streams redacted logs with determinate socket progress",
+                trailing = uploadLogsButton,
             ))
             .addRow(EqRow(act, "Export logs", onClick = { onLogAction(LogAction.EXPORT) }))
-            .addRow(scopeRow)
-            .addRow(logStatusRow)
-            .addRow(EqRow(act, "USB probe", onClick = { onLogAction(LogAction.USB_PROBE) }))
             .addRow(EqRow(act, "Clear logs", titleColor = EqTheme.DANGER, onClick = { confirmClearLogs() })))
+    }
+
+    private fun saveShotsSubtitle(): String =
+        if (wasidremin.gmccpa.av.VisionLauncher.saveScreenshots) {
+            "ON for this session — before/after CarPlay images are saved for troubleshooting. " +
+                "Images may include map locations, contacts, and media."
+        } else {
+            "Temporarily saves before/after CarPlay images for troubleshooting. " +
+                "Images may include map locations, contacts, and media."
+        }
+
+    private fun latestLaunchDetail(): String {
+        val rec = wasidremin.gmccpa.av.CarPlayLauncher.listLaunches(act).firstOrNull()
+            ?: return "No launches yet"
+        val shots = wasidremin.gmccpa.av.LaunchEvidence.listAttempts(act).size
+        return "${rec.targetName} → ${rec.outcome} · ${rec.id}" +
+            (rec.error?.let { " · $it" } ?: "") +
+            " · screenshots: $shots attempt(s) saved"
+    }
+
+    private fun latestLaunchSubtitle(): String {
+        val shots = if (wasidremin.gmccpa.av.VisionLauncher.saveScreenshots) "screenshots on" else "screenshots off"
+        val rec = wasidremin.gmccpa.av.CarPlayLauncher.listLaunches(act).firstOrNull()
+            ?: return "No launches yet · $shots"
+        return "Last: ${rec.targetName} → ${rec.outcome} · $shots"
+    }
+
+    private fun showLaunchDiagnosticsDialog() {
+        val dialog = Dialog(act)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setDimAmount(0.6f)
+        val body = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            background = EqTheme.rounded(0xFF111826.toInt(), 28f, EqTheme.CARD_LINE)
+            setPadding(EqTheme.px(36f), EqTheme.px(28f), EqTheme.px(36f), EqTheme.px(24f))
+            addView(EqTheme.text(act, 28f, EqTheme.TEXT, EqTheme.Weight.LIGHT).apply { text = "Launch diagnostics" })
+        }
+        val detail = EqRow(act, "Latest launch", "Loading…")
+        lateinit var shots: EqRow
+        shots = EqRow(act, "Save launch screenshots", saveShotsSubtitle(),
+            trailing = EqToggle(act, wasidremin.gmccpa.av.VisionLauncher.saveScreenshots) { on ->
+                wasidremin.gmccpa.av.VisionLauncher.saveScreenshots = on
+                shots.setSubtitle(saveShotsSubtitle())
+                refreshLatestLaunchRow()
+                setDetail(if (on) "Launch screenshots ON for this session only" else "Launch screenshots off")
+            })
+        body.addView(EqCard(act)
+            .addRow(EqRow(act, "Test app launch", "Strip first, then the Home grid. Never taps an app without a match.",
+                trailing = EqChevron(act), onClick = { dialog.dismiss(); calib.showTestLaunch() }))
+            .addRow(detail)
+            .addRow(shots)
+            .addRow(EqRow(act, "Export launch diagnostics", "Records + saved screenshots. Nothing uploads automatically.",
+                onClick = { dialog.dismiss(); exportLaunchDiagnostics() }))
+            .addRow(EqRow(act, "Clear saved launch screenshots", titleColor = EqTheme.DANGER,
+                onClick = { dialog.dismiss(); confirmClearEvidence() })),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(16f) })
+        body.addView(eqButton(act, "Close", EqButtonStyle.SECONDARY) { dialog.dismiss() },
+            LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END; topMargin = EqTheme.px(20f) })
+        dialog.setContentView(ScrollView(act).apply { addView(body) },
+            ViewGroup.LayoutParams(safeDialogWidth(EqTheme.px(860f)), ViewGroup.LayoutParams.WRAP_CONTENT))
+        dialog.show()
+        Thread({
+            val s = latestLaunchDetail()
+            act.runOnUiThread { if (dialog.isShowing) detail.setSubtitle(s) }
+        }, "launch-diag-read").apply { isDaemon = true }.start()
+    }
+
+    /** Disk reads stay off the UI thread; the row updates when the scan lands. */
+    private fun refreshLatestLaunchRow() {
+        Thread({
+            val subtitle = latestLaunchSubtitle()
+            act.runOnUiThread {
+                if (act.isFinishing || act.isDestroyed) return@runOnUiThread
+                if (::latestLaunchRow.isInitialized) latestLaunchRow.setSubtitle(subtitle)
+            }
+        }, "latest-launch-read").apply { isDaemon = true }.start()
+    }
+
+    private fun confirmClearEvidence() {
+        EqDialog.confirm(
+            act, "Clear launch screenshots",
+            "Deletes launch screenshots and diagnostic ZIPs stored in this app. " +
+                "Copies you already exported or shared are not affected.",
+            "Clear", true,
+        ) {
+            wasidremin.gmccpa.av.LaunchEvidence.clear(act)
+            setDetail("launch screenshots cleared")
+            refreshLatestLaunchRow()
+        }
+    }
+
+    /**
+     * buildZip runs on this background thread (it throws on the main thread by design);
+     * the MediaStore copy runs here too. Only the share intent and status text go back
+     * to the UI thread. The share flow and wording are unchanged.
+     */
+    private fun exportLaunchDiagnostics() {
+        setDetail("packing launch diagnostics…")
+        Thread({
+            val zip: java.io.File? = try {
+                wasidremin.gmccpa.av.LaunchDiagnosticsBundle.buildZip(act)
+            } catch (t: Throwable) {
+                postExportResult(null, null, t)
+                return@Thread
+            }
+            if (zip == null) {
+                postExportResult(null, null, null)
+                return@Thread
+            }
+            val uri: android.net.Uri? = try {
+                copyZipToDownloads(zip)
+            } catch (t: Throwable) {
+                postExportResult(zip, null, t)
+                return@Thread
+            }
+            postExportResult(zip, uri, null)
+        }, "launch-diag-export").apply { isDaemon = true }.start()
+    }
+
+    private fun copyZipToDownloads(zip: java.io.File): android.net.Uri {
+        if (android.os.Build.VERSION.SDK_INT < 29) {
+            throw java.io.IOException("launch export needs the downloads collection (API 29+)")
+        }
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, zip.name)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/zip")
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+        }
+        val uri = act.contentResolver.insert(
+            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw java.io.IOException("MediaStore insert returned null")
+        act.contentResolver.openOutputStream(uri)?.use { out ->
+            java.io.FileInputStream(zip).use { it.copyTo(out) }
+        } ?: throw java.io.IOException("MediaStore openOutputStream returned null")
+        return uri
+    }
+
+    private fun postExportResult(zip: java.io.File?, uri: android.net.Uri?, error: Throwable?) {
+        act.runOnUiThread {
+            if (act.isFinishing || act.isDestroyed) return@runOnUiThread
+            if (error != null) {
+                setDetail("Error: launch export failed: ${error.message ?: error.javaClass.simpleName}")
+                return@runOnUiThread
+            }
+            if (zip == null) {
+                setDetail("Nothing to export: no launch records or evidence yet")
+                return@runOnUiThread
+            }
+            try {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "application/zip"
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                act.startActivity(android.content.Intent.createChooser(send, "Share launch diagnostics"))
+                setDetail("launch diagnostics packed (${zip.length() / 1024} KB) — pick where to send it")
+            } catch (t: Throwable) {
+                setDetail("Error: launch export failed: ${t.message ?: t.javaClass.simpleName}")
+            }
+        }
+    }
+
+    fun setUploadLogsState(state: wasidremin.gmccpa.upload.UploadState) = act.runOnUiThread {
+        if (::uploadLogsButton.isInitialized) {
+            uploadLogsButton.setState(state)
+        }
+    }
+
+    fun refreshUploadQueueRow() = act.runOnUiThread {
+        if (act.isFinishing || act.isDestroyed) return@runOnUiThread
+        if (::queueStatusRow.isInitialized) {
+            queueStatusRow.setSubtitle(queueStatusSubtitle())
+        }
+    }
+
+    private fun queueStatusSubtitle(): String {
+        val n = wasidremin.gmccpa.upload.UploadCenter.pendingCaptureCount(act)
+        val probePending = wasidremin.gmccpa.telemetry.ProbeUpload.pendingReportCount(act)
+        val totalSaved = wasidremin.gmccpa.av.CarPlayFrameGrabber.listSavedCaptures(act).size
+        return "$n queued ($probePending telemetry) · $totalSaved screen captures saved (max ${wasidremin.gmccpa.av.CarPlayFrameGrabber.MAX_STORED_CAPTURES})"
+    }
+
+    private fun triggerCalibrationCapture(
+        button: wasidremin.gmccpa.upload.UploadActionButton,
+        kind: wasidremin.gmccpa.av.CarPlayFrameGrabber.CaptureButtonKind =
+            wasidremin.gmccpa.av.CarPlayFrameGrabber.CaptureButtonKind.CAPTURE_CURRENT,
+        targetRow: EqRow = captureCurrentRow,
+        progressText: String = "Capturing stable frame…",
+    ) {
+        if (!wasidremin.gmccpa.av.CarPlayFrameGrabber.isSessionActive()) {
+            val err = "Error: No active CarPlay session"
+            targetRow.setSubtitle(err)
+            targetRow.subtitleView.setTextColor(EqTheme.DANGER)
+            button.setState(wasidremin.gmccpa.upload.UploadState.Failed("No CarPlay session", retryable = true))
+            setDetail(err)
+            return
+        }
+        targetRow.subtitleView.setTextColor(EqTheme.TEXT_DIM)
+        targetRow.setSubtitle(progressText)
+        wasidremin.gmccpa.av.CarPlayFrameGrabber.runCalibrationCaptureAsync(
+            ctx = act,
+            buttonKind = kind,
+            onUploadState = { st -> button.setState(st) },
+        ) { res ->
+            res.onSuccess { saved ->
+                val summary = "Saved ${saved.id} · ${saved.metadata.classification.name} · " +
+                    "home=${saved.metadata.homePressesUsed} · ${saved.metadata.msToStableFrame} ms"
+                targetRow.subtitleView.setTextColor(EqTheme.OK)
+                targetRow.setSubtitle(summary)
+                refreshUploadQueueRow()
+                setDetail(summary)
+            }.onFailure { t ->
+                val err = "Error: ${t.message ?: t.javaClass.simpleName}"
+                targetRow.subtitleView.setTextColor(EqTheme.DANGER)
+                targetRow.setSubtitle(err)
+                setDetail(err)
+            }
+        }
+    }
+
+
+    private fun templateRowSubtitle(): String =
+        runCatching { calib.missingSummary(act) }.getOrElse { "Templates unreadable: ${it.message}" }
+
+    private fun refreshTemplateRow() = act.runOnUiThread {
+        if (act.isFinishing || act.isDestroyed) return@runOnUiThread
+        if (::iconTemplateRow.isInitialized) {
+            iconTemplateRow.subtitleView.setTextColor(EqTheme.TEXT_DIM)
+            iconTemplateRow.setSubtitle(templateRowSubtitle())
+        }
     }
 
     private fun buildAdvanced(page: LinearLayout) {
@@ -495,15 +928,123 @@ class LauncherUi(private val act: Activity) {
             .addRow(announceRow)
             .addRow(announceRetriesRow)
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
-            .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() }))
+            .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() })))
+
+        page.addView(eqSectionLabel(act, "Display overrides"))
+        buildDisplayOverrides(page)
+
+        val granted = readLogsGranted()
+        val scope = CapturePrefs.scope(act)
+        scopeControl = EqSegmented(act, listOf("This app", "Whole car"), if (scope == LogCapture.Scope.WHOLE_OS) 1 else 0) { i ->
+            onScopePicked(i)
+        }
+        scopeRow = EqRow(act, "Log scope", scopeSubtitle(granted), trailing = scopeControl)
+        page.addView(eqSectionLabel(act, "Logging"))
+        page.addView(EqCard(act)
+            .addRow(scopeRow)
+            .addRow(EqRow(act, "USB probe", onClick = { onLogAction(LogAction.USB_PROBE) }))
+            .addRow(EqRow(act, "Vehicle Telemetry Probe", "Temporary read-only diagnostics · parked only", onClick = { onLogAction(LogAction.VEHICLE_PROBE) })))
+
+        baseUrlRow = EqRow(
+            act,
+            "Server connection",
+            wasidremin.gmccpa.upload.UploadCenter.baseUrl(act),
+            trailing = eqValueChevron(act, "Configure / Demo"),
+            onClick = {
+                wasidremin.gmccpa.upload.UploadCenter.showUploadSettingsAndDemoDialog(act) { updated ->
+                    baseUrlRow.setSubtitle(updated)
+                }
+            },
+        )
+        testConnectionButton = wasidremin.gmccpa.upload.UploadActionButton(
+            ctx = act,
+            defaultLabel = "Test Connection",
+            defaultIcon = wasidremin.gmccpa.upload.UploadIcon.CONNECTION,
+            onStatusAnnounce = { msg -> setDetail(msg) },
+            onTrigger = {
+                wasidremin.gmccpa.upload.UploadCenter.testConnection(act) { st ->
+                    testConnectionButton.setState(st)
+                }
+            },
+        )
+        testConnectionRow = EqRow(
+            act,
+            "Test Connection",
+            "Verifies server reachability and drains any queued captures",
+            trailing = testConnectionButton,
+        )
+        drainQueueButton = wasidremin.gmccpa.upload.UploadActionButton(
+            ctx = act,
+            defaultLabel = "Retry Queued",
+            defaultIcon = wasidremin.gmccpa.upload.UploadIcon.UPLOAD,
+            onStatusAnnounce = { msg -> setDetail(msg) },
+            onTrigger = {
+                wasidremin.gmccpa.upload.UploadCenter.drainPendingCaptures(act) { st ->
+                    drainQueueButton.setState(st)
+                }
+            },
+        )
+        queueStatusRow = EqRow(
+            act,
+            "Pending uploads",
+            queueStatusSubtitle(),
+            trailing = drainQueueButton,
+        )
+        val autoTelemetryToggle = EqToggle(act, wasidremin.gmccpa.telemetry.ProbeUpload.isAutoUploadEnabled(act)) { on ->
+            wasidremin.gmccpa.telemetry.ProbeUpload.setAutoUploadEnabled(act, on)
+            if (on) {
+                wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(act)
+                setDetail("EV Insights continuous telemetry & auto-upload ON")
+            } else {
+                wasidremin.gmccpa.telemetry.ProbeService.stopAuto(act)
+                setDetail("EV Insights continuous telemetry & auto-upload paused")
+            }
+            refreshUploadQueueRow()
+        }
+        val autoGpsToggle = EqToggle(act, wasidremin.gmccpa.telemetry.ProbeUpload.isAutoRawLocationEnabled(act)) { on ->
+            wasidremin.gmccpa.telemetry.ProbeUpload.setAutoRawLocationEnabled(act, on)
+            if (wasidremin.gmccpa.telemetry.ProbeUpload.isAutoUploadEnabled(act)) {
+                wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(act)
+            }
+            setDetail(if (on) "EV Insights route GPS included in stream" else "EV Insights route GPS off")
+        }
+        wasidremin.gmccpa.upload.UploadCenter.removeQueueListener(queueListener)
+        wasidremin.gmccpa.upload.UploadCenter.addQueueListener(queueListener)
+        page.addView(eqSectionLabel(act, "Upload server & EV Insights"))
+        page.addView(EqCard(act)
             .addRow(EqRow(
-                act, "Recover",
-                "Tries the automatic recovery steps now.",
-                onClick = { onRecover() },
-            )))
+                act,
+                "EV Insights auto-upload",
+                "Continuously streams vehicle telemetry chunks and drains offline queue automatically",
+                trailing = autoTelemetryToggle,
+            ))
+            .addRow(EqRow(
+                act,
+                "Include route GPS in EV Insights",
+                "Includes local-only GPS speed and coordinates in telemetry uploads",
+                trailing = autoGpsToggle,
+            ))
+            .addRow(baseUrlRow)
+            .addRow(testConnectionRow)
+            .addRow(queueStatusRow))
+
+        iconTemplateRow = EqRow(
+            act,
+            "Template overrides",
+            templateRowSubtitle(),
+            trailing = EqChevron(act),
+            onClick = { calib.showTemplates { refreshTemplateRow() } },
+        )
+        page.addView(eqSectionLabel(act, "Recognition"))
+        page.addView(EqCard(act).addRow(iconTemplateRow))
 
         page.addView(eqSectionLabel(act, "App"))
         page.addView(EqCard(act).addRow(EqRow(
+            act, "Forget pairing",
+            "Clears the adapter and this app. Also forget this car on the iPhone.",
+            titleColor = EqTheme.DANGER,
+            onClick = { confirmForget() },
+        )).addRow(EqRow(
             act, "Close app",
             titleColor = EqTheme.DANGER,
             onClick = {
@@ -516,12 +1057,40 @@ class LauncherUi(private val act: Activity) {
 
     private fun showTab(index: Int) {
         selectedTab = index
+        refreshLauncherStatusRow()
+        if (index == 1) refreshLatestLaunchRow()
         if (::pages.isInitialized) {
             pages.forEachIndexed { i, p -> p.visibility = if (i == index) View.VISIBLE else View.GONE }
         }
         if (::rail.isInitialized) rail.select(index)
         if (::scroller.isInitialized) scroller.scrollTo(0, 0)
-        if (index == 4) onAdvancedOpened()
+        if (index == 2) onAdvancedOpened()
+        auditLayout(index)
+    }
+
+    private fun firstText(v: View): String? {
+        if (v is TextView && v.text.isNotBlank()) return v.text.toString()
+        if (v is ViewGroup) for (i in 0 until v.childCount) firstText(v.getChildAt(i))?.let { return it }
+        return null
+    }
+
+    private fun auditLayout(index: Int) {
+        if (!::pages.isInitialized || !auditedTabs.add(index)) return
+        val page = pages[index]
+        page.post {
+            val edge = act.window.decorView.width - safeRight
+            uiLog.i("layout audit tab=$index pageH=${page.height} safeRightEdge=$edge")
+            val loc = IntArray(2)
+            for (i in 0 until page.childCount) {
+                val c = page.getChildAt(i)
+                if (c.visibility != View.VISIBLE) continue
+                c.getLocationInWindow(loc)
+                val right = loc[0] + c.width
+                uiLog.i("layout audit tab=$index #$i ${c.javaClass.simpleName} y=${loc[1]} h=${c.height} " +
+                    "x=${loc[0]}..$right '${firstText(c)?.take(40) ?: ""}'" +
+                    (if (right > edge) " PAST_SAFE_RIGHT" else ""))
+            }
+        }
     }
 
     /** Reflect a read or a verified write. [subtitle] is replaced when the link is down. */
@@ -572,7 +1141,7 @@ class LauncherUi(private val act: Activity) {
         settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
         introRestore?.let { intro.removeCallbacks(it) }
         hideIntroLayer()
-        showTab(1)
+        showTab(0)
     }
 
     private fun hideIntroLayer() {
@@ -642,7 +1211,7 @@ class LauncherUi(private val act: Activity) {
             dialog.dismiss()
         }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(16f) })
         body.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(32f) })
-        dialog.setContentView(body, ViewGroup.LayoutParams(EqTheme.px(720f), ViewGroup.LayoutParams.WRAP_CONTENT))
+        dialog.setContentView(body, ViewGroup.LayoutParams(safeDialogWidth(EqTheme.px(720f)), ViewGroup.LayoutParams.WRAP_CONTENT))
         dialog.show()
     }
 

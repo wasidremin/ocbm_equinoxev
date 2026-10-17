@@ -140,16 +140,38 @@ object LogExport {
      */
     fun upload(
         context: Context,
-        baseUrl: String = DEFAULT_REMOTE_BASE_URL,
+        baseUrl: String = wasidremin.gmccpa.upload.UploadCenter.baseUrl(context),
+        onState: ((wasidremin.gmccpa.upload.UploadState) -> Unit)? = null,
         callback: (Result<UploadResult>) -> Unit,
     ) {
         val appCtx = context.applicationContext
+        onState?.let { wasidremin.gmccpa.upload.UploadCenter.emitState(it, wasidremin.gmccpa.upload.UploadState.Preparing) }
         ioExecutor.execute {
-            deliverUpload(callback, runCatching { uploadNow(appCtx, baseUrl) })
+            val res = runCatching { uploadNow(appCtx, baseUrl, onState) }
+            res.onSuccess { r ->
+                onState?.let {
+                    wasidremin.gmccpa.upload.UploadCenter.emitState(
+                        it,
+                        wasidremin.gmccpa.upload.UploadState.Success("${r.lines} lines"),
+                    )
+                }
+            }.onFailure { t ->
+                onState?.let {
+                    wasidremin.gmccpa.upload.UploadCenter.emitState(
+                        it,
+                        wasidremin.gmccpa.upload.UploadCenter.classifyFailure(t, allowQueue = false),
+                    )
+                }
+            }
+            deliverUpload(callback, res)
         }
     }
 
-    private fun uploadNow(context: Context, baseUrl: String): UploadResult {
+    private fun uploadNow(
+        context: Context,
+        baseUrl: String,
+        onState: ((wasidremin.gmccpa.upload.UploadState) -> Unit)? = null,
+    ): UploadResult {
         val normalized = baseUrl.trim().trimEnd('/')
         require(normalized.startsWith("https://", ignoreCase = true)) {
             "remote log upload requires an HTTPS URL"
@@ -160,33 +182,8 @@ object LogExport {
         val endpoint = "$normalized/logs"
         val redactor = Redactor()
         val batch = ArrayList<String>(MAX_UPLOAD_BATCH)
-        var batches = 0
+        val payloads = ArrayList<ByteArray>()
         var lines = 0
-
-        fun sendBatch() {
-            if (batch.isEmpty()) return
-            val payload = encodeBatch(batch, "gmccpa")
-            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 10_000
-                readTimeout = 15_000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                setRequestProperty("Accept", "application/json")
-            }
-            try {
-                connection.outputStream.use { out -> out.write(payload.toByteArray(Charsets.UTF_8)) }
-                val code = connection.responseCode
-                if (code !in 200..299) {
-                    throw IOException("server returned HTTP $code for batch ${batches + 1}")
-                }
-                connection.inputStream.close()
-                batches++
-            } finally {
-                connection.disconnect()
-            }
-            batch.clear()
-        }
 
         val files = LogCapture.logFiles(context)
         for (file in files) {
@@ -194,15 +191,86 @@ object LogExport {
                 source.forEach { line ->
                     batch += redactor.redactLine(line)
                     lines++
-                    if (batch.size == MAX_UPLOAD_BATCH) sendBatch()
+                    if (batch.size == MAX_UPLOAD_BATCH) {
+                        payloads += encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
+                        batch.clear()
+                    }
                 }
             }
         }
-        if (batch.isNotEmpty()) sendBatch()
-        if (files.isEmpty()) {
+        if (batch.isNotEmpty()) {
+            payloads += encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
+            batch.clear()
+        }
+        if (payloads.isEmpty()) {
             batch += "GM CCPA upload: no captured log files were available"
-            sendBatch()
+            payloads += encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
+            batch.clear()
             lines = 1
+        }
+
+        val totalBytes = payloads.sumOf { it.size.toLong() }
+        var cumulativeSent = 0L
+        var batches = 0
+        onState?.let {
+            wasidremin.gmccpa.upload.UploadCenter.emitState(
+                it,
+                wasidremin.gmccpa.upload.UploadState.InProgress(0L, totalBytes),
+            )
+        }
+
+        for ((idx, payload) in payloads.withIndex()) {
+            val baseOffset = cumulativeSent
+            wasidremin.gmccpa.upload.UploadCenter.executeWithOneRetry {
+                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = wasidremin.gmccpa.upload.UploadCenter.CONNECT_TIMEOUT_MS
+                    readTimeout = wasidremin.gmccpa.upload.UploadCenter.WRITE_READ_TIMEOUT_MS
+                    doOutput = true
+                    setFixedLengthStreamingMode(payload.size.toLong())
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                }
+                try {
+                    wasidremin.gmccpa.upload.CountingRequestOutputStream(
+                        delegate = connection.outputStream,
+                        bytesTotal = totalBytes,
+                    ) { batchSent, _ ->
+                        onState?.let {
+                            wasidremin.gmccpa.upload.UploadCenter.emitState(
+                                it,
+                                wasidremin.gmccpa.upload.UploadState.InProgress(
+                                    (baseOffset + batchSent).coerceAtMost(totalBytes),
+                                    totalBytes,
+                                ),
+                            )
+                        }
+                    }.use { out ->
+                        out.write(payload)
+                        out.flush()
+                    }
+                    if (idx == payloads.lastIndex) {
+                        onState?.let {
+                            wasidremin.gmccpa.upload.UploadCenter.emitState(
+                                it,
+                                wasidremin.gmccpa.upload.UploadState.Finalizing,
+                            )
+                        }
+                    }
+                    val code = connection.responseCode
+                    if (code !in 200..299) {
+                        throw wasidremin.gmccpa.upload.UploadCenter.HttpStatusException(
+                            code,
+                            "server returned HTTP $code for batch ${idx + 1}",
+                        )
+                    }
+                    connection.inputStream.close()
+                } finally {
+                    connection.disconnect()
+                }
+            }
+            cumulativeSent += payload.size.toLong()
+            batches++
         }
         log.i("uploaded redacted logs to $endpoint: $lines lines in $batches batches")
         return UploadResult(endpoint, batches, lines)

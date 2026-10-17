@@ -564,12 +564,30 @@ class OcbmProbe(context: Context) {
      * /auth-setup is per control connection, not per pairing, so the next reconnect or hijack needs
      * the MFi coprocessor or it fails to authenticate.
      */
+    /**
+     * True while a link bring-up runs on [ops]. Read by MainActivity's resume-relink so it
+     * never queues a second bring-up behind a live one (a queued duplicate would run another
+     * full ten-minute claim wait after the first finishes). Set on the single funnel both
+     * entry points share, so every current and future caller is covered.
+     */
+    @Volatile var linkAttemptInFlight = false
+        private set
+
     fun runAll(subscribe: Boolean = true): LinkResult =
-        ops.submit<LinkResult> { runAllLocked(subscribe) }.get()
+        trackAttempt { ops.submit<LinkResult> { runAllLocked(subscribe) }.get() }
 
     /** Claim and HELLO only, for headless file operations without session bring-up. */
     fun connectForFiles(): LinkResult =
-        ops.submit<LinkResult> { runAllLocked(subscribe = false, helloOnly = true) }.get()
+        trackAttempt { ops.submit<LinkResult> { runAllLocked(subscribe = false, helloOnly = true) }.get() }
+
+    private inline fun <T> trackAttempt(block: () -> T): T {
+        linkAttemptInFlight = true
+        try {
+            return block()
+        } finally {
+            linkAttemptInFlight = false
+        }
+    }
 
     private companion object {
         /**
@@ -1007,6 +1025,7 @@ class OcbmProbe(context: Context) {
         // The live surface, decoder advertisement and touch mapping share this snapshot.
         VideoFrame.capture(ctx, advertise = adapterWifi)
         log.i("display: ui scale ${VideoFrame.uiScalePercent}% → advertise ${VideoFrame.width}x${VideoFrame.height} into view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}")
+        log.i("display: UI calibration=${VideoFrame.controls.uiPercent}% physical=${VideoFrame.physicalWidthMm}x${VideoFrame.physicalHeightMm}mm coded=${VideoFrame.width}x${VideoFrame.height} (requires updated receiver)")
         logPhysicalSize()
         if (VideoFrame.railPx > 0) {
             log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px, panel ${VideoFrame.panelPx}px")
@@ -1019,6 +1038,8 @@ class OcbmProbe(context: Context) {
                 VideoFrame.height,
                 VideoFrame.safeRightPx,
                 telephony = true,
+                physicalWidthMm = VideoFrame.physicalWidthMm,
+                physicalHeightMm = VideoFrame.physicalHeightMm,
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)

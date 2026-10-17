@@ -217,6 +217,14 @@ object SessionTrace {
         }
 
         /**
+         * True when [name] currently reads FAILED — a terminal fault no later step has
+         * cleared. An explicit Stop resets the board (so it is never mistaken for a fault),
+         * and a new attempt overwrites the entry with DOWN/UP, so this is exactly "the last
+         * attempt died and nothing has retried since". Read by MainActivity's resume-relink.
+         */
+        fun isFailed(name: String): Boolean = state[name]?.startsWith("FAILED") == true
+
+        /**
          * Record arbitrary standing state that is neither up nor down, without a severity of its
          * own.
          *

@@ -1,0 +1,6 @@
+{
+  "name": "evinsights", "version": "1.0.0", "private": true, "type": "module",
+  "scripts": {"dev":"vite --host 0.0.0.0", "build":"tsc --noEmit && vite build", "test":"vitest run", "smoke":"playwright test"},
+  "dependencies": {"react":"19.0.0","react-dom":"19.0.0","@tanstack/react-query":"5.74.4","@tanstack/react-table":"8.21.3","@tanstack/react-virtual":"3.13.6","echarts":"5.6.0","leaflet":"1.9.4"},
+  "devDependencies": {"typescript":"5.8.3","vite":"6.2.6","@vitejs/plugin-react":"4.4.1","@types/react":"19.0.12","@types/react-dom":"19.0.4","@types/leaflet":"1.9.16","vitest":"3.1.1","@playwright/test":"1.51.1"}
+}

@@ -29,6 +29,7 @@ class BootReceiver : BroadcastReceiver() {
         val started = runCatching { LogCapture.start(context, CapturePrefs.config(context)) }
             .onFailure { log.e("boot start failed: ${it.message}") }
             .getOrDefault(false)
+        runCatching { wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(context) }
         log.i("BOOT_COMPLETED — capture start=$started scope=${CapturePrefs.scope(context)}")
     }
 }

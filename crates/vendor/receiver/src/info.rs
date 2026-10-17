@@ -47,6 +47,9 @@ pub struct DeviceConfig {
     pub status_flags: u64,
     pub display_width: i64,
     pub display_height: i64,
+    /// Optional host-authored physical calibration in millimeters; zero preserves the legacy offer.
+    pub display_width_mm: i64,
+    pub display_height_mm: i64,
     /// Negotiated max frame rate advertised in `displays[].maxFPS` (host YAML `maxFPS`; iOS caps its
     /// encode at this). Default 60.
     pub max_fps: i64,
@@ -135,6 +138,8 @@ impl Default for DeviceConfig {
             status_flags: 0x4,
             display_width: 1920,
             display_height: 720,
+            display_width_mm: 0,
+            display_height_mm: 0,
             max_fps: 60,
             main_safe_area: None,
             main_draw_outside_safe: false,
@@ -918,10 +923,10 @@ fn build_info_with_view_area_2(cfg: &DeviceConfig, second: Option<ViewArea2>) ->
         "heightPixels".into(),
         Value::Integer(cfg.display_height.into()),
     );
-    // Physical dims: the genuine wired MAIN display sent 0/0 (omitted/unknown); the prior 240×90 was
-    // invented (facet-08 CORRECTION-1). Match the genuine main = 0/0.
-    disp.insert("widthPhysical".into(), Value::Integer(0.into()));
-    disp.insert("heightPhysical".into(), Value::Integer(0.into()));
+    // The genuine main display's 0/0 remains the default. Optional host-authored physical-size
+    // calibration is independent of coded dimensions (Apple DisplayPanelConfig.physicalDimensions).
+    disp.insert("widthPhysical".into(), Value::Integer(cfg.display_width_mm.into()));
+    disp.insert("heightPhysical".into(), Value::Integer(cfg.display_height_mm.into()));
     // `initialViewArea` / `adjacentViewAreas` are DISPLAY-level siblings of `viewAreas`. Default
     // (lever unset or refused): `0` / `[]` — the genuine box's shape, byte-pinned below. With the
     // lever: the initial index comes from `:initial`, and the adjacency is DERIVED from it, never a

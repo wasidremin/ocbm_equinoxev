@@ -132,6 +132,161 @@ APK: `host/gm_ccpa/apk/gmccpa-debug-7532873-dirty.apk` (versionCode 85).
 Hardware-free preview: `adb -s emulator-5554 shell am start --user 10 -n
 wasidremin.gmccpa/.MainActivity --es run topbar_preview --ez enabled true`.
 
+## Temporary GM vehicle telemetry capability probe
+
+**Real Equinox EV results: PENDING.** Nothing here establishes that a property or
+permission works on the Chevrolet Equinox EV / Bosch VCUNH1 / `burmese_orange`
+AAOS 14. Emulator observations are bench evidence only.
+
+### Repository discovery and shipping identity
+
+The current internal-track product is **`host/gm_ccpa/netprobe_app/:app`**, package
+**`wasidremin.gmccpa`**, **`playRelease`**, `automotive:internal` / COMPLETED.
+The owner approved this location after discovery: `host/CarlinkAndroid/:app` is
+`zeno.carlink.ocbm`, sideload-only (`sideloadDebug`/`sideloadRelease`), not the
+current Play product. Neither identity, signing configuration nor publishing
+contract is changed. The rejected `:projection`/CarProjectionManager route is
+not used. Existing launcher, USB attach, OCBM, projection, media and top-bar code
+is unchanged apart from the settings launch action.
+
+Shipping build: compile/target SDK 35, min SDK 26; optional manifest
+`android.car` library with API-35 compile-only platform stubs, no packaged car
+classes. Main manifest owns all components; distribution flavors do not replace
+the launcher. `host/CarlinkAndroid` instead uses compile SDK 37, target 36, min 32
+and `useLibrary("android.car")`. The GM app uses Views/native
+`requestPermissions`, not Compose activity-result launchers. Existing settings
+Capture actions export logs through SAF/removable storage/Downloads; telemetry
+uses the same local-first SAF/removable-storage approach, separately from logs.
+No existing FileProvider is present in the GM shipping app; no backend is added.
+
+This is a **temporary diagnostic exception** to the historical "zero car
+permissions" description below, not a privileged integration. The shipping GM
+app already had CAR_POWERTRAIN, CAR_EXTERIOR_ENVIRONMENT,
+READ_CAR_DISPLAY_UNITS and fine/coarse location. The probe adds only read/test
+car declarations: CAR_INFO, CAR_SPEED, CAR_ENERGY, CAR_ENERGY_PORTS, CAR_TIRES,
+CAR_DYNAMICS_STATE, READ_CAR_STEERING, CAR_MILEAGE, CAR_DRIVING_STATE,
+CAR_IDENTIFICATION (each under `android.car.permission`). No HVAC or vehicle
+control permission is requested, and no vehicle property setter exists.
+A separate dataSync FGS permission/type covers local diagnostic recording only.
+
+API-35 public `Car` constants contain INFO, SPEED, ENERGY, ENERGY_PORTS,
+POWERTRAIN, EXTERIOR_ENVIRONMENT, READ_DISPLAY_UNITS, READ_STEERING_STATE and
+IDENTIFICATION permission strings. TIRES, DYNAMICS_STATE, MILEAGE and
+DRIVING_STATE are not public `Car` constants in that jar; literal names keep
+compilation independent of their existence. All 23 requested headline property
+constants are present in that compile jar. PermissionManager on the vehicle,
+not compile availability, establishes platform existence and protection level.
+
+### Run on the Equinox EV (no vehicle ADB)
+
+1. Install **94 / `4.0+vehicle-telemetry`** through the existing Play internal-test
+   listing. Published by owner request on 2026-10-09 to `automotive:internal`,
+   COMPLETED; upload and Play edit commit succeeded. Version 93 was rejected
+   because Play had already used it, so the existing `AAB_VERSION_CODE` override
+   was raised to 94 without changing telemetry source. Confirm the installed
+   version in the report; future uploads require a code above the Play high-water mark.
+2. Park safely. Open **Settings → Logs → Capture → Vehicle Telemetry Probe**. It is
+   a separate, non-exported, non-distraction-optimized Activity; it never opens
+   automatically during projection/startup. Connection and census run only here.
+3. Use **Request eligible runtime permissions once**, then review/refresh the
+   census. Only defined, manifest-declared, denied dangerous permissions are
+   requested. Fine location is paired with coarse as Android 12+ requires.
+   Denials are recorded, never retried automatically. Signature permissions are
+   inspected but cannot be acquired by ordinary runtime requests. OS dialog
+   presentation is not observable: reports distinguish API request submission
+   from an unknown actual displayed dialog. Previously submitted requests persist
+   across reopening/restart; system app permissions can be changed manually.
+4. First run **Start 60-second capture** parked; it stops automatically.
+   For moving observations, start **Drive Capture** while parked, leave the
+   detailed screen and drive normally, then return while parked and **Stop capture**.
+   No overlays, audio focus or projection listeners are added. Current/changed
+   UX restrictions are recorded separately, never labeled exact driving state.
+   Unknown/restricted UX disables detailed actions. A manually started dataSync
+   foreground service may continue recording while the Activity is hidden.
+5. GPS collection is **off by default**. To test independent GPS, explicitly enable
+   the raw-location checkbox before capture. It exposes precise coordinates/route
+   in JSON/CSV/NDJSON exports; Markdown omits raw location events. Verify provider
+   enabled state, permission grants and actual fixes, not just registration.
+6. Export while parked. **Export latest report ZIP** opens the system document
+   picker; select USB/storage destination and Save. If no picker exists, insert
+   a removable USB stick and retry: the fallback writes
+   `Android/data/wasidremin.gmccpa/files/vehicle-telemetry-<timestamp>.zip` on it.
+   Read that folder on a computer after removing the stick. If neither is
+   available, the exact local path is shown with a copy button; no external
+   retrieval is claimed in that case. Cancelling the picker retains local data.
+   **Clear probe data** confirms and deletes only telemetry files.
+
+### Report interpretation and limits
+
+Local directory: app-specific external `files/telemetry/<timestamp>/`, internal
+files fallback if external storage is unavailable. Each capture gets a new
+folder. `report.md`, typed `report.json` (including streamed raw live events),
+timestamped `events-<timestamp>.csv` and raw `events.ndjson` contain device/build provenance, permissions,
+full per-area read census, headline states, subscription attempts/statistics,
+exact read exceptions, confirmed facts and inconclusive items. CSV includes
+wall/elapsed timestamps, property timestamp, ID, area, status and value.
+Unknown vendor properties are retained. Group bits: SYSTEM `0x1`, VENDOR `0x2`,
+BACKPORTED `0x3`, OTHER otherwise. HVAC census access is not proof of control.
+
+The public list may be **permission-filtered**: absence means not visible to this
+UID, not proof GM's VHAL lacks it. Compile constant, platform permission existence,
+manifest declaration, runtime grant, list exposure, initial read, registration
+and real updates are separate facts. Null/non-AVAILABLE/status errors and
+SecurityException are expected. SUBSCRIBABLE requires an available callback,
+not merely accepted registration. Per-area stats include counts/frequency,
+first/last, scalar or per-array-element extrema and distinct values. Distinct
+sets cap at 10,000 and explicitly become lower bounds. Rates target 1 Hz,
+clamped to supported ranges; configs demanding >5 Hz are skipped and recorded.
+Every changing read-accessible returned config is considered, including unknown
+vendor configs, without guessing or brute-forcing absent IDs.
+
+Drive recording stops manually, at service teardown/disconnection/failure, OS
+FGS timeout, or a protective 50 MiB raw-event / 100 MiB-free-space threshold;
+resource/OS termination is not a completed drive test. Property and GPS listeners
+are removed on stop; UX listener is removed at diagnostic service teardown.
+Closing an active capture's screen deliberately leaves the started service alive;
+closing an idle screen destroys its bound service. Process kill may leave flushed
+raw files but an incomplete summary; no restart/resume is automatic.
+
+Speed is m/s, range m, odometer km, battery level Wh (not percent), charge rate
+mW, temperature Celsius, tire pressure kPa, dimensions mm. WHEEL_TICK's Android
+contract is cumulative signed counts `[reset, FL, FR, RR, RL]`; config `[wheel mask,
+micrometers/tick FL, FR, RR, RL]`. Changed reset counts invalidate comparisons,
+and user-start reset is specified, not vehicle-proven. Observe forward/reverse,
+restarts, config scales and GPS accuracy before preferring wheel distance,
+speed integration or GPS. No automated distance-source recommendation is made
+without a physical-vehicle report and known moving/stopped intervals.
+
+### Bench validation (not Equinox EV evidence)
+
+The signed `playRelease` 93 / `4.0+vehicle-telemetry` AAB was bench-tested with
+ the existing upload key; the same source was rebuilt and published as **94**
+ after Play rejected the already-used code 93. Eleven telemetry JVM tests pass;
+existing on-emulator self-tests pass 155/155; Tier-0 receiver/pairing/JNI,
+docs and protocol checks pass. Normal launcher does not create ProbeService.
+Runtime location/car denials cause no crash or automatic re-prompt. AAOS 14
+bench capture verifies automatic 60-second stop, background drive recording,
+manual parked stop, and UX callbacks transitioning false → restricted → false.
+The final-source document-picker ZIP was retrieved and parsed: typed JSON,
+23 headlines, 15 permission entries, timestamped CSV matching raw-event count,
+and exact `playRelease` provenance. No physical-vehicle claims follow from it.
+
+Full `lintPlayRelease` **fails** with 29 existing errors in unchanged
+CarPlayActivity/MainActivity inset APIs versus minSdk 26 and USB receiver flags.
+The probe's GPS MissingPermission error was repaired with explicit checking and
+SecurityException handling; final lint has no telemetry errors. Existing lint
+checks were not disabled or baselined. Temporary probe warnings include literal
+English UI text, resource-name lookup (needed by the existing Gradle-free build)
+and conservative usable-space checking. Real-car permission grants, moving
+speed/wheel behavior, GPS fixes, removable-stick fallback, missing-car-library
+startup and OS timeout execution still require separate verification.
+
+Removal: delete the `telemetry/` production/test packages, VEHICLE_PROBE enum/row
+and launcher case, two manifest components, ten temporary car declarations and
+FOREGROUND_SERVICE_DATA_SYNC, plus the Gradle telemetry variant resource. **Retain** pre-existing powertrain/environment/units
+and fine/coarse location declarations. Remove test dependencies only if no other
+tests use them; update this section with collected evidence, not a dated sibling.
+
 ## The Android app is a THIRD-PARTY app, by decision (verified 2026-09-18)
 
 `host/CarlinkAndroid` is two Gradle modules, and today's session settled which one is the AAOS

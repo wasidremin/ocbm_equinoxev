@@ -30,6 +30,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import kotlin.math.roundToInt
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -68,9 +69,11 @@ class CarPlayActivity : Activity() {
     private var lastMismatchLog: String? = null
     private var centerBlockX: Int = 0
     private var centerBlockY: Int = 0
+    /** Downscale applied to the latched block when the live window shrank after SUBSCRIBE. 1 = 1:1. */
+    private var windowFitScale: Float = 1f
     private var topBar: wasidremin.gmccpa.GmTopBarView? = null
     private var topBarData: wasidremin.gmccpa.TopBarVehicleData? = null
-    private enum class CarPlayApp { NAV, MUSIC, PHONE, APPS, CAR, CONTROLS, ENERGY }
+    enum class CarPlayApp { NAV, MUSIC, PHONE, APPS, CAR, CONTROLS, ENERGY }
     private var gmCandidatesLogged = false
 
     private fun requestCarPlayApp(kind: CarPlayApp) {
@@ -78,9 +81,49 @@ class CarPlayActivity : Activity() {
         when (kind) {
             CarPlayApp.APPS -> launchAppsGrid()
             CarPlayApp.CAR, CarPlayApp.CONTROLS, CarPlayApp.ENERGY -> launchVehicleDestination(kind)
-            CarPlayApp.NAV, CarPlayApp.MUSIC, CarPlayApp.PHONE ->
-                log.i("topbar: ${kind.name.lowercase()} requested — box support pending")
+            // iPhone-side buttons: vision launcher (strip -> Home toggle -> grid). AC Home is not used:
+            // the box drops it while dPadSupport=false (2026-10-15 log). Missing templates = old behaviour.
+            CarPlayApp.NAV -> launchOrFallback("maps") {
+                log.i("topbar: maps templates missing — nothing sent")
+            }
+            CarPlayApp.MUSIC -> {
+                val role = if (wasidremin.gmccpa.av.VisionLauncher.isCalibrated(this, "spotify")) "spotify" else "music"
+                launchOrFallback(role) {
+                    val index = when (nowPlaying.snapshot.playbackStatus) {
+                        NowPlayingState.PLAY -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
+                        null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
+                        else -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY
+                    }
+                    sendMedia(index)
+                    log.i("topbar: music templates missing — play/pause toggle $index sent")
+                }
+            }
+            CarPlayApp.PHONE -> {
+                val action = nowPlaying.phoneAction()
+                if (action != null) {
+                    touchHandler?.post {
+                        val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendTelephony(action)
+                        log.i("topbar: phone button $action sent=$sent")
+                    }
+                } else {
+                    launchOrFallback("phone") {
+                        sendSiri()
+                        log.i("topbar: phone templates missing — Siri voice-dial")
+                    }
+                }
+            }
         }
+    }
+
+    private fun launchOrFallback(role: String, fallback: () -> Unit) {
+        if (!wasidremin.gmccpa.av.VisionLauncher.isCalibrated(this, role)) {
+            fallback()
+            return
+        }
+        val started = wasidremin.gmccpa.av.VisionLauncher.launchAsync(this, role, "top-bar") { rec ->
+            log.i("topbar: launch $role -> ${rec.outcome}" + (rec.error?.let { " ($it)" } ?: ""))
+        }
+        log.i("topbar: launch $role ${if (started) "started" else "ignored (busy/debounce)"}")
     }
 
     private fun startResolved(intent: Intent, label: String): Boolean = runCatching {
@@ -127,18 +170,19 @@ class CarPlayActivity : Activity() {
             hits.forEach { (name, ri) -> log.i("topbar: vehicle candidate $name label=${ri.loadLabel(pm)}") }
             if (hits.isEmpty()) log.i("topbar: no com.gm./com.android.car. activity candidates")
         }
-        val terms = when (kind) {
-            CarPlayApp.CAR -> listOf("vehicle", "carsettings", "car_settings")
-            CarPlayApp.CONTROLS -> listOf("controls", "climate", "hvac")
-            else -> listOf("energy", "charging", "charge")
+        val candidates = hits.values.mapNotNull { ri ->
+            val info = ri.activityInfo ?: return@mapNotNull null
+            val label = runCatching { ri.loadLabel(pm)?.toString() ?: "" }.getOrDefault("")
+            VehicleCandidate(info.packageName, info.name, label)
         }
-        val match = hits.values.firstOrNull { ri ->
-            val info = ri.activityInfo
-            val searchable = "${info.packageName} ${info.name} ${ri.loadLabel(pm)}".lowercase()
-            terms.any { searchable.contains(it) }
+        val vehicleKind = when (kind) {
+            CarPlayApp.CAR -> VehicleKind.CAR
+            CarPlayApp.CONTROLS -> VehicleKind.CONTROLS
+            else -> VehicleKind.ENERGY
         }
+        val match = selectVehicleDestination(vehicleKind, candidates)
         if (match != null) {
-            val target = Intent(Intent.ACTION_MAIN).setClassName(match.activityInfo.packageName, match.activityInfo.name)
+            val target = Intent(Intent.ACTION_MAIN).setClassName(match.packageName, match.className)
             if (startResolved(target, "${kind.name.lowercase()} screen")) return
         }
         startResolved(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "CATEGORY_HOME (${kind.name.lowercase()} fallback)")
@@ -187,18 +231,17 @@ class CarPlayActivity : Activity() {
         val visibleNav = if (navVisible) (nav?.bottom ?: 0) else 0
         val latchedW = VideoFrame.railPx + VideoFrame.viewWidth
         val latchedH = VideoFrame.topPx + VideoFrame.viewHeight + VideoFrame.bottomPx
-        val mismatch = root.width != latchedW || root.height != latchedH
-        val mismatchKey = "${System.identityHashCode(window)}:${root.width}x${root.height}:$latchedW x$latchedH"
-        if (mismatch) {
-            centerBlockX = ((root.width - latchedW) / 2).coerceAtLeast(0)
-            centerBlockY = ((root.height - latchedH) / 2).coerceAtLeast(0)
+        val fit = wasidremin.gmccpa.DisplayGeometry.fitLatched(root.width, root.height, latchedW, latchedH)
+        centerBlockX = fit.x
+        centerBlockY = fit.y
+        windowFitScale = if (viewAreaIndex == 0) fit.scale else 1f
+        val mismatchKey = "${System.identityHashCode(window)}:${root.width}x${root.height}:$latchedW x$latchedH:${fit.scale}"
+        if (!fit.matched) {
             if (lastMismatchLog != mismatchKey) {
                 lastMismatchLog = mismatchKey
-                log.w("topbar geometry mismatch root=${root.width}x${root.height} latched=${latchedW}x$latchedH")
+                log.w("topbar geometry mismatch root=${root.width}x${root.height} latched=${latchedW}x$latchedH scale=${fit.scale}")
             }
         } else {
-            centerBlockX = 0
-            centerBlockY = 0
             lastMismatchLog = null
         }
         val maxBounds = if (Build.VERSION.SDK_INT >= 30)
@@ -242,13 +285,15 @@ class CarPlayActivity : Activity() {
                     })
                 }
                 bar.elevation = dp(10).toFloat()
-                root.addView(bar, android.widget.FrameLayout.LayoutParams(-1, strip, Gravity.TOP))
+                val barH = (strip * windowFitScale).roundToInt().coerceAtLeast(1)
+                root.addView(bar, android.widget.FrameLayout.LayoutParams(-1, barH, Gravity.TOP))
                 topBar = bar
                 topBarData = wasidremin.gmccpa.TopBarVehicleData(bar).also { it.start() }
-                log.i("topbar: attached height=${strip}px; clock follows system 12/24h setting")
+                log.i("topbar: attached height=${strip}px (on-screen ${barH}px at scale=${windowFitScale}); clock follows system 12/24h setting")
             } else {
                 val lp = bar.layoutParams as android.widget.FrameLayout.LayoutParams
-                if (lp.height != strip) { lp.height = strip; bar.layoutParams = lp }
+                val barH = (strip * windowFitScale).roundToInt().coerceAtLeast(1)
+                if (lp.height != barH) { lp.height = barH; bar.layoutParams = lp }
                 bar.visibility = View.VISIBLE
             }
             bar.visibility = if (window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.statusBars()) == true)
@@ -258,19 +303,23 @@ class CarPlayActivity : Activity() {
         }
         topStripPx = if (placed) strip else 0
         syncChrome()
-        val logKey = "$strip:$placed:$reason"
+        val logKey = "$strip:$placed:$reason:${windowFitScale}:$centerBlockX,$centerBlockY"
         if (lastTopBarLog != logKey) {
             lastTopBarLog = logKey
-            log.i("topbar: strip=${strip}px placed=$placed reason=$reason")
+            log.i("topbar: strip=${strip}px placed=$placed reason=$reason scale=${windowFitScale} center=$centerBlockX,$centerBlockY")
         }
         if (previewOnly && previewReady && !previewCaptured) {
             previewCaptured = true
             root.post {
                 if (!isDestroyed) {
-                    val fits = strip == 0 || (surfaceView.top == strip &&
-                        surfaceView.bottom == strip + VideoFrame.viewHeight &&
-                        surfaceView.left == VideoFrame.railPx &&
-                        topBar?.height == strip)
+                    val safe = wasidremin.gmccpa.DisplayGeometry.content(VideoFrame.viewWidth,
+                        VideoFrame.viewHeight, resources.displayMetrics.density, VideoFrame.controls)
+                    val expected = if (VideoFrame.controls.fit) wasidremin.gmccpa.DisplayGeometry.fit(safe,
+                        VideoFrame.width, VideoFrame.height) else safe
+                    val fits = surfaceView.top == strip + expected.y + centerBlockY &&
+                        surfaceView.height == expected.height && surfaceView.width == expected.width &&
+                        surfaceView.left == VideoFrame.railPx + expected.x + centerBlockX &&
+                        (strip == 0 || topBar?.height == strip)
                     log.i("topbar: preview layout ${if (fits) "PASS" else "FAIL"} " +
                         "root=${root.width}x${root.height} " +
                         "video=[${surfaceView.left},${surfaceView.top},${surfaceView.right},${surfaceView.bottom}] " +
@@ -293,6 +342,18 @@ class CarPlayActivity : Activity() {
         /** A fresh preview must not reuse an old task's latched geometry. Main-thread only. */
         fun closePreview() {
             live?.get()?.let { if (it.previewOnly) it.finish() }
+        }
+
+        /** Live CarPlayActivity instance if one is up and not destroyed. */
+        fun liveActivity(): CarPlayActivity? =
+            live?.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
+
+        /** Live CarPlay SurfaceView when its holder has a valid Surface. */
+        fun liveSurfaceView(): SurfaceView? {
+            val act = liveActivity() ?: return null
+            if (!act::surfaceView.isInitialized) return null
+            val sv = act.surfaceView
+            return sv.takeIf { it.holder?.surface?.isValid == true && it.width > 0 && it.height > 0 }
         }
 
         /**
@@ -529,6 +590,11 @@ class CarPlayActivity : Activity() {
             previewReady = true
             measureAndLayout()
         }
+        root.setBackgroundColor(android.graphics.Color.BLACK)
+        VideoPresentation.onSizeChanged = { root.post { if (!isDestroyed) applyVideoFrame() } }
+        if (DisplayPrefs.controls(this).stats) {
+            root.addView(ProjectionStatsPill(this, previewOnly), android.widget.FrameLayout.LayoutParams(-2, -2))
+        }
         if (!previewOnly) maybeShowIntro()
 
         touchThread = HandlerThread("cp-touch").also { it.start(); touchHandler = Handler(it.looper) }
@@ -627,11 +693,13 @@ class CarPlayActivity : Activity() {
      */
     private fun chromeParams(rail: Boolean): android.widget.FrameLayout.LayoutParams {
         return if (rail) {
-            val railW = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) VideoFrame.railPx else dp(VideoFrame.RAIL_DP)
-            android.widget.FrameLayout.LayoutParams(railW, VideoFrame.viewHeight,
+            val s = if (viewAreaIndex == 0) windowFitScale else 1f
+            val railW = if (VideoFrame.railPx > 0 && viewAreaIndex == 0) (VideoFrame.railPx * s).roundToInt().coerceAtLeast(1) else dp(VideoFrame.RAIL_DP)
+            val railH = if (viewAreaIndex == 0) (VideoFrame.viewHeight * s).roundToInt().coerceAtLeast(1) else VideoFrame.viewHeight
+            android.widget.FrameLayout.LayoutParams(railW, railH,
                 Gravity.TOP or Gravity.START).apply {
                 if (viewAreaIndex == 0) {
-                    topMargin = centerBlockY + topStripPx
+                    topMargin = centerBlockY + (topStripPx * s).roundToInt()
                     marginStart = centerBlockX
                 }
             }
@@ -643,7 +711,8 @@ class CarPlayActivity : Activity() {
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.START,
             ).apply {
-                topMargin = dp(16) + if (viewAreaIndex == 0) topStripPx else 0
+                val s = if (viewAreaIndex == 0) windowFitScale else 1f
+                topMargin = dp(16) + if (viewAreaIndex == 0) (topStripPx * s).roundToInt() else 0
                 marginStart = dp(16)
             }
         }
@@ -663,31 +732,50 @@ class CarPlayActivity : Activity() {
         val scaled = VideoFrame.uiScalePercent != 100 && viewAreaIndex == 0
         val viewW = when {
             viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).width()
-            rail || top || scaled -> VideoFrame.viewWidth
-            else -> DISPLAY_W
+            else -> VideoFrame.viewWidth
         }
         val viewH = when {
             viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).height()
-            rail || top || scaled -> VideoFrame.viewHeight
-            else -> DISPLAY_H
+            else -> VideoFrame.viewHeight
         }
         val bufW = if (viewAreaIndex == 0 && (rail || top || scaled)) VideoFrame.width else viewW
         val bufH = if (viewAreaIndex == 0 && (rail || top || scaled)) VideoFrame.height else viewH
         // Flush against the rail. The on-screen width is the measured window minus the rail, so
         // this rectangle and the rail together are the whole window.
         val gravity = Gravity.TOP or Gravity.START
-        val inset = if (viewAreaIndex == 0) centerBlockX + if (rail) VideoFrame.railPx else 0 else 0
-        val topInset = if (top) centerBlockY + topStripPx else centerBlockY
-        if (lp.width == viewW && lp.height == viewH && lp.gravity == gravity &&
-            lp.marginStart == inset && lp.topMargin == topInset) return
-        lp.width = viewW
-        lp.height = viewH
+        // windowFitScale shrinks the whole latched block (rail + strip + presentation) when the
+        // live window came up smaller than the subscribe-time latch. The buffer stays advertised
+        // so the compositor scales; touch stays normalised to the view so it stays correct.
+        val s = if (viewAreaIndex == 0) windowFitScale else 1f
+        val railPx = if (rail) (VideoFrame.railPx * s).roundToInt() else 0
+        val stripPx = if (top) (topStripPx * s).roundToInt() else 0
+        val inset = if (viewAreaIndex == 0) centerBlockX + railPx else 0
+        val topInset = if (top) centerBlockY + stripPx else centerBlockY
+        val c = VideoFrame.controls
+        val safe = wasidremin.gmccpa.DisplayGeometry.content(viewW, viewH, resources.displayMetrics.density, c)
+        val presentation = if (c.fit) wasidremin.gmccpa.DisplayGeometry.fit(safe,
+            VideoPresentation.width.takeIf { it > 0 } ?: bufW,
+            VideoPresentation.height.takeIf { it > 0 } ?: bufH) else safe
+        val outW = (presentation.width * s).roundToInt().coerceAtLeast(1)
+        val outH = (presentation.height * s).roundToInt().coerceAtLeast(1)
+        val outX = (presentation.x * s).roundToInt()
+        val outY = (presentation.y * s).roundToInt()
+        val x = inset + outX
+        val y = topInset + outY
+        if (lp.width == outW && lp.height == outH && lp.gravity == gravity &&
+            lp.marginStart == x && lp.topMargin == y) return
+        lp.width = outW
+        lp.height = outH
         lp.gravity = gravity
-        lp.marginStart = inset
-        lp.topMargin = topInset
+        lp.marginStart = x
+        lp.topMargin = y
         surfaceView.layoutParams = lp
         surfaceView.holder.setFixedSize(bufW, bufH)
-        log.i("video frame view ${viewW}x$viewH fixed ${bufW}x$bufH rail ${if (rail) VideoFrame.railPx else 0} gravity=$gravity origin=${VideoFrame.captureX},${VideoFrame.captureY}")
+        log.i("display: presentation=${if (c.fit) "fit" else "stretch"} available=${viewW}x$viewH " +
+            "insetsDp=${c.left},${c.top},${c.right},${c.bottom} density=${resources.displayMetrics.density} " +
+            "safe=${safe.width}x${safe.height}@${safe.x},${safe.y} " +
+            "surface=${lp.width}x${lp.height}@$x,$y buffer=${bufW}x$bufH " +
+            "ui=${c.uiPercent}% physical=${VideoFrame.physicalWidthMm}x${VideoFrame.physicalHeightMm}mm")
     }
 
     /** [VIEW_AREAS] at 100%. Otherwise the same rectangles divided by the UI scale. Area 0 is the advertised frame. */
@@ -868,6 +956,56 @@ class CarPlayActivity : Activity() {
     private fun sendNav(nav: Byte) {
         if (previewOnly) { log.i("rail preview: nav $nav — no command sent"); return }
         touchHandler?.post { dispatchNav(nav) }
+    }
+
+    /** Used by CarPlayFrameGrabber / CarPlayLauncher to send AC Home over the existing nav path. */
+    fun sendAcHomeFromTooling() {
+        sendNav(wasidremin.gmccpa.ocbm.Ocbm.NAV_HOME)
+    }
+
+    /**
+     * Whole-window screenshot: the Android view hierarchy (custom top bar, rail/gear, background)
+     * with the live CarPlay video frame drawn at the surface's on-screen rect.
+     *
+     * Calibration captures use PixelCopy straight off the SurfaceView, which is only the decoded
+     * iPhone frame — the top bar and rail are sibling Views and never appear in it. This draws
+     * [root] to a bitmap (the SurfaceView paints blank there) and overdraws [video] scaled into
+     * the surface's live rect, so a reviewer sees the chrome around the picture.
+     *
+     * Safe to call from any thread: the hierarchy draw is marshalled to the UI thread. Returns
+     * null when the window is not laid out. The caller owns the returned bitmap and must recycle it.
+     */
+    fun captureWindowComposite(video: android.graphics.Bitmap): android.graphics.Bitmap? {
+        if (!::root.isInitialized || !::surfaceView.isInitialized) return null
+        var hier: android.graphics.Bitmap? = null
+        var left = 0; var top = 0; var w = 0; var h = 0
+        val drawHierarchy = {
+            try {
+                if (!isFinishing && !isDestroyed && root.width > 0 && root.height > 0) {
+                    left = surfaceView.left; top = surfaceView.top
+                    w = surfaceView.width; h = surfaceView.height
+                    hier = android.graphics.Bitmap.createBitmap(
+                        root.width, root.height, android.graphics.Bitmap.Config.ARGB_8888)
+                    root.draw(android.graphics.Canvas(hier!!))
+                }
+            } catch (_: Throwable) { hier = null }
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            drawHierarchy()
+        } else {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            runOnUiThread { try { drawHierarchy() } finally { latch.countDown() } }
+            try {
+                latch.await(2000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) { Thread.currentThread().interrupt(); return null }
+        }
+        val base = hier ?: return null
+        if (w <= 0 || h <= 0) return base
+        runCatching {
+            android.graphics.Canvas(base).drawBitmap(video, null,
+                android.graphics.Rect(left, top, left + w, top + h), null)
+        }.onFailure { log.w("full-window composite: video overdraw failed: ${it.message}") }
+        return base
     }
 
     private fun dispatchCommand(cmd: Byte): Boolean {
@@ -1542,7 +1680,7 @@ class CarPlayActivity : Activity() {
         // View area / full panel: the phone was told the display is the whole 2400x960 panel, and a
         // view area is a sub-rect inside it. `nativeTouch` scales by DISPLAY_W/H. Using the view's
         // own width there would report the video's left edge as x=0 instead of the view area's origin.
-        val framed = (VideoFrame.railPx > 0 || topStripPx > 0) && viewAreaIndex == 0
+        val framed = viewAreaIndex == 0
         val nx = (if (framed) ev.getX(idx) / v.width.toFloat()
             else (v.left + ev.getX(idx)) / DISPLAY_W.toFloat()).coerceIn(0f, 1f)
         val ny = (if (framed) ev.getY(idx) / v.height.toFloat()
@@ -1609,6 +1747,7 @@ class CarPlayActivity : Activity() {
     }
 
     override fun onDestroy() {
+        VideoPresentation.onSizeChanged = null
         topBarData?.stop(); topBarData = null
         intro?.removeCallbacks(introLate)
         intro = null

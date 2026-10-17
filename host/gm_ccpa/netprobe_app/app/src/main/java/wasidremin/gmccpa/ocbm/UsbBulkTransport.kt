@@ -284,6 +284,10 @@ class UsbBulkTransport(
                 if (!permWatchArmed) {
                     grantedViaBroadcast = false
                     permWatchArmed = true
+                    // A new episode gets its own deferral line. Without this the flag stuck
+                    // from the first display-off deferral (2026-10-15: set at 22:17, still set
+                    // at 03:23+) and every later deferral was silent in the log.
+                    displayOffDeferLogged = false
                 }
                 if (permWatch != null) return
                 val r = object : BroadcastReceiver() {

@@ -711,6 +711,8 @@ class MainActivity : Activity() {
                     LogAction.EXPORT -> exportLogs(redact = true)
                     LogAction.UPLOAD -> uploadLogs()
                     LogAction.USB_PROBE -> runAsync { wasidremin.gmccpa.ocbm.UsbDiagnostics.runProbe(applicationContext) }
+                    LogAction.VEHICLE_PROBE -> startActivity(Intent(this@MainActivity,
+                        wasidremin.gmccpa.telemetry.ProbeActivity::class.java))
                     // The settings row confirms before this runs.
                     LogAction.CLEAR -> runAsync {
                         val n = LogCapture.clearAll(applicationContext)
@@ -779,6 +781,8 @@ class MainActivity : Activity() {
         // had no logcap-pump thread. start() is idempotent and self-reaping, so calling it on every
         // onCreate is free when capture is already running.
         runCatching { LogCapture.start(applicationContext, CapturePrefs.config(this)) }
+        runCatching { wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(applicationContext) }
+        runCatching { wasidremin.gmccpa.upload.UploadCenter.drainPendingCaptures(applicationContext) }
         // USB diagnostics watcher: process-scoped and idempotent, so every Activity generation
         // re-arms it for free. Attach/detach events are logged whether or not a link is running —
         // the car failure to explain is exactly "dongle plugged in, app says waiting, nothing else".
@@ -1319,6 +1323,15 @@ class MainActivity : Activity() {
                     if (i.hasExtra("sidebar")) DisplayPrefs.setSidebar(this, i.getBooleanExtra("sidebar", false))
                     if (i.hasExtra("scale")) DisplayPrefs.setUiScale(this, i.getIntExtra("scale", 125))
                     if (i.hasExtra("safe_right")) DisplayPrefs.setSafeRightPx(this, i.getIntExtra("safe_right", 48))
+                    // The existing hardware-free preview exercises the same persisted controls and layout.
+                    if (i.hasExtra("inset_top") || i.hasExtra("ui_size") || i.hasExtra("fit") || i.hasExtra("stats")) {
+                        val c = DisplayPrefs.controls(this)
+                        check(DisplayPrefs.saveControls(this, c.copy(
+                            top = i.getIntExtra("inset_top", c.top), bottom = i.getIntExtra("inset_bottom", c.bottom),
+                            left = i.getIntExtra("inset_left", c.left), right = i.getIntExtra("inset_right", c.right),
+                            uiPercent = i.getIntExtra("ui_size", c.uiPercent), fit = i.getBooleanExtra("fit", c.fit),
+                            stats = i.getBooleanExtra("stats", c.stats))))
+                    }
                     startActivity(Intent(this, wasidremin.gmccpa.av.CarPlayActivity::class.java)
                         .putExtra("topbar_preview", true)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -1538,6 +1551,31 @@ class MainActivity : Activity() {
             emit("stale sessionUp with no live control connection — clearing instead of restoring")
             onCarPlaySessionDown()
         }
+        maybeRelinkOnResume()
+    }
+
+    /**
+     * Warm-start relink (2026-10-15 pid 4683): remote warm-up powers the USB bus while the
+     * display is off — the permission dialog is deferred, the claim loop aborts after 10 min,
+     * and opening the app only resumes this Activity, so dispatchIntent/autoStart never re-run
+     * and the app sat FAILED with the adapter on the bus until Restart Session was pressed.
+     *
+     * Relinks only when stuck: the board still reads USB_CLAIM FAILED from the aborted attempt
+     * (an explicit Stop resets the board, so it is never mistaken for a fault), no bring-up is
+     * running, and the adapter is actually on the bus (otherwise this would queue a ten-minute
+     * absent-wait behind nothing). The reclaim's own guards + 20 s debounce make repeats safe.
+     */
+    private fun maybeRelinkOnResume() {
+        if (ocbmProbe?.linkAttemptInFlight == true) return
+        if (!SessionTrace.Board.isFailed(wasidremin.gmccpa.ocbm.OcbmBoard.USB_CLAIM)) return
+        val usb = getSystemService(USB_SERVICE) as UsbManager
+        val present = usb.deviceList.values.any {
+            it.vendorId == wasidremin.gmccpa.ocbm.UsbBulkTransport.VID_CARLINKIT &&
+                it.productId == wasidremin.gmccpa.ocbm.UsbBulkTransport.PID_OCBM
+        }
+        if (!present) return
+        emit("resume with a failed claim and the adapter on the bus — reclaiming")
+        reclaimDeadLink()
     }
 
     /** Returns false when the command was dropped, so a caller holding state for it can release it. */
@@ -1667,9 +1705,14 @@ class MainActivity : Activity() {
 
     /** Upload a redacted snapshot to the shared Cloud Bridge log receiver. */
     private fun uploadLogs() {
-        emit(">>> uploading logs (always redacted) to ${LogExport.DEFAULT_REMOTE_BASE_URL}/logs")
+        val base = wasidremin.gmccpa.upload.UploadCenter.baseUrl(this)
+        emit(">>> uploading logs (always redacted) to $base/logs")
         ui.setDetail("uploading redacted logs…")
-        LogExport.upload(this) { result ->
+        ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Preparing)
+        LogExport.upload(
+            this,
+            onState = { st -> if (uiAlive()) ui.setUploadLogsState(st) },
+        ) { result ->
             result.onSuccess {
                 emit("upload OK: ${it.lines} lines in ${it.batches} batches -> ${it.endpoint}")
                 if (uiAlive()) ui.setDetail("uploaded ${it.lines} redacted log lines")

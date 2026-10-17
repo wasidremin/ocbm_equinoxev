@@ -578,6 +578,17 @@ is "not sent to either phone" (`dpi` is an Android Auto field, not a CarPlay one
 neither value is re-proposed for the CarPlay wire without first giving `vehicle_config.rs` a slot —
 this is a client decision, not a protocol gap.
 
+**GM display calibration implementation (2026-10):** the GM adapter-Wi-Fi path now optionally
+emits `mainDisplayPanel.physicalDimensions`, parsed by `vehicle_config.rs` and forwarded through
+`DeviceConfig.display_width_mm/display_height_mm` to `/info` `widthPhysical/heightPhysical`.
+Both dimensions must be in 1–2000 mm; absent/invalid pairs preserve the legacy 0/0 offer.
+The new `carplay_ui_size_percent` preference does NOT alter coded resolution or the surface;
+100 retains unknown physical size, other values calibrate relative to a nominal 200 mm width.
+This is a calibration hint, not a continuous DPI guarantee: iOS may quantize layouts.
+Requires an updated box receiver; no live iPhone validation is claimed. The legacy host path
+still serves its static `info.bplist` and does not support this new calibration control.
+The GM legacy `ui_scale` preference continues to mean resolution scaling, not this control.
+
 #### displayProperties
 Special roles for this panel.
 Member `showsInstruments` marks the panel as an instrument-cluster display (gauge/nav cluster) rather than a normal touch screen. Empty = a standard display.

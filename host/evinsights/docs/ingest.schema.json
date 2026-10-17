@@ -1,0 +1,593 @@
+{
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "not": {
+        "anyOf": [
+          {
+            "properties": {
+              "value_int": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_int"
+            ]
+          },
+          {
+            "properties": {
+              "value_bool": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_bool"
+            ]
+          },
+          {
+            "properties": {
+              "value_str": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_str"
+            ]
+          },
+          {
+            "properties": {
+              "value_arr": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_arr"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "value_num": {
+          "not": {
+            "type": "null"
+          }
+        }
+      },
+      "required": [
+        "value_num"
+      ]
+    },
+    {
+      "not": {
+        "anyOf": [
+          {
+            "properties": {
+              "value_num": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_num"
+            ]
+          },
+          {
+            "properties": {
+              "value_bool": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_bool"
+            ]
+          },
+          {
+            "properties": {
+              "value_str": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_str"
+            ]
+          },
+          {
+            "properties": {
+              "value_arr": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_arr"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "value_int": {
+          "not": {
+            "type": "null"
+          }
+        }
+      },
+      "required": [
+        "value_int"
+      ]
+    },
+    {
+      "not": {
+        "anyOf": [
+          {
+            "properties": {
+              "value_num": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_num"
+            ]
+          },
+          {
+            "properties": {
+              "value_int": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_int"
+            ]
+          },
+          {
+            "properties": {
+              "value_str": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_str"
+            ]
+          },
+          {
+            "properties": {
+              "value_arr": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_arr"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "value_bool": {
+          "not": {
+            "type": "null"
+          }
+        }
+      },
+      "required": [
+        "value_bool"
+      ]
+    },
+    {
+      "not": {
+        "anyOf": [
+          {
+            "properties": {
+              "value_num": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_num"
+            ]
+          },
+          {
+            "properties": {
+              "value_int": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_int"
+            ]
+          },
+          {
+            "properties": {
+              "value_bool": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_bool"
+            ]
+          },
+          {
+            "properties": {
+              "value_arr": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_arr"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "value_str": {
+          "not": {
+            "type": "null"
+          }
+        }
+      },
+      "required": [
+        "value_str"
+      ]
+    },
+    {
+      "not": {
+        "anyOf": [
+          {
+            "properties": {
+              "value_num": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_num"
+            ]
+          },
+          {
+            "properties": {
+              "value_int": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_int"
+            ]
+          },
+          {
+            "properties": {
+              "value_bool": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_bool"
+            ]
+          },
+          {
+            "properties": {
+              "value_str": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value_str"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "value_arr": {
+          "not": {
+            "type": "null"
+          }
+        }
+      },
+      "required": [
+        "value_arr"
+      ]
+    }
+  ],
+  "properties": {
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "batch_id": {
+      "format": "uuid",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "device_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Device Id",
+      "type": "string"
+    },
+    "vehicle_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Vehicle Id",
+      "type": "string"
+    },
+    "source_ts": {
+      "format": "date-time",
+      "title": "Source Ts",
+      "type": "string"
+    },
+    "source_elapsed_ns": {
+      "minimum": 0,
+      "title": "Source Elapsed Ns",
+      "type": "integer"
+    },
+    "tz_offset_min": {
+      "maximum": 840,
+      "minimum": -840,
+      "title": "Tz Offset Min",
+      "type": "integer"
+    },
+    "property_id": {
+      "exclusiveMaximum": 9223372036854775808,
+      "minimum": -9223372036854775808,
+      "title": "Property Id",
+      "type": "integer"
+    },
+    "property_name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Property Name",
+      "type": "string"
+    },
+    "area_id": {
+      "minimum": 0,
+      "title": "Area Id",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "available",
+        "unavailable",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "value_num": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value Num"
+    },
+    "value_int": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value Int"
+    },
+    "value_bool": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value Bool"
+    },
+    "value_str": {
+      "anyOf": [
+        {
+          "maxLength": 10000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value Str"
+    },
+    "value_arr": {
+      "anyOf": [
+        {
+          "items": {},
+          "maxItems": 256,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value Arr"
+    },
+    "unit_canonical": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Unit Canonical",
+      "type": "string"
+    },
+    "unit_original": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Unit Original",
+      "type": "string"
+    },
+    "quality": {
+      "enum": [
+        "measured",
+        "derived",
+        "enriched",
+        "user-entered"
+      ],
+      "title": "Quality",
+      "type": "string"
+    },
+    "lat": {
+      "anyOf": [
+        {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lat"
+    },
+    "lon": {
+      "anyOf": [
+        {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lon"
+    },
+    "alt_m": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Alt M"
+    },
+    "accuracy_m": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Accuracy M"
+    },
+    "bearing_deg": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 360,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Bearing Deg"
+    },
+    "app_version": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "App Version",
+      "type": "string"
+    },
+    "build_fingerprint": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Build Fingerprint",
+      "type": "string"
+    },
+    "seq": {
+      "minimum": 0,
+      "title": "Seq",
+      "type": "integer"
+    },
+    "meta": {
+      "additionalProperties": true,
+      "title": "Meta",
+      "type": "object"
+    }
+  },
+  "required": [
+    "event_id",
+    "batch_id",
+    "schema_version",
+    "device_id",
+    "vehicle_id",
+    "source_ts",
+    "source_elapsed_ns",
+    "tz_offset_min",
+    "property_id",
+    "property_name",
+    "area_id",
+    "status",
+    "unit_canonical",
+    "unit_original",
+    "quality",
+    "app_version",
+    "build_fingerprint",
+    "seq",
+    "meta"
+  ],
+  "title": "Event",
+  "type": "object"
+}

@@ -63,6 +63,11 @@ android {
     packagingOptions { jniLibs { useLegacyPackaging = false } }
 }
 
+// Temporary probe provenance: per-variant resource, never inferred from release build type.
+android.applicationVariants.all { variant ->
+    variant.resValue 'string', 'telemetry_build_variant', variant.name
+}
+
 // Same publishing contract as the sister app: only an explicit publish task uploads anything.
 play {
     def serviceAccountPath = System.getenv("PLAY_SERVICE_ACCOUNT") ?: "${rootProject.projectDir}/play-service-account.json"
@@ -73,6 +78,9 @@ play {
 }
 
 dependencies {
+    // Same JVM test libraries already used by host/CarlinkAndroid; no production dependency.
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20250107'
     // android.car is an AAOS optional platform library: compile against its API 35 stub, but
     // do not package it. The real library is supplied by the head unit and the manifest declares
     // it as an optional uses-library.

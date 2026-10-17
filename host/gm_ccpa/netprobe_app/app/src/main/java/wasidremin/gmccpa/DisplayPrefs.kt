@@ -142,6 +142,41 @@ object DisplayPrefs {
         prefs(ctx).edit().putString(KEY_PHONE, clean).apply()
     }
 
+    /** New display controls are independent of the legacy resolution-based ui_scale key. */
+    data class Controls(
+        val top: Int = 0, val bottom: Int = 0, val left: Int = 0, val right: Int = 0,
+        val uiPercent: Int = 100, val fit: Boolean = false, val stats: Boolean = false,
+    )
+
+    fun controls(ctx: Context): Controls = prefs(ctx).let { p ->
+        Controls(p.getInt("inset_top_dp", 0).coerceIn(0, 160),
+            p.getInt("inset_bottom_dp", 0).coerceIn(0, 160),
+            p.getInt("inset_left_dp", 0).coerceIn(0, 160),
+            p.getInt("inset_right_dp", 0).coerceIn(0, 160),
+            p.getInt("carplay_ui_size_percent", 100).coerceIn(50, 150),
+            p.getBoolean("video_fit", false), p.getBoolean("stats_overlay", false))
+    }
+
+    /** Synchronous atomic commit before reconnect; failure must not tear down a working session. */
+    fun saveControls(ctx: Context, c: Controls): Boolean {
+        require(listOf(c.top, c.bottom, c.left, c.right).all { it in 0..160 })
+        require(c.uiPercent in 50..150)
+        return prefs(ctx).edit().putInt("inset_top_dp", c.top).putInt("inset_bottom_dp", c.bottom)
+            .putInt("inset_left_dp", c.left).putInt("inset_right_dp", c.right)
+            .putInt("carplay_ui_size_percent", c.uiPercent).putBoolean("video_fit", c.fit)
+            .putBoolean("stats_overlay", c.stats).commit()
+    }
+
+    fun statsPosition(ctx: Context): Pair<Float, Float> = prefs(ctx).let {
+        it.getFloat("stats_x_fraction", 0.75f).coerceIn(0f, 1f) to
+            it.getFloat("stats_y_fraction", 0.1f).coerceIn(0f, 1f)
+    }
+
+    fun setStatsPosition(ctx: Context, x: Float, y: Float) {
+        prefs(ctx).edit().putFloat("stats_x_fraction", x.coerceIn(0f, 1f))
+            .putFloat("stats_y_fraction", y.coerceIn(0f, 1f)).apply()
+    }
+
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }
@@ -257,6 +292,11 @@ object VideoFrame {
     fun noteLauncherWindow(ctx: Context, mode: ScreenMode, width: Int, height: Int,
                            x: Int, y: Int, insets: android.view.WindowInsets?) {
         if (testingGeometry || width < 640 || height < 480) return
+        // Pre-insets measurements are the full window before GM's chrome insets it (2026-10-17:
+        // 2914x1134 persisted, then the CarPlay window settled at 2629x967, so SUBSCRIBE latched
+        // the wrong panel and every frame overflowed). Only a post-insets measurement may move
+        // the latch that capture() reads. Below API 30 there are no window insets to wait for.
+        if (insets == null && android.os.Build.VERSION.SDK_INT >= 30) return
         val m = measurement(mode, width, height, x, y, insets)
         launcherMeasurement = m
         persistMeasurement(ctx, m)
@@ -327,6 +367,13 @@ object VideoFrame {
         return selected
     }
 
+    @Volatile var controls = DisplayPrefs.Controls()
+        private set
+    @Volatile var physicalWidthMm: Int = 0
+        private set
+    @Volatile var physicalHeightMm: Int = 0
+        private set
+
     @Volatile var testingGeometry: Boolean = false
 
     /**
@@ -341,6 +388,7 @@ object VideoFrame {
      * status bar), so the phone must lay out in the remaining rectangle.
      */
     fun capture(ctx: Context, advertise: Boolean) {
+        controls = DisplayPrefs.controls(ctx)
         val percent = if (advertise) DisplayPrefs.uiScale(ctx) else 100
         val inset = if (advertise) DisplayPrefs.safeRightPx(ctx) else 0
         val mode = DisplayPrefs.mode(ctx)
@@ -393,6 +441,11 @@ object VideoFrame {
         panelPx = panel
         val scaled = DisplayScale.even(insetAt100, percent)
         safeRightPx = scaled.coerceIn(0, (width - 2).coerceAtLeast(0)) and 1.inv()
+        // Physical-size calibration only; never change coded pixels for the new UI slider.
+        physicalWidthMm = if (controls.uiPercent == 100) 0 else
+            (20000.0 / controls.uiPercent).toInt().coerceAtLeast(1)
+        physicalHeightMm = if (physicalWidthMm == 0) 0 else
+            (physicalWidthMm.toDouble() * viewH / viewW).toInt().coerceAtLeast(1)
     }
 
     /** Pixel width from the same current-mode measurement used for the panel height. */

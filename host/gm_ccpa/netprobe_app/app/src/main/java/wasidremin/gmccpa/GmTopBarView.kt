@@ -71,6 +71,99 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     private val r = RectF()
     private val hitRects = Array(Button.values().size) { RectF() }
 
+    // ---- 24-unit outline glyphs (car / music / nav / phone / energy) ----------------------------
+    // Previewed against the existing apps/controls glyphs on 2026-10-15. Drawn at 1.2x the icon box
+    // because the 24-unit art carries ~2.5 units of padding.
+
+    private class Glyph(
+        val strokes: List<Path>,
+        val fills: List<Path> = emptyList(),
+        /** Filled with the bar background, then stroked — covers body lines (car wheels). */
+        val knockouts: List<Path> = emptyList(),
+    )
+
+    private fun circle(cx: Float, cy: Float, r: Float) = Path().apply { addCircle(cx, cy, r, Path.Direction.CW) }
+
+    /** Minimal SVG path parser: absolute M L H V C Z only (all glyph strings below use only these). */
+    private fun svg(d: String): Path {
+        val p = Path()
+        val tokens = Regex("[MLHVCZ]|-?\\d*\\.?\\d+").findAll(d).map { it.value }.toList()
+        var i = 0
+        var cmd = 'M'
+        var x = 0f
+        var y = 0f
+        fun num(): Float = tokens[i++].toFloat()
+        while (i < tokens.size) {
+            val t = tokens[i]
+            if (t.length == 1 && t[0].isLetter()) {
+                cmd = t[0]
+                i++
+                if (cmd == 'Z') {
+                    p.close()
+                    continue
+                }
+            }
+            when (cmd) {
+                'M' -> { x = num(); y = num(); p.moveTo(x, y); cmd = 'L' }
+                'L' -> { x = num(); y = num(); p.lineTo(x, y) }
+                'H' -> { x = num(); p.lineTo(x, y) }
+                'V' -> { y = num(); p.lineTo(x, y) }
+                'C' -> {
+                    val x1 = num(); val y1 = num(); val x2 = num(); val y2 = num()
+                    x = num(); y = num()
+                    p.cubicTo(x1, y1, x2, y2, x, y)
+                }
+                else -> throw IllegalArgumentException("unsupported path command $cmd in \"$d\"")
+            }
+        }
+        return p
+    }
+
+    private val glyphCar = Glyph(
+        strokes = listOf(
+            svg("M2.5 16.5V12.8L4.6 11.6L7.4 6.5H16.6L19.4 11.6L21.5 12.8V16.5Z"),
+            svg("M6.4 11.4H17.6"),
+        ),
+        knockouts = listOf(circle(7f, 16.8f, 2.3f), circle(17f, 16.8f, 2.3f)),
+    )
+    private val glyphMusic = Glyph(
+        strokes = listOf(svg("M9.6 17.3V5.8L19.4 3.8V15.3"), svg("M9.6 9.2L19.4 7.2")),
+        fills = listOf(circle(7.3f, 17.3f, 2.4f), circle(17.1f, 15.3f, 2.4f)),
+    )
+    private val glyphNav = Glyph(
+        strokes = listOf(
+            svg("M12 21.5C12 21.5 5 14.8 5 9.6C5 5.7 8.1 2.6 12 2.6C15.9 2.6 19 5.7 19 9.6C19 14.8 12 21.5 12 21.5Z"),
+            circle(12f, 9.6f, 2.6f),
+        ),
+    )
+    private val glyphPhone = Glyph(
+        strokes = listOf(
+            svg("M7.2 3.2H9.6L11.2 7.6L9.1 9.2C10.2 11.7 12.3 13.8 14.8 14.9L16.4 12.8L20.8 14.4V16.8C20.8 18.9 19.1 20.6 17 20.6C9.6 20.1 3.9 14.4 3.4 7C3.4 4.9 5.1 3.2 7.2 3.2Z"),
+        ),
+    )
+    private val glyphBolt = Glyph(strokes = listOf(svg("M13.6 2.6L5.6 13.4H11.6L10.4 21.4L18.4 10.6H12.4Z")))
+
+    private fun drawGlyph(c: Canvas, g: Glyph, cx: Float, cy: Float, s: Float) {
+        val size = s * 1.2f
+        val k = size / 24f
+        val oldW = stroke.strokeWidth
+        c.save()
+        c.translate(cx - size / 2f, cy - size / 2f)
+        c.scale(k, k)
+        stroke.strokeWidth = oldW / k
+        for (p in g.strokes) c.drawPath(p, stroke)
+        for (p in g.fills) c.drawPath(p, fill)
+        for (p in g.knockouts) {
+            val col = fill.color
+            fill.color = bgTop
+            c.drawPath(p, fill)
+            fill.color = col
+            c.drawPath(p, stroke)
+        }
+        c.restore()
+        stroke.strokeWidth = oldW
+    }
+
     private val tick = object : Runnable {
         override fun run() { invalidate(); postDelayed(this, 15_000) }
     }
@@ -171,31 +264,13 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     // ---------------------------------------------------------------- icons
 
     private fun drawIcon(c: Canvas, b: Button, cx: Float, cy: Float, s: Float) = when (b) {
-        Button.CAR -> drawCar(c, cx, cy, s)
+        Button.CAR -> drawGlyph(c, glyphCar, cx, cy, s)
         Button.APPS -> drawApps(c, cx, cy, s)
         Button.CONTROLS -> drawControls(c, cx, cy, s)
-        Button.MUSIC -> drawMusic(c, cx, cy, s)
-        Button.NAV -> drawPin(c, cx, cy, s, filled = true)
-        Button.PHONE -> drawPhone(c, cx, cy, s)
-        Button.ENERGY -> drawBolt(c, cx, cy, s)
-    }
-
-    /** 3/4 rear view of a crossover: roof slope, body block, wheel arch. */
-    private fun drawCar(c: Canvas, cx: Float, cy: Float, s: Float) {
-        val l = cx - s * 0.5f; val t = cy - s * 0.42f; val rr = cx + s * 0.5f; val b = cy + s * 0.45f
-        path.reset()
-        path.moveTo(l, b)
-        path.lineTo(l, cy - s * 0.02f)
-        path.lineTo(cx - s * 0.10f, t)               // roof front
-        path.lineTo(rr - s * 0.12f, t + s * 0.10f)   // roof rear
-        path.lineTo(rr, cy + s * 0.05f)
-        path.lineTo(rr, b)
-        path.close()
-        c.drawPath(path, stroke)
-        // body crease lines
-        c.drawLine(l, cy + s * 0.12f, rr, cy + s * 0.18f, stroke)
-        c.drawLine(l + s * 0.08f, cy + s * 0.28f, rr - s * 0.05f, cy + s * 0.32f, stroke)
-        c.drawLine(cx - s * 0.10f, t, cx - s * 0.02f, cy + s * 0.12f, stroke)
+        Button.MUSIC -> drawGlyph(c, glyphMusic, cx, cy, s)
+        Button.NAV -> drawGlyph(c, glyphNav, cx, cy, s)
+        Button.PHONE -> drawGlyph(c, glyphPhone, cx, cy, s)
+        Button.ENERGY -> drawGlyph(c, glyphBolt, cx, cy, s)
     }
 
     /** Tall panel on the left, two stacked panels on the right. */
@@ -219,19 +294,6 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         }
     }
 
-    /** Beamed pair of eighth notes. */
-    private fun drawMusic(c: Canvas, cx: Float, cy: Float, s: Float) {
-        val hr = s * 0.15f
-        val lx = cx - s * 0.30f; val rx = cx + s * 0.30f
-        val ly = cy + s * 0.34f; val ry = cy + s * 0.24f
-        r.set(lx - hr * 1.3f, ly - hr, lx + hr * 0.2f, ly + hr * 0.8f); c.drawOval(r, stroke)
-        r.set(rx - hr * 1.3f, ry - hr, rx + hr * 0.2f, ry + hr * 0.8f); c.drawOval(r, stroke)
-        c.drawLine(lx, ly - hr * 0.2f, lx, cy - s * 0.32f, stroke)
-        c.drawLine(rx, ry - hr * 0.2f, rx, cy - s * 0.44f, stroke)
-        c.drawLine(lx, cy - s * 0.32f, rx, cy - s * 0.44f, stroke)
-        c.drawLine(lx, cy - s * 0.18f, rx, cy - s * 0.30f, stroke)
-    }
-
     /** Map pin. Filled with a cut-out dot for the bar button; outline for the small status pin. */
     private fun drawPin(c: Canvas, cx: Float, cy: Float, s: Float, filled: Boolean) {
         val rad = s * 0.34f
@@ -253,22 +315,6 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             c.drawLine(cx + rad * 0.86f, top + rad * 0.5f, cx, cy + s * 0.50f, stroke)
             c.drawCircle(cx, top, rad * 0.30f, stroke)
         }
-    }
-
-    /** Portrait phone outline. */
-    private fun drawPhone(c: Canvas, cx: Float, cy: Float, s: Float) {
-        r.set(cx - s * 0.27f, cy - s * 0.50f, cx + s * 0.27f, cy + s * 0.50f)
-        c.drawRoundRect(r, s * 0.10f, s * 0.10f, stroke)
-    }
-
-    /** Thin lightning bolt. */
-    private fun drawBolt(c: Canvas, cx: Float, cy: Float, s: Float) {
-        path.reset()
-        path.moveTo(cx + s * 0.18f, cy - s * 0.52f)
-        path.lineTo(cx - s * 0.22f, cy + s * 0.06f)
-        path.lineTo(cx + s * 0.06f, cy + s * 0.04f)
-        path.lineTo(cx - s * 0.16f, cy + s * 0.52f)
-        c.drawPath(path, stroke)
     }
 
     private fun drawBell(c: Canvas, cx: Float, cy: Float, s: Float) {

@@ -1,0 +1,43 @@
+name: evinsights
+on:
+  push:
+    paths: ['host/evinsights/**', '.github/workflows/evinsights.yml']
+  pull_request:
+    paths: ['host/evinsights/**', '.github/workflows/evinsights.yml']
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: host/evinsights
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: host/evinsights/frontend/package-lock.json
+      - name: Configure isolated synthetic test stack
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import secrets
+          Path('.env').write_text('\n'.join(k+'='+secrets.token_hex(32) for k in ['DB_PASSWORD','KEY_PEPPER','ADMIN_TOKEN'])+'\nALLOW_SYNTHETIC=true\n')
+          PY
+      - run: docker compose up --build -d --wait
+      - run: make test
+      - name: Seed through authenticated production ingest
+        run: |
+          python3 tools/demo.py --days 30
+      - name: Browser smoke
+        run: |
+          cd frontend
+          npx playwright install --with-deps chromium
+          set -a; . ../.env.demo; set +a
+          npm run smoke
+      - name: Logs
+        if: failure()
+        run: docker compose logs --tail 100
+      - name: Stop isolated CI services
+        if: always()
+        run: docker compose down

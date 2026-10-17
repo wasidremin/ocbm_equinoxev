@@ -90,6 +90,54 @@ reports `No matching endpoint found`, forget the vehicle on the iPhone and re-pa
 Full procedure, expected log lines and the troubleshooting table:
 [`docs/06_BRINGUP_RUNBOOK.md`](docs/06_BRINGUP_RUNBOOK.md) §5g.
 
+## Logs — where uploads land and how to read them
+
+Vehicle logs leave the head unit only on an explicit tap (no background upload):
+
+| Action | Endpoint | Server location |
+|---|---|---|
+| **Upload Logs** (launcher) | `POST https://wasidremin.ddnsgeek.com/cloudbridge/logs` (`{device: gmccpa, lines: [...]}`) | `/opt/stacks/cloudbridge-log/logs.txt` |
+| **Upload latest report to log server** (probe activity) | `POST .../cloudbridge/probe` (`report.json`, headers `X-Device`/`X-Report-Name`) | `/opt/stacks/cloudbridge-log/probes/` |
+| **Capture CarPlay Home/Current Screen** (launcher) | `POST .../cloudbridge/api/captures` (multipart `metadata` JSON + `image` PNG) | `/opt/stacks/cloudbridge-log/captures/` |
+| **Icon-tap launch record** (`CarPlayLauncher.uploadLaunch`) | `POST .../cloudbridge/api/launches` (record JSON with `id`) | `/opt/stacks/cloudbridge-log/launches/` |
+
+Contract: `netprobe_app/.../logging/LogExport.kt` (`DEFAULT_REMOTE_BASE_URL`) and
+`telemetry/ProbeUpload.kt`; capture/launch senders: `upload/UploadFeedback.kt`
+(`UploadCenter`) and `av/CarPlayLauncher.kt`. Receiver:
+`/opt/stacks/cloudbridge-log/log_server.py` (running as the `cloudbridge-log`
+container with `/opt/stacks/cloudbridge-log:/app`, so the live store is `/app/logs.txt`
+in-container = `logs.txt` on host; tail page at `.../cloudbridge/`, raw at
+`.../logs/raw`, probe list at `.../probes`, capture/launch lists at
+`.../api/captures` and `.../api/launches`).
+Each `/logs` line is stored as `<server-stamp>  <event line>`; lines are redacted
+on-device before upload. Local reproductions: `car-logs-delta-20261002/regenerate.sh`
+shows the exact extraction from `logs.txt`.
+
+## Calibration — icon templates & test app launch (launcher card)
+
+Below the capture rows, **Icon Templates** and **Test app launch** operate the vision
+launcher (`match/ScreenModel.kt` + `match/IconMatcher.kt` +
+`match/IconTemplateStore.kt`, `av/VisionLauncher.kt`, `CalibrationUi.kt`):
+
+1. **Capture Current Screen** on the Home grid, on the Dashboard (and optionally inside an app).
+2. **Icon templates → Calibrate from capture** — tap an icon in the saved PNG, check the blue
+   box, press its name. Strip icons and the bottom glyph pin to the strip's centre column;
+   everything else cuts a grid template. Templates live in
+   `filesDir/icon_templates/<name>/template.json`.
+3. **Self-check** — every template against every saved capture: expect `strip.*` MATCH on
+   every shot and `grid.*` MATCH only on Home grid shots.
+4. **Test app launch** (Maps / Music / Spotify / Phone) — searches the recent-apps strip,
+   then the grid, then taps the strip's Home/Dashboard toggle and searches the grid again.
+   It never taps an app without a match of 0.85 or higher, saves the record
+   (`filesDir/launches/<id>.json`, kept win or lose), and uploads it to `/api/launches`.
+
+AC Home is dropped by the box while `dPadSupport=false` (2026-10-15 log), which is why the
+launcher taps the strip's Home/Dashboard toggle instead of sending Home.
+
+Built-in Equinox 2754x966 templates (cut from the real captures, `assets/vision/equinox_2754x966/`)
+are used automatically, so a fresh install can launch with no calibration.
+Calibrate-from-capture now only creates optional overrides — a user-saved template always wins.
+
 ## Layout
 
 ```

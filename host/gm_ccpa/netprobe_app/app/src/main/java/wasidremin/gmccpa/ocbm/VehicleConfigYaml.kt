@@ -36,6 +36,8 @@ data class VehicleConfigSpec(
     val name: String = "CarLink GM 2400x960",
     val width: Int = 2400,
     val height: Int = 960,
+    val physicalWidthMm: Int = 0,
+    val physicalHeightMm: Int = 0,
     /** The box accepts 30 or 60 only; anything else is dropped and the compiled default stands. */
     val maxFps: Int = 60,
     /** Safe area, defaulting to the full panel. Derive from display-cutout insets when they exist. */
@@ -146,6 +148,11 @@ object VehicleConfigYaml {
         line("    pixelDimensions:")
         line("      width: ${s.width}")
         line("      height: ${s.height}")
+        if (s.physicalWidthMm > 0 && s.physicalHeightMm > 0) {
+            line("    physicalDimensions:")
+            line("      width: ${s.physicalWidthMm}")
+            line("      height: ${s.physicalHeightMm}")
+        }
         line("  altDisplayPanels: []")
     }
 
@@ -420,6 +427,8 @@ object VehicleConfigYaml {
         height: Int = 960,
         safeRight: Int = 0,
         telephony: Boolean = false,
+        physicalWidthMm: Int = 0,
+        physicalHeightMm: Int = 0,
     ): ByteArray {
         require(passphrase.length >= 8 && passphrase.all { it.isLetterOrDigit() }) {
             "adapter passphrase must be at least 8 letters or digits"
@@ -443,11 +452,13 @@ object VehicleConfigYaml {
         // at this indent, and serde then rejects the whole subscribe — including wifi_ap — so the
         // phone is never handed the adapter network.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
-        val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony) pinned
+        val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony && physicalWidthMm == 0 && physicalHeightMm == 0) pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
                 height = height,
+                physicalWidthMm = physicalWidthMm,
+                physicalHeightMm = physicalHeightMm,
                 safeWidth = width - inset,
                 safeHeight = height,
                 telephonyButtonsSupport = telephony,
