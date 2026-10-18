@@ -1,6 +1,7 @@
 package wasidremin.gmccpa
 
 import android.content.Context
+import kotlin.math.roundToInt
 
 /**
  * How the CarPlay picture shares the panel with GM's own chrome.
@@ -68,6 +69,47 @@ object DisplayPrefs {
         window.decorView.requestApplyInsets()
     }
 
+    /**
+     * Traced visible rectangle, as per-mille fractions (0..1000) of the trace-time window.
+     * Produced by the edge-scribble flow ([ScribbleActivity]) and consumed by [VideoFrame.capture].
+     * Fractions (not pixels) so a trace survives window-size changes; the head-unit density is
+     * fixed, so dp insets derived at capture time stay valid.
+     */
+    data class ScribbleRect(val l: Int, val t: Int, val r: Int, val b: Int) {
+        fun fractions(): FloatArray = floatArrayOf(l / 1000f, t / 1000f, r / 1000f, b / 1000f)
+    }
+    private const val KEY_SCRIBBLE = "scribble_enabled"
+    private const val KEY_SCRIBBLE_RECT = "scribble_rect"
+    private const val KEY_SCRIBBLE_PANEL = "scribble_panel"
+    private const val KEY_SCRIBBLE_NOTE = "scribble_note"
+    fun scribbleEnabled(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_SCRIBBLE, false) && scribbleRect(ctx) != null
+    fun scribbleRect(ctx: Context): ScribbleRect? {
+        val parts = prefs(ctx).getString(KEY_SCRIBBLE_RECT, null)?.split(",")?.mapNotNull { it.toIntOrNull() }
+        if (parts == null || parts.size != 4) return null
+        val (l, t, r, b) = parts
+        if (l !in 0..1000 || t !in 0..1000 || r !in 0..1000 || b !in 0..1000 || l >= r || t >= b) return null
+        return ScribbleRect(l, t, r, b)
+    }
+    fun scribbleNote(ctx: Context): String? =
+        prefs(ctx).getString(KEY_SCRIBBLE_NOTE, null)?.takeIf { it.isNotEmpty() }
+    /** Persist a trace. Also arms the custom top bar: the traced top wedge is bar space. */
+    fun saveScribble(ctx: Context, rect: ScribbleRect, panelW: Int, panelH: Int, note: String): Boolean {
+        require(rect.l in 0..1000 && rect.t in 0..1000 && rect.r in 0..1000 && rect.b in 0..1000)
+        require(rect.l < rect.r && rect.t < rect.b)
+        val ok = prefs(ctx).edit()
+            .putString(KEY_SCRIBBLE_RECT, "${rect.l},${rect.t},${rect.r},${rect.b}")
+            .putString(KEY_SCRIBBLE_PANEL, "${panelW}x${panelH}")
+            .putString(KEY_SCRIBBLE_NOTE, note)
+            .putBoolean(KEY_SCRIBBLE, true)
+            .putBoolean(KEY_CUSTOM_TOP_BAR, true)
+            .commit()
+        return ok
+    }
+    fun clearScribble(ctx: Context) {
+        prefs(ctx).edit().remove(KEY_SCRIBBLE_RECT).remove(KEY_SCRIBBLE_PANEL)
+            .remove(KEY_SCRIBBLE_NOTE).putBoolean(KEY_SCRIBBLE, false).apply()
+    }
     private const val PREFS = "carplay_screen"
     private const val KEY_MODE = "mode"
     private const val KEY_SIDEBAR = "sidebar"
@@ -403,7 +445,10 @@ object VideoFrame {
     fun capture(ctx: Context, advertise: Boolean) {
         controls = DisplayPrefs.controls(ctx)
         val percent = if (advertise) DisplayPrefs.uiScale(ctx) else 100
-        val inset = if (advertise) DisplayPrefs.safeRightPx(ctx) else 0
+        // A trace already keeps iOS clear of the cutout via the rect; the extra safe-area inset
+        // would double-shrink the right edge. Untraced sessions honour the legacy margin pref.
+        val traced = advertise && DisplayPrefs.scribbleEnabled(ctx)
+        val inset = if (advertise && !traced) DisplayPrefs.safeRightPx(ctx) else 0
         val mode = DisplayPrefs.mode(ctx)
         if (!advertise) {
             captureSource = "default"
@@ -414,10 +459,38 @@ object VideoFrame {
         val m = selectMeasurement(ctx, mode)
         val panelW = if (captureSource == "default") PANEL_W else m.width
         val panelH = if (captureSource == "default") PANEL_H else m.height
+        // Traced edges replace the manual dp sliders: the solved rect becomes the presentation
+        // insets, the strip above it the top bar's space, and the YAML safe-area inset goes to 0
+        // (the whole video already avoids the missing glass). Fractions scale to this panel.
+        val scrib = DisplayPrefs.scribbleRect(ctx)?.takeIf { DisplayPrefs.scribbleEnabled(ctx) }
+        val scribF = scrib?.fractions()
+        if (scribF != null) {
+            val d = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
+            controls = controls.copy(
+                left = (scribF[0] * panelW / d).roundToInt().coerceIn(0, 160),
+                top = 0,
+                right = ((1 - scribF[2]) * panelW / d).roundToInt().coerceIn(0, DisplayPrefs.RIGHT_DP_MAX),
+                bottom = ((1 - scribF[3]) * panelH / d).roundToInt().coerceIn(0, 160))
+        }
         val enabled = DisplayPrefs.customTopBar(ctx) &&
             (mode == ScreenMode.FULLSCREEN || mode == ScreenMode.STATUS_HIDDEN)
-        val top = reserveTop(m, panelH, enabled)
-        val bottom = m.visibleBottom.coerceIn(0, (panelH - top).coerceAtLeast(0))
+        var top = reserveTop(m, panelH, enabled)
+        var bottom = m.visibleBottom.coerceIn(0, (panelH - top).coerceAtLeast(0))
+        if (scribF != null) {
+            val tracedBar = (scribF[1] * panelH).roundToInt() and 1.inv()
+            val tracedBottom = (panelH - (scribF[3] * panelH).roundToInt()).coerceAtLeast(0)
+            if (enabled) {
+                // Bar owns the wedge: measured strip and trace agree within a few px; take the max
+                // so the video never starts under dead glass on either reading.
+                top = maxOf(top, tracedBar)
+            } else {
+                // Bar off after a trace: the wedge becomes a plain top inset, no black gap.
+                top = 0
+                val d = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
+                controls = controls.copy(top = (tracedBar / d).roundToInt().coerceIn(0, 160))
+            }
+            bottom = maxOf(bottom, tracedBottom)
+        }
         var videoH = (panelH - top - bottom) and 1.inv()
         var actualTop = top
         var actualBottom = bottom

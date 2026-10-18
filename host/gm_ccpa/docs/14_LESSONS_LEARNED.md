@@ -268,3 +268,52 @@ Two diagnosability gaps made this cost a full audit, both now closed (no behavio
    existing `mbs` card title logs), and title-less records naming an artworkId log once per id
    (`titlelessRecordEvent`, pure and unit-tested in `NowPlayingLogTest`). The next audit of this
    shape ends at the first grep: probes vs real offers, titled vs untitled records.
+
+---
+
+## 12. 2026-10-18: position/playlist publishing fixes + edge-trace calibration (v205)
+
+### 12.1 The phone splits a track change across frames — the merge did not know
+
+Evening 2026-10-18 logs (healthy playback, ticks at ~2 Hz, `state=3 rate=1.0`) showed every
+track-change record as `status=? artworkId=?`: the title/ artist frame carries NO
+PlaybackAttributes and NO artwork id; the id follows in a title-less frame ~2 ms later, then
+the JPEG transfer. Four app-side defects followed from assuming one complete record:
+
+1. **Wrong cover flash.** `ArtworkKeeper` kept the previous id across a title frame with no id,
+   so each new track published once with the OLD cover (`Blank Space art=300x300`), then
+   `art=none`, then the right art — three `setMetadata` rebuilds per track. A title without an
+   id is now a new item with unknown art (cleared, matching the sibling `NowPlayingState`), and
+   the id follow-up / adopt path restores it. Pinned by `ArtworkKeeperTest` (5).
+2. **Card seconds stutter.** Every ~450 ms tick called `setPlaybackState`, re-baselining AAOS
+   interpolation on jittered phone timestamps — the designed path is interpolate-between-pushes
+   (the sibling Media3 `MediaSessionManager` pushes only on change/seek/duration for the same
+   reason). Ticks now publish only on state/rate change or a >2 s seek deviation; explicit
+   paths (status, focus, replay) always push. Tick log spam (1850 lines/window) goes with it.
+3. **Seeks froze.** Rate was `status == PLAY`; SEEK_FWD/BACK publish PLAYING with rate 0.
+   Rate now follows the published state.
+4. **Stale rail icon.** The rail play/pause glyph refreshed only on metadata change while
+   status arrives in sparse separate frames — it now refreshes on ticks too (change-gated).
+
+Also new: a single-item `setQueue` (current track) so the car's queue UI moves with track
+changes, and duration/status/queueId on the `card: metadata` line. What is NOT fixed, by
+wire-protocol design: real playlist *contents* need iAP2 `MediaLibraryUpdate` (`Tier::Capability`,
+`0x4C04`), which iOS refuted on the wireless tunnel with an unrecoverable `0x1D03` — and
+queue/track numbers are parsed but deliberately NOT subscribed (the proven 40 B baseline;
+a 2026-07-12 superset subscribe degraded to zero titles). The queue carries the current track,
+never the phone's list.
+
+### 12.2 Edge-trace calibration replaces the dp inset sliders
+
+Manual per-edge dp sliders cannot express this panel (straight left/bottom, top sloping down,
+right swooping to the bottom), and the right-margin presets duplicated the YAML safe area.
+Settings ▸ Display now offers **Trace edges**: a full-panel activity where the driver paints
+the DEAD glass; `ScribbleSolver` (pure, `ScribbleSolverTest` (4) on a synthetic 2914x1134
+panel) takes per-band dead-paint extremes, median-smooths, seeds untraced bands from the live
+cutout, gates votes to central ranges (a full-width top stroke must not vote the right
+profile), derives T as the deepest dead paint spanned and searches R for max area, and applies
+a fingertip safety margin only where paint contributed. The solved rect becomes the
+presentation insets at capture, the strip above it the top bar's space (bar auto-armed on
+save), the YAML safe inset forced to 0. Sliders and margin presets are removed; untraced
+sessions honour the measured cutout bounds plus the last saved margin pref. Takes effect at
+the next connection.

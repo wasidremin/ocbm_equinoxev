@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaDescription
 import android.media.MediaMetadata
 import android.media.browse.MediaBrowser
 import android.media.session.MediaSession
@@ -96,6 +97,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private var pausedByFocusLoss = false
     private var pausedByTransientLoss = false
     private var focusLossAt = 0L
+    /** Last pushed PlaybackState, so ~2 Hz ticks that change nothing do not re-baseline AAOS
+     *  interpolation (re-baselining on jittered phone timestamps is what froze the card's seconds). */
+    private var lastPushedState = -1
+    private var lastPushedPos = 0L
+    private var lastPushedAt = 0L
+    private var lastPushedRate = 0f
     private var userPaused = false
     private var focusPaused = false
     private var seenContent = false
@@ -125,6 +132,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
             PlaybackState.ACTION_SKIP_TO_PREVIOUS
 
+        /** Ticks more than this far off the extrapolated position count as a seek and are pushed. */
+        private const val SEEK_DEDUP_MS = 2_000L
         /** [SessionTrace.Board] entry. Bound/unbound is AAOS's decision, so the board is the only
          *  place "is the app in the source switcher right now" is answerable from a capture. */
         private const val BOARD = "media-browser"
@@ -532,8 +541,16 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it)
             b.putBitmap(MediaMetadata.METADATA_KEY_ART, it)
         }
+        sess.setQueue(listOf(MediaSession.QueueItem(
+            MediaDescription.Builder()
+                .setMediaId("carplay:" + (s.title.orEmpty().hashCode().toString(16)))
+                .setTitle(s.title.orEmpty())
+                .setSubtitle(s.artist.orEmpty())
+                .setDescription(s.album.orEmpty())
+                .build(), s.artworkId.toLong())))
         val artNote = if (art != null) "${art.width}x${art.height}" else "none"
-        val cardLine = "card: metadata \"${s.title.orEmpty()}\" art=$artNote (sessionUp=$sessionUp)"
+        val cardLine = "card: metadata \"${s.title.orEmpty()}\" art=$artNote " +
+            "dur=${s.durationMs} status=${s.playbackStatus} queueId=${s.artworkId} (sessionUp=$sessionUp)"
         if (cardLine != cardLogLine) {
             cardLogLine = cardLine
             log.i(cardLine)
@@ -568,12 +585,27 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             NowPlayingState.PLAY, NowPlayingState.SEEK_FWD, NowPlayingState.SEEK_BACK -> PlaybackState.STATE_PLAYING
             else -> if (seenContent) PlaybackState.STATE_PAUSED else PlaybackState.STATE_BUFFERING
         }
-        val rate = if (status == NowPlayingState.PLAY) 1f else 0f
+        // Rate follows the published STATE, not the raw status: SEEK_FWD/BACK publish PLAYING and
+        // must interpolate, or the card freezes mid-seek. (Was `status == PLAY`, so seeks stalled.)
+        val rate = if (state == PlaybackState.STATE_PLAYING) 1f else 0f
         val pos = if (focusPaused) frozenPosition else s.elapsedMs
+        val now = SystemClock.elapsedRealtime()
+        // AAOS interpolates position from (pos, rate, updateTime) between pushes — that is the
+        // designed path (the sibling Media3 app pushes only on change/seek/duration for the same
+        // reason). Re-baselining at the phone's ~2 Hz tick rate on jittered timestamps makes the
+        // card's seconds stutter or freeze, and spams six controllers per tick. Push ticks only on
+        // a state/rate change or a seek (>2 s off the extrapolated line); explicit paths (status,
+        // focus, replay after bind) always go through.
+        if (source == "tick") {
+            val expected = lastPushedPos + ((now - lastPushedAt) * lastPushedRate).toLong()
+            val seek = lastPushedAt == 0L || kotlin.math.abs(pos - expected) > SEEK_DEDUP_MS
+            if (!seek && state == lastPushedState && rate == lastPushedRate) return
+        }
         val ps = PlaybackState.Builder().setActions(ACTIONS)
-            .setState(state, pos, rate, SystemClock.elapsedRealtime())
+            .setState(state, pos, rate, now)
             .build()
         runCatching { sess.setPlaybackState(ps) }.onFailure { log.e("setPlaybackState failed: ${it.message}") }
+        lastPushedState = state; lastPushedPos = pos; lastPushedAt = now; lastPushedRate = rate
         val line = "card: state=$state pos=$pos rate=$rate"
         if (line != stateLogLine) {
             stateLogLine = line
@@ -820,6 +852,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         pausedByFocusLoss = false; pausedByTransientLoss = false; userPaused = false
         synchronized(this) {
             focusPaused = false; seenContent = false; knownStatus = null; stateLogLine = null
+            lastPushedState = -1; lastPushedPos = 0L; lastPushedAt = 0L; lastPushedRate = 0f
         }
     }
 }

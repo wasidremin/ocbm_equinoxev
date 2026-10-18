@@ -423,7 +423,12 @@ class CarPlayActivity : Activity() {
                 CarPlayMediaBrowserService.publish(snapshot)
                 live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
             }
-            onPlaybackTick = { CarPlayMediaBrowserService.publishPlaybackState(it) }
+            // The rail icon follows ticks too: status arrives in its own sparse frames, so
+            // metadata-only refresh left the play/pause glyph stale for whole tracks.
+            onPlaybackTick = {
+                CarPlayMediaBrowserService.publishPlaybackState(it)
+                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
+            }
         }
 
         /**
@@ -942,8 +947,11 @@ class CarPlayActivity : Activity() {
         }
     }
 
+    @Volatile private var lastRailPlaying: Boolean? = null
     private fun updateRailPlayback() {
         val playing = nowPlaying.snapshot.playbackStatus == NowPlayingState.PLAY
+        if (playing == lastRailPlaying) return
+        lastRailPlaying = playing
         railPlayButton?.let {
             it.icon = if (playing) RailIcon.PAUSE else RailIcon.PLAY
             it.contentDescription = if (playing) "Pause" else "Play"

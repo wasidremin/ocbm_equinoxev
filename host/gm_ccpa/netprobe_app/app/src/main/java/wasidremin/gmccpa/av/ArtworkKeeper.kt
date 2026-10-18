@@ -41,8 +41,15 @@ class ArtworkKeeper(
         }
         val prevId = artworkId
         val prevArt = artwork
+        // A new title without an id is a NEW item whose art is unknown — the phone splits the
+        // full record across frames (title first, artworkId in a title-less follow-up, observed
+        // 2026-10-18), so keeping prevId pastes the previous track's cover onto the new title
+        // for ~100 ms. Clearing to unknown is a brief blank instead of a wrong picture; the
+        // follow-up id frame (or the adopt path in onTransfer) restores it. A title frame that
+        // DOES name the previous id keeps the bytes: same cover, no flash either way.
         val newId = when {
-            trackChanged && (recordArtworkId == null || recordArtworkId == prevId) -> prevId
+            trackChanged && recordArtworkId != null -> recordArtworkId
+            trackChanged -> -1
             recordArtworkId != null -> recordArtworkId
             else -> prevId
         }

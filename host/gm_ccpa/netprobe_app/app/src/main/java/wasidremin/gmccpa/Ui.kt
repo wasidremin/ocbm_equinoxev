@@ -501,28 +501,17 @@ class LauncherUi(private val act: Activity) {
     }
 
     private var displayDraft: DisplayPrefs.Controls? = null
+    private lateinit var scribbleRow: EqRow
 
-    /** Geometry overrides and legacy numeric controls. Advanced only; Settings keeps the three
-     * presentation rows (moved to buildSettings with unchanged callbacks and stored values). */
+    /**
+     * Edge-trace calibration (replaces the retired dp inset sliders) plus the remaining numeric
+     * controls. The trace solves the largest visible rectangle and the top-bar wedge from a
+     * finger painting of the dead glass; manual per-edge guessing cannot express a sloped top
+     * and a swooping cutout, so the sliders are gone rather than kept alongside.
+     */
     private fun buildDisplayOverrides(page: LinearLayout) {
         var pending = displayDraft ?: DisplayPrefs.controls(act)
         fun update(c: DisplayPrefs.Controls) { pending = c; displayDraft = c }
-        val preview = object : View(act) {
-            private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-            override fun onDraw(canvas: android.graphics.Canvas) {
-                paint.color = EqTheme.TEXT_FAINT
-                canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-                val metrics = act.resources.displayMetrics
-                val panelW = VideoFrame.viewWidth.takeIf { VideoFrame.captureSource != "default" } ?: metrics.widthPixels
-                val panelH = VideoFrame.viewHeight.takeIf { VideoFrame.captureSource != "default" } ?: metrics.heightPixels
-                val box = DisplayGeometry.content(panelW, panelH, metrics.density, pending)
-                paint.color = EqTheme.ACCENT
-                canvas.drawRect(box.x * width / panelW.toFloat(), box.y * height / panelH.toFloat(),
-                    (box.x + box.width) * width / panelW.toFloat(), (box.y + box.height) * height / panelH.toFloat(), paint)
-            }
-        }
-        page.addView(eqSectionLabel(act, "Safe controls · pending until saved"))
-        page.addView(preview, LinearLayout.LayoutParams(-1, EqTheme.px(140f)))
         fun slider(title: String, value: Int, max: Int, offset: Int = 0, changed: (Int) -> Unit) {
             val row = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
             val label = EqTheme.text(act, 18f, EqTheme.TEXT).apply { text = "$title: ${value + offset}" }
@@ -531,7 +520,7 @@ class LauncherUi(private val act: Activity) {
                 this.max = max; progress = value; contentDescription = title
                 setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(bar: android.widget.SeekBar, v: Int, user: Boolean) {
-                        if (user) { changed(v); label.text = "$title: ${v + offset}"; preview.invalidate() }
+                        if (user) { changed(v); label.text = "$title: ${v + offset}" }
                     }
                     override fun onStartTrackingTouch(bar: android.widget.SeekBar) = Unit
                     override fun onStopTrackingTouch(bar: android.widget.SeekBar) = Unit
@@ -539,10 +528,20 @@ class LauncherUi(private val act: Activity) {
             }, LinearLayout.LayoutParams(-1, EqTheme.px(48f)))
             page.addView(row)
         }
-        slider("Top inset (dp)", pending.top, 160) { update(pending.copy(top = it)) }
-        slider("Bottom inset (dp)", pending.bottom, 160) { update(pending.copy(bottom = it)) }
-        slider("Left inset (dp)", pending.left, 160) { update(pending.copy(left = it)) }
-        slider("Right inset (dp)", pending.right, DisplayPrefs.RIGHT_DP_MAX) { update(pending.copy(right = it)) }
+        page.addView(eqSectionLabel(act, "Visible edges · traced"))
+        scribbleRow = EqRow(act, "Edge trace", scribbleSubtitle(),
+            trailing = eqButton(act, "Trace edges", EqButtonStyle.SECONDARY) {
+                act.startActivity(android.content.Intent(act, ScribbleActivity::class.java))
+            })
+        page.addView(EqCard(act).addRow(scribbleRow)
+            .addRow(EqRow(act, "Clear trace",
+                "Falls back to the measured cutout bounds.",
+                trailing = eqButton(act, "Clear", EqButtonStyle.SECONDARY) {
+                    DisplayPrefs.clearScribble(act)
+                    displayDraft = null
+                    pending = DisplayPrefs.controls(act)
+                    refreshScribbleRow()
+                })))
         if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(act)) {
             slider("CarPlay UI · Smaller ↔ Larger (50–150%)", pending.uiPercent - 50, 100, 50) {
                 update(pending.copy(uiPercent = it + 50))
@@ -565,26 +564,16 @@ class LauncherUi(private val act: Activity) {
         val scales = DisplayPrefs.SCALE_PRESETS
         val scaleLabels = scales.map { "$it%" }
         val scaleIndex = scales.indexOf(DisplayPrefs.uiScale(act)).coerceAtLeast(0)
-        val margins = DisplayPrefs.SAFE_PRESETS
-        val marginLabels = listOf("Off", "Small", "Medium", "Large", "XL", "Max")
-        // Nearest stop, not a fixed default: saved values from the retired (0,24,48,72,96)
-        // list (24/72) must not silently become something else when the page opens.
-        val marginIndex = wasidremin.gmccpa.DisplayGeometry.nearestPresetIndex(margins, DisplayPrefs.safeRightPx(act))
+        // The right-margin presets retired with the sliders: a trace already keeps the whole video
+        // (and the YAML safe area, forced to 0 at capture) clear of the cutout. Untraced sessions
+        // honour the last saved margin pref; there is no UI left to change it — trace instead.
         page.addView(eqSectionLabel(act, "Picture"))
         val card = EqCard(act)
         card.addRow(EqRow(
             act, "Legacy video resolution scale",
-            "Changes coded resolution. Separate from the new CarPlay UI calibration above.",
+            "Changes coded resolution. Separate from the edge trace above.",
             trailing = EqSegmented(act, scaleLabels, scaleIndex) { i ->
                 DisplayPrefs.setUiScale(act, scales[i])
-                refreshDynamic()
-            },
-        ))
-        card.addRow(EqRow(
-            act, "Right margin",
-            "Keeps Now Playing off the right edge. Applies at the next connection.",
-            trailing = EqSegmented(act, marginLabels, marginIndex) { i ->
-                DisplayPrefs.setSafeRightPx(act, margins[i])
                 refreshDynamic()
             },
         ))
@@ -1441,6 +1430,7 @@ class LauncherUi(private val act: Activity) {
         if (::hotspotRow.isInitialized) {
             setRowShown(hotspotRow, !adapterWifi)
         }
+        refreshScribbleRow()
     }
 
     private fun phoneTitle(): String =
@@ -1459,9 +1449,22 @@ class LauncherUi(private val act: Activity) {
         else -> EqTheme.TEXT_FAINT
     }
 
+    private fun scribbleSubtitle(): String =
+        if (DisplayPrefs.scribbleEnabled(act))
+            (DisplayPrefs.scribbleNote(act) ?: "Trace saved.") + " Takes effect at the next connection."
+        else "No trace — using the measured cutout bounds. Trace the dead glass to fit CarPlay exactly."
+
+    private fun refreshScribbleRow() = act.runOnUiThread {
+        if (act.isFinishing || act.isDestroyed) return@runOnUiThread
+        if (::scribbleRow.isInitialized) scribbleRow.setSubtitle(scribbleSubtitle())
+    }
+
     private fun sizePending(): Boolean {
         if (!(sessionIsLive() || lastState == LinkState.LIVE)) return false
         if (DisplayPrefs.uiScale(act) != VideoFrame.uiScalePercent) return true
+        // A trace forces the safe-area inset to 0 at capture; the legacy pref is then stale by
+        // design and must not hold the Apply row visible.
+        if (DisplayPrefs.scribbleEnabled(act)) return false
         val advertised = DisplayScale.even(DisplayPrefs.safeRightPx(act), VideoFrame.uiScalePercent)
             .coerceIn(0, (VideoFrame.width - 2).coerceAtLeast(0)) and 1.inv()
         return advertised != VideoFrame.safeRightPx

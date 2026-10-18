@@ -169,6 +169,13 @@
             android:exported="false" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <meta-data android:name="distractionOptimized" android:value="false"/>
         </activity>
+        <!-- Edge-tracing calibration: full-panel finger paint that replaces the dp inset sliders.
+             Parked-only like the probe screen; not a launcher. -->
+        <activity android:name="wasidremin.gmccpa.ScribbleActivity"
+            android:exported="false" android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:screenOrientation="landscape">
+            <meta-data android:name="distractionOptimized" android:value="false"/>
+        </activity>
         <service android:name="wasidremin.gmccpa.telemetry.ProbeService"
             android:exported="false" android:foregroundServiceType="dataSync"/>
 
