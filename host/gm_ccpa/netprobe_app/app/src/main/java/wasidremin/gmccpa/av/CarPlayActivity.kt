@@ -595,6 +595,16 @@ class CarPlayActivity : Activity() {
         if (DisplayPrefs.controls(this).stats) {
             root.addView(ProjectionStatsPill(this, previewOnly), android.widget.FrameLayout.LayoutParams(-2, -2))
         }
+        // In-call overlay pill: added once, above the picture and the rail, driven by
+        // NowPlayingState.callPhase via updateCallPill. It positions itself from persisted
+        // fractions once the root has a size; see CallPillView.bind.
+        callPill = CallPillView(this).also {
+            it.elevation = dp(32).toFloat()
+            root.addView(it, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.START))
+        }
         if (!previewOnly) maybeShowIntro()
 
         touchThread = HandlerThread("cp-touch").also { it.start(); touchHandler = Handler(it.looper) }
@@ -878,7 +888,7 @@ class CarPlayActivity : Activity() {
             phone.isEnabled = action != null || previewOnly
         }
         updatePhone()
-        nowPlaying.onCallChanged = { runOnUiThread { if (!isDestroyed) updatePhone() } }
+        nowPlaying.onCallChanged = { runOnUiThread { if (!isDestroyed) { updatePhone(); updateCallPill() } } }
         add(bottom, phone, false)
         rail.addView(top, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         rail.addView(View(this), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -887,6 +897,41 @@ class CarPlayActivity : Activity() {
     }
 
     private var railPlayButton: RailButton? = null
+    /** Movable in-call overlay. Null until onCreate; the pill itself hides when idle. */
+    private var callPill: CallPillView? = null
+    /** Last mute state we sent via TEL_MUTE — iOS sends no mute read-back, so this is the label. */
+    private var pillMuted = false
+
+    /**
+     * Shows/hides the in-call pill from [NowPlayingState.callPhase]. Answer sends TEL_ANSWER,
+     * Hang up sends TEL_END, Mute toggles TEL_MUTE — the same path as the rail phone button,
+     * which stays as the at-a-glance indicator while the pill carries the large touch targets.
+     */
+    private fun updateCallPill() {
+        val pill = callPill ?: return
+        val phase = nowPlaying.callPhase()
+        pill.bind(
+            phase, pillMuted,
+            onAnswer = { sendCallButton(wasidremin.gmccpa.ocbm.Ocbm.TEL_ANSWER) },
+            onEnd = { sendCallButton(wasidremin.gmccpa.ocbm.Ocbm.TEL_END) },
+            onMuteToggle = {
+                pillMuted = !pillMuted
+                sendCallButton(wasidremin.gmccpa.ocbm.Ocbm.TEL_MUTE)
+                runOnUiThread { updateCallPill() }
+            },
+        )
+    }
+
+    private fun sendCallButton(action: Byte) {
+        if (previewOnly) {
+            log.i("call pill preview: $action")
+            return
+        }
+        touchHandler?.post {
+            val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendTelephony(action)
+            log.i("call pill $action sent=$sent")
+        }
+    }
 
     private fun updateRailPlayback() {
         val playing = nowPlaying.snapshot.playbackStatus == NowPlayingState.PLAY

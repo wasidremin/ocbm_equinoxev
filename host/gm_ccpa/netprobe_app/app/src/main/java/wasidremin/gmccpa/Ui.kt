@@ -23,6 +23,7 @@ import android.widget.TextView
 import wasidremin.gmccpa.logging.CapturePrefs
 import wasidremin.gmccpa.logging.LogCapture
 import wasidremin.gmccpa.ocbm.UsbIdentity
+import java.io.File
 
 /**
  * The launcher screen's chrome. Kept out of [MainActivity] so the session logic there is not
@@ -77,6 +78,21 @@ enum class LinkState(val label: String, val color: Int) {
     RESTARTING    ("RESTARTING SESSION", Palette.WORKING),
     STOPPED       ("STOPPED",            Palette.IDLE),
     FAILED        ("FAILED",             Palette.FAILED),
+}
+
+/** Which action the status strip carries. Top-level and pure so the FAILED-keeps-Restart rule is unit-tested. */
+internal enum class StripAction { BACK, RESTART, DONE }
+
+/**
+ * FAILED is the "phone didn't connect, press Restart" state (`RxPhase.STALLED` maps here): the
+ * strip carries a primary Restart so the recovery is one tap away on every tab — and on the
+ * intro layer via the restart button — not buried on the Troubleshooting page. A live session
+ * always wins (Back to CarPlay); every other idle state keeps the quiet Done button.
+ */
+internal fun stripActionFor(sessionLive: Boolean, state: LinkState): StripAction = when {
+    sessionLive -> StripAction.BACK
+    state == LinkState.FAILED -> StripAction.RESTART
+    else -> StripAction.DONE
 }
 
 /**
@@ -184,6 +200,15 @@ class LauncherUi(private val act: Activity) {
 
     private val intro = StartupAnimationView(act)
     private val introGear = IntroSettingsButton(act) { openIntroSettings() }
+    /**
+     * One-tap recovery on the failure screen. The intro layer covers settings when the phone
+     * fails to connect, so the Troubleshooting-page Restart is unreachable; this button sits
+     * bottom-right, visible only while FAILED. See [syncIntroRestart].
+     */
+    private val introRestart = IntroRestartButton(act) {
+        uiLog.i("intro: restart tapped")
+        onRestart()
+    }
     private var introRestore: Runnable? = null
     private val uiLog = ProbeLog.sub("ui")
 
@@ -226,6 +251,7 @@ class LauncherUi(private val act: Activity) {
     private val queueListener: (Int) -> Unit = { _ -> refreshUploadQueueRow() }
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
+    private lateinit var insightsPage: InsightsPage
 
     private var selectedTab = 0
     private var restartBusy = false
@@ -292,6 +318,11 @@ class LauncherUi(private val act: Activity) {
             leftMargin = act.dp(24)
             bottomMargin = act.dp(24)
         })
+        introRestart.visibility = View.GONE
+        frame.addView(introRestart, FrameLayout.LayoutParams(act.dp(88), act.dp(88), Gravity.BOTTOM or Gravity.END).apply {
+            rightMargin = act.dp(24)
+            bottomMargin = act.dp(24)
+        })
         frame.setOnApplyWindowInsetsListener { _, insets ->
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 val cut = insets.getInsets(android.view.WindowInsets.Type.displayCutout())
@@ -305,6 +336,11 @@ class LauncherUi(private val act: Activity) {
                 lp.leftMargin = safeLeft + act.dp(24)
                 lp.bottomMargin = safeBottom + act.dp(24)
                 introGear.layoutParams = lp
+            }
+            (introRestart.layoutParams as FrameLayout.LayoutParams).let { lp ->
+                lp.rightMargin = safeRight + act.dp(24)
+                lp.bottomMargin = safeBottom + act.dp(24)
+                introRestart.layoutParams = lp
             }
             uiLog.i("settings safe insets l=$safeLeft r=$safeRight b=$safeBottom")
             insets
@@ -343,7 +379,7 @@ class LauncherUi(private val act: Activity) {
         val version = runCatching {
             act.packageManager.getPackageInfo(act.packageName, 0).versionName
         }.getOrNull() ?: ""
-        rail = EqNavRail(act, listOf("Settings", "Troubleshooting", "Advanced"), { showTab(it) }, version)
+        rail = EqNavRail(act, listOf("Settings", "Troubleshooting", "Advanced", "Insights"), { showTab(it) }, version)
         settingsHost.addView(rail, LinearLayout.LayoutParams(
             EqTheme.px(300f), ViewGroup.LayoutParams.MATCH_PARENT))
 
@@ -361,10 +397,12 @@ class LauncherUi(private val act: Activity) {
         val settings = page("Settings")
         val trouble = page("Troubleshooting")
         val advanced = page("Advanced")
-        pages = listOf(settings, trouble, advanced)
+        val insights = page("Insights")
+        pages = listOf(settings, trouble, advanced, insights)
         buildSettings(settings)
         buildTroubleshooting(trouble)
         buildAdvanced(advanced)
+        buildInsights(insights)
         for (p in pages) column.addView(p, LinearLayout.LayoutParams(-1, -2))
         this.scroller.addView(column, ViewGroup.LayoutParams(-1, -2))
         settingsHost.addView(this.scroller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -378,6 +416,16 @@ class LauncherUi(private val act: Activity) {
         addView(EqLightLine(act), LinearLayout.LayoutParams(-1, EqTheme.px(2f)).apply {
             bottomMargin = EqTheme.px(4f)
         })
+    }
+
+    /**
+     * Insights: the website's overview cards and charts, drawn from this head unit's own probe
+     * segments. The page loads off the UI thread; see [InsightsPage].
+     */
+    private fun buildInsights(page: LinearLayout) {
+        val dataRoot = File(act.getExternalFilesDir(null) ?: act.filesDir, "telemetry")
+        insightsPage = InsightsPage(act, dataRoot)
+        page.addView(insightsPage.view, LinearLayout.LayoutParams(-1, -2))
     }
 
     /**
@@ -560,7 +608,9 @@ class LauncherUi(private val act: Activity) {
      */
     private fun buildTroubleshooting(page: LinearLayout) {
         pairRow = EqRow(act, pairingCode.ifEmpty { " " })
-        pairRow.titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(40f))
+        // 30sp, not 40: at the panel scale cap (1.35x) 40sp renders ~54sp and the row becomes
+        // a billboard that pushes the Status card — and its Restart button — off screen.
+        pairRow.titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(30f))
         pairRow.titleView.typeface = EqTheme.Weight.LIGHT.face
         pairRow.titleView.letterSpacing = 0.18f
         page.addView(pairRow, 0)
@@ -1065,6 +1115,7 @@ class LauncherUi(private val act: Activity) {
         if (::rail.isInitialized) rail.select(index)
         if (::scroller.isInitialized) scroller.scrollTo(0, 0)
         if (index == 2) onAdvancedOpened()
+        if (index == 3 && ::insightsPage.isInitialized) insightsPage.refresh()
         auditLayout(index)
     }
 
@@ -1147,11 +1198,19 @@ class LauncherUi(private val act: Activity) {
     private fun hideIntroLayer() {
         intro.visibility = View.GONE
         introGear.visibility = View.GONE
+        introRestart.visibility = View.GONE
     }
 
     private fun showIntroLayer() {
         intro.visibility = View.VISIBLE
         introGear.visibility = View.VISIBLE
+        syncIntroRestart()
+    }
+
+    /** The intro Restart button exists only for the failure screen (see [introRestart]). */
+    private fun syncIntroRestart() {
+        introRestart.visibility =
+            if (intro.visibility == View.VISIBLE && lastState == LinkState.FAILED) View.VISIBLE else View.GONE
     }
 
     fun setAdapterWifi(on: Boolean) {
@@ -1303,6 +1362,8 @@ class LauncherUi(private val act: Activity) {
         if (act.isFinishing) return@runOnUiThread
         restartBusy = busy
         if (::restartButton.isInitialized) restartButton.text = if (busy) "Restarting…" else "Restart"
+        // The strip carries its own Restart copy while FAILED — keep its label in step.
+        refreshDynamic()
     }
 
     /** Refreshes the strip. Back to CarPlay is shown only while a session is live. */
@@ -1352,13 +1413,14 @@ class LauncherUi(private val act: Activity) {
 
     private fun refreshDynamic() {
         if (!::strip.isInitialized) return
+        syncIntroRestart()
         val detail = if (lastState == LinkState.LIVE) liveDetail() else lastDetail
         strip.set(lastState.label, detail, stripColor(lastState))
         val sessionLive = sessionIsLive() || lastState == LinkState.LIVE
-        strip.setAction(if (sessionLive) {
-            eqButton(act, "Back to CarPlay", EqButtonStyle.PRIMARY) { onReturnToCarPlay() }
-        } else {
-            eqButton(act, "Done", EqButtonStyle.SECONDARY) { showIntroLayer() }
+        strip.setAction(when (stripActionFor(sessionLive, lastState)) {
+            StripAction.BACK -> eqButton(act, "Back to CarPlay", EqButtonStyle.PRIMARY) { onReturnToCarPlay() }
+            StripAction.RESTART -> eqButton(act, if (restartBusy) "Restarting…" else "Restart", EqButtonStyle.PRIMARY) { onRestart() }
+            StripAction.DONE -> eqButton(act, "Done", EqButtonStyle.SECONDARY) { showIntroLayer() }
         })
         if (::phoneRow.isInitialized) {
             phoneRow.titleView.text = phoneTitle()
@@ -1510,5 +1572,45 @@ internal class IntroSettingsButton(
                 cx + c * outer, cy + s * outer, ink,
             )
         }
+    }
+}
+
+/**
+ * One-tap recovery on the intro failure screen: a circular arrow, same 72dp-class
+ * footprint as [IntroSettingsButton], bottom-right. Shown only while FAILED (driven by
+ * `LauncherUi.syncIntroRestart`); tapping it runs the same Restart Session path as the
+ * Troubleshooting-page button.
+ */
+internal class IntroRestartButton(
+    ctx: android.content.Context,
+    private val onTap: () -> Unit,
+) : View(ctx) {
+    private val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF4C9BFF.toInt()
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    init {
+        contentDescription = "Restart CarPlay"
+        isClickable = true
+        setOnClickListener { onTap() }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = minOf(width, height) * 0.30f
+        ink.strokeWidth = r * 0.18f
+        val oval = android.graphics.RectF(cx - r, cy - r, cx + r, cy + r)
+        // Nearly-closed arc, gap at the top-right where the arrowhead lands.
+        canvas.drawArc(oval, 50f, 290f, false, ink)
+        val tip = Math.toRadians(50.0)
+        val tx = (cx + r * Math.cos(tip)).toFloat()
+        val ty = (cy + r * Math.sin(tip)).toFloat()
+        val head = r * 0.42f
+        canvas.drawLine(tx, ty, tx - head, ty - head * 0.25f, ink)
+        canvas.drawLine(tx, ty, tx - head * 0.25f, ty - head, ink)
     }
 }

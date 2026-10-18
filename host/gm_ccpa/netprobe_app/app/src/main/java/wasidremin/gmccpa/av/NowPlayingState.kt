@@ -118,6 +118,12 @@ class NowPlayingState {
         else -> null
     }
 
+    /**
+     * Which overlay the call pill should show. Delegates to the pure [callPhaseOf] so the
+     * mapping is unit-testable without constructing this class (its init spawns a thread).
+     */
+    @Synchronized fun callPhase(): CallPhase = callPhaseOf(calls)
+
     fun onCallState(json: JSONObject) {
         synchronized(this) {
             if (!json.has("status")) return
@@ -265,3 +271,18 @@ internal fun JSONObject.optIntOrNull(k: String): Int? = if (has(k) && !isNull(k)
 
 internal fun ByteArray?.contentEqualsOrBothNull(o: ByteArray?): Boolean =
     if (this == null || o == null) this == null && o == null else contentEquals(o)
+
+/** Which call-overlay state the pill shows. NONE hides it. */
+enum class CallPhase { NONE, RINGING, ACTIVE }
+
+/**
+ * Pure mapping from the `calls` table (callId -> `metadata.rs` TEL_ state code) to [CallPhase].
+ * Code 2 is an unconnected incoming call (the only state [NowPlayingState.phoneAction] answers);
+ * any other non-empty table means a call is up or on hold. Top-level and dependency-free so JVM
+ * unit tests can cover it without touching Android or spawning the class executor.
+ */
+fun callPhaseOf(calls: Map<String, Int>): CallPhase = when {
+    calls.isEmpty() -> CallPhase.NONE
+    calls.values.any { it == 2 } -> CallPhase.RINGING
+    else -> CallPhase.ACTIVE
+}

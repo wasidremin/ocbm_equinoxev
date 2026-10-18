@@ -476,14 +476,16 @@ class EqNavRail(
 
 /**
  * The connection readout at the top of every settings page: a coloured dot, the state in plain
- * words, one line of detail, and an optional action on the right (for example "Back to CarPlay").
+ * words, up to two lines of detail, and an optional action on the right (for example
+ * "Back to CarPlay", or "Restart" while FAILED). Two lines so a failure instruction such as
+ * "press Restart Session again" is never ellipsized to nothing on a narrow window.
  * Colours: ACCENT working, OK live, WARN attention, DANGER failed, TEXT_FAINT idle.
  */
 class EqStatusStrip(ctx: Context) : LinearLayout(ctx) {
     private val dot = View(ctx)
     private val title = EqTheme.text(ctx, 22f, EqTheme.TEXT, EqTheme.Weight.MEDIUM)
     private val detail = EqTheme.text(ctx, 16f, EqTheme.TEXT_DIM).apply {
-        maxLines = 1
+        maxLines = 2
         ellipsize = android.text.TextUtils.TruncateAt.END
     }
     private val actionSlot = FrameLayout(ctx)
