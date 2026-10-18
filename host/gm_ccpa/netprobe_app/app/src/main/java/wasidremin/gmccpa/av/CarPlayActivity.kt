@@ -262,11 +262,19 @@ class CarPlayActivity : Activity() {
             strip <= 0 -> "not reserved at subscription (reconnect to apply)"
             else -> "ok"
         }
-        placeTopBar(strip, reason)
+        placeTopBar(strip, reason, cutout?.safeInsetRight ?: 0)
     }
 
-    /** Put GmTopBarView at y=0 in the freed strip; shift the rail + surface down by it. */
-    private fun placeTopBar(strip: Int, reason: String) {
+    /**
+     * Put GmTopBarView at y=0 in the freed strip; shift the rail + surface down by it.
+     *
+     * [rightInset] is the live `displayCutout.safeInsetRight` (285 on the Equinox EV's sloped /
+     * cut right side). The bar spans the full window, but its clock + temperature cluster must
+     * start left of the missing glass — the 2026-10-18 capture proved the rightmost items were
+     * drawn at x 2700-2850, invisible on the car. Re-applied every layout: the cutout object is
+     * only non-null once the window is laid out under the ALWAYS policy.
+     */
+    private fun placeTopBar(strip: Int, reason: String, rightInset: Int) {
         val placed = strip > 0 && viewAreaIndex == 0
         if (placed) {
             var bar = topBar
@@ -296,6 +304,7 @@ class CarPlayActivity : Activity() {
                 if (lp.height != barH) { lp.height = barH; bar.layoutParams = lp }
                 bar.visibility = View.VISIBLE
             }
+            if (bar.rightInsetPx != rightInset.coerceAtLeast(0)) bar.rightInsetPx = rightInset
             bar.visibility = if (window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.statusBars()) == true)
                 View.GONE else View.VISIBLE
         } else {
@@ -303,7 +312,7 @@ class CarPlayActivity : Activity() {
         }
         topStripPx = if (placed) strip else 0
         syncChrome()
-        val logKey = "$strip:$placed:$reason:${windowFitScale}:$centerBlockX,$centerBlockY"
+        val logKey = "$strip:$placed:$reason:${windowFitScale}:$centerBlockX,$centerBlockY:$rightInset"
         if (lastTopBarLog != logKey) {
             lastTopBarLog = logKey
             log.i("topbar: strip=${strip}px placed=$placed reason=$reason scale=${windowFitScale} center=$centerBlockX,$centerBlockY")

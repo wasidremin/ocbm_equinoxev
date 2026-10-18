@@ -542,7 +542,7 @@ class LauncherUi(private val act: Activity) {
         slider("Top inset (dp)", pending.top, 160) { update(pending.copy(top = it)) }
         slider("Bottom inset (dp)", pending.bottom, 160) { update(pending.copy(bottom = it)) }
         slider("Left inset (dp)", pending.left, 160) { update(pending.copy(left = it)) }
-        slider("Right inset (dp)", pending.right, 160) { update(pending.copy(right = it)) }
+        slider("Right inset (dp)", pending.right, DisplayPrefs.RIGHT_DP_MAX) { update(pending.copy(right = it)) }
         if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(act)) {
             slider("CarPlay UI · Smaller ↔ Larger (50–150%)", pending.uiPercent - 50, 100, 50) {
                 update(pending.copy(uiPercent = it + 50))
@@ -566,8 +566,10 @@ class LauncherUi(private val act: Activity) {
         val scaleLabels = scales.map { "$it%" }
         val scaleIndex = scales.indexOf(DisplayPrefs.uiScale(act)).coerceAtLeast(0)
         val margins = DisplayPrefs.SAFE_PRESETS
-        val marginLabels = listOf("Off", "Small", "Medium", "Large", "Max")
-        val marginIndex = margins.indexOf(DisplayPrefs.safeRightPx(act)).let { if (it < 0) 2 else it }
+        val marginLabels = listOf("Off", "Small", "Medium", "Large", "XL", "Max")
+        // Nearest stop, not a fixed default: saved values from the retired (0,24,48,72,96)
+        // list (24/72) must not silently become something else when the page opens.
+        val marginIndex = wasidremin.gmccpa.DisplayGeometry.nearestPresetIndex(margins, DisplayPrefs.safeRightPx(act))
         page.addView(eqSectionLabel(act, "Picture"))
         val card = EqCard(act)
         card.addRow(EqRow(

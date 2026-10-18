@@ -78,8 +78,15 @@ object DisplayPrefs {
 
     /** Percentages the screen page offers. 100 is today's advertised size. */
     val SCALE_PRESETS = intArrayOf(100, 115, 125, 133, 150)
-    /** Right inset in 100% pixels. The advertised inset shrinks with [uiScale]. */
-    val SAFE_PRESETS = intArrayOf(0, 24, 48, 72, 96)
+    /**
+     * Right margin in 100%-space pixels. The advertised inset shrinks with [uiScale].
+     *
+     * The top stops cover the Equinox EV's real right cutout: the vehicle reports
+     * `displayCutout.safeInsetRight` = 285 on its sloped/cut right side, so the old 96 max left
+     * CarPlay's own right-edge UI under missing glass. Saved 24/72 values from the retired list
+     * keep working (they are plain ints); the settings UI maps them to the nearest stop.
+     */
+    val SAFE_PRESETS = intArrayOf(0, 48, 96, 160, 240, 320)
     const val DEFAULT_UI_SCALE = 125
     const val DEFAULT_SAFE_RIGHT = 48
 
@@ -123,14 +130,14 @@ object DisplayPrefs {
     }
 
     /**
-     * Right inset in 100%-space pixels (0–96). The phone is told the scaled value, so a 48 px
+     * Right margin in 100%-space pixels (0–320). The phone is told the scaled value, so a 48 px
      * margin stays about the same physical width when the advertised picture shrinks.
      */
     fun safeRightPx(ctx: Context): Int =
-        prefs(ctx).getInt(KEY_SAFE_RIGHT, DEFAULT_SAFE_RIGHT).coerceIn(0, 96)
+        prefs(ctx).getInt(KEY_SAFE_RIGHT, DEFAULT_SAFE_RIGHT).coerceIn(0, 320)
 
     fun setSafeRightPx(ctx: Context, px: Int) {
-        prefs(ctx).edit().putInt(KEY_SAFE_RIGHT, px.coerceIn(0, 96)).apply()
+        prefs(ctx).edit().putInt(KEY_SAFE_RIGHT, px.coerceIn(0, 320)).apply()
     }
 
     fun lastPhoneName(ctx: Context): String? =
@@ -148,18 +155,24 @@ object DisplayPrefs {
         val uiPercent: Int = 100, val fit: Boolean = false, val stats: Boolean = false,
     )
 
+    /** Display-page dp slider ceiling for the right inset. Higher than the rest: the Equinox EV's
+     * right cutout alone is 285 px (≈228 dp at the head-unit density), so the old shared 160 cap
+     * could not pull the video clear of the missing glass. */
+    const val RIGHT_DP_MAX = 320
+
     fun controls(ctx: Context): Controls = prefs(ctx).let { p ->
         Controls(p.getInt("inset_top_dp", 0).coerceIn(0, 160),
             p.getInt("inset_bottom_dp", 0).coerceIn(0, 160),
             p.getInt("inset_left_dp", 0).coerceIn(0, 160),
-            p.getInt("inset_right_dp", 0).coerceIn(0, 160),
+            p.getInt("inset_right_dp", 0).coerceIn(0, RIGHT_DP_MAX),
             p.getInt("carplay_ui_size_percent", 100).coerceIn(50, 150),
             p.getBoolean("video_fit", false), p.getBoolean("stats_overlay", false))
     }
 
     /** Synchronous atomic commit before reconnect; failure must not tear down a working session. */
     fun saveControls(ctx: Context, c: Controls): Boolean {
-        require(listOf(c.top, c.bottom, c.left, c.right).all { it in 0..160 })
+        require(listOf(c.top, c.bottom, c.left).all { it in 0..160 })
+        require(c.right in 0..RIGHT_DP_MAX)
         require(c.uiPercent in 50..150)
         return prefs(ctx).edit().putInt("inset_top_dp", c.top).putInt("inset_bottom_dp", c.bottom)
             .putInt("inset_left_dp", c.left).putInt("inset_right_dp", c.right)

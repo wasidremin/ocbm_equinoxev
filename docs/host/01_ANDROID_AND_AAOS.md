@@ -82,6 +82,33 @@ succeeded (the AAB was re-checked in place: its dex carries the new
 recovery on the vehicle remains unverified — the emulator proves layout, not GM
 compositor behavior.
 
+### Follow-up: non-rectangular panel fitment (2026-10-18, vehicle-evidence)
+
+The 2026-10-18 drive (v203 `4.0+insights-np-logs`, FULLSCREEN, custom bar on) settled what
+the emulator could not: the 17.7" panel is not a rectangle. The window reports 2914×1134
+with cutout bounding rects `Rect(0,0-2629,167)` + `Rect(2629,0-2932,1134)` — safe insets
+0/167/285/0, stableStatus 166. The top edge slopes down left-to-right and the right side
+is cut away, so the visible glass is effectively 2629×967 at offset (0,167).
+
+The full-window capture proved the failure: the bar's right cluster is drawn right-aligned
+to the 2914 window edge, putting the clock + outside temperature (the rightmost items)
+at x 2700–2850 — on missing glass. The owner saw the left icons but no temp/time. Fix:
+the bar background still spans the full window, but the cluster now starts left by the live
+`displayCutout.safeInsetRight` (`GmTopBarView.rightInsetPx`, re-applied every layout from
+`CarPlayActivity.placeTopBar`), and the right-cluster text/icons run larger (0.33–0.34h vs
+0.30h) since the slope leaves less usable height at the right end. Temperature and clock
+needed no new reads — VHAL temp (44° on the drive) and the system 12/24h clock were already
+wired; they were clipped, not missing.
+
+Settings ceilings raised to match the measured 285 px cutout: the "Right margin" stops go
+(0,24,48,72,96) → (0,48,96,160,240,320) with nearest-stop mapping for saved 24/72 values,
+and the "Right inset (dp)" slider caps at 320 (`DisplayPrefs.RIGHT_DP_MAX`) instead of 160.
+Below these ceilings CarPlay's own right-edge UI and the video surface both stayed under
+the cutout. Verified hardware-free: 7 new `TopBarFitTest` checks (cluster edge math,
+nearest-stop mapping incl. retired values, ceilings ≥ 285) plus the full
+`:app:testPlayReleaseUnitTest` suite green. On-car confirmation of the new cluster position
+is pending the next drive.
+
 ### Earlier top-bar release (2026-10-02)
 
 `wasidremin.gmccpa` has an opt-in Display → Top bar setting (default off,

@@ -36,6 +36,36 @@ object DisplayGeometry {
      */
     data class LatchedFit(val scale: Float, val x: Int, val y: Int, val matched: Boolean)
 
+    /**
+     * Right-edge x for the custom top bar's right cluster (clock, temperature, status icons).
+     *
+     * The Equinox EV panel is not a rectangle: the top edge slopes down left-to-right and the
+     * right side is cut away (2026-10-18 vehicle report: safe insets 0/167/285/0 on a 2914x1134
+     * window). The bar itself spans the full window so its background stays edge to edge, but
+     * content right-aligned at the window edge lands under the cutout — the capture proved the
+     * clock + temperature (the rightmost items) were drawn at x 2700-2850, i.e. on missing glass.
+     * [rightInsetPx] is the live `displayCutout.safeInsetRight`; the cluster starts that far left
+     * of the historical end margin so temp/time stay visible. Pure and unit-tested.
+     */
+    fun clusterRightEdge(viewWidth: Float, barHeight: Float, rightInsetPx: Int): Float =
+        viewWidth - barHeight * 0.35f - rightInsetPx.coerceAtLeast(0).toFloat()
+
+    /**
+     * Index of the segmented-control preset nearest to a persisted [value]. A saved value from a
+     * retired preset list (or a hand-set exact code) maps to its closest stop instead of falling
+     * back to a fixed default that silently changes the behaviour. Returns 0 for an empty list.
+     */
+    fun nearestPresetIndex(presets: IntArray, value: Int): Int {
+        if (presets.isEmpty()) return 0
+        var best = 0
+        var bestDist = Int.MAX_VALUE
+        for (i in presets.indices) {
+            val d = kotlin.math.abs(presets[i] - value)
+            if (d < bestDist) { bestDist = d; best = i }
+        }
+        return best
+    }
+
     fun fitLatched(rootW: Int, rootH: Int, latchedW: Int, latchedH: Int): LatchedFit {
         if (latchedW <= 0 || latchedH <= 0 || rootW <= 0 || rootH <= 0)
             return LatchedFit(1f, 0, 0, true)

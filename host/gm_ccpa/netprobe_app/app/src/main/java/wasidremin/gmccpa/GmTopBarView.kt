@@ -46,6 +46,15 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     /** Which left icon to draw highlighted (white), or null. In the photo none is selected. */
     var selected: Button? = null
         set(v) { field = v; invalidate() }
+    /**
+     * Window pixels of display cutout hiding the bar's right end (live
+     * `displayCutout.safeInsetRight`; 285 on the Equinox EV). The bar background still spans
+     * the full width, but the right cluster starts this far left of the historical end margin
+     * so the clock + temperature — the rightmost items — land on glass instead of under the
+     * cutout. Zero keeps the historical right-aligned layout.
+     */
+    var rightInsetPx: Int = 0
+        set(v) { field = v.coerceAtLeast(0); invalidate() }
 
     // Colours sampled from the photo.
     private val bgTop = 0xFF0B1220.toInt()
@@ -202,10 +211,13 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             cx += pitch
         }
 
-        // ---- right cluster (right-aligned) ----
-        text.textSize = h * 0.30f
+        // ---- right cluster (right-aligned, clear of the right cutout) ----
+        // Text and status icons run larger than the photo's proportions: on the 17.7" panel at
+        // bar height they were small, and the slope/cutout leaves less usable height at the
+        // right end. Left icons keep their measured size.
+        text.textSize = h * 0.33f
         text.color = textCol
-        var x = w - h * 0.35f
+        var x = DisplayGeometry.clusterRightEdge(w, h, rightInsetPx)
         temperature?.let { t ->
             x -= text.measureText(t)
             c.drawText(t, x, cy + text.textSize * 0.36f, text)
@@ -216,7 +228,7 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         c.drawText(clock, x, cy + text.textSize * 0.36f, text)
         x -= h * 0.45f
 
-        val small = h * 0.30f
+        val small = h * 0.34f
         stroke.color = iconCol; fill.color = iconCol
         stroke.strokeWidth = h * 0.024f
         drawPin(c, x - small / 2, cy, small, filled = false)
@@ -240,7 +252,7 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         drawBell(c, x - small / 2, cy, small)
         x -= small + h * 0.40f
 
-        val ar = h * 0.20f
+        val ar = h * 0.22f
         fill.color = avatarFill
         c.drawCircle(x - ar, cy, ar, fill)
         text.textSize = h * 0.24f
