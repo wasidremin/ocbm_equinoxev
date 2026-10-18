@@ -33,4 +33,10 @@ class NowPlayingLogTest {
         val line = trackSummaryLine(null, false, null, null)
         assertEquals("np: track \"?\" artist=no status=? artworkId=?", line)
     }
+
+    @Test fun shouldFireTickOnlyWhenElapsedMoves() {
+        org.junit.Assert.assertTrue(shouldFireTick(1000L, 1500L))
+        org.junit.Assert.assertFalse(shouldFireTick(1500L, 1500L))
+        org.junit.Assert.assertFalse(shouldFireTick(0L, 0L))
+    }
 }

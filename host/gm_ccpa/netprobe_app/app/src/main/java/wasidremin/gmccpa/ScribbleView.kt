@@ -28,20 +28,33 @@ class ScribbleView(ctx: Context) : View(ctx) {
         style = Paint.Style.STROKE
         strokeWidth = 2f * ctx.resources.displayMetrics.density
     }
+    private val solvedFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x1A4ADE80
+        style = Paint.Style.FILL
+    }
+    private val solvedStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF4ADE80.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = 3f * ctx.resources.displayMetrics.density
+    }
     private val paths = mutableListOf<Path>()
     private val strokes = mutableListOf<MutableList<ScribbleSolver.Pt>>()
     private var current: Path? = null
     private var currentPts: MutableList<ScribbleSolver.Pt>? = null
+    var solvedRect: ScribbleSolver.Result? = null
+        set(v) { field = v; invalidate() }
 
     var onChanged: (() -> Unit)? = null
 
-    fun strokeLists(): List<List<ScribbleSolver.Pt>> = strokes.toList()
+    fun strokeLists(): List<List<ScribbleSolver.Pt>> =
+        if (currentPts != null) strokes + listOf(currentPts!!.toList()) else strokes.toList()
 
     fun clear() {
         paths.clear()
         strokes.clear()
         current = null
         currentPts = null
+        solvedRect = null
         invalidate()
         onChanged?.invoke()
     }
@@ -93,6 +106,12 @@ class ScribbleView(ctx: Context) : View(ctx) {
             canvas.drawLine(0f, h * 0.55f, w, h * 0.55f, faintPaint)
             canvas.drawLine(w * 0.40f, 0f, w * 0.40f, h, faintPaint)
             canvas.drawLine(w * 0.60f, 0f, w * 0.60f, h, faintPaint)
+        }
+        solvedRect?.let { r ->
+            if (r.r > r.l && r.b > r.t) {
+                canvas.drawRect(r.l, r.t, r.r, r.b, solvedFillPaint)
+                canvas.drawRect(r.l, r.t, r.r, r.b, solvedStrokePaint)
+            }
         }
         for (p in paths) canvas.drawPath(p, strokePaint)
         current?.let { canvas.drawPath(it, strokePaint) }

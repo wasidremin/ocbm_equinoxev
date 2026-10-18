@@ -1521,6 +1521,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (::ui.isInitialized) ui.onActivityResume()
         // Play does not grant RECORD_AUDIO. The session service stays up without it; the mic does not.
         // Ask while this screen is in front, before CarPlayActivity covers it.
         if (!micAsked &&

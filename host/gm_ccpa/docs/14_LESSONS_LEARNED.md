@@ -312,8 +312,10 @@ the DEAD glass; `ScribbleSolver` (pure, `ScribbleSolverTest` (4) on a synthetic 
 panel) takes per-band dead-paint extremes, median-smooths, seeds untraced bands from the live
 cutout, gates votes to central ranges (a full-width top stroke must not vote the right
 profile), derives T as the deepest dead paint spanned and searches R for max area, and applies
-a fingertip safety margin only where paint contributed. The solved rect becomes the
-presentation insets at capture, the strip above it the top bar's space (bar auto-armed on
-save), the YAML safe inset forced to 0. Sliders and margin presets are removed; untraced
-sessions honour the measured cutout bounds plus the last saved margin pref. Takes effect at
-the next connection.
+a fingertip safety margin only where paint contributed. At capture time the solved rect sizes
+the advertised `viewWidth`×`viewHeight` directly (with presentation dp insets forced to 0, so
+iOS encodes at the true visible aspect ratio rather than squishing horizontally after decode),
+the strip above it becomes the top bar's space (bar auto-armed on save, and its right cluster
+insets by the greater of `safeInsetRight` and `VideoFrame.rightPx`), and the YAML safe inset
+is forced to 0. Sliders and margin presets are removed; untraced sessions honour the measured
+cutout bounds plus the last saved margin pref. Takes effect at the next connection.

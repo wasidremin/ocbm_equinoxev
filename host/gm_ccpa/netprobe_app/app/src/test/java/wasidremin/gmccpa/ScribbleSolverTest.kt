@@ -55,9 +55,9 @@ class ScribbleSolverTest {
         // Still a usable CarPlay rectangle.
         assertTrue(r.r - r.l >= 2000f)
         assertTrue(r.b - r.t >= 700f)
-        // Every edge well covered (the central-range gates cap the maximum at ~0.83,
-        // so 0.7 is the honest bar, not 0.8).
-        for ((edge, cov) in r.coverage) assertTrue("$edge coverage=$cov", cov > 0.7f)
+        // Every edge well covered (coverage is normalised against the 38 active central bands,
+        // so a full trace reaches >0.85).
+        for ((edge, cov) in r.coverage) assertTrue("$edge coverage=$cov", cov > 0.85f)
     }
 
     @Test fun emptyStrokesFallBackToSeed() {

@@ -251,6 +251,7 @@ class LauncherUi(private val act: Activity) {
     private val queueListener: (Int) -> Unit = { _ -> refreshUploadQueueRow() }
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
+    private lateinit var customTopBarControl: EqSegmented
     private lateinit var insightsPage: InsightsPage
 
     private var selectedTab = 0
@@ -458,13 +459,14 @@ class LauncherUi(private val act: Activity) {
                 onSidebarChanged()
             },
         ))
+        customTopBarControl = EqSegmented(act, listOf("Off", "On"), if (DisplayPrefs.customTopBar(act)) 1 else 0) { i ->
+            DisplayPrefs.setCustomTopBar(act, i == 1)
+            refreshDynamic()
+        }
         card.addRow(EqRow(
             act, "Custom top bar",
             "GM-style controls above CarPlay when the car hides its top bar. Off keeps today's picture.",
-            trailing = EqSegmented(act, listOf("Off", "On"), if (DisplayPrefs.customTopBar(act)) 1 else 0) { i ->
-                DisplayPrefs.setCustomTopBar(act, i == 1)
-                refreshDynamic()
-            },
+            trailing = customTopBarControl,
         ))
         page.addView(card)
         val bt = AudioRoute.bluetooth
@@ -1430,7 +1432,14 @@ class LauncherUi(private val act: Activity) {
         if (::hotspotRow.isInitialized) {
             setRowShown(hotspotRow, !adapterWifi)
         }
+        if (::customTopBarControl.isInitialized) {
+            customTopBarControl.setSelected(if (DisplayPrefs.customTopBar(act)) 1 else 0, animate = false)
+        }
         refreshScribbleRow()
+    }
+
+    fun onActivityResume() {
+        refreshDynamic()
     }
 
     private fun phoneTitle(): String =

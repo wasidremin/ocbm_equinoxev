@@ -57,6 +57,7 @@ class ScribbleActivity : Activity() {
         root.addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         setContentView(root)
         scribble.onChanged = { refreshHint() }
+        scribble.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refreshHint() }
         root.post { refreshHint() }
     }
 
@@ -94,6 +95,7 @@ class ScribbleActivity : Activity() {
 
     private fun refreshHint() {
         val r = currentResult()
+        scribble.solvedRect = r
         if (r == null) {
             hint.text = INSTRUCTIONS
             return

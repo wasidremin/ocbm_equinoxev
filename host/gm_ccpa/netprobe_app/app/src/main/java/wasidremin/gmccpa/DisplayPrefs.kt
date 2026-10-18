@@ -254,6 +254,14 @@ object VideoFrame {
     /** Reserved before SUBSCRIBE, then used unchanged by layout and touch. */
     @Volatile var topPx: Int = 0
         private set
+    /** Left/right dead-glass margins reserved before SUBSCRIBE by an edge trace (0 when untraced). */
+    @Volatile var leftPx: Int = 0
+        private set
+    @Volatile var rightPx: Int = 0
+        private set
+    /** Top wedge reserved when the custom top bar is OFF during a traced session (0 otherwise). */
+    @Volatile var topInsetPx: Int = 0
+        private set
 
     fun topBarPixels(height: Int, enabled: Boolean): Int =
         if (enabled) ((height * GmTopBarView.HEIGHT_FRACTION + 1f).toInt() and 1.inv()) else 0
@@ -453,63 +461,69 @@ object VideoFrame {
         if (!advertise) {
             captureSource = "default"
             captureX = 0; captureY = 0; bottomPx = 0; topPx = 0
+            leftPx = 0; rightPx = 0; topInsetPx = 0
             latch(PANEL_W, PANEL_H, 0, PANEL_W, percent, inset)
             return
         }
         val m = selectMeasurement(ctx, mode)
         val panelW = if (captureSource == "default") PANEL_W else m.width
         val panelH = if (captureSource == "default") PANEL_H else m.height
-        // Traced edges replace the manual dp sliders: the solved rect becomes the presentation
-        // insets, the strip above it the top bar's space, and the YAML safe-area inset goes to 0
-        // (the whole video already avoids the missing glass). Fractions scale to this panel.
+        // Traced edges replace the manual dp sliders AND define the advertised CarPlay rectangle:
+        // subtracting the dead-glass margins before latch() means iOS encodes at the true visible
+        // aspect ratio (no post-decode horizontal squish, no 160/320dp cap, and no double-shrink
+        // with DisplayGeometry.content). Presentation dp insets are forced to 0 while traced.
         val scrib = DisplayPrefs.scribbleRect(ctx)?.takeIf { DisplayPrefs.scribbleEnabled(ctx) }
         val scribF = scrib?.fractions()
         if (scribF != null) {
-            val d = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
-            controls = controls.copy(
-                left = (scribF[0] * panelW / d).roundToInt().coerceIn(0, 160),
-                top = 0,
-                right = ((1 - scribF[2]) * panelW / d).roundToInt().coerceIn(0, DisplayPrefs.RIGHT_DP_MAX),
-                bottom = ((1 - scribF[3]) * panelH / d).roundToInt().coerceIn(0, 160))
+            controls = controls.copy(left = 0, top = 0, right = 0, bottom = 0)
         }
         val enabled = DisplayPrefs.customTopBar(ctx) &&
             (mode == ScreenMode.FULLSCREEN || mode == ScreenMode.STATUS_HIDDEN)
         var top = reserveTop(m, panelH, enabled)
         var bottom = m.visibleBottom.coerceIn(0, (panelH - top).coerceAtLeast(0))
+        var topInset = 0
+        val leftDead = if (scribF != null) (scribF[0] * panelW).roundToInt().coerceAtLeast(0) else 0
+        val rightDead = if (scribF != null) (panelW - (scribF[2] * panelW).roundToInt()).coerceAtLeast(0) else 0
         if (scribF != null) {
             val tracedBar = (scribF[1] * panelH).roundToInt() and 1.inv()
             val tracedBottom = (panelH - (scribF[3] * panelH).roundToInt()).coerceAtLeast(0)
             if (enabled) {
                 // Bar owns the wedge: measured strip and trace agree within a few px; take the max
                 // so the video never starts under dead glass on either reading.
+                if (tracedBar >= top) captureTopSource = "scribble"
                 top = maxOf(top, tracedBar)
             } else {
-                // Bar off after a trace: the wedge becomes a plain top inset, no black gap.
+                // Bar off after a trace: the wedge is reserved as a top margin, no black bar view.
                 top = 0
-                val d = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
-                controls = controls.copy(top = (tracedBar / d).roundToInt().coerceIn(0, 160))
+                topInset = tracedBar
             }
             bottom = maxOf(bottom, tracedBottom)
         }
-        var videoH = (panelH - top - bottom) and 1.inv()
+        var videoH = (panelH - top - topInset - bottom) and 1.inv()
         var actualTop = top
+        var actualTopInset = topInset
         var actualBottom = bottom
         if (videoH < 480) {
-            actualTop = 0; actualBottom = 0
+            actualTop = 0; actualTopInset = 0; actualBottom = 0
             videoH = if (panelH >= 480) panelH and 1.inv() else PANEL_H
         }
         topPx = actualTop
+        topInsetPx = actualTopInset
         bottomPx = actualBottom
         statusRegionHeight = maxOf(m.stableStatusTop, m.cutoutTop)
         val rail = if (DisplayPrefs.sidebar(ctx)) railPixels(ctx) else 0
-        val videoW = ((panelW - rail).coerceAtLeast(2)) and 1.inv()
+        val availW = (panelW - leftDead - rightDead).coerceAtLeast(2)
+        val videoW = ((availW - rail).coerceAtLeast(2)) and 1.inv()
         if (videoW < 640 || videoH < 480) {
             captureSource = "default"
             captureX = 0; captureY = 0; bottomPx = 0; topPx = 0
+            leftPx = 0; rightPx = 0; topInsetPx = 0
             latch(PANEL_W, PANEL_H, 0, PANEL_W, percent, inset)
             return
         }
-        latch(videoW, videoH, if (rail > 0) panelW - videoW else 0, panelW, percent, inset)
+        leftPx = leftDead
+        rightPx = (panelW - leftDead - (if (rail > 0) availW else videoW)).coerceAtLeast(0)
+        latch(videoW, videoH, if (rail > 0) availW - videoW else 0, panelW, percent, inset)
     }
 
     /**

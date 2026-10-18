@@ -541,16 +541,17 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it)
             b.putBitmap(MediaMetadata.METADATA_KEY_ART, it)
         }
+        val queueId = if (s.artworkId >= 0) s.artworkId.toLong() else 0L
         sess.setQueue(listOf(MediaSession.QueueItem(
             MediaDescription.Builder()
                 .setMediaId("carplay:" + (s.title.orEmpty().hashCode().toString(16)))
                 .setTitle(s.title.orEmpty())
                 .setSubtitle(s.artist.orEmpty())
                 .setDescription(s.album.orEmpty())
-                .build(), s.artworkId.toLong())))
+                .build(), queueId)))
         val artNote = if (art != null) "${art.width}x${art.height}" else "none"
         val cardLine = "card: metadata \"${s.title.orEmpty()}\" art=$artNote " +
-            "dur=${s.durationMs} status=${s.playbackStatus} queueId=${s.artworkId} (sessionUp=$sessionUp)"
+            "dur=${s.durationMs} status=${s.playbackStatus} queueId=$queueId (sessionUp=$sessionUp)"
         if (cardLine != cardLogLine) {
             cardLogLine = cardLine
             log.i(cardLine)

@@ -162,10 +162,13 @@ class NowPlayingState {
                 // telephony surface in this app, and half-handling a kind is worse than ignoring it.
                 if (json.optString("kind") == "callState") { onCallState(json); return }
                 if (json.optString("kind") != "nowPlaying") return
+                val prevElapsed = snapshot.elapsedMs
                 val changed = onNowPlaying(json)
                 if (changed != null) emit(changed)
-                else runCatching { onPlaybackTick?.invoke(snapshot) }
-                    .onFailure { log.e("tick consumer threw: ${it.message}") }
+                else if (shouldFireTick(prevElapsed, snapshot.elapsedMs)) {
+                    runCatching { onPlaybackTick?.invoke(snapshot) }
+                        .onFailure { log.e("tick consumer threw: ${it.message}") }
+                }
             }
             MetadataSeam.META_ARTWORK -> {
                 if (payload.size < 2) return
@@ -317,6 +320,14 @@ internal fun titlelessRecordEvent(
     lastLoggedId: Int,
 ): Int? = if (incomingTitle == null && recordArtworkId != null && recordArtworkId != lastLoggedId)
     recordArtworkId else null
+
+/**
+ * True when an unchanged-metadata record actually moved [nextElapsed] relative to [prevElapsed].
+ * Records that neither change displayed metadata nor advance elapsed time (e.g. duplicate ticks
+ * or unsubscribed shuffle/repeat frames) do not fire the tick listener.
+ */
+internal fun shouldFireTick(prevElapsed: Long, nextElapsed: Long): Boolean =
+    nextElapsed != prevElapsed
 
 /**
  * Pure mapping from the `calls` table (callId -> `metadata.rs` TEL_ state code) to [CallPhase].

@@ -335,8 +335,12 @@ class OcbmProbe(context: Context) {
         val savedSidebar = wasidremin.gmccpa.DisplayPrefs.sidebar(ctx)
         val savedScale = wasidremin.gmccpa.DisplayPrefs.uiScale(ctx)
         val savedSafe = wasidremin.gmccpa.DisplayPrefs.safeRightPx(ctx)
+        val savedScribRect = wasidremin.gmccpa.DisplayPrefs.scribbleRect(ctx)
+        val savedScribNote = wasidremin.gmccpa.DisplayPrefs.scribbleNote(ctx)
+        val savedScribOn = wasidremin.gmccpa.DisplayPrefs.scribbleEnabled(ctx)
         VideoFrame.testingGeometry = true
         try {
+            wasidremin.gmccpa.DisplayPrefs.clearScribble(ctx)
             wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, true)
             wasidremin.gmccpa.DisplayPrefs.setMode(ctx, wasidremin.gmccpa.ScreenMode.FULLSCREEN)
             wasidremin.gmccpa.DisplayPrefs.setSidebar(ctx, false)
@@ -376,8 +380,28 @@ class OcbmProbe(context: Context) {
             VideoFrame.capture(ctx, advertise = false)
             check("wired static advertisement stays 2400x960",
                 VideoFrame.viewHeight == 960 && VideoFrame.height == 960)
+            // Edge trace: solved rect shrinks viewWidth/viewHeight before latch() so iOS
+            // encodes at the true visible aspect ratio (no post-decode dp squish).
+            VideoFrame.noteWindow(2914, 1134, 167)
+            wasidremin.gmccpa.DisplayPrefs.setUiScale(ctx, 100)
+            wasidremin.gmccpa.DisplayPrefs.setSidebar(ctx, false)
+            wasidremin.gmccpa.DisplayPrefs.saveScribble(
+                ctx,
+                wasidremin.gmccpa.DisplayPrefs.ScribbleRect(0, 148, 902, 1000),
+                2914, 1134, "self-test")
+            VideoFrame.capture(ctx, advertise = true)
+            check("scribble trace sizes advertised video directly with zero dp squish",
+                VideoFrame.topPx == 168 && VideoFrame.viewHeight == 966 &&
+                    VideoFrame.viewWidth == 2628 && VideoFrame.width == 2628 &&
+                    VideoFrame.rightPx == 286 && VideoFrame.safeRightPx == 0 &&
+                    VideoFrame.controls.right == 0 && VideoFrame.controls.top == 0)
         } finally {
             VideoFrame.testingGeometry = false
+            if (savedScribOn && savedScribRect != null) {
+                wasidremin.gmccpa.DisplayPrefs.saveScribble(ctx, savedScribRect, 2914, 1134, savedScribNote ?: "")
+            } else {
+                wasidremin.gmccpa.DisplayPrefs.clearScribble(ctx)
+            }
             wasidremin.gmccpa.DisplayPrefs.setCustomTopBar(ctx, savedCustomTop)
             wasidremin.gmccpa.DisplayPrefs.setMode(ctx, savedMode)
             wasidremin.gmccpa.DisplayPrefs.setSidebar(ctx, savedSidebar)

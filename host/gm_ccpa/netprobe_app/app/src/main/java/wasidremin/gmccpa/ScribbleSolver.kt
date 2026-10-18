@@ -38,6 +38,8 @@ object ScribbleSolver {
     )
 
     const val BANDS = 48
+    /** Number of central bands (10%..90%) where points are allowed to vote for an edge. */
+    private const val ACTIVE_BANDS = 38f
     const val MIN_POINTS_PER_BAND = 3
     const val SAFETY_PX = 8f
 
@@ -145,7 +147,7 @@ object ScribbleSolver {
     }
 
     private fun cover(bands: Array<MutableList<Float>>): Float =
-        bands.count { it.size >= MIN_POINTS_PER_BAND } / BANDS.toFloat()
+        (bands.count { it.size >= MIN_POINTS_PER_BAND } / ACTIVE_BANDS).coerceAtMost(1f)
 
     /** Per-mille fractions of (w,h) for prefs. */
     fun toFractions(r: Result, w: Float, h: Float): DisplayPrefs.ScribbleRect =

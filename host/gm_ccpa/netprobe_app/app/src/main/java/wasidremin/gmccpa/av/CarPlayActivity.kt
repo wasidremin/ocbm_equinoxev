@@ -89,9 +89,9 @@ class CarPlayActivity : Activity() {
             CarPlayApp.MUSIC -> {
                 val role = if (wasidremin.gmccpa.av.VisionLauncher.isCalibrated(this, "spotify")) "spotify" else "music"
                 launchOrFallback(role) {
-                    val index = when (nowPlaying.snapshot.playbackStatus) {
-                        NowPlayingState.PLAY -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
-                        null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
+                    val index = when {
+                        nowPlaying.snapshot.playing -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
+                        nowPlaying.snapshot.playbackStatus == null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
                         else -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY
                     }
                     sendMedia(index)
@@ -229,8 +229,8 @@ class CarPlayActivity : Activity() {
         val stableStatus = if (insets != null && Build.VERSION.SDK_INT >= 30)
             insets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top else 0
         val visibleNav = if (navVisible) (nav?.bottom ?: 0) else 0
-        val latchedW = VideoFrame.railPx + VideoFrame.viewWidth
-        val latchedH = VideoFrame.topPx + VideoFrame.viewHeight + VideoFrame.bottomPx
+        val latchedW = VideoFrame.leftPx + VideoFrame.railPx + VideoFrame.viewWidth + VideoFrame.rightPx
+        val latchedH = VideoFrame.topPx + VideoFrame.topInsetPx + VideoFrame.viewHeight + VideoFrame.bottomPx
         val fit = wasidremin.gmccpa.DisplayGeometry.fitLatched(root.width, root.height, latchedW, latchedH)
         centerBlockX = fit.x
         centerBlockY = fit.y
@@ -262,7 +262,7 @@ class CarPlayActivity : Activity() {
             strip <= 0 -> "not reserved at subscription (reconnect to apply)"
             else -> "ok"
         }
-        placeTopBar(strip, reason, cutout?.safeInsetRight ?: 0)
+        placeTopBar(strip, reason, maxOf(cutout?.safeInsetRight ?: 0, VideoFrame.rightPx))
     }
 
     /**
@@ -325,9 +325,9 @@ class CarPlayActivity : Activity() {
                         VideoFrame.viewHeight, resources.displayMetrics.density, VideoFrame.controls)
                     val expected = if (VideoFrame.controls.fit) wasidremin.gmccpa.DisplayGeometry.fit(safe,
                         VideoFrame.width, VideoFrame.height) else safe
-                    val fits = surfaceView.top == strip + expected.y + centerBlockY &&
+                    val fits = surfaceView.top == strip + VideoFrame.topInsetPx + expected.y + centerBlockY &&
                         surfaceView.height == expected.height && surfaceView.width == expected.width &&
-                        surfaceView.left == VideoFrame.railPx + expected.x + centerBlockX &&
+                        surfaceView.left == VideoFrame.leftPx + VideoFrame.railPx + expected.x + centerBlockX &&
                         (strip == 0 || topBar?.height == strip)
                     log.i("topbar: preview layout ${if (fits) "PASS" else "FAIL"} " +
                         "root=${root.width}x${root.height} " +
@@ -723,8 +723,8 @@ class CarPlayActivity : Activity() {
             android.widget.FrameLayout.LayoutParams(railW, railH,
                 Gravity.TOP or Gravity.START).apply {
                 if (viewAreaIndex == 0) {
-                    topMargin = centerBlockY + (topStripPx * s).roundToInt()
-                    marginStart = centerBlockX
+                    topMargin = centerBlockY + ((topStripPx + VideoFrame.topInsetPx) * s).roundToInt()
+                    marginStart = centerBlockX + (VideoFrame.leftPx * s).roundToInt()
                 }
             }
         } else {
@@ -736,8 +736,8 @@ class CarPlayActivity : Activity() {
                 Gravity.TOP or Gravity.START,
             ).apply {
                 val s = if (viewAreaIndex == 0) windowFitScale else 1f
-                topMargin = dp(16) + if (viewAreaIndex == 0) (topStripPx * s).roundToInt() else 0
-                marginStart = dp(16)
+                topMargin = dp(16) + if (viewAreaIndex == 0) ((topStripPx + VideoFrame.topInsetPx) * s).roundToInt() else 0
+                marginStart = dp(16) + if (viewAreaIndex == 0) (VideoFrame.leftPx * s).roundToInt() else 0
             }
         }
     }
@@ -753,6 +753,7 @@ class CarPlayActivity : Activity() {
         val lp = surfaceView.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return
         val rail = VideoFrame.railPx > 0 && viewAreaIndex == 0
         val top = topStripPx > 0 && viewAreaIndex == 0
+        val traced = (VideoFrame.leftPx > 0 || VideoFrame.rightPx > 0 || VideoFrame.topInsetPx > 0 || VideoFrame.bottomPx > 0) && viewAreaIndex == 0
         val scaled = VideoFrame.uiScalePercent != 100 && viewAreaIndex == 0
         val viewW = when {
             viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).width()
@@ -762,8 +763,8 @@ class CarPlayActivity : Activity() {
             viewAreaIndex != 0 -> declaredViewArea(viewAreaIndex).height()
             else -> VideoFrame.viewHeight
         }
-        val bufW = if (viewAreaIndex == 0 && (rail || top || scaled)) VideoFrame.width else viewW
-        val bufH = if (viewAreaIndex == 0 && (rail || top || scaled)) VideoFrame.height else viewH
+        val bufW = if (viewAreaIndex == 0 && (rail || top || traced || scaled)) VideoFrame.width else viewW
+        val bufH = if (viewAreaIndex == 0 && (rail || top || traced || scaled)) VideoFrame.height else viewH
         // Flush against the rail. The on-screen width is the measured window minus the rail, so
         // this rectangle and the rail together are the whole window.
         val gravity = Gravity.TOP or Gravity.START
@@ -771,10 +772,12 @@ class CarPlayActivity : Activity() {
         // live window came up smaller than the subscribe-time latch. The buffer stays advertised
         // so the compositor scales; touch stays normalised to the view so it stays correct.
         val s = if (viewAreaIndex == 0) windowFitScale else 1f
+        val leftPx = if (viewAreaIndex == 0) (VideoFrame.leftPx * s).roundToInt() else 0
         val railPx = if (rail) (VideoFrame.railPx * s).roundToInt() else 0
         val stripPx = if (top) (topStripPx * s).roundToInt() else 0
-        val inset = if (viewAreaIndex == 0) centerBlockX + railPx else 0
-        val topInset = if (top) centerBlockY + stripPx else centerBlockY
+        val topInsetPx = if (viewAreaIndex == 0) (VideoFrame.topInsetPx * s).roundToInt() else 0
+        val inset = if (viewAreaIndex == 0) centerBlockX + leftPx + railPx else 0
+        val topInset = centerBlockY + stripPx + topInsetPx
         val c = VideoFrame.controls
         val safe = wasidremin.gmccpa.DisplayGeometry.content(viewW, viewH, resources.displayMetrics.density, c)
         val presentation = if (c.fit) wasidremin.gmccpa.DisplayGeometry.fit(safe,
@@ -873,9 +876,9 @@ class CarPlayActivity : Activity() {
         add(top, railButton(RailIcon.SETTINGS, "Settings", RailTone.Default) { _ -> openSettings() }, false)
         add(bottom, railButton(RailIcon.VOICE, "Voice Assistant", RailTone.Default) { _ -> sendSiri() }, true)
         val play = railButton(RailIcon.PLAY, "Play", RailTone.Highlight) { _ ->
-            val index = when (nowPlaying.snapshot.playbackStatus) {
-                NowPlayingState.PLAY -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
-                null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
+            val index = when {
+                nowPlaying.snapshot.playing -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
+                nowPlaying.snapshot.playbackStatus == null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
                 else -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY
             }
             sendMedia(index)
@@ -949,7 +952,7 @@ class CarPlayActivity : Activity() {
 
     @Volatile private var lastRailPlaying: Boolean? = null
     private fun updateRailPlayback() {
-        val playing = nowPlaying.snapshot.playbackStatus == NowPlayingState.PLAY
+        val playing = nowPlaying.snapshot.playing
         if (playing == lastRailPlaying) return
         lastRailPlaying = playing
         railPlayButton?.let {
