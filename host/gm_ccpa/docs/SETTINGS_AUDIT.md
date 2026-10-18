@@ -1,9 +1,10 @@
 # SETTINGS_AUDIT — actual controls on the v100 tree (2026-10-15)
 
-Source of truth for the v101 settings cleanup. Every row below was read from the
-named builder/function — nothing is invented from the task prompt. Rail pages come
-from `Ui.kt fillSettings()`:
-`Connection | Display | Audio | Logs | Advanced`.
+Source of truth for the settings cleanup (v101 base, v103 deltas at the end).
+Every row below was read from the named builder/function — nothing is invented
+from the task prompt. Rail pages come from `Ui.kt fillSettings()` and are now:
+`Settings | Troubleshooting | Advanced | Insights` (v101's Connection/Display/
+Audio/Logs split shipped; v103 added Insights — see “v103 deltas”).
 
 Conventions: "action only" = no persisted key. Preference files:
 `carplay_screen` (DisplayPrefs), `hotspot_credentials` (Ui.kt CRED_PREFS),
@@ -136,6 +137,28 @@ stays (serves Capture Current).
   pre-tap + verification frames while protected, recycles owned copies via
   `LaunchEvidence`, never recycles the grabber bitmap, and never holds the
   lock across PNG encode / file write / match / upload / sleep.
+
+## v103 deltas (2026-10-18, versionCode 103 `4.0+insights-callpill-restart`)
+
+- **Insights page** (`Ui.kt buildInsights`, `InsightsUi.kt InsightsPage`,
+  `telemetry/InsightsData.kt`): fourth rail tab rendering this head unit's own
+  probe segments website-style — latest-value tiles, Battery & range / Speed /
+  per-segment-trend canvas charts (`InsightChartView`, dual-normalised),
+  last-10 segment list. Loads off the UI thread; refreshes on tab select.
+- **Strip Restart while FAILED** (`Ui.kt stripActionFor`, tested in
+  `UiStripTest`): Back when live, primary Restart when FAILED, Done otherwise.
+  Strip detail 1 → 2 lines (`SettingsKit.kt EqStatusStrip`) so the failure
+  instruction survives. Intro failure screen gains a restart button
+  (`IntroRestartButton`, bottom-right, FAILED-only via `syncIntroRestart`).
+- **Pairing code 40sp → 30sp** (`Ui.kt buildTroubleshooting`): at the 1.35x
+  panel scale cap 40sp rendered ~54sp and pushed the Status card's Restart
+  button off screen. Only horizontal-overflow-class fix; the full four-tab
+  `auditLayout` run shows zero `PAST_SAFE_RIGHT` (long pages scroll vertically
+  by design).
+- **Call pill** (`av/CallPillView.kt`, `NowPlayingState.callPhase/`
+  `callPhaseOf`, tested in `CallPhaseTest`): Answer (RINGING only) / Hang up
+  (`TEL_END`) / Mute (`TEL_MUTE`) overlay on `CarPlayActivity`, draggable with
+  persisted fractions, hidden when the call table empties.
 
 ## Version high-water
 
