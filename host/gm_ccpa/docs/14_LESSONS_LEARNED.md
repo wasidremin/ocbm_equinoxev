@@ -230,3 +230,41 @@ The log case was `RxPhase.STALLED` → `LinkState.FAILED` with the only Restart 
 ### 10.4 Oversize audit: one real fix, the rest retired as content-height
 
 The audit (`auditLayout`, `PAST_SAFE_RIGHT` marker) found **zero horizontal overflows on all four tabs** — Settings/Display cards, Troubleshooting status/launch/capture/log cards, Advanced adapter/display/picture/logging/upload/recognition/app cards, and the 2705 px Insights page all end at x=988 against a 1024 safe edge (long vertical pages scroll; that is correct). One real fix: the pairing-code row at 40sp rendered ~54sp under the 1.35x panel scale cap and pushed the Status card — and its Restart button — off screen; now 30sp. Strip detail went 1 → 2 lines (see §10.3) with no width change. `SETTINGS_AUDIT.md` was stale (it still lists the v100 `Connection | Display | Audio | Logs | Advanced` rail); its rail line and page map are corrected to the shipped `Settings | Troubleshooting | Advanced | Insights` structure with a v103 deltas section — corrected in place, no new file (docs budget).
+
+---
+
+## 11. 2026-10-17 drive-log audit: midday song/artwork staleness was "nothing playing"
+
+Midday sessions (12:01–12:10, four short sessions around an operator Restart) showed the
+complaint verbatim: one `card: state=1 pos=0` line per session, never a `card: metadata` line,
+artworkIds advancing (-1 → 128 → 129) with zero `art … accepted` transfers. Evening (21:30+)
+was healthy: track changes with metadata + 300x300 art decodes, position advancing via
+`source=tick`.
+
+Evidence it is phone-side silence, not a box/app drop:
+
+| Signal | Midday (4 sessions) | Evening (working) |
+|---|---|---|
+| `0x5001` msgs | 4 per session (54/22/27/9 B open burst), then silence for minutes | 50+, incl. 451× 12 B ~2 Hz elapsed ticks |
+| `TX session-2 reply` | **0** — the two 10 B Setup fragments per session were never answered | 8 — Accept sent, then 65525 B + 18449 B JPEG fragments |
+| Audio frames played (`aac stopping`) | **0 in every session** | normal playback ("drop dead" on the card) |
+| `card: metadata` lines | 0 | every track change |
+
+The phone sent its session-open burst, announced artworkIds for a queue it never described
+(no titles → the merge correctly published nothing), never played audio (no ticks), and offered
+art only as size-0 Setup probes — which the box correctly ignores without an Accept, since
+answering would stall the phone waiting for data that never comes. `enablesFileTransfer: false`
+in the OCBM subscribe block is a red herring: it reads false in the working evening sessions too.
+
+Two diagnosability gaps made this cost a full audit, both now closed (no behaviour change):
+
+1. Box `iap2-core/metadata.rs::on_session2` logged only the Accept path. Every silent ignore
+   now says why on stderr: truncated datagram/setup, size-0 probe ("no image offered"),
+   oversize setup, data for an unknown id, Cancel of an in-flight transfer. Rust test
+   `artwork_ignores_are_silent_on_the_wire_but_decisive` pins the wire behaviour (still None,
+   no residue — a later valid Setup still Accepts).
+2. App `NowPlayingState.onNowPlaying` logged only artworkId transitions. Track changes now log
+   a one-line summary (`np: track "…" artist=yes/no status=… artworkId=…`, consistent with the
+   existing `mbs` card title logs), and title-less records naming an artworkId log once per id
+   (`titlelessRecordEvent`, pure and unit-tested in `NowPlayingLogTest`). The next audit of this
+   shape ends at the first grep: probes vs real offers, titled vs untitled records.

@@ -178,6 +178,14 @@ class NowPlayingState {
         }
     }
 
+    /**
+     * Last artworkId for which a title-less record was logged. A record that names an artworkId
+     * but no title is the phone announcing a queue it will not describe — the 2026-10-17 midday
+     * sessions showed artworkId advancing with no titles, no ticks and no art, and the log gave
+     * no evidence either way. Logged once per id (not per tick) via [titlelessRecordEvent].
+     */
+    private var lastTitlelessArtworkId = -2
+
     /** Apply one nowPlaying record. Returns the new snapshot if the DISPLAYED picture changed. */
     @Synchronized
     fun onNowPlaying(json: JSONObject): Snapshot? {
@@ -185,14 +193,29 @@ class NowPlayingState {
         // Track change is inferred from a different non-empty title. NOT from artworkId: that key is
         // absent from elapsed-only frames, so it would read as a change to -1 on every single tick.
         val incomingTitle = json.optStringOrNull("title")
+        val recordArtworkId = json.optIntOrNull("artworkId")
         val trackChanged = incomingTitle != null && incomingTitle != prev.title
+        if (trackChanged) {
+            log.i(trackSummaryLine(
+                incomingTitle,
+                json.optStringOrNull("artist") != null,
+                json.optIntOrNull("playbackStatus"),
+                recordArtworkId,
+            ))
+        } else {
+            titlelessRecordEvent(incomingTitle, recordArtworkId, lastTitlelessArtworkId)?.let {
+                lastTitlelessArtworkId = it
+                log.i("np: record without title (artworkId=$it status=${json.optIntOrNull("playbackStatus") ?: "?"})" +
+                    " — phone announced no item to describe; expect no ticks and probe-only art")
+            }
+        }
         // On a track change, merge onto a BLANK record: a field the full record omits is genuinely
         // absent for the new track. Merging onto the previous snapshot instead kept the old artist,
         // album and duration alive beside the new title. playbackStatus carries across because it
         // describes the PLAYER, not the item. Artwork is the exception: iOS does not resend a JPEG
         // whose id did not change, so a chapter that keeps the cover must keep the bytes too.
         val base = if (trackChanged) Snapshot(playbackStatus = prev.playbackStatus) else prev
-        art.onRecord(trackChanged, json.optIntOrNull("artworkId"))
+        art.onRecord(trackChanged, recordArtworkId)
         val next = Snapshot(
             title = incomingTitle ?: base.title,
             artist = json.optStringOrNull("artist") ?: base.artist,
@@ -274,6 +297,26 @@ internal fun ByteArray?.contentEqualsOrBothNull(o: ByteArray?): Boolean =
 
 /** Which call-overlay state the pill shows. NONE hides it. */
 enum class CallPhase { NONE, RINGING, ACTIVE }
+
+/**
+ * One-line track-change summary for the log. Titles already surface in `mbs` card logs, so
+ * naming the track here is consistent, not new exposure. Pure for unit tests.
+ */
+internal fun trackSummaryLine(title: String?, artistPresent: Boolean, status: Int?, artworkId: Int?): String =
+    "np: track \"${title ?: "?"}\" artist=${if (artistPresent) "yes" else "no"}" +
+        " status=${status ?: "?"} artworkId=${artworkId ?: "?"}"
+
+/**
+ * Returns [recordArtworkId] when this record should emit the title-less diagnostic: the record
+ * names an artworkId but carries no title, and this id has not been reported yet. Otherwise null.
+ * Pure for unit tests; the caller persists the returned id as the last-reported one.
+ */
+internal fun titlelessRecordEvent(
+    incomingTitle: String?,
+    recordArtworkId: Int?,
+    lastLoggedId: Int,
+): Int? = if (incomingTitle == null && recordArtworkId != null && recordArtworkId != lastLoggedId)
+    recordArtworkId else null
 
 /**
  * Pure mapping from the `calls` table (callId -> `metadata.rs` TEL_ state code) to [CallPhase].

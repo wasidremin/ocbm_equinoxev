@@ -1290,6 +1290,10 @@ impl Artwork {
 
     pub fn on_session2(&mut self, payload: &[u8]) -> Option<Vec<u8>> {
         if payload.len() < 2 {
+            // Too short to even hold [id][flags] — never a valid datagram; say so, because a
+            // silent drop here looks exactly like the phone never offering (seen 2026-10-17
+            // midday: artwork absent with zero log evidence either way).
+            eprintln!("[art] {} B fragment — too short, dropped", payload.len());
             return None;
         }
         let id = payload[0];
@@ -1299,14 +1303,25 @@ impl Artwork {
             4 => {
                 // Setup: [id][04][size u64 BE]
                 if payload.len() < 10 {
+                    eprintln!("[art] setup id=0x{id:02x} truncated ({} B) — dropped", payload.len());
                     return None;
                 }
                 let size = u64::from_be_bytes([
                     payload[2], payload[3], payload[4], payload[5], payload[6], payload[7],
                     payload[8], payload[9],
                 ]);
-                if size == 0 || size > 8 << 20 {
-                    return None; // the size-0 probe transfer — ignore (it gets Cancelled)
+                if size == 0 {
+                    // The size-0 probe: the phone is asking whether we accept transfers, not
+                    // offering an image. Ignored (it gets Cancelled). Logged because a run of
+                    // probes with no real Setup is the signature of "nothing playing" — the
+                    // 2026-10-17 midday sessions showed artworkId advancing with no art and no
+                    // log line to explain it.
+                    eprintln!("[art] setup id=0x{id:02x} size=0 probe — ignoring (no image offered)");
+                    return None;
+                }
+                if size > 8 << 20 {
+                    eprintln!("[art] setup id=0x{id:02x} size={size} exceeds 8 MiB cap — ignoring");
+                    return None;
                 }
                 // Do NOT pre-allocate the attacker-declared `size` (up to 8 MiB, and ids are u8 so a
                 // peer could open 256 transfers ≈ 2 GiB of eager allocation with zero data sent).
@@ -1321,6 +1336,13 @@ impl Artwork {
                 // Aggregate ceiling across ALL in-flight transfers, checked after the append.
                 // The 8 MiB per-transfer cap bounds one image; nothing bounded the sum.
                 const MAX_TOTAL_BUFFERED: usize = 12 << 20; // 12 MiB, ~10% of box RAM
+                if !self.xfers.contains_key(&id) {
+                    // Data for a transfer we never Accepted (no Setup seen, or it was a probe /
+                    // oversize ignore above). Without this line the next artwork-less drive log
+                    // is ambiguous again: phone-sent-orphans vs phone-sent-nothing.
+                    eprintln!("[art] data id=0x{id:02x} ({} B) with no open transfer — dropped", payload.len());
+                    return None;
+                }
                 let done = {
                     let (size, buf) = self.xfers.get_mut(&id)?;
                     buf.extend_from_slice(&payload[2..]);
@@ -1386,7 +1408,9 @@ impl Artwork {
                 None
             }
             2 => {
-                self.xfers.remove(&id); // Cancel
+                if self.xfers.remove(&id).is_some() {
+                    eprintln!("[art] cancel id=0x{id:02x} — discarded in-flight transfer");
+                }
                 None
             }
             _ => None,
@@ -1879,6 +1903,29 @@ mod tests {
             a.on_session2(&[0x81, 0x40, 0xff, 0xd9]),
             Some(vec![0x81, 0x05])
         );
+    }
+
+    #[test]
+    fn artwork_ignores_are_silent_on_the_wire_but_decisive() {
+        // Every path that returns None without a reply must stay None (the phone stalls
+        // otherwise), while the new diagnostics go to stderr, not the wire. Regression cover
+        // for the 2026-10-17 midday audit, where unlogged ignores were indistinguishable
+        // from the phone never offering.
+        let mut a = Artwork::default();
+        // Truncated datagram and truncated setup.
+        assert_eq!(a.on_session2(&[0x81]), None);
+        assert_eq!(a.on_session2(&[0x81, 0x04, 0x00]), None);
+        // Oversize setup (> 8 MiB) is ignored and opens nothing: follow-up data is orphaned.
+        let mut big = vec![0x82, 0x04];
+        big.extend_from_slice(&(9u64 << 20).to_be_bytes());
+        assert_eq!(a.on_session2(&big), None);
+        assert_eq!(a.on_session2(&[0x82, 0x80, 0xff, 0xd8]), None);
+        // Cancel for an unknown id is a no-op, not an error.
+        assert_eq!(a.on_session2(&[0x82, 0x02]), None);
+        // And a valid Setup still Accepts afterwards — ignores leave no residue.
+        let mut setup = vec![0x83, 0x04];
+        setup.extend_from_slice(&2u64.to_be_bytes());
+        assert_eq!(a.on_session2(&setup), Some(vec![0x83, 0x01]));
     }
 
     #[test]
