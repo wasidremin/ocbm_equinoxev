@@ -22,7 +22,8 @@ import kotlin.math.min
  *  - 7 left icons, thin outline, pale blue-white, evenly spaced, starting near the left edge:
  *    car, apps, controls, music, navigation (pin), phone, energy (bolt).
  *  - Right cluster: profile initial in a dark circle, bell, "5G" over signal bars, small pin,
- *    clock, outside temperature. Right-aligned, slightly brighter and larger text than the icons.
+ *    clock, outside temperature. Right-aligned, slightly brighter but SMALLER than the left
+ *    icons and indented from the edge, like the car's own bar.
  *  - Background: near-black navy, faint top-to-bottom gradient; a thin blue hairline at the bottom.
  *
  * Left icons are tappable and call [onButton]. The right cluster is display only.
@@ -211,55 +212,76 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             cx += pitch
         }
 
-        // ---- right cluster (right-aligned, clear of the right cutout) ----
-        // Text and status icons run larger than the photo's proportions: on the 17.7" panel at
-        // bar height they were small, and the slope/cutout leaves less usable height at the
-        // right end. Left icons keep their measured size.
-        text.textSize = h * 0.33f
-        text.color = textCol
-        var x = DisplayGeometry.clusterRightEdge(w, h, rightInsetPx)
-        temperature?.let { t ->
-            x -= text.measureText(t)
-            c.drawText(t, x, cy + text.textSize * 0.36f, text)
-            x -= h * 0.42f
-        }
+        // ---- right cluster (right-aligned, clear of the right cutout, never overlapping left) ----
+        // The car's own bar runs its right side SMALLER than the left icons and indented from
+        // the edge, so this cluster does too: status text ~0.8x the old size, status icons and
+        // avatar smaller still. Then a fit pass: the natural width is measured up front, and if
+        // the slot between the left block and the cutout-shifted edge is narrower (narrow
+        // window, large inset, long clock/temperature strings) the whole cluster shrinks
+        // uniformly to land inside it instead of colliding with the left icons or spilling
+        // under the cutout. Left icons keep their measured size.
+        val leftEnd = cx - pitch / 2f
+        val edge = DisplayGeometry.clusterRightEdge(w, h, rightInsetPx)
         val clock = DateFormat.getTimeFormat(context).format(Date())
-        x -= text.measureText(clock)
-        c.drawText(clock, x, cy + text.textSize * 0.36f, text)
-        x -= h * 0.45f
-
-        val small = h * 0.34f
-        stroke.color = iconCol; fill.color = iconCol
-        stroke.strokeWidth = h * 0.024f
-        drawPin(c, x - small / 2, cy, small, filled = false)
-        x -= small + h * 0.32f
-
-        if (signalBars >= 0) {
-            val blockW = h * 0.36f
-            text.textSize = h * 0.17f
-            text.color = iconCol
-            c.drawText(networkLabel, x - blockW, cy, text)
-            val barW = blockW / 5.5f
-            for (k in 0 until 4) {
-                fill.color = if (k < signalBars) iconCol else 0x55C3CCDB
-                val bx = x - blockW + k * barW * 1.35f
-                c.drawRect(bx, cy + h * 0.05f, bx + barW, cy + h * 0.10f, fill)
+        val baseText = h * 0.27f
+        val baseSmall = h * 0.28f
+        val baseAvatarR = h * 0.18f
+        val baseSignalW = h * 0.30f
+        text.textSize = baseText
+        var natural = text.measureText(clock) + h * 0.36f +
+            baseSmall + h * 0.26f +
+            baseSmall + h * 0.32f +
+            baseAvatarR * 2f
+        temperature?.let { natural += text.measureText(it) + h * 0.34f }
+        if (signalBars >= 0) natural += baseSignalW + h * 0.30f
+        val fit = DisplayGeometry.clusterFitScale(edge - leftEnd, natural)
+        if (fit > 0f) {
+            val ts = baseText * fit
+            val small = baseSmall * fit
+            text.textSize = ts
+            text.color = textCol
+            var x = edge
+            temperature?.let { t ->
+                x -= text.measureText(t)
+                c.drawText(t, x, cy + ts * 0.36f, text)
+                x -= h * 0.34f * fit
             }
-            x -= blockW + h * 0.36f
+            x -= text.measureText(clock)
+            c.drawText(clock, x, cy + ts * 0.36f, text)
+            x -= h * 0.36f * fit
+
+            stroke.color = iconCol; fill.color = iconCol
+            stroke.strokeWidth = h * 0.024f * fit
+            drawPin(c, x - small / 2, cy, small, filled = false)
+            x -= small + h * 0.26f * fit
+
+            if (signalBars >= 0) {
+                val blockW = baseSignalW * fit
+                text.textSize = h * 0.14f * fit
+                text.color = iconCol
+                c.drawText(networkLabel, x - blockW, cy, text)
+                val barW = blockW / 5.5f
+                for (k in 0 until 4) {
+                    fill.color = if (k < signalBars) iconCol else 0x55C3CCDB
+                    val bx = x - blockW + k * barW * 1.35f
+                    c.drawRect(bx, cy + h * 0.05f * fit, bx + barW, cy + h * 0.10f * fit, fill)
+                }
+                x -= blockW + h * 0.30f * fit
+            }
+
+            stroke.color = iconCol
+            drawBell(c, x - small / 2, cy, small)
+            x -= small + h * 0.32f * fit
+
+            val ar = baseAvatarR * fit
+            fill.color = avatarFill
+            c.drawCircle(x - ar, cy, ar, fill)
+            text.textSize = h * 0.20f * fit
+            text.color = textCol
+            text.textAlign = Paint.Align.CENTER
+            c.drawText(profileInitial, x - ar, cy + text.textSize * 0.36f, text)
+            text.textAlign = Paint.Align.LEFT
         }
-
-        stroke.color = iconCol
-        drawBell(c, x - small / 2, cy, small)
-        x -= small + h * 0.40f
-
-        val ar = h * 0.22f
-        fill.color = avatarFill
-        c.drawCircle(x - ar, cy, ar, fill)
-        text.textSize = h * 0.24f
-        text.color = textCol
-        text.textAlign = Paint.Align.CENTER
-        c.drawText(profileInitial, x - ar, cy + text.textSize * 0.36f, text)
-        text.textAlign = Paint.Align.LEFT
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {

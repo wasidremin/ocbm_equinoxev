@@ -45,10 +45,37 @@ object DisplayGeometry {
      * content right-aligned at the window edge lands under the cutout — the capture proved the
      * clock + temperature (the rightmost items) were drawn at x 2700-2850, i.e. on missing glass.
      * [rightInsetPx] is the live `displayCutout.safeInsetRight`; the cluster starts that far left
-     * of the historical end margin so temp/time stay visible. Pure and unit-tested.
+     * of the end margin so temp/time stay visible. The end margin (0.55 x bar height) is a
+     * deliberate indent from the side, matching the car's own bar, whose right cluster sits
+     * inboard of the edge — not flush against it. Pure and unit-tested.
      */
     fun clusterRightEdge(viewWidth: Float, barHeight: Float, rightInsetPx: Int): Float =
-        viewWidth - barHeight * 0.35f - rightInsetPx.coerceAtLeast(0).toFloat()
+        viewWidth - barHeight * 0.55f - rightInsetPx.coerceAtLeast(0).toFloat()
+
+    /**
+     * Right edge x of the bar's left icon block: last icon centre plus half a pitch.
+     *
+     * Mirrors [wasidremin.gmccpa.GmTopBarView]'s loop (first centre `firstCxFrac` x height,
+     * `count` icons at `pitchFrac` x height). The right cluster must start at or right of this
+     * x; [clusterFitScale] shrinks it when the natural width does not fit. Pure and unit-tested.
+     */
+    fun leftBlockEnd(barHeight: Float, firstCxFrac: Float = 0.95f, pitchFrac: Float = 0.88f, count: Int = 7): Float =
+        barHeight * (firstCxFrac + (count - 1) * pitchFrac + pitchFrac / 2f)
+
+    /**
+     * Uniform downscale so the right cluster fits between [leftBlockEnd] and [clusterRightEdge].
+     *
+     * 1 when the natural width fits (the common case — the bar draws at its designed sizes);
+     * a fraction that lands the cluster exactly in the available slot when it does not (narrow
+     * window, large cutout inset, long clock/temperature strings). Never upscales: extra room
+     * stays empty rather than inflating the cluster. Zero or negative room hides the cluster
+     * (scale 0) instead of overlapping the left icons. Pure and unit-tested.
+     */
+    fun clusterFitScale(availableWidth: Float, naturalWidth: Float): Float {
+        if (naturalWidth <= 0f) return 1f
+        if (availableWidth <= 0f) return 0f
+        return (availableWidth / naturalWidth).coerceIn(0f, 1f)
+    }
 
     /**
      * Index of the segmented-control preset nearest to a persisted [value]. A saved value from a

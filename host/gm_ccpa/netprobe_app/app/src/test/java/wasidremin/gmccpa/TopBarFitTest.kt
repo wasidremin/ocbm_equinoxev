@@ -11,15 +11,50 @@ import org.junit.Test
  * items — were drawn at x 2700-2850, i.e. on missing glass.
  */
 class TopBarFitTest {
-    @Test fun zeroInsetKeepsHistoricalRightAlignment() {
-        assertEquals(2914f - 168f * 0.35f, DisplayGeometry.clusterRightEdge(2914f, 168f, 0), 0.001f)
+    @Test fun zeroInsetKeepsIndentedRightAlignment() {
+        // 0.55 x bar height of deliberate indent from the side, like the car's own bar.
+        assertEquals(2914f - 168f * 0.55f, DisplayGeometry.clusterRightEdge(2914f, 168f, 0), 0.001f)
     }
 
     @Test fun measuredCutoutShiftsClusterOntoGlass() {
         val edge = DisplayGeometry.clusterRightEdge(2914f, 168f, 285)
-        assertEquals(2914f - 168f * 0.35f - 285f, edge, 0.001f)
-        // Rightmost glyph ends at the edge: 2570 < 2629, clear of the cutout.
+        assertEquals(2914f - 168f * 0.55f - 285f, edge, 0.001f)
+        // Rightmost glyph ends at the edge: 2537 < 2629, clear of the cutout.
         assertTrue(edge < 2629f)
+    }
+
+    @Test fun leftBlockEndMatchesSevenIconLoop() {
+        // First centre 0.95h, 7 icons at 0.88h pitch, plus half a pitch past the last.
+        assertEquals(168f * 6.67f, DisplayGeometry.leftBlockEnd(168f), 0.01f)
+    }
+
+    @Test fun fittingClusterDrawsAtFullSize() {
+        assertEquals(1f, DisplayGeometry.clusterFitScale(1969f, 900f), 0.001f)
+    }
+
+    @Test fun narrowSlotShrinksClusterToFitExactly() {
+        // Narrow window + large inset: the slot holds only half the natural width.
+        val scale = DisplayGeometry.clusterFitScale(205f, 410f)
+        assertEquals(0.5f, scale, 0.001f)
+        // Landing check: scaled cluster ends exactly at the slot edges.
+        assertEquals(205f, 410f * scale, 0.01f)
+    }
+
+    @Test fun zeroNaturalWidthNeverDividesByZero() {
+        assertEquals(1f, DisplayGeometry.clusterFitScale(100f, 0f), 0.001f)
+    }
+
+    @Test fun noRoomHidesClusterInsteadOfOverlapping() {
+        assertEquals(0f, DisplayGeometry.clusterFitScale(0f, 410f), 0.001f)
+        assertEquals(0f, DisplayGeometry.clusterFitScale(-50f, 410f), 0.001f)
+    }
+
+    @Test fun vehicleGeometryFitsAtFullSize() {
+        // 2914x1134 window, 94px bar, 285 cutout: slot holds the cluster with room to spare.
+        val h = 94f
+        val slot = DisplayGeometry.clusterRightEdge(2914f, h, 285) - DisplayGeometry.leftBlockEnd(h)
+        assertTrue(slot > 1500f)
+        assertEquals(1f, DisplayGeometry.clusterFitScale(slot, 510f), 0.001f)
     }
 
     @Test fun negativeInsetClampsToHistorical() {
