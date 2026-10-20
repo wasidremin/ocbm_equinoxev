@@ -61,6 +61,8 @@ class CarPlayActivity : Activity() {
     private var previewOnly = false
     private var previewCaptured = false
     private var previewReady = false
+    /** Preview-only slope override (`slope_test_m` extra): exercises wedge layout without the car. */
+    private var previewSlopeM: Float? = null
     /** Layout-time strip: freed space above the 960-tall CarPlay picture. 0 = no custom bar. */
     private var topStripPx: Int = 0
     private var lastDisplayLogKey: String? = null
@@ -262,7 +264,15 @@ class CarPlayActivity : Activity() {
             strip <= 0 -> "not reserved at subscription (reconnect to apply)"
             else -> "ok"
         }
-        placeTopBar(strip, reason, maxOf(cutout?.safeInsetRight ?: 0, VideoFrame.rightPx))
+        // Top-edge cutout wedge (Equinox: Rect(0,0-2629,167)) gives the panel slope the bar
+        // hangs its content from; anything else (centered notch, none) means a flat panel.
+        val wedge = cutout?.boundingRects
+            ?.filter { it.top == 0 && it.left == 0 }
+            ?.maxByOrNull { it.width() }
+        val liveSlopeM = wasidremin.gmccpa.DisplayGeometry.wedgeSlopeM(
+            wedge?.right ?: 0, wedge?.bottom ?: 0)
+        val slopeM = if (previewOnly) previewSlopeM ?: liveSlopeM else liveSlopeM
+        placeTopBar(strip, reason, maxOf(cutout?.safeInsetRight ?: 0, VideoFrame.rightPx), slopeM)
     }
 
     /**
@@ -274,7 +284,7 @@ class CarPlayActivity : Activity() {
      * drawn at x 2700-2850, invisible on the car. Re-applied every layout: the cutout object is
      * only non-null once the window is laid out under the ALWAYS policy.
      */
-    private fun placeTopBar(strip: Int, reason: String, rightInset: Int) {
+    private fun placeTopBar(strip: Int, reason: String, rightInset: Int, slopeM: Float) {
         val placed = strip > 0 && viewAreaIndex == 0
         if (placed) {
             var bar = topBar
@@ -305,6 +315,7 @@ class CarPlayActivity : Activity() {
                 bar.visibility = View.VISIBLE
             }
             if (bar.rightInsetPx != rightInset.coerceAtLeast(0)) bar.rightInsetPx = rightInset
+            if (bar.slopeM != slopeM.coerceAtLeast(0f)) bar.slopeM = slopeM.coerceAtLeast(0f)
             bar.visibility = if (window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.statusBars()) == true)
                 View.GONE else View.VISIBLE
         } else {
@@ -312,7 +323,7 @@ class CarPlayActivity : Activity() {
         }
         topStripPx = if (placed) strip else 0
         syncChrome()
-        val logKey = "$strip:$placed:$reason:${windowFitScale}:$centerBlockX,$centerBlockY:$rightInset"
+        val logKey = "$strip:$placed:$reason:${windowFitScale}:$centerBlockX,$centerBlockY:$rightInset:$slopeM"
         if (lastTopBarLog != logKey) {
             lastTopBarLog = logKey
             log.i("topbar: strip=${strip}px placed=$placed reason=$reason scale=${windowFitScale} center=$centerBlockX,$centerBlockY")
@@ -555,6 +566,8 @@ class CarPlayActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         previewOnly = intent.getBooleanExtra("topbar_preview", false)
+        if (previewOnly && intent.hasExtra("slope_test_m"))
+            previewSlopeM = intent.getFloatExtra("slope_test_m", 0f).coerceAtLeast(0f)
         live = java.lang.ref.WeakReference(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         surfaceView = SurfaceView(this)

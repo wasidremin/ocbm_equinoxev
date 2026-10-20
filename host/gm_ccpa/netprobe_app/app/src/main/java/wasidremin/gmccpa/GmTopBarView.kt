@@ -22,8 +22,9 @@ import kotlin.math.min
  *  - 7 left icons, thin outline, pale blue-white, evenly spaced, starting near the left edge:
  *    car, apps, controls, music, navigation (pin), phone, energy (bolt).
  *  - Right cluster: profile initial in a dark circle, bell, "5G" over signal bars, small pin,
- *    clock, outside temperature. Right-aligned, slightly brighter but SMALLER than the left
- *    icons and indented from the edge, like the car's own bar.
+ *    clock, outside temperature. Smaller than the left icons, indented from the edge, and hung
+ *    from the panel-slope clearance like the car's own bar — centering in the rect puts it on
+ *    missing glass where the top edge slopes away.
  *  - Background: near-black navy, faint top-to-bottom gradient; a thin blue hairline at the bottom.
  *
  * Left icons are tappable and call [onButton]. The right cluster is display only.
@@ -56,6 +57,14 @@ class GmTopBarView(ctx: Context) : View(ctx) {
      */
     var rightInsetPx: Int = 0
         set(v) { field = v.coerceAtLeast(0); invalidate() }
+    /**
+     * Slope of the panel's top-edge cutout wedge (glass starts at y = slopeM * x; 0.06352 on
+     * the Equinox EV, 0 on a rectangular panel). The bar's bottom row is on glass almost
+     * everywhere while its top is progressively missing, so content hangs from slope-clearing
+     * tops near the bottom instead of centering in the rect. Zero keeps the centered layout.
+     */
+    var slopeM: Float = 0f
+        set(v) { field = v.coerceAtLeast(0f); invalidate() }
 
     // Colours sampled from the photo.
     private val bgTop = 0xFF0B1220.toInt()
@@ -198,88 +207,103 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         fill.shader = null
 
         // ---- left icons ----
+        // A level row that clears the panel slope at its LAST (rightmost) icon: on the
+        // Equinox wedge (m = 0.06352) the 7th icon's box top would otherwise sit ~30px under
+        // the slope. Zero shift on a flat panel.
         val icon = h * 0.46f                 // icon box size
         val pitch = h * 0.88f                // centre-to-centre spacing (photo: ~0.88 × bar height)
         var cx = h * 0.95f                   // first icon centre
         val cy = h * 0.47f
+        val margin = h * 0.05f               // glass to spare above content and below it
+        val cyL = cy + DisplayGeometry.levelShift(cy - icon / 2f,
+            cx + 6 * pitch, slopeM, margin)
         stroke.strokeWidth = h * 0.028f
         for ((i, b) in Button.values().withIndex()) {
             val col = if (b == selected) iconHi else iconCol
             stroke.color = col
             fill.color = col
             hitRects[i].set(cx - pitch / 2, 0f, cx + pitch / 2, h)
-            drawIcon(c, b, cx, cy, icon)
+            drawIcon(c, b, cx, cyL, icon)
             cx += pitch
         }
 
-        // ---- right cluster (right-aligned, clear of the right cutout, never overlapping left) ----
-        // The car's own bar runs its right side SMALLER than the left icons and indented from
-        // the edge, so this cluster does too: status text ~0.8x the old size, status icons and
-        // avatar smaller still. Then a fit pass: the natural width is measured up front, and if
-        // the slot between the left block and the cutout-shifted edge is narrower (narrow
-        // window, large inset, long clock/temperature strings) the whole cluster shrinks
-        // uniformly to land inside it instead of colliding with the left icons or spilling
-        // under the cutout. Left icons keep their measured size.
+        // ---- right cluster (on glass, never overlapping left) ----
+        // Like the car's own bar the right side runs SMALLER than the left icons and indented
+        // from the edge — and it hangs from the slope clearance instead of centering in the
+        // rect, because on the wedge the rect's vertical middle is missing glass. The edge
+        // itself is solved: the furthest-right x where a contentH-tall block still ends above
+        // the bar bottom (on the vehicle: near x 1600, where ~50px of glass exists — NOT x
+        // 2540, where 7px exists). A fit pass then shrinks the cluster uniformly if the slot
+        // between the left block and that edge is narrower than the measured natural width
+        // (narrow window, long clock/temperature strings). Zero slope keeps the centered
+        // layout. Left icons keep their measured size.
         val leftEnd = cx - pitch / 2f
-        val edge = DisplayGeometry.clusterRightEdge(w, h, rightInsetPx)
         val clock = DateFormat.getTimeFormat(context).format(Date())
-        val baseText = h * 0.27f
-        val baseSmall = h * 0.28f
-        val baseAvatarR = h * 0.18f
-        val baseSignalW = h * 0.30f
+        val baseText = h * 0.24f
+        val baseSmall = h * 0.24f
+        val baseAvatarR = h * 0.14f
+        val baseSignalW = h * 0.28f
+        val contentH = maxOf(baseSmall, baseAvatarR * 2f, baseText)
+        val edge = DisplayGeometry.clusterRightEdgeOnGlass(
+            w, h, rightInsetPx, slopeM, contentH, margin)
         text.textSize = baseText
-        var natural = text.measureText(clock) + h * 0.36f +
-            baseSmall + h * 0.26f +
-            baseSmall + h * 0.32f +
+        var natural = text.measureText(clock) + h * 0.30f +
+            baseSmall + h * 0.22f +
+            baseSmall + h * 0.28f +
             baseAvatarR * 2f
-        temperature?.let { natural += text.measureText(it) + h * 0.34f }
-        if (signalBars >= 0) natural += baseSignalW + h * 0.30f
+        temperature?.let { natural += text.measureText(it) + h * 0.30f }
+        if (signalBars >= 0) natural += baseSignalW + h * 0.26f
         val fit = DisplayGeometry.clusterFitScale(edge - leftEnd, natural)
         if (fit > 0f) {
             val ts = baseText * fit
             val small = baseSmall * fit
+            val scaledH = contentH * fit
+            // Anchor the TOP on the slope clearance at the edge (worst slope in the span),
+            // grow downward; shrinking only pulls the bottom up, so visibility is monotonic.
+            val top = maxOf(cy - scaledH / 2f, slopeM * edge + margin)
+            val mid = top + scaledH / 2f
             text.textSize = ts
             text.color = textCol
             var x = edge
             temperature?.let { t ->
                 x -= text.measureText(t)
-                c.drawText(t, x, cy + ts * 0.36f, text)
-                x -= h * 0.34f * fit
+                c.drawText(t, x, mid + ts * 0.36f, text)
+                x -= h * 0.30f * fit
             }
             x -= text.measureText(clock)
-            c.drawText(clock, x, cy + ts * 0.36f, text)
-            x -= h * 0.36f * fit
+            c.drawText(clock, x, mid + ts * 0.36f, text)
+            x -= h * 0.30f * fit
 
             stroke.color = iconCol; fill.color = iconCol
-            stroke.strokeWidth = h * 0.024f * fit
-            drawPin(c, x - small / 2, cy, small, filled = false)
-            x -= small + h * 0.26f * fit
+            stroke.strokeWidth = h * 0.022f * fit
+            drawPin(c, x - small / 2, mid, small, filled = false)
+            x -= small + h * 0.22f * fit
 
             if (signalBars >= 0) {
                 val blockW = baseSignalW * fit
-                text.textSize = h * 0.14f * fit
+                text.textSize = h * 0.12f * fit
                 text.color = iconCol
-                c.drawText(networkLabel, x - blockW, cy, text)
+                c.drawText(networkLabel, x - blockW, mid + text.textSize * 0.3f, text)
                 val barW = blockW / 5.5f
                 for (k in 0 until 4) {
                     fill.color = if (k < signalBars) iconCol else 0x55C3CCDB
                     val bx = x - blockW + k * barW * 1.35f
-                    c.drawRect(bx, cy + h * 0.05f * fit, bx + barW, cy + h * 0.10f * fit, fill)
+                    c.drawRect(bx, mid + h * 0.03f * fit, bx + barW, mid + h * 0.08f * fit, fill)
                 }
-                x -= blockW + h * 0.30f * fit
+                x -= blockW + h * 0.26f * fit
             }
 
             stroke.color = iconCol
-            drawBell(c, x - small / 2, cy, small)
-            x -= small + h * 0.32f * fit
+            drawBell(c, x - small / 2, mid, small)
+            x -= small + h * 0.28f * fit
 
             val ar = baseAvatarR * fit
             fill.color = avatarFill
-            c.drawCircle(x - ar, cy, ar, fill)
-            text.textSize = h * 0.20f * fit
+            c.drawCircle(x - ar, mid, ar, fill)
+            text.textSize = h * 0.18f * fit
             text.color = textCol
             text.textAlign = Paint.Align.CENTER
-            c.drawText(profileInitial, x - ar, cy + text.textSize * 0.36f, text)
+            c.drawText(profileInitial, x - ar, mid + text.textSize * 0.36f, text)
             text.textAlign = Paint.Align.LEFT
         }
     }

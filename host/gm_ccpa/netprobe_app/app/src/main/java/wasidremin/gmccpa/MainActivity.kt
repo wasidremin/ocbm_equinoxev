@@ -1310,6 +1310,11 @@ class MainActivity : Activity() {
             "capture_whole_os" -> setCaptureScope(LogCapture.Scope.WHOLE_OS)
             "capture_own" -> setCaptureScope(LogCapture.Scope.OWN_PROCESS)
             "ocbm_selftest" -> runAsync { ocbm().selfTest() }
+            "open_tab" -> {
+                val tab = i.getIntExtra("tab", 3)
+                val sub = i.getIntExtra("subtab", 0)
+                ui.openTabFromScript(tab, sub)
+            }
             // Hardware-free preview: real insets + real vehicle reads, no OCBM
             // claim or SUBSCRIBE. Never report this as a live CarPlay negotiation.
             "topbar_preview" -> {
@@ -1332,9 +1337,14 @@ class MainActivity : Activity() {
                             uiPercent = i.getIntExtra("ui_size", c.uiPercent), fit = i.getBooleanExtra("fit", c.fit),
                             stats = i.getBooleanExtra("stats", c.stats))))
                     }
-                    startActivity(Intent(this, wasidremin.gmccpa.av.CarPlayActivity::class.java)
+                    val preview = Intent(this, wasidremin.gmccpa.av.CarPlayActivity::class.java)
                         .putExtra("topbar_preview", true)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    // Preview-only wedge-slope override (rise/run) for slope-layout checks
+                    // without the car; absent means the live cutout decides, as in production.
+                    if (i.hasExtra("slope_m")) preview.putExtra("slope_test_m",
+                        i.getFloatExtra("slope_m", 0f))
+                    startActivity(preview)
                 }
             }
             "ocbm_link" -> runAsync {

@@ -53,6 +53,49 @@ object DisplayGeometry {
         viewWidth - barHeight * 0.55f - rightInsetPx.coerceAtLeast(0).toFloat()
 
     /**
+     * Slope of the panel's top-edge cutout wedge: glass starts at y = slopeM * x.
+     *
+     * Vehicle-proven on the Equinox EV (2026-10-15 geometry log): the cutout bounding rects are
+     * `Rect(0, 0 - 2629, 167)` (top wedge) and `Rect(2629, 0 - 2932, 1134)` (right block) on a
+     * 2914x1134 window, safe insets 0/167/285/0. The panel's top edge is a straight slope down
+     * left-to-right, so the wedge's bounding box gives the glass line directly: rise 167 over
+     * run 2629 (m = 0.06352). The bar lives at y 0..168 — its BOTTOM row is on glass almost
+     * everywhere, its top progressively is not — which is why bar content hangs from computed
+     * tops near the bottom instead of centering in the rect (centering put the whole right
+     * cluster on missing glass at x 2000-2540, where the slope eats y 0..127-161). Zero when
+     * degenerate: no wedge means a rectangular panel and every shift below is a no-op. Pure.
+     */
+    fun wedgeSlopeM(wedgeRight: Int, wedgeBottom: Int): Float =
+        if (wedgeRight > 0 && wedgeBottom > 0) wedgeBottom.toFloat() / wedgeRight else 0f
+
+    /**
+     * Downward shift so a content box whose centered top is [centeredTop] clears the slope at
+     * position [x], with [margin] of glass to spare. Zero on a flat panel (or when the centered
+     * position already clears) — the emulator renders byte-identical to the centered layout.
+     * A level row of icons uses its LAST (rightmost, steepest-slope) x so the row stays level.
+     * Pure and unit-tested.
+     */
+    fun levelShift(centeredTop: Float, x: Float, slopeM: Float, margin: Float): Float =
+        ((slopeM * x + margin) - centeredTop).coerceAtLeast(0f)
+
+    /**
+     * Right-edge x for the cluster such that a [contentH]-tall block hung from the slope
+     * clearance still ends above the bar bottom: E <= (barH - 2*margin - contentH) / slopeM.
+     * Takes the further-left of that and [clusterRightEdge] (which already keeps the cluster
+     * off the fully-cut right block with the car-like end indent). On the vehicle (168px bar,
+     * m = 0.06352, 50px content) this lands near x 1600 — mid-panel, where ~50px of glass
+     * exists — instead of x 2540, where 7px exists. Degenerate slope or content falls back to
+     * [clusterRightEdge]. May return less than the left block end (or negative) for absurd
+     * inputs; the caller hides the cluster then instead of overlapping. Pure and unit-tested.
+     */
+    fun clusterRightEdgeOnGlass(viewWidth: Float, barHeight: Float, rightInsetPx: Int,
+                                slopeM: Float, contentH: Float, margin: Float): Float {
+        val e0 = clusterRightEdge(viewWidth, barHeight, rightInsetPx)
+        if (slopeM <= 0f || contentH <= 0f) return e0
+        return minOf(e0, (barHeight - 2 * margin - contentH) / slopeM)
+    }
+
+    /**
      * Right edge x of the bar's left icon block: last icon centre plus half a pitch.
      *
      * Mirrors [wasidremin.gmccpa.GmTopBarView]'s loop (first centre `firstCxFrac` x height,

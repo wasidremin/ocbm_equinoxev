@@ -9,8 +9,23 @@ import org.junit.Test
  * right side cut away; vehicle reports safe insets 0/167/285/0 on a 2914x1134 window).
  * The 2026-10-18 full-window capture proved the bar's clock + temperature — the rightmost
  * items — were drawn at x 2700-2850, i.e. on missing glass.
+ *
+ * The 2026-10-15 geometry log gives the exact glass line: cutout rects
+ * `Rect(0, 0 - 2629, 167)` + `Rect(2629, 0 - 2932, 1134)`, so the top wedge is a straight
+ * slope m = 167/2629 and the bar (y 0..168) is visible only below it. Centering content in
+ * the rect put the whole right cluster on missing glass (slope eats y 0..127-161 at
+ * x 2000-2540); bar content therefore hangs from slope-clearing tops near the bottom.
  */
 class TopBarFitTest {
+    // Vehicle constants shared by the slope tests below.
+    private val w = 2914f
+    private val h = 168f
+    private val inset = 285
+    private val slopeM = 167f / 2629f          // 0.06352
+    private val margin = h * 0.05f             // 8.4
+    private val contentH = h * 0.28f           // 47.04: tallest cluster item (status icons)
+    private val leftEnd = h * 6.67f            // 1120.56: last icon centre + half pitch
+
     @Test fun zeroInsetKeepsIndentedRightAlignment() {
         // 0.55 x bar height of deliberate indent from the side, like the car's own bar.
         assertEquals(2914f - 168f * 0.55f, DisplayGeometry.clusterRightEdge(2914f, 168f, 0), 0.001f)
@@ -82,6 +97,78 @@ class TopBarFitTest {
         assertEquals(0, DisplayGeometry.nearestPresetIndex(p, -10))
         assertEquals(5, DisplayGeometry.nearestPresetIndex(p, 9999))
         assertEquals(0, DisplayGeometry.nearestPresetIndex(intArrayOf(), 48))
+    }
+
+    @Test fun wedgeSlopeMatchesMeasuredCutout() {
+        assertEquals(167f / 2629f, DisplayGeometry.wedgeSlopeM(2629, 167), 1e-6f)
+    }
+
+    @Test fun degenerateWedgeMeansFlatPanel() {
+        assertEquals(0f, DisplayGeometry.wedgeSlopeM(0, 167), 0f)
+        assertEquals(0f, DisplayGeometry.wedgeSlopeM(2629, 0), 0f)
+        assertEquals(0f, DisplayGeometry.wedgeSlopeM(-5, 10), 0f)
+    }
+
+    @Test fun flatPanelNeedsNoShift() {
+        assertEquals(0f, DisplayGeometry.levelShift(40f, 1046f, 0f, margin), 0f)
+        // Centered content that already clears keeps its position.
+        assertEquals(0f, DisplayGeometry.levelShift(80f, 500f, slopeM, margin), 0f)
+    }
+
+    @Test fun leftRowClearsSlopeAtLastIcon() {
+        // Icon box top when centered: cy - icon/2 = (0.47 - 0.23) * h.
+        val centeredTop = h * 0.24f
+        // Last icon centre: (0.95 + 6 * 0.88) * h.
+        val shift = DisplayGeometry.levelShift(centeredTop, h * 6.23f, slopeM, margin)
+        assertEquals(34.6f, shift, 0.5f)
+        // Every icon's top then sits on glass with margin to spare.
+        val top = centeredTop + shift
+        for (i in 0..6) {
+            val x = h * (0.95f + 0.88f * i)
+            assertTrue("icon $i top $top under slope ${slopeM * x}", top - slopeM * x >= margin - 0.5f)
+        }
+    }
+
+    @Test fun flatPanelKeepsHistoricalEdge() {
+        assertEquals(DisplayGeometry.clusterRightEdge(w, h, inset),
+            DisplayGeometry.clusterRightEdgeOnGlass(w, h, inset, 0f, contentH, margin), 0.001f)
+        assertEquals(DisplayGeometry.clusterRightEdge(w, h, inset),
+            DisplayGeometry.clusterRightEdgeOnGlass(w, h, inset, slopeM, 0f, margin), 0.001f)
+    }
+
+    @Test fun vehicleEdgeSolvesGlassHeight() {
+        // (168 - 2*8.4 - 47.04) / 0.06352: the furthest-right x with ~50px of glass.
+        val edge = DisplayGeometry.clusterRightEdgeOnGlass(w, h, inset, slopeM, contentH, margin)
+        assertEquals(1640f, edge, 3f)
+        // Strictly inside both the historical edge and the glass end.
+        assertTrue(edge < DisplayGeometry.clusterRightEdge(w, h, inset))
+        assertTrue(edge < w - inset)
+    }
+
+    @Test fun absurdContentHidesInsteadOfOverlapping() {
+        val edge = DisplayGeometry.clusterRightEdgeOnGlass(w, h, inset, slopeM, 500f, margin)
+        assertTrue(edge < leftEnd)
+    }
+
+    @Test fun vehicleClusterSpanIsFullyOnGlass() {
+        val edge = DisplayGeometry.clusterRightEdgeOnGlass(w, h, inset, slopeM, contentH, margin)
+        // Conservative worst case: every field populated, long 12h clock + temperature.
+        val natural = 700f
+        val slot = edge - leftEnd
+        assertTrue("slot $slot must hold a shrunken cluster", slot > 0f)
+        val fit = DisplayGeometry.clusterFitScale(slot, natural)
+        assertTrue(fit < 1f && fit > 0.5f)
+        // Drawn span starts where the left block ends and ends at the solved edge.
+        val drawnLeft = edge - slot
+        assertEquals(leftEnd, drawnLeft, 0.5f)
+        // The anchored top clears the slope at every point of the span (binds at the edge).
+        val top = slopeM * edge + margin
+        for (k in 0..10) {
+            val x = drawnLeft + (edge - drawnLeft) * k / 10f
+            assertTrue("x=$x top=$top slope=${slopeM * x}", top >= slopeM * x)
+        }
+        // The block bottom stays inside the bar.
+        assertTrue(top + contentH * fit <= h - margin + 0.5f)
     }
 
     @Test fun settingsCeilingsCoverTheMeasuredCutout() {

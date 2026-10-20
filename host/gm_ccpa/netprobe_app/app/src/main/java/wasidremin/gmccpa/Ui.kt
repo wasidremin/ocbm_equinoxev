@@ -1180,6 +1180,16 @@ class LauncherUi(private val act: Activity) {
         if (i > 0) parent.getChildAt(i - 1).visibility = row.visibility
     }
 
+    fun openTabFromScript(index: Int, subtab: Int = 0) = act.runOnUiThread {
+        settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
+        introRestore?.let { intro.removeCallbacks(it) }
+        hideIntroLayer()
+        showTab(index.coerceIn(0, 3))
+        if (index == 3 && ::insightsPage.isInitialized) {
+            insightsPage.selectSubtab(subtab)
+        }
+    }
+
     private fun openIntroSettings() {
         uiLog.i("intro: settings")
         settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
