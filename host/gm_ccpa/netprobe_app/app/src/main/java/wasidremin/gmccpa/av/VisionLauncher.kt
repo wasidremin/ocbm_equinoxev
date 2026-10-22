@@ -115,7 +115,11 @@ object VisionLauncher {
     private fun stamp(pattern: String): String =
         SimpleDateFormat(pattern, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
 
+    /** The one role that needs no icon template: it only drives the strip's Home toggle. */
+    const val ROLE_HOME = "home"
+
     fun isCalibrated(ctx: Context, role: String): Boolean =
+        role == ROLE_HOME ||
         IconTemplateStore.loadTemplate(ctx, ScreenModel.templateName(ScreenModel.Kind.STRIP, role)) != null ||
             IconTemplateStore.loadTemplate(ctx, ScreenModel.templateName(ScreenModel.Kind.GRID, role)) != null
 
@@ -246,6 +250,7 @@ object VisionLauncher {
         r.glyphOtherSource = IconTemplateStore.sourceOf(r.ctx, ScreenModel.GLYPH_OTHER)
         r.step("templates", "strip=${r.stripSource} grid=${r.gridSource} glyph=${r.glyphDashSource}/${r.glyphOtherSource}" +
             " evidence=${if (saveScreenshots) "on" else "off"}")
+        if (r.role == ROLE_HOME) return homeAttempt(r, glyphDash, glyphOther)
         if (strip == null && grid == null) {
             throw Abort("no strip.${r.role} or grid.${r.role} template available")
         }
@@ -303,6 +308,52 @@ object VisionLauncher {
                 gridAttempt(r, surface, frame.gray, grid, glyphDash, glyphOther)?.let { return it }
             }
             if (surf == ScreenModel.Surface.NOT_DASHBOARD) break
+        }
+        return CarPlayLauncher.Outcome.NOT_FOUND
+    }
+
+    /**
+     * CarPlay Home: tap the strip's Home/Dashboard toggle until the screen is not the Dashboard.
+     *
+     * The toggle goes Dashboard -> Home from the Dashboard and app -> Home from an app, but from
+     * the Home grid it goes back to the Dashboard — hence the loop (at most [MAX_TOGGLES] taps)
+     * and the surface check after each. When the glyph templates are missing the surface is
+     * UNKNOWN: one tap is made and the result is UNVERIFIED rather than guessed. The only blind
+     * tap ever sent is the toggle itself.
+     */
+    private fun homeAttempt(
+        r: Run,
+        glyphDash: IconMatcher.IconTemplate?,
+        glyphOther: IconMatcher.IconTemplate?,
+    ): CarPlayLauncher.Outcome {
+        val surface = CarPlayFrameGrabber.awaitLiveSurfaceView(r.ctx, SURFACE_WAIT_MS)
+            ?: throw Abort("CarPlay surface not ready")
+        var frame = stable(r, surface)
+        r.beforeOwned = frame.owned
+        r.mark("capture")
+        for (i in 1..MAX_TOGGLES) {
+            checkBudget(r)
+            tap(r, ScreenModel.TOGGLE_NX, ScreenModel.TOGGLE_NY, "toggle", isTarget = i == 1)
+            val settled = afterChange(r, surface, frame.gray)
+            if (settled == null) {
+                r.step("toggle$i", "screen did not change within $CHANGE_WAIT_MS ms")
+                return CarPlayLauncher.Outcome.UNVERIFIED
+            }
+            val ev = ScreenModel.surfaceDetailed(settled.gray, glyphDash, glyphOther)
+            r.step("toggle$i", "surface=${ev.surface}")
+            if (ev.surface == ScreenModel.Surface.UNKNOWN) {
+                settled.owned?.recycle()
+                return CarPlayLauncher.Outcome.UNVERIFIED
+            }
+            if (ev.surface == ScreenModel.Surface.NOT_DASHBOARD) {
+                r.verifyOwned = settled.owned
+                r.verifyDashScore = ev.dashboardScore
+                r.verifyOtherScore = ev.otherScore
+                r.mark("verify")
+                return CarPlayLauncher.Outcome.SUCCESS
+            }
+            settled.owned?.recycle()
+            frame = Frame(settled.gray, null)
         }
         return CarPlayLauncher.Outcome.NOT_FOUND
     }

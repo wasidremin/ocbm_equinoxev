@@ -75,32 +75,28 @@ class CarPlayActivity : Activity() {
     private var windowFitScale: Float = 1f
     private var topBar: wasidremin.gmccpa.GmTopBarView? = null
     private var topBarData: wasidremin.gmccpa.TopBarVehicleData? = null
-    enum class CarPlayApp { NAV, MUSIC, PHONE, APPS, CAR, CONTROLS, ENERGY }
-    private var gmCandidatesLogged = false
-
-    private fun requestCarPlayApp(kind: CarPlayApp) {
-        if (previewOnly) { log.i("topbar: preview request ${kind.name.lowercase()} — no command sent"); return }
-        when (kind) {
-            CarPlayApp.APPS -> launchAppsGrid()
-            CarPlayApp.CAR, CarPlayApp.CONTROLS, CarPlayApp.ENERGY -> launchVehicleDestination(kind)
-            // iPhone-side buttons: vision launcher (strip -> Home toggle -> grid). AC Home is not used:
-            // the box drops it while dPadSupport=false (2026-10-15 log). Missing templates = old behaviour.
-            CarPlayApp.NAV -> launchOrFallback("maps") {
+    /**
+     * What each top-bar tile does. AAOS_* / CHARGING leave for the car's own apps
+     * ([VehicleLaunch]); CP_* drive the CarPlay UI on the phone through the vision launcher
+     * (AC Home is not usable: the box drops it while dPadSupport=false, 2026-10-15 log);
+     * APP_SETTINGS / INSIGHTS bring this app's settings forward on the matching tab.
+     */
+    private fun requestBarTarget(target: wasidremin.gmccpa.BarTarget) {
+        if (previewOnly) { log.i("topbar: preview request ${target.name.lowercase()} — no command sent"); return }
+        when (target) {
+            wasidremin.gmccpa.BarTarget.AAOS_HOME -> VehicleLaunch.home(this)
+            wasidremin.gmccpa.BarTarget.CHARGING -> VehicleLaunch.charging(this)
+            wasidremin.gmccpa.BarTarget.AAOS_SETTINGS -> VehicleLaunch.settings(this)
+            wasidremin.gmccpa.BarTarget.CP_HOME -> launchOrFallback("home") {
+                log.i("topbar: carplay home unavailable — nothing sent")
+            }
+            wasidremin.gmccpa.BarTarget.CP_MAPS -> launchOrFallback("maps") {
                 log.i("topbar: maps templates missing — nothing sent")
             }
-            CarPlayApp.MUSIC -> {
-                val role = if (wasidremin.gmccpa.av.VisionLauncher.isCalibrated(this, "spotify")) "spotify" else "music"
-                launchOrFallback(role) {
-                    val index = when {
-                        nowPlaying.snapshot.playing -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
-                        nowPlaying.snapshot.playbackStatus == null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
-                        else -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY
-                    }
-                    sendMedia(index)
-                    log.i("topbar: music templates missing — play/pause toggle $index sent")
-                }
+            wasidremin.gmccpa.BarTarget.CP_SPOTIFY -> launchOrFallback("spotify") {
+                log.i("topbar: spotify templates missing — nothing sent")
             }
-            CarPlayApp.PHONE -> {
+            wasidremin.gmccpa.BarTarget.CP_PHONE -> {
                 val action = nowPlaying.phoneAction()
                 if (action != null) {
                     touchHandler?.post {
@@ -114,6 +110,8 @@ class CarPlayActivity : Activity() {
                     }
                 }
             }
+            wasidremin.gmccpa.BarTarget.APP_SETTINGS -> openSettings(tab = 0)
+            wasidremin.gmccpa.BarTarget.INSIGHTS -> openSettings(tab = 3)
         }
     }
 
@@ -126,68 +124,6 @@ class CarPlayActivity : Activity() {
             log.i("topbar: launch $role -> ${rec.outcome}" + (rec.error?.let { " ($it)" } ?: ""))
         }
         log.i("topbar: launch $role ${if (started) "started" else "ignored (busy/debounce)"}")
-    }
-
-    private fun startResolved(intent: Intent, label: String): Boolean = runCatching {
-        if (intent.resolveActivity(packageManager) == null) return false
-        startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        log.i("topbar: launched $label ${intent.component ?: intent.action}")
-        true
-    }.getOrElse { log.w("topbar: launch $label failed: ${it.message}"); false }
-
-    private fun launchAppsGrid() {
-        // ACTION_ALL_APPS is newer than this app's API-32 compile target: refer to its action string.
-        val allApps = runCatching { Intent("android.intent.action.ALL_APPS") }.getOrNull()
-        if (allApps != null && startResolved(allApps, "ACTION_ALL_APPS")) return
-        val pm = packageManager
-        val candidates = listOf(
-            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                .setPackage("com.android.car.carlauncher").putExtra("show_all_apps", true),
-            Intent(Intent.ACTION_MAIN).setClassName("com.android.car.carlauncher",
-                "com.android.car.carlauncher.AppGridActivity"),
-        )
-        for (candidate in candidates) {
-            val resolved = runCatching { pm.resolveActivity(candidate, 0) }.getOrNull()
-            if (resolved?.activityInfo != null) {
-                if (startResolved(candidate.setClassName(resolved.activityInfo.packageName,
-                        resolved.activityInfo.name), "AAOS app grid")) return
-            }
-        }
-        startResolved(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "CATEGORY_HOME")
-    }
-
-    private fun launchVehicleDestination(kind: CarPlayApp) {
-        val pm = packageManager
-        val probes = listOf(Intent(Intent.ACTION_MAIN), Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_DEFAULT))
-        val hits = LinkedHashMap<String, android.content.pm.ResolveInfo>()
-        for (probe in probes) {
-            for (ri in runCatching { pm.queryIntentActivities(probe, 0) }.getOrDefault(emptyList())) {
-                val pkg = ri.activityInfo?.packageName ?: continue
-                if (pkg.startsWith("com.gm.") || pkg.startsWith("com.android.car."))
-                    hits["$pkg/${ri.activityInfo.name}"] = ri
-            }
-        }
-        if (!gmCandidatesLogged) {
-            gmCandidatesLogged = true
-            hits.forEach { (name, ri) -> log.i("topbar: vehicle candidate $name label=${ri.loadLabel(pm)}") }
-            if (hits.isEmpty()) log.i("topbar: no com.gm./com.android.car. activity candidates")
-        }
-        val candidates = hits.values.mapNotNull { ri ->
-            val info = ri.activityInfo ?: return@mapNotNull null
-            val label = runCatching { ri.loadLabel(pm)?.toString() ?: "" }.getOrDefault("")
-            VehicleCandidate(info.packageName, info.name, label)
-        }
-        val vehicleKind = when (kind) {
-            CarPlayApp.CAR -> VehicleKind.CAR
-            CarPlayApp.CONTROLS -> VehicleKind.CONTROLS
-            else -> VehicleKind.ENERGY
-        }
-        val match = selectVehicleDestination(vehicleKind, candidates)
-        if (match != null) {
-            val target = Intent(Intent.ACTION_MAIN).setClassName(match.packageName, match.className)
-            if (startResolved(target, "${kind.name.lowercase()} screen")) return
-        }
-        startResolved(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "CATEGORY_HOME (${kind.name.lowercase()} fallback)")
     }
 
     /**
@@ -292,15 +228,7 @@ class CarPlayActivity : Activity() {
                 bar = wasidremin.gmccpa.GmTopBarView(this)
                 bar.onButton = { button ->
                     log.i("topbar: ${button.name} button requested")
-                    requestCarPlayApp(when (button) {
-                        wasidremin.gmccpa.GmTopBarView.Button.CAR -> CarPlayApp.CAR
-                        wasidremin.gmccpa.GmTopBarView.Button.APPS -> CarPlayApp.APPS
-                        wasidremin.gmccpa.GmTopBarView.Button.CONTROLS -> CarPlayApp.CONTROLS
-                        wasidremin.gmccpa.GmTopBarView.Button.ENERGY -> CarPlayApp.ENERGY
-                        wasidremin.gmccpa.GmTopBarView.Button.NAV -> CarPlayApp.NAV
-                        wasidremin.gmccpa.GmTopBarView.Button.MUSIC -> CarPlayApp.MUSIC
-                        wasidremin.gmccpa.GmTopBarView.Button.PHONE -> CarPlayApp.PHONE
-                    })
+                    requestBarTarget(button)
                 }
                 bar.elevation = dp(10).toFloat()
                 val barH = (strip * windowFitScale).roundToInt().coerceAtLeast(1)
@@ -464,6 +392,8 @@ class CarPlayActivity : Activity() {
         const val DISPLAY_H = 960
         // Bind runs on the UI thread in onCreate; keep the worst case (4 ports x RETRIES x BACKOFF)
         // safely under the ~5 s ANR threshold. 4 x 6 x 150 ms = 3.6 s max, and normal binds are instant.
+        /** Settle time between the picture coming back and a settings-originated CarPlay tile acting. */
+        private const val BAR_TARGET_DELAY_MS = 900L
         private const val BIND_RETRIES = 6
         private const val BIND_BACKOFF_MS = 150L
         /** Desync guard on the seam length prefix; matches HevcRenderer and session.rs MAX_FRAME_BODY. */
@@ -563,6 +493,24 @@ class CarPlayActivity : Activity() {
     private var introFinished = false
     private val introLate = Runnable { finishIntro(late = true) }
 
+    /**
+     * The settings screen asked for a CarPlay action (a top-bar CarPlay tile tapped there). Runs
+     * once the picture has had time to come back: the vision launcher needs a live, stable frame.
+     */
+    private fun runPendingBarTarget(i: Intent?) {
+        val name = i?.getStringExtra(wasidremin.gmccpa.EXTRA_BAR_TARGET) ?: return
+        i.removeExtra(wasidremin.gmccpa.EXTRA_BAR_TARGET)
+        val target = runCatching { wasidremin.gmccpa.BarTarget.valueOf(name) }.getOrNull() ?: return
+        log.i("topbar: ${target.name} requested from settings — running once the picture is up")
+        root.postDelayed({ if (!isDestroyed) requestBarTarget(target) }, BAR_TARGET_DELAY_MS)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        runPendingBarTarget(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         previewOnly = intent.getBooleanExtra("topbar_preview", false)
@@ -583,6 +531,7 @@ class CarPlayActivity : Activity() {
         // compositor scales the picture up. Touch is normalised to the view.
         surfaceView.holder.setFixedSize(VideoFrame.width, VideoFrame.height)
         setContentView(root)
+        runPendingBarTarget(intent)
         if (Build.VERSION.SDK_INT >= 30) {
             // If GM's bar comes back (a swipe shows the bars transiently), the freed space is
             // gone: hide our bar until the next applySystemUi re-measures. Re-hiding GM's bars
@@ -631,6 +580,10 @@ class CarPlayActivity : Activity() {
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.START))
+        }
+        // Hardware-free look at the in-call pill: `call_preview` = ring | active | muted.
+        if (previewOnly) intent.getStringExtra("call_preview")?.let { v ->
+            callPill?.bind(if (v == "ring") CallPhase.RINGING else CallPhase.ACTIVE, v == "muted", {}, {}, {})
         }
         if (!previewOnly) maybeShowIntro()
 
@@ -1000,13 +953,15 @@ class CarPlayActivity : Activity() {
      * Bring the launcher forward and keep it there. MainActivity's resume path otherwise treats a
      * return to the app as "the picture should come back" and covers settings immediately.
      */
-    private fun openSettings() {
+    private fun openSettings(tab: Int = -1) {
         DisplayPrefs.holdLauncher = true
-        log.i("settings — holding the launcher in front; the session stays up")
+        log.i("settings — holding the launcher in front; the session stays up" +
+            if (tab >= 0) " (tab $tab)" else "")
         log.i(AacPlayer.settingsFocusLine())
         startActivity(
             Intent(this, wasidremin.gmccpa.MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                .apply { if (tab >= 0) putExtra(wasidremin.gmccpa.EXTRA_OPEN_TAB, tab) }
         )
     }
 

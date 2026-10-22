@@ -1504,6 +1504,12 @@ class OcbmClient(
         return subscribed
     }
 
+    /** `[INPUT_COMMAND][CMD_NIGHT_MODE][on]` -> the box's `setNightMode{nightMode}`. */
+    fun sendNightMode(night: Boolean): Boolean {
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_NIGHT_MODE, if (night) 1 else 0))
+        return subscribed
+    }
+
     /** `[INPUT_NAV][nav]`. The box ignores this while the advertised config has `dPadSupport: false`. */
     fun sendNav(nav: Byte): Boolean {
         enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_NAV, nav))

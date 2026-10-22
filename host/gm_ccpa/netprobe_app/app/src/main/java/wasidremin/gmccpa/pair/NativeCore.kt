@@ -99,24 +99,11 @@ object NativeCore {
      */
     fun mediaButton(index: Int): Boolean = available && nativeMediaButton(index)
 
-    /**
-     * Restrict ([limit] = true) or release the CarPlay UI for driving.
-     *
-     * BLOCKING on the same global event-channel mutex as [touch] and [mediaButton] — never call from
-     * a binder or UI thread. `DriveStateWatcher` hands these to its own single-thread executor.
-     *
-     * Returns false between sessions, which is normal: the command needs a live event channel, and
-     * the state is re-asserted on session-up rather than persisted across one.
-     */
-    fun setLimitedUI(limit: Boolean): Boolean = available && nativeSetLimitedUI(limit)
-
-    /**
-     * Mirror the head unit's day/night state into CarPlay's UI.
-     *
-     * Same threading contract as [setLimitedUI]: BLOCKING on the event-channel mutex, driven from
-     * `VehicleStateWatcher`'s executor, false between sessions.
-     */
-    fun setNightMode(night: Boolean): Boolean = available && nativeSetNightMode(night)
+    // setLimitedUI / setNightMode are NOT JNI calls any more. The receiver that owns the CarPlay
+    // control session runs on the box (carplayd), so these levers ride OCBM CMD_LIMITED_UI_ON/OFF
+    // and CMD_NIGHT_MODE (see VehicleStateWatcher). The old JNI exports were named
+    // `Java_zeno_gmccpa_…` and never matched this class, so every call died with "No implementation
+    // found" (2026-10-22 capture; 428 + 65 hits in the server log).
 
     /** True once pair-verify has completed and the channel flipped to ChaCha20-Poly1305. */
     fun isEncrypted(handle: Long): Boolean = handle > 0L && nativeIsEncrypted(handle)
@@ -134,8 +121,6 @@ object NativeCore {
     private external fun nativeIsEncrypted(handle: Long): Boolean
     private external fun nativeTouch(phase: Int, nx: Float, ny: Float, w: Int, h: Int): Boolean
     private external fun nativeMediaButton(index: Int): Boolean
-    private external fun nativeSetLimitedUI(limit: Boolean): Boolean
-    private external fun nativeSetNightMode(night: Boolean): Boolean
     private external fun nativeForceKeyFrame(): Boolean
     private external fun nativeDestroy(handle: Long)
 }

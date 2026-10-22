@@ -45,7 +45,10 @@ class NowPlayingState {
     private var sessionRecords = 0L
     private var sessionArtwork = 0L
     private var firstRecordAtMs = 0L
-    private val sessionStartMs = System.currentTimeMillis()
+    // This object is PROCESS-wide (CarPlayActivity.nowPlaying), so the clock has to be re-based by
+    // [beginSession] — measured from construction, "first record N s after the seam opened" read
+    // 7769 s on the 2026-10-22 drive (the app had been up since 18:59, the session began 21:09).
+    private var sessionStartMs = System.currentTimeMillis()
     private var lastBeatAtMs = sessionStartMs
     private var silentLogged = false
 
@@ -340,6 +343,21 @@ class NowPlayingState {
         val next = snapshot.copy(artwork = art.artwork, artworkId = art.artworkId)
         snapshot = next
         return next
+    }
+
+    /**
+     * A CarPlay session is starting: re-base the sync clock so `firstRecordAfter` is measured from
+     * HERE, and drop the previous session's tallies. Does not touch the merged picture.
+     */
+    fun beginSession() = synchronized(this) {
+        val now = System.currentTimeMillis()
+        sessionStartMs = now
+        lastBeatAtMs = now
+        firstRecordAtMs = 0L
+        sessionRecords = 0L
+        sessionArtwork = 0L
+        tally.clear()
+        silentLogged = false
     }
 
     /**

@@ -106,6 +106,63 @@ object DisplayGeometry {
         barHeight * (firstCxFrac + (count - 1) * pitchFrac + pitchFrac / 2f)
 
     /**
+     * One level row of square app tiles hung from the panel slope.
+     *
+     * [size] is the tile edge, [pitch] centre-to-centre spacing, [x0] the first tile's LEFT
+     * edge, [top] the shared tile top, [end] the right edge of the last tile.
+     */
+    data class TileRow(val size: Float, val pitch: Float, val x0: Float, val top: Float, val end: Float)
+
+    /**
+     * Largest tile row that is entirely on glass.
+     *
+     * Tiles are bottom-justified in the bar (a [margin] clear of the hairline) because on a
+     * sloped panel the bottom row of the bar is the part that is always visible; the row is
+     * level, so the LAST (rightmost, steepest-slope) tile decides: its top must clear
+     * `slopeM * end + margin`. With pitch `(1 + gapFrac) * size` and `x0` fixed this is linear
+     * in size: `size * (1 + slopeM * (count - 1) * (1 + gapFrac) + slopeM) <= barH - 2.5 *
+     * margin - slopeM * x0`. Capped at [maxFrac] of the bar height (a flat panel gets tiles as
+     * large as the car's own icons, never larger) and floored at [minFrac] so an absurd slope
+     * shrinks the tiles rather than making them unreadable. When [rightClusterRoom] says the
+     * right cluster would be crushed, the row shrinks by [shrink] steps (down to [minFrac])
+     * until `end + minGap` leaves the cluster at least [minClusterScale] of its natural width.
+     * Zero slope gives a plain centred-looking row at [maxFrac]. Pure and unit-tested.
+     */
+    fun topBarTiles(
+        barHeight: Float,
+        slopeM: Float,
+        count: Int,
+        x0: Float,
+        margin: Float,
+        gapFrac: Float = 0.28f,
+        maxFrac: Float = 0.66f,
+        minFrac: Float = 0.34f,
+        rightClusterRoom: ((end: Float) -> Float)? = null,
+        minClusterScale: Float = 0.8f,
+        shrink: Float = 0.94f,
+    ): TileRow {
+        val n = count.coerceAtLeast(1)
+        val m = slopeM.coerceAtLeast(0f)
+        val spans = (n - 1) * (1f + gapFrac) + 1f
+        val limit = (barHeight - 2.5f * margin - m * x0) / (1f + m * spans)
+        var size = minOf(barHeight * maxFrac, limit).coerceAtLeast(barHeight * minFrac)
+        fun rowOf(s: Float): TileRow {
+            val pitch = s * (1f + gapFrac)
+            val end = x0 + (n - 1) * pitch + s
+            return TileRow(s, pitch, x0, barHeight - 1.5f * margin - s, end)
+        }
+        var row = rowOf(size)
+        if (rightClusterRoom != null) {
+            var guard = 0
+            while (rightClusterRoom(row.end) < minClusterScale && size > barHeight * minFrac && guard++ < 24) {
+                size = (size * shrink).coerceAtLeast(barHeight * minFrac)
+                row = rowOf(size)
+            }
+        }
+        return row
+    }
+
+    /**
      * Uniform downscale so the right cluster fits between [leftBlockEnd] and [clusterRightEdge].
      *
      * 1 when the natural width fits (the common case — the bar draws at its designed sizes);

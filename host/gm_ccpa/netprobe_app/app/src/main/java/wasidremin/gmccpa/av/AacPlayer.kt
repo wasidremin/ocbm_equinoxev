@@ -92,6 +92,13 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      * starts from 0 — so the net figure is floored at 0 rather than trusted below it.
      */
     @Volatile private var underrunBaseline = -1
+    // Underrun forensics (consume thread only). 2026-10-22 showed 3 underruns in 30 s of steady
+    // playback with nothing logged at the moment they happened, so the 500-frame summary could not
+    // say whether the PHONE stopped delivering (long gap between decoded frames) or the device
+    // starved with frames arriving on time (short gap).
+    @Volatile private var lastPlayedAtMs = 0L
+    private var windowMaxGapMs = 0L
+    private var lastSeenUnderruns = -1
     /**
      * Per-stream latch for [EXPECT_FIRST_PCM]. Reset on the main thread in [onStreamStart];
      * set on the consume thread in [feed]. [consume]'s finally cancels the expectation when
@@ -581,6 +588,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
      */
     fun onStreamStart(scid: Long) {
         mediaScid = scid
+        lastPlayedAtMs = 0L   // a pause/restart is not a delivery gap
         warnedGain0 = false
         firstPcmThisConn = false
         SessionTrace.expect(EXPECT_FIRST_PCM, FIRST_PCM_MS,
@@ -1163,7 +1171,21 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                     underrunBaseline = track?.underrunCount ?: -1
                     log.i("FIRST AUDIO FRAME PLAYED ($underrunBaseline underruns before it — the fill baseline)")
                     if (!wasidremin.gmccpa.AudioRoute.bluetooth) CarPlayMediaBrowserService.claimCarSource()
+                    lastSeenUnderruns = underrunBaseline
+                    lastPlayedAtMs = 0L
+                    windowMaxGapMs = 0L
                 }
+                val playedAtMs = android.os.SystemClock.elapsedRealtime()
+                val gapMs = if (lastPlayedAtMs == 0L) 0L else playedAtMs - lastPlayedAtMs
+                lastPlayedAtMs = playedAtMs
+                if (gapMs > windowMaxGapMs) windowMaxGapMs = gapMs
+                val underNow = track?.underrunCount ?: -1
+                if (n > 1 && underNow > lastSeenUnderruns && lastSeenUnderruns >= 0) {
+                    log.w("underrun +${underNow - lastSeenUnderruns} (total $underNow, ${netUnderruns(underNow)} net) at frame $n — " +
+                        "previous decoded frame ${gapMs}ms earlier (a ~21 ms cadence means the device starved " +
+                        "with frames on time; a gap near or above ${TRACK_BUFFER_MS} ms means the phone stopped delivering)")
+                }
+                if (underNow >= 0) lastSeenUnderruns = underNow
                 if (n % 500 == 0L) {
                     // Judged like the stop() summary: no-track drops are an E, net underruns past the
                     // tolerance a W. framesDiscardedPaused is printed but never judged — it is the hold.
@@ -1178,7 +1200,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                     val msg = "$n audio frames played, ${framesDiscardedPaused.get()} discarded (paused), " +
                               "$dropped dropped (no track), $inputDropped dropped (no input buffer), " +
                               "${framesPlayedMuted.get()} played at gain 0, " +
-                              "$u underruns ($net net of the fill baseline)"
+                              "$u underruns ($net net of the fill baseline), longest frame gap ${windowMaxGapMs}ms"
+                    windowMaxGapMs = 0L
                     when {
                         dropped > 0 -> log.e("$msg — decoded media is reaching NO live track")
                         inputUp -> log.w("$msg — AAC input frames were dropped before the decoder")

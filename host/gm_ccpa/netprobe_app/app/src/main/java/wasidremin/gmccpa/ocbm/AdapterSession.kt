@@ -111,6 +111,9 @@ object AdapterSession {
     fun sendCommand(cmd: Byte): Boolean =
         client?.sendCommand(cmd) == true
 
+    fun sendNightMode(night: Boolean): Boolean =
+        client?.sendNightMode(night) == true
+
     fun sendNav(nav: Byte): Boolean =
         client?.sendNav(nav) == true
 

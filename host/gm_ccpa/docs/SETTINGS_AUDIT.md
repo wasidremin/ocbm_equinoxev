@@ -39,7 +39,7 @@ Conventions: "action only" = no persisted key. Preference files:
 | Right margin | `buildDisplay` card | `carplay_screen/safe_right` (immediate) | Now-Playing keep-out, next connection | Advanced | move | Numeric override |
 | Screen layout | `buildDisplay` card | `carplay_screen/mode` (immediate) | SYSTEM_UI/STATUS_HIDDEN/NAV_HIDDEN/FULLSCREEN | Settings | keep | Normal presentation preference |
 | Sidebar | `buildDisplay` card | `carplay_screen/sidebar` (immediate) | Rail beside CarPlay, restarts CarPlay | Settings | keep | Normal presentation preference |
-| Custom top bar | `buildDisplay` card | `carplay_screen/custom_top_bar` (immediate) | GM-style strip in freed status area | Settings | keep + relabel subtitle | Normal preference; subtitle must state consequence |
+| Custom top bar | `buildDisplay` card | `carplay_screen/custom_top_bar` (immediate) | Strip in freed status area: nine CarPlay-style tiles (doc 14 §15), also shown on the settings screen | Settings | keep + relabel subtitle | Normal preference; subtitle must state consequence |
 | Apply size now | `applyRow` (visible when `sizePending()`) | action | `onRestart()` | Advanced | move | Companion to legacy scale controls |
 | Restart app | `buildDisplay` bottom row | action | `onRestartApp()` | Advanced | move | Support escape hatch, not a preference |
 

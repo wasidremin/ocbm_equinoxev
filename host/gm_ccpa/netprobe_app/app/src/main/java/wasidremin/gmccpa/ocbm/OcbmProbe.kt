@@ -597,8 +597,39 @@ class OcbmProbe(context: Context) {
     @Volatile var linkAttemptInFlight = false
         private set
 
+    /** The last bring-up that reached SUBSCRIBE, and when — see [runAll]'s duplicate guard. */
+    @Volatile private var lastLinkResult: LinkResult? = null
+    @Volatile private var lastLinkOkAtMs = 0L
+
+    /**
+     * A second bring-up asked for within [DUPLICATE_LINK_MS] of a healthy, subscribed one is
+     * answered with that one's result instead of tearing the link down and redoing it.
+     *
+     * Device-observed 2026-10-22: the USB permission grant landed at 21:08:45.8, the link came up
+     * and subscribed, and the attach intent that the same grant produces started a second
+     * `runAll` at 21:08:47.8 — which stopped the fresh session ("a session is already live") and
+     * re-claimed the device. The box's ocbmd saw the transport drop and respawned in between. A
+     * real replug cannot hit this: it kills the transport, so `usb`/`client` are no longer live.
+     */
     fun runAll(subscribe: Boolean = true): LinkResult =
-        trackAttempt { ops.submit<LinkResult> { runAllLocked(subscribe) }.get() }
+        trackAttempt {
+            ops.submit<LinkResult> {
+                val prior = lastLinkResult
+                val age = android.os.SystemClock.elapsedRealtime() - lastLinkOkAtMs
+                if (subscribe && prior != null && prior.subscribed && client?.subscribed == true &&
+                    usb != null && age in 0 until DUPLICATE_LINK_MS) {
+                    log.i("link: duplicate bring-up ${age}ms after a healthy subscribed one — keeping the live session")
+                    prior
+                } else {
+                    runAllLocked(subscribe).also {
+                        if (subscribe && it.subscribed) {
+                            lastLinkResult = it
+                            lastLinkOkAtMs = android.os.SystemClock.elapsedRealtime()
+                        }
+                    }
+                }
+            }.get()
+        }
 
     /** Claim and HELLO only, for headless file operations without session bring-up. */
     fun connectForFiles(): LinkResult =
@@ -620,6 +651,9 @@ class OcbmProbe(context: Context) {
          * broadcast is still noticed. hasPermission() is a cheap binder call.
          */
         const val POLL_MS = 250L
+        /** A repeat [runAll] inside this window of a healthy subscribed one is ignored. */
+        private const val DUPLICATE_LINK_MS = 10_000L
+
         /** How often the permission dialog may be re-raised. Rarely, so this is never a dialog storm. */
         const val REQUEST_INTERVAL_MS = 30_000L
         /** Overall patience. Long enough to cover walking to the vehicle and replugging. */
@@ -1565,6 +1599,7 @@ class OcbmProbe(context: Context) {
     }
 
     private fun stopLocked(quick: Boolean = false) {
+        lastLinkResult = null
         // Take a final pass FIRST: the most interesting box lines are usually the last ones, and
         // after client.stop() there is no link left to fetch them over. On the quick path the pull is
         // bounded — and skipped outright when the link is not subscribed, which is also how the

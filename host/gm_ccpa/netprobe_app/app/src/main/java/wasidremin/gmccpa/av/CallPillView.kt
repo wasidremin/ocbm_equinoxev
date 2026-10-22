@@ -49,9 +49,10 @@ class CallPillView(context: Context) : FrameLayout(context) {
     init {
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
-        bg.cornerRadius = dp(40).toFloat()
-        bg.setColor(0xF2222B3A.toInt())
-        bg.setStroke(dp(3), 0xFF5AC8FA.toInt())
+        bg.cornerRadius = dp(36).toFloat()
+        // CarPlay's call card: near-black glass with a faint edge, not an accent-coloured frame.
+        bg.setColor(0xF01C1C1E.toInt())
+        bg.setStroke(dp(1), 0x33FFFFFF)
         background = bg
         elevation = dp(24).toFloat()
 
@@ -68,7 +69,7 @@ class CallPillView(context: Context) : FrameLayout(context) {
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         sublabel.textSize = 16f
-        sublabel.setTextColor(0xFFC3CCDB.toInt())
+        sublabel.setTextColor(0xFF8E8E93.toInt())
         sublabel.gravity = Gravity.CENTER_HORIZONTAL
         col.addView(sublabel, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
@@ -196,9 +197,14 @@ class CallPillView(context: Context) : FrameLayout(context) {
         internal const val GAP_DP = 16
         internal const val PAD_H_DP = 28
         internal const val PAD_V_DP = 20
-        internal const val ACTION_GREEN = 0xFF34C759.toInt()
+        // iOS system colours, as CarPlay's own call buttons use them.
+        internal const val ACTION_GREEN = 0xFF30D158.toInt()
         internal const val ACTION_RED = 0xFFFF453A.toInt()
-        internal const val ACTION_GREY = 0xFF3A4252.toInt()
+        internal const val ACTION_GREY = 0xFF48484A.toInt()
+        /** An engaged toggle (muted) turns white with a dark glyph, like CarPlay's. */
+        internal const val ACTION_ACTIVE = 0xFFFFFFFF.toInt()
+        /** Disc diameter; the surrounding column is [TOUCH_DP]. */
+        internal const val DISC_DP = 76
     }
 }
 
@@ -222,11 +228,11 @@ internal class PillActionButton(
         orientation = VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         disc.setIcon(icon, discColor)
-        val d = (64 * resources.displayMetrics.density).roundToInt()
+        val d = (CallPillView.DISC_DP * resources.displayMetrics.density).roundToInt()
         addView(disc, LayoutParams(d, d))
         text.text = label
-        text.textSize = 18f
-        text.setTextColor(Color.WHITE)
+        text.textSize = 17f
+        text.setTextColor(0xFFC7C7CC.toInt())
         text.gravity = Gravity.CENTER_HORIZONTAL
         addView(text, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = (8 * resources.displayMetrics.density).roundToInt()
@@ -251,19 +257,21 @@ internal class PillActionButton(
 
     fun setIcon(i: PillIcon) {
         icon = i
-        disc.setIcon(i, discColor)
+        disc.setIcon(i, if (i == PillIcon.UNMUTE) CallPillView.ACTION_ACTIVE else discColor)
         disc.invalidate()
     }
 }
 
-/** Circular disc with a white call/mic glyph, drawn in code — no assets. */
+/**
+ * Circular disc with a solid CarPlay-style glyph, drawn in code — no assets. White glyph on a
+ * coloured disc; the engaged mute toggle is the inverse (dark glyph on white).
+ */
 internal class DiscView(context: Context) : View(context) {
     private var icon: PillIcon = PillIcon.ANSWER
     private var color: Int = CallPillView.ACTION_GREEN
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.WHITE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
@@ -281,50 +289,52 @@ internal class DiscView(context: Context) : View(context) {
         val r = minOf(width, height) / 2f
         fill.color = color
         c.drawCircle(cx, cy, r, fill)
-        stroke.strokeWidth = r * 0.14f
+        val glyph = if (color == CallPillView.ACTION_ACTIVE) 0xFF1C1C1E.toInt() else Color.WHITE
         when (icon) {
-            PillIcon.ANSWER, PillIcon.END -> drawHandset(c, cx, cy, r, icon == PillIcon.END)
-            PillIcon.MUTE -> drawMic(c, cx, cy, r, crossed = false)
-            PillIcon.UNMUTE -> drawMic(c, cx, cy, r, crossed = true)
+            PillIcon.ANSWER -> drawHandset(c, cx, cy, r, glyph, hangUp = false)
+            PillIcon.END -> drawHandset(c, cx, cy, r, glyph, hangUp = true)
+            PillIcon.MUTE -> drawMic(c, cx, cy, r, glyph, crossed = false)
+            PillIcon.UNMUTE -> drawMic(c, cx, cy, r, glyph, crossed = true)
         }
     }
 
-    /** Classic handset curve; END mirrors it so the two read as opposites at a glance. */
-    private fun drawHandset(c: Canvas, cx: Float, cy: Float, r: Float, mirrored: Boolean) {
-        val s = if (mirrored) -1f else 1f
-        val w = r * 0.85f
-        val p = android.graphics.Path().apply {
-            moveTo(cx - s * w, cy - r * 0.45f)
-            cubicTo(cx - s * w * 1.3f, cy + r * 0.1f, cx - s * w * 0.2f, cy + r * 0.75f, cx + s * w * 0.5f, cy + r * 0.55f)
-            lineTo(cx + s * w * 0.85f, cy + r * 0.85f)
-            lineTo(cx + s * w * 0.45f, cy + r * 0.15f)
-            cubicTo(cx - s * w * 0.1f, cy - r * 0.05f, cx - s * w * 0.2f, cy - r * 0.35f, cx - s * w * 0.35f, cy - r * 0.62f)
-            close()
-        }
-        val old = stroke.style
-        stroke.style = Paint.Style.FILL
-        stroke.color = Color.WHITE
-        c.drawPath(p, stroke)
-        stroke.style = old
-        stroke.color = Color.WHITE
+    /**
+     * Solid handset (SF Symbols `phone.fill`). Hang-up is the same handset swung 135 degrees so
+     * the earpiece and mouthpiece point down (`phone.down.fill`) — the shape every CarPlay and
+     * iOS call screen uses, so the two buttons read as opposites at a glance.
+     */
+    private fun drawHandset(c: Canvas, cx: Float, cy: Float, r: Float, color: Int, hangUp: Boolean) {
+        fill.color = color
+        c.save()
+        c.translate(cx, cy)
+        if (hangUp) c.rotate(135f)
+        val k = r * 1.08f / 12f
+        c.scale(k, k)
+        c.translate(-12f, -12f)
+        c.drawPath(wasidremin.gmccpa.BarGlyphs.PHONE, fill)
+        c.restore()
     }
 
-    /** Mic capsule plus stand; a slash marks the muted (UNMUTE offers to unmute) state. */
-    private fun drawMic(c: Canvas, cx: Float, cy: Float, r: Float, crossed: Boolean) {
-        val mw = r * 0.42f
-        val mh = r * 0.62f
-        rect.set(cx - mw / 2, cy - mh, cx + mw / 2, cy - mh + mh)
-        val old = stroke.style
-        stroke.style = Paint.Style.FILL
-        stroke.color = Color.WHITE
-        c.drawRoundRect(rect, mw / 2, mw / 2, stroke)
-        stroke.style = Paint.Style.STROKE
-        stroke.color = Color.WHITE
-        c.drawArc(cx - mw * 0.85f, cy - mh + mh * 0.4f, cx + mw * 0.85f, cy + mh * 0.75f,
-            15f, 150f, false, stroke)
-        c.drawLine(cx, cy + mh * 0.45f, cx, cy + mh * 0.8f, stroke)
-        if (crossed) c.drawLine(cx - r * 0.55f, cy + r * 0.6f, cx + r * 0.55f, cy - r * 0.7f, stroke)
-        stroke.style = old
+    /** Solid microphone (`mic.fill`); [crossed] adds the slash of `mic.slash.fill`, with a gap cut in the disc colour. */
+    private fun drawMic(c: Canvas, cx: Float, cy: Float, r: Float, color: Int, crossed: Boolean) {
+        val u = r / 12f
+        fill.color = color
+        rect.set(cx - 3.2f * u, cy - 9.2f * u, cx + 3.2f * u, cy + 2.4f * u)
+        c.drawRoundRect(rect, 3.2f * u, 3.2f * u, fill)
+        stroke.color = color
+        stroke.strokeWidth = 1.7f * u
+        rect.set(cx - 6.4f * u, cy - 6.6f * u, cx + 6.4f * u, cy + 5.8f * u)
+        c.drawArc(rect, 15f, 150f, false, stroke)
+        c.drawLine(cx, cy + 6.2f * u, cx, cy + 9.4f * u, stroke)
+        c.drawLine(cx - 3.2f * u, cy + 9.4f * u, cx + 3.2f * u, cy + 9.4f * u, stroke)
+        if (crossed) {
+            stroke.color = this.color
+            stroke.strokeWidth = 4.2f * u
+            c.drawLine(cx - 7.4f * u, cy - 8.2f * u, cx + 7.4f * u, cy + 8.2f * u, stroke)
+            stroke.color = color
+            stroke.strokeWidth = 1.9f * u
+            c.drawLine(cx - 7.4f * u, cy - 8.2f * u, cx + 7.4f * u, cy + 8.2f * u, stroke)
+        }
     }
 }
 

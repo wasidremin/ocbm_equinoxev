@@ -785,7 +785,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         val ok = !duplicate && hid(index)
         if (ok && play) last?.let { publishState(it.copy(playbackStatus = NowPlayingState.PLAY), "status") }
         if (play) log.i("focus: GAIN → phone PLAY sent=$ok reason=user-play")
-        log.i("transport: $name $caller -> HID media $index sent=$ok")
+        if (duplicate) log.i("transport: $name $caller -> HID media $index not sent — phone already status=$status (duplicate suppressed)")
+        else log.i("transport: $name $caller -> HID media $index sent=$ok")
         if (!ok && !duplicate && pause && sessionUp) {
             val generation = commandGeneration
             val deadline = SystemClock.elapsedRealtime() + 3_000L

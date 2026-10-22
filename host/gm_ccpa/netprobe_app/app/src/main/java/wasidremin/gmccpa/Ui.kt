@@ -1,5 +1,6 @@
 package wasidremin.gmccpa
 
+import kotlin.math.roundToInt
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
@@ -175,6 +176,10 @@ internal fun uploadLogsSubtitle(window: UploadWindow): String =
  * animation back when no session is live. A live session uses Back to CarPlay on the status strip.
  */
 class LauncherUi(private val act: Activity) {
+    /** A top-bar tile was tapped on the settings screen. Set by [MainActivity]. */
+    var onBarTarget: ((BarTarget) -> Unit)? = null
+    private var settingsBar: GmTopBarView? = null
+
 
     var onStart: () -> Unit = {}
     var onStop: () -> Unit = {}
@@ -342,6 +347,13 @@ class LauncherUi(private val act: Activity) {
             rightMargin = act.dp(24)
             bottomMargin = act.dp(24)
         })
+        settingsBar = TopBarHost.create(act) { t ->
+            uiLog.i("settings bar: ${t.name} tapped")
+            onBarTarget?.invoke(t)
+        }.also {
+            it.visibility = View.GONE
+            frame.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1, Gravity.TOP))
+        }
         frame.setOnApplyWindowInsetsListener { _, insets ->
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 val cut = insets.getInsets(android.view.WindowInsets.Type.displayCutout())
@@ -394,9 +406,20 @@ class LauncherUi(private val act: Activity) {
             .coerceAtLeast(1)
         val latchedH = (VideoFrame.topPx + VideoFrame.topInsetPx + VideoFrame.viewHeight + VideoFrame.bottomPx)
             .coerceAtLeast(1)
-        val box = DisplayGeometry.settingsFrame(
+        val raw = DisplayGeometry.settingsFrame(
             rootW, rootH, latchedW, latchedH,
             DisplayPrefs.controls(act), act.resources.displayMetrics.density)
+        // The custom top bar occupies the strip the CarPlay screen reserved before SUBSCRIBE
+        // (VideoFrame.topPx, the top of the latched block), at the window top. Settings starts
+        // below it, so the bar is visible here too and nothing hides under it.
+        val insets = frame.rootWindowInsets
+        val stripPx = if (DisplayPrefs.customTopBar(act) && VideoFrame.topPx > 0 && !TopBarHost.statusBarVisible(insets))
+            (VideoFrame.topPx * DisplayGeometry.fitLatched(rootW, rootH, latchedW, latchedH).scale).roundToInt()
+                .coerceIn(0, rootH / 3) else 0
+        placeSettingsBar(stripPx, insets)
+        val box = if (stripPx > 0)
+            DisplayGeometry.Box(raw.x, raw.y + stripPx, raw.width, (raw.height - stripPx).coerceAtLeast(1))
+        else raw
         val lp = settingsHost.layoutParams as? FrameLayout.LayoutParams ?: return
         if (lp.width == box.width && lp.height == box.height &&
             lp.leftMargin == box.x && lp.topMargin == box.y) return
@@ -411,6 +434,21 @@ class LauncherUi(private val act: Activity) {
         settingsHost.layoutParams = lp
         uiLog.i("settings frame root=${rootW}x${rootH} latched=${latchedW}x${latchedH} " +
             "frame=${box.width}x${box.height}@${box.x},${box.y}")
+    }
+
+    /** Sizes, shapes and shows (or hides) the settings-screen top bar. Idempotent. */
+    private fun placeSettingsBar(stripPx: Int, insets: android.view.WindowInsets?) {
+        val bar = settingsBar ?: return
+        if (stripPx <= 0) { if (bar.visibility != View.GONE) bar.visibility = View.GONE; return }
+        val glass = TopBarHost.glass(insets)
+        if (bar.rightInsetPx != glass.rightInsetPx) bar.rightInsetPx = glass.rightInsetPx
+        if (bar.slopeM != glass.slopeM) bar.slopeM = glass.slopeM
+        val lp = bar.layoutParams as FrameLayout.LayoutParams
+        if (lp.height != stripPx) { lp.height = stripPx; bar.layoutParams = lp }
+        if (bar.visibility != View.VISIBLE) {
+            bar.visibility = View.VISIBLE
+            uiLog.i("settings bar: shown height=${stripPx}px slope=${glass.slopeM} rightInset=${glass.rightInsetPx}")
+        }
     }
 
     fun safeDialogWidth(desired: Int): Int =
@@ -1188,6 +1226,7 @@ class LauncherUi(private val act: Activity) {
             pages.forEachIndexed { i, p -> p.visibility = if (i == index) View.VISIBLE else View.GONE }
         }
         if (::rail.isInitialized) rail.select(index)
+        settingsBar?.selected = if (index == 3) BarTarget.INSIGHTS else BarTarget.APP_SETTINGS
         if (::scroller.isInitialized) scroller.scrollTo(0, 0)
         if (index == 2) onAdvancedOpened()
         if (index == 3 && ::insightsPage.isInitialized) insightsPage.refresh()

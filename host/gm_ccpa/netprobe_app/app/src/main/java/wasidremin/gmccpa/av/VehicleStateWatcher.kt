@@ -12,7 +12,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import wasidremin.gmccpa.ProbeLog
 import wasidremin.gmccpa.logging.SessionTrace
-import wasidremin.gmccpa.pair.NativeCore
+import wasidremin.gmccpa.ocbm.AdapterSession
+import wasidremin.gmccpa.ocbm.Ocbm
 
 /**
  * Drive the two vehicle-state levers CarPlay exposes as pure runtime commands:
@@ -65,8 +66,9 @@ import wasidremin.gmccpa.pair.NativeCore
  * a CarPlay session — a vehicle-state lever failing is a cosmetic loss; the session is the product.
  *
  * ## Threading
- * `NativeCore.setLimitedUI`/`setNightMode` BLOCK on the global event mutex, and Car callbacks arrive
- * on the main looper, so every native call is handed to the single-thread `cp-vehicle` executor.
+ * The lever sends go out over OCBM (`CMD_LIMITED_UI_ON/OFF`, `CMD_NIGHT_MODE`) to the box's
+ * carplayd, which owns the CarPlay control session. Car callbacks arrive on the main looper, so
+ * every send is handed to the single-thread `cp-vehicle` executor.
  * Serialising on one thread also makes the last write win, which is what we want when a gear change
  * and a theme change land together.
  */
@@ -296,7 +298,8 @@ class VehicleStateWatcher(private val ctx: Context) {
                 var refused = false
 
                 if (wantLimited != null && wantLimited != sentLimited) {
-                    if (NativeCore.setLimitedUI(wantLimited)) {
+                    if (AdapterSession.sendCommand(
+                            if (wantLimited) Ocbm.CMD_LIMITED_UI_ON else Ocbm.CMD_LIMITED_UI_OFF)) {
                         sentLimited = wantLimited
                         log.i("setLimitedUI($wantLimited) sent [$why]")
                     } else {
@@ -304,7 +307,7 @@ class VehicleStateWatcher(private val ctx: Context) {
                     }
                 }
                 if (wantNight != sentNight) {
-                    if (NativeCore.setNightMode(wantNight)) {
+                    if (AdapterSession.sendNightMode(wantNight)) {
                         sentNight = wantNight
                         log.i("setNightMode($wantNight) sent [$why]")
                     } else {

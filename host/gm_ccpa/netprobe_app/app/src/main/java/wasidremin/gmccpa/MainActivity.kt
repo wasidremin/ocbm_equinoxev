@@ -699,6 +699,7 @@ class MainActivity : Activity() {
                 wasidremin.gmccpa.av.CarPlayActivity.refreshChrome()
             }
             onSidebarChanged = { onSidebarToggled() }
+            onBarTarget = { handleBarTarget(it) }
             onClose = {
                 SessionHolder.stopRequested = true
                 ocbmProbe?.abortClaimWait()
@@ -802,6 +803,11 @@ class MainActivity : Activity() {
      *  (launcher icon, task switch) means "just bring the session up". Shared by [onCreate] and
      *  [onNewIntent] so the two paths cannot drift. */
     private fun dispatchIntent(i: Intent?) {
+        val tab = i?.getIntExtra(EXTRA_OPEN_TAB, -1) ?: -1
+        if (tab >= 0) {
+            i?.removeExtra(EXTRA_OPEN_TAB)
+            if (::ui.isInitialized) ui.root.post { ui.openTabFromScript(tab) }
+        }
         if (i?.getBooleanExtra(EXTRA_RESTART_SESSION, false) == true) {
             i.removeExtra(EXTRA_RESTART_SESSION)
             requestRestart()
@@ -1347,6 +1353,7 @@ class MainActivity : Activity() {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     // Preview-only wedge-slope override (rise/run) for slope-layout checks
                     // without the car; absent means the live cutout decides, as in production.
+                    i.getStringExtra("call_preview")?.let { preview.putExtra("call_preview", it) }
                     if (i.hasExtra("slope_m")) preview.putExtra("slope_test_m",
                         i.getFloatExtra("slope_m", 0f))
                     startActivity(preview)
@@ -1440,6 +1447,7 @@ class MainActivity : Activity() {
         // state is whatever iOS reports in the first nowPlaying record, never inferred from a session
         // existing or from bytes on the audio seam — the phone may well hand us a paused player.
         wasidremin.gmccpa.av.CarPlayMediaBrowserService.onSessionUp()
+        wasidremin.gmccpa.av.CarPlayActivity.nowPlaying.beginSession()
         // The supervisor sets the state word (via report -> Ui.setState). Setting it here too made
         // two writers race for one line, so the label flickered between whichever landed last.
         supervisor.onSessionUp()
@@ -1448,6 +1456,39 @@ class MainActivity : Activity() {
             android.content.Intent(this, wasidremin.gmccpa.av.CarPlayActivity::class.java)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         )
+    }
+
+    /**
+     * A top-bar tile tapped on the settings screen. The car's own apps launch straight from here;
+     * the CarPlay tiles bring the CarPlay screen forward and ask it to run the action once the
+     * picture is up (a settings screen cannot drive the phone's UI); the two app tiles just switch
+     * tab. CarPlay tiles with no live session say so instead of silently doing nothing.
+     */
+    private fun handleBarTarget(t: BarTarget) {
+        when (t) {
+            BarTarget.AAOS_HOME -> wasidremin.gmccpa.av.VehicleLaunch.home(this)
+            BarTarget.CHARGING -> wasidremin.gmccpa.av.VehicleLaunch.charging(this)
+            BarTarget.AAOS_SETTINGS -> wasidremin.gmccpa.av.VehicleLaunch.settings(this)
+            BarTarget.APP_SETTINGS -> ui.openTabFromScript(0)
+            BarTarget.INSIGHTS -> ui.openTabFromScript(3)
+            BarTarget.CP_HOME, BarTarget.CP_MAPS, BarTarget.CP_SPOTIFY, BarTarget.CP_PHONE -> {
+                val live = sessionUp && (cpRx?.sessionLive == true ||
+                    wasidremin.gmccpa.ocbm.AdapterSession.sessionUp)
+                if (!live) {
+                    emit("topbar: ${t.name} needs a live CarPlay session — nothing sent")
+                    android.widget.Toast.makeText(this, "Connect your iPhone to use ${t.description}",
+                        android.widget.Toast.LENGTH_SHORT).show()
+                    return
+                }
+                DisplayPrefs.holdLauncher = false
+                ui.setReturnToCarPlay(false)
+                startActivity(
+                    Intent(this, wasidremin.gmccpa.av.CarPlayActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        .putExtra(EXTRA_BAR_TARGET, t.name)
+                )
+            }
+        }
     }
 
     /**
