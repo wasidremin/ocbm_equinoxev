@@ -171,6 +171,37 @@ class TopBarFitTest {
         assertTrue(top + contentH * fit <= h - margin + 0.5f)
     }
 
+    @Test fun justifiedLayoutPinsRightEdgeToUsableGlass() {
+        // Roomy flat panel (no slope): right cluster at full size, right-justified to the
+        // usable edge, left block untouched, middle gap absorbs the rest.
+        val leftEnd = DisplayGeometry.leftBlockEnd(h)
+        val natural = 500f
+        val layout = DisplayGeometry.topBarLayout(w, h, inset, 0f, contentH, margin, leftEnd, natural)
+        assertEquals(DisplayGeometry.clusterRightEdgeOnGlass(w, h, inset, 0f, contentH, margin),
+            layout.rightEdge, 0.001f)
+        assertEquals(1f, layout.rightScale, 0.001f)
+        assertEquals(layout.rightEdge - natural, layout.rightStart, 0.01f)
+        assertTrue("gap ${layout.gap} must hold half a bar", layout.gap >= h * 0.5f - 0.5f)
+        assertEquals(layout.rightStart - leftEnd, layout.gap, 0.01f)
+    }
+
+    @Test fun crowdedLayoutShrinksRightToProtectTheGap() {
+        // Vehicle geometry with a wide cluster: the old code let the clusters touch; the
+        // justified solver shrinks the right side to keep half a bar of daylight.
+        val leftEnd = DisplayGeometry.leftBlockEnd(h)
+        val layout = DisplayGeometry.topBarLayout(w, h, inset, slopeM, contentH, margin, leftEnd, 700f)
+        assertTrue(layout.rightScale < 1f && layout.rightScale > 0f)
+        assertEquals(h * 0.5f, layout.gap, 1f)
+        assertEquals(layout.rightEdge - 700f * layout.rightScale, layout.rightStart, 0.5f)
+    }
+
+    @Test fun noRoomHidesRightInsteadOfOverlapping() {
+        val leftEnd = DisplayGeometry.leftBlockEnd(h)
+        val layout = DisplayGeometry.topBarLayout(w, h, inset, slopeM, contentH, margin, leftEnd, 700f,
+            minGap = 5000f)
+        assertEquals(0f, layout.rightScale, 0.001f)
+    }
+
     @Test fun settingsCeilingsCoverTheMeasuredCutout() {
         // safeInsetRight = 285 on the vehicle. Both the phone-side margin stops and the
         // surface-side dp slider must reach past it or the right edge stays under glass.

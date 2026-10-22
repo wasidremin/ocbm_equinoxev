@@ -28,6 +28,7 @@ import wasidremin.gmccpa.ProbeLog
 import wasidremin.gmccpa.av.CarPlayFrameGrabber
 import wasidremin.gmccpa.eqButton
 import wasidremin.gmccpa.logging.LogExport
+import wasidremin.gmccpa.logging.UploadWindow
 import java.io.File
 import java.io.FilterOutputStream
 import java.io.IOException
@@ -663,6 +664,29 @@ object UploadCenter {
             .putString(KEY_BASE_URL, cleaned)
             .apply()
         log.i("upload base URL updated to $cleaned")
+    }
+
+    /**
+     * How far back the Logs button reads. Lives with [baseUrl] rather than in [CapturePrefs]: that
+     * file is the capture engine's "which scope to run at" knob, and this is a choice about the
+     * upload, not about what gets captured. Absent/unreadable values fall back to
+     * [UploadWindow.DEFAULT] (the last hour), so an older install gains the shorter range rather
+     * than an accidental unbounded upload.
+     */
+    private const val KEY_LOG_WINDOW = "log_window"
+
+    fun logWindow(ctx: Context): UploadWindow =
+        UploadWindow.fromName(
+            ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_LOG_WINDOW, null)
+        )
+
+    fun setLogWindow(ctx: Context, window: UploadWindow) {
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LOG_WINDOW, window.name)
+            .apply()
+        log.i("log upload range set to ${window.label} (${window.name})")
     }
 
     fun addQueueListener(listener: (Int) -> Unit) {

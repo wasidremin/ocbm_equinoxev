@@ -128,6 +128,10 @@ object LogExport {
         val endpoint: String,
         val batches: Int,
         val lines: Int,
+        /** The range the operator picked; echoed into the log line so a CSV of uploads is readable. */
+        val window: UploadWindow,
+        /** Lines older than the window that were deliberately NOT sent. 0 for [UploadWindow.ALL]. */
+        val skippedLines: Long,
     )
 
     /**
@@ -137,17 +141,22 @@ object LogExport {
      * lines, and never runs automatically. The caller must invoke it explicitly from the launcher.
      * Files are read line-by-line and posted in the same JSON shape accepted by
      * `server/log_server.py`: `{\"device\":\"gmccpa\",\"lines\":[...]}`.
+     *
+     * @param window how far back to go. Defaults to [UploadWindow.DEFAULT] (the last hour) because a
+     *   whole-OS capture is ~227 MB/h and an unbounded upload through a vehicle hotspot is not a
+     *   support action anyone can wait for. See [UploadWindow].
      */
     fun upload(
         context: Context,
         baseUrl: String = wasidremin.gmccpa.upload.UploadCenter.baseUrl(context),
+        window: UploadWindow = UploadWindow.DEFAULT,
         onState: ((wasidremin.gmccpa.upload.UploadState) -> Unit)? = null,
         callback: (Result<UploadResult>) -> Unit,
     ) {
         val appCtx = context.applicationContext
         onState?.let { wasidremin.gmccpa.upload.UploadCenter.emitState(it, wasidremin.gmccpa.upload.UploadState.Preparing) }
         ioExecutor.execute {
-            val res = runCatching { uploadNow(appCtx, baseUrl, onState) }
+            val res = runCatching { uploadNow(appCtx, baseUrl, window, onState) }
             res.onSuccess { r ->
                 onState?.let {
                     wasidremin.gmccpa.upload.UploadCenter.emitState(
@@ -167,9 +176,23 @@ object LogExport {
         }
     }
 
+    /**
+     * Two passes over the capture: count what the window keeps, then stream it.
+     *
+     * **Why the second pass exists at all.** The previous implementation read every line into an
+     * `ArrayList<ByteArray>` and posted afterwards, so its peak memory was the size of the whole
+     * capture — 768 MB of lines on a 3-day whole-OS directory, on a head unit. Streaming one batch
+     * at a time removes that; a first pass is what keeps the progress bar determinate and lets an
+     * empty window be reported as empty instead of as a one-line "no data" upload.
+     *
+     * The progress denominator is the raw character count of the kept lines, so redaction (which
+     * shortens lines) makes `sent` finish below the total rather than overshoot; every emission is
+     * clamped to the total regardless.
+     */
     private fun uploadNow(
         context: Context,
         baseUrl: String,
+        window: UploadWindow,
         onState: ((wasidremin.gmccpa.upload.UploadState) -> Unit)? = null,
     ): UploadResult {
         val normalized = baseUrl.trim().trimEnd('/')
@@ -180,38 +203,48 @@ object LogExport {
         // export executor, never on the UI thread.
         LogCapture.flush()
         val endpoint = "$normalized/logs"
-        val redactor = Redactor()
-        val batch = ArrayList<String>(MAX_UPLOAD_BATCH)
-        val payloads = ArrayList<ByteArray>()
-        var lines = 0
-
         val files = LogCapture.logFiles(context)
-        for (file in files) {
-            file.bufferedReader(Charsets.UTF_8).useLines { source ->
-                source.forEach { line ->
-                    batch += redactor.redactLine(line)
-                    lines++
-                    if (batch.size == MAX_UPLOAD_BATCH) {
-                        payloads += encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
-                        batch.clear()
+        val filter = LogTimeFilter.forCutoff(uploadCutoffMs(window, System.currentTimeMillis()))
+
+        // Pass 1 — what survives the window.
+        var kept = 0L
+        var skipped = 0L
+        var totalBytes = 0L
+        if (filter == null) {
+            totalBytes = files.sumOf { it.length() }
+        } else {
+            for (file in files) {
+                file.bufferedReader(Charsets.UTF_8).useLines { source ->
+                    source.forEach { line ->
+                        if (filter.accepts(line)) {
+                            kept++
+                            totalBytes += line.length.toLong() + 1L
+                        } else skipped++
                     }
                 }
             }
         }
-        if (batch.isNotEmpty()) {
-            payloads += encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
-            batch.clear()
-        }
-        if (payloads.isEmpty()) {
-            batch += "GM CCPA upload: no captured log files were available"
-            payloads += encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
-            batch.clear()
-            lines = 1
+
+        if (files.isEmpty()) {
+            // Nothing captured at all. Still tell the receiver a button was pressed, exactly as
+            // before — a silent no-op on an empty box reads as a broken button.
+            log.w("upload: no capture files on disk — sending a placeholder line")
+        } else if (filter != null && kept == 0L) {
+            // Files exist but every line is older than the window. Reporting "uploaded 1 line" here
+            // would be a lie the operator cannot see through, so this fails with the reason and the
+            // oldest capture that IS on disk.
+            throw IOException(
+                "no captured lines in ${window.phrase} — oldest capture on disk is " +
+                    "${files.first().name} (${skipped} older line(s) not sent); choose a longer range"
+            )
         }
 
-        val totalBytes = payloads.sumOf { it.size.toLong() }
-        var cumulativeSent = 0L
+        val redactor = Redactor()
+        val batch = ArrayList<String>(MAX_UPLOAD_BATCH)
+        var lines = 0L
         var batches = 0
+        var postedBytes = 0L
+
         onState?.let {
             wasidremin.gmccpa.upload.UploadCenter.emitState(
                 it,
@@ -219,8 +252,12 @@ object LogExport {
             )
         }
 
-        for ((idx, payload) in payloads.withIndex()) {
-            val baseOffset = cumulativeSent
+        fun postBatch() {
+            if (batch.isEmpty()) return
+            val payload = encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
+            batch.clear()
+            val baseOffset = postedBytes
+            val index = batches + 1
             wasidremin.gmccpa.upload.UploadCenter.executeWithOneRetry {
                 val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
@@ -249,19 +286,11 @@ object LogExport {
                         out.write(payload)
                         out.flush()
                     }
-                    if (idx == payloads.lastIndex) {
-                        onState?.let {
-                            wasidremin.gmccpa.upload.UploadCenter.emitState(
-                                it,
-                                wasidremin.gmccpa.upload.UploadState.Finalizing,
-                            )
-                        }
-                    }
                     val code = connection.responseCode
                     if (code !in 200..299) {
                         throw wasidremin.gmccpa.upload.UploadCenter.HttpStatusException(
                             code,
-                            "server returned HTTP $code for batch ${idx + 1}",
+                            "server returned HTTP $code for batch $index",
                         )
                     }
                     connection.inputStream.close()
@@ -269,11 +298,38 @@ object LogExport {
                     connection.disconnect()
                 }
             }
-            cumulativeSent += payload.size.toLong()
+            postedBytes += payload.size.toLong()
             batches++
         }
-        log.i("uploaded redacted logs to $endpoint: $lines lines in $batches batches")
-        return UploadResult(endpoint, batches, lines)
+
+        if (files.isEmpty()) {
+            batch += "GM CCPA upload: no captured log files were available"
+            postBatch()
+            lines = 1L
+        } else {
+            for (file in files) {
+                file.bufferedReader(Charsets.UTF_8).useLines { source ->
+                    source.forEach { line ->
+                        if (filter != null && !filter.accepts(line)) return@forEach
+                        batch += redactor.redactLine(line)
+                        lines++
+                        if (batch.size == MAX_UPLOAD_BATCH) postBatch()
+                    }
+                }
+            }
+            postBatch()
+        }
+        onState?.let {
+            wasidremin.gmccpa.upload.UploadCenter.emitState(
+                it,
+                wasidremin.gmccpa.upload.UploadState.Finalizing,
+            )
+        }
+        log.i(
+            "uploaded redacted logs to $endpoint: $lines lines in $batches batches " +
+                "(range=${window.label}, skipped=$skipped older line(s), ${totalBytes}B)"
+        )
+        return UploadResult(endpoint, batches, lines.toInt(), window, skipped)
     }
 
     /** Which rung of the local export ladder produced an artifact. */

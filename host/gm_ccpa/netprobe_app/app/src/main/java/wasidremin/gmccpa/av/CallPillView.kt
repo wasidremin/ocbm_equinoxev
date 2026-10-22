@@ -1,19 +1,30 @@
 package wasidremin.gmccpa.av
 
 import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.content.res.ColorStateList
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.roundToInt
 
 /**
- * Large movable in-call overlay pill: status label plus Answer / Hang up / Mute buttons.
+ * Large movable in-call overlay pill: status label plus Answer / Hang up / Mute actions.
+ *
+ * Driving-sized on purpose: every action is a 112dp touch target (icon disc + text label),
+ * well above the ~76dp AAOS driving minimum, with 16dp gaps so a glove lands on one thing.
+ * Each action is an icon disc plus a word — green handset to answer, red handset to hang up,
+ * mic / crossed-mic to mute — drawn in code (framework-only, no assets) so it reads at arm's
+ * length next to the CarPlay picture.
  *
  * The pill is shown while [CallPhase] is RINGING or ACTIVE and hidden when the call ends
  * ([CallPhase.NONE]) — the owner ([CarPlayActivity]) drives that via [bind]. Dragging anywhere
@@ -27,9 +38,10 @@ import kotlin.math.roundToInt
 class CallPillView(context: Context) : FrameLayout(context) {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val label = TextView(context)
-    private val answerBtn = Button(context)
-    private val endBtn = Button(context)
-    private val muteBtn = Button(context)
+    private val sublabel = TextView(context)
+    private lateinit var answerBtn: PillActionButton
+    private lateinit var endBtn: PillActionButton
+    private lateinit var muteBtn: PillActionButton
     private var dragDx = 0f
     private var dragDy = 0f
     private var moved = false
@@ -37,47 +49,49 @@ class CallPillView(context: Context) : FrameLayout(context) {
     init {
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
-        bg.cornerRadius = 48f
-        bg.setColor(0xE6222B3A.toInt())
-        bg.setStroke(3, 0xFF5AC8FA.toInt())
+        bg.cornerRadius = dp(40).toFloat()
+        bg.setColor(0xF2222B3A.toInt())
+        bg.setStroke(dp(3), 0xFF5AC8FA.toInt())
         background = bg
-        elevation = 24f
+        elevation = dp(24).toFloat()
+
+        val col = LinearLayout(context)
+        col.orientation = LinearLayout.VERTICAL
+        val padH = dp(PAD_H_DP)
+        col.setPadding(padH, dp(PAD_V_DP), padH, dp(PAD_V_DP))
+
+        label.textSize = 26f
+        label.setTypeface(Typeface.DEFAULT_BOLD)
+        label.setTextColor(0xFFFFFFFF.toInt())
+        label.gravity = Gravity.CENTER_HORIZONTAL
+        col.addView(label, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        sublabel.textSize = 16f
+        sublabel.setTextColor(0xFFC3CCDB.toInt())
+        sublabel.gravity = Gravity.CENTER_HORIZONTAL
+        col.addView(sublabel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(4)
+            bottomMargin = dp(12)
+        })
 
         val row = LinearLayout(context)
         row.orientation = LinearLayout.HORIZONTAL
-        row.gravity = Gravity.CENTER_VERTICAL
-        val pad = dp(16)
-        row.setPadding(pad, dp(12), pad, dp(12))
-        label.textSize = 20f
-        label.setTypeface(Typeface.DEFAULT_BOLD)
-        label.setTextColor(0xFFFFFFFF.toInt())
-        val labelLp = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        )
-        labelLp.marginEnd = dp(12)
-        row.addView(label, labelLp)
+        row.gravity = Gravity.CENTER_HORIZONTAL
 
-        answerBtn.text = "Answer"
-        answerBtn.textSize = 18f
-        answerBtn.contentDescription = "Answer call"
-        answerBtn.minimumHeight = dp(56)
-        row.addView(answerBtn)
-        endBtn.text = "Hang up"
-        endBtn.textSize = 18f
-        endBtn.contentDescription = "Hang up call"
-        endBtn.minimumHeight = dp(56)
-        val endLp = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        )
-        endLp.marginStart = dp(8)
-        endLp.marginEnd = dp(8)
-        row.addView(endBtn, endLp)
-        muteBtn.textSize = 18f
-        muteBtn.contentDescription = "Mute or unmute microphone"
-        muteBtn.minimumHeight = dp(56)
-        row.addView(muteBtn)
+        answerBtn = PillActionButton(context, PillIcon.ANSWER, "Answer", ACTION_GREEN)
+        endBtn = PillActionButton(context, PillIcon.END, "Hang up", ACTION_RED)
+        muteBtn = PillActionButton(context, PillIcon.MUTE, "Mute", ACTION_GREY)
+        val btnLp = LinearLayout.LayoutParams(dp(TOUCH_DP), LinearLayout.LayoutParams.WRAP_CONTENT)
+        row.addView(answerBtn, btnLp)
+        row.addView(endBtn, LinearLayout.LayoutParams(dp(TOUCH_DP), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            marginStart = dp(GAP_DP); marginEnd = dp(GAP_DP)
+        })
+        row.addView(muteBtn, btnLp)
+        col.addView(row)
 
-        addView(row, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        addView(col, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         visibility = View.GONE
         isClickable = true
         isFocusable = true
@@ -142,9 +156,13 @@ class CallPillView(context: Context) : FrameLayout(context) {
             return
         }
         visibility = View.VISIBLE
-        label.text = if (phase == CallPhase.RINGING) "Incoming call" else "On call"
-        answerBtn.visibility = if (phase == CallPhase.RINGING) View.VISIBLE else View.GONE
-        muteBtn.text = if (muted) "Unmute" else "Mute"
+        val ringing = phase == CallPhase.RINGING
+        label.text = if (ringing) "Incoming call" else "On call"
+        sublabel.text = if (ringing) "Tap Answer or Hang up" else if (muted) "Microphone muted" else "Tap Hang up to end"
+        sublabel.visibility = View.VISIBLE
+        answerBtn.visibility = if (ringing) View.VISIBLE else View.GONE
+        muteBtn.setIcon(if (muted) PillIcon.UNMUTE else PillIcon.MUTE)
+        muteBtn.setLabel(if (muted) "Unmute" else "Mute")
         answerBtn.setOnClickListener { onAnswer() }
         endBtn.setOnClickListener { onEnd() }
         muteBtn.setOnClickListener { onMuteToggle() }
@@ -173,6 +191,140 @@ class CallPillView(context: Context) : FrameLayout(context) {
         private const val PREFS = "gmccpa_call_pill"
         private const val KEY_FX = "fx"
         private const val KEY_FY = "fy"
+        /** 112dp square touch target per action: glove-landable at arm's length. */
+        internal const val TOUCH_DP = 112
+        internal const val GAP_DP = 16
+        internal const val PAD_H_DP = 28
+        internal const val PAD_V_DP = 20
+        internal const val ACTION_GREEN = 0xFF34C759.toInt()
+        internal const val ACTION_RED = 0xFFFF453A.toInt()
+        internal const val ACTION_GREY = 0xFF3A4252.toInt()
+    }
+}
+
+/** Which glyph a [PillActionButton] disc draws. */
+internal enum class PillIcon { ANSWER, END, MUTE, UNMUTE }
+
+/**
+ * One driving-sized call action: a coloured icon disc with a word under it.
+ * The whole 112dp column is the touch target (disc + label), with a ripple.
+ */
+internal class PillActionButton(
+    context: Context,
+    private var icon: PillIcon,
+    label: String,
+    private val discColor: Int,
+) : LinearLayout(context) {
+    private val disc = DiscView(context)
+    private val text = TextView(context)
+
+    init {
+        orientation = VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        disc.setIcon(icon, discColor)
+        val d = (64 * resources.displayMetrics.density).roundToInt()
+        addView(disc, LayoutParams(d, d))
+        text.text = label
+        text.textSize = 18f
+        text.setTextColor(Color.WHITE)
+        text.gravity = Gravity.CENTER_HORIZONTAL
+        addView(text, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            topMargin = (8 * resources.displayMetrics.density).roundToInt()
+        })
+        isClickable = true
+        isFocusable = true
+        contentDescription = label
+        val ripple = RippleDrawable(
+            ColorStateList.valueOf(0x33FFFFFF),
+            null,
+            android.graphics.drawable.ColorDrawable(Color.WHITE),
+        )
+        background = ripple
+        minimumWidth = (CallPillView.TOUCH_DP * resources.displayMetrics.density).roundToInt()
+        minimumHeight = (CallPillView.TOUCH_DP * resources.displayMetrics.density).roundToInt()
+    }
+
+    fun setLabel(s: String) {
+        text.text = s
+        contentDescription = s
+    }
+
+    fun setIcon(i: PillIcon) {
+        icon = i
+        disc.setIcon(i, discColor)
+        disc.invalidate()
+    }
+}
+
+/** Circular disc with a white call/mic glyph, drawn in code — no assets. */
+internal class DiscView(context: Context) : View(context) {
+    private var icon: PillIcon = PillIcon.ANSWER
+    private var color: Int = CallPillView.ACTION_GREEN
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.WHITE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val rect = RectF()
+
+    fun setIcon(i: PillIcon, c: Int) {
+        icon = i
+        color = c
+        invalidate()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = minOf(width, height) / 2f
+        fill.color = color
+        c.drawCircle(cx, cy, r, fill)
+        stroke.strokeWidth = r * 0.14f
+        when (icon) {
+            PillIcon.ANSWER, PillIcon.END -> drawHandset(c, cx, cy, r, icon == PillIcon.END)
+            PillIcon.MUTE -> drawMic(c, cx, cy, r, crossed = false)
+            PillIcon.UNMUTE -> drawMic(c, cx, cy, r, crossed = true)
+        }
+    }
+
+    /** Classic handset curve; END mirrors it so the two read as opposites at a glance. */
+    private fun drawHandset(c: Canvas, cx: Float, cy: Float, r: Float, mirrored: Boolean) {
+        val s = if (mirrored) -1f else 1f
+        val w = r * 0.85f
+        val p = android.graphics.Path().apply {
+            moveTo(cx - s * w, cy - r * 0.45f)
+            cubicTo(cx - s * w * 1.3f, cy + r * 0.1f, cx - s * w * 0.2f, cy + r * 0.75f, cx + s * w * 0.5f, cy + r * 0.55f)
+            lineTo(cx + s * w * 0.85f, cy + r * 0.85f)
+            lineTo(cx + s * w * 0.45f, cy + r * 0.15f)
+            cubicTo(cx - s * w * 0.1f, cy - r * 0.05f, cx - s * w * 0.2f, cy - r * 0.35f, cx - s * w * 0.35f, cy - r * 0.62f)
+            close()
+        }
+        val old = stroke.style
+        stroke.style = Paint.Style.FILL
+        stroke.color = Color.WHITE
+        c.drawPath(p, stroke)
+        stroke.style = old
+        stroke.color = Color.WHITE
+    }
+
+    /** Mic capsule plus stand; a slash marks the muted (UNMUTE offers to unmute) state. */
+    private fun drawMic(c: Canvas, cx: Float, cy: Float, r: Float, crossed: Boolean) {
+        val mw = r * 0.42f
+        val mh = r * 0.62f
+        rect.set(cx - mw / 2, cy - mh, cx + mw / 2, cy - mh + mh)
+        val old = stroke.style
+        stroke.style = Paint.Style.FILL
+        stroke.color = Color.WHITE
+        c.drawRoundRect(rect, mw / 2, mw / 2, stroke)
+        stroke.style = Paint.Style.STROKE
+        stroke.color = Color.WHITE
+        c.drawArc(cx - mw * 0.85f, cy - mh + mh * 0.4f, cx + mw * 0.85f, cy + mh * 0.75f,
+            15f, 150f, false, stroke)
+        c.drawLine(cx, cy + mh * 0.45f, cx, cy + mh * 0.8f, stroke)
+        if (crossed) c.drawLine(cx - r * 0.55f, cy + r * 0.6f, cx + r * 0.55f, cy - r * 0.7f, stroke)
+        stroke.style = old
     }
 }
 

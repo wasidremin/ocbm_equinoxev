@@ -77,6 +77,9 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     /** Last `card: metadata` line, so a repeated title does not log again until the art or title moves. */
     private var cardLogLine: String? = null
     private var session: MediaSession? = null
+    /** How many times AAOS has bound this service. Guarded by [bindLock]. */
+    private var browserBinds = 0
+    private val bindLock = Any()
 
     @Volatile private var artBitmap: Bitmap? = null
     @Volatile private var artFor: ByteArray? = null
@@ -469,8 +472,17 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * unknown callers (the usual package-allowlist pattern) is how an app silently disappears from the
      * source list on an OEM build whose Media Center package you did not anticipate.
      */
-    override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot =
-        BrowserRoot(ROOT_ID, null)
+    override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot {
+        // One line per bind. The music card can only be wrong in one of two ways: the phone never sent
+        // metadata, or nobody in the car bound us to show it. `np: sync` answers the first; this
+        // answers the second, and neither is visible from the other.
+        val n = synchronized(bindLock) { ++browserBinds }
+        log.i(
+            "browser: bind #$n package=$clientPackageName uid=$clientUid " +
+                "(sessionUp=$sessionUp sourceSwitchable=$sourceSwitchable)"
+        )
+        return BrowserRoot(ROOT_ID, null)
+    }
 
     /** Empty, not null — see the class docs. Null reads as a failed connection. */
     override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowser.MediaItem>>) {
@@ -589,7 +601,10 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         // Rate follows the published STATE, not the raw status: SEEK_FWD/BACK publish PLAYING and
         // must interpolate, or the card freezes mid-seek. (Was `status == PLAY`, so seeks stalled.)
         val rate = if (state == PlaybackState.STATE_PLAYING) 1f else 0f
-        val pos = if (focusPaused) frozenPosition else s.elapsedMs
+        // Unknown rather than 0 when no record has stated elapsed time: a track-change frame carries
+        // no PlaybackAttributes, and publishing the blank base's 0 at rate 1 made the card report
+        // "0:00 of this track" (remaining = full length) until the next tick snapped it back.
+        val pos = publishedPosition(s.elapsedKnown, s.elapsedMs, focusPaused, frozenPosition)
         val now = SystemClock.elapsedRealtime()
         // AAOS interpolates position from (pos, rate, updateTime) between pushes — that is the
         // designed path (the sibling Media3 app pushes only on change/seek/duration for the same
@@ -599,7 +614,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         // focus, replay after bind) always go through.
         if (source == "tick") {
             val expected = lastPushedPos + ((now - lastPushedAt) * lastPushedRate).toLong()
-            val seek = lastPushedAt == 0L || kotlin.math.abs(pos - expected) > SEEK_DEDUP_MS
+            // A push that left the position UNKNOWN owes AAOS the first real one, or the card would
+            // sit with no progress until something else changed: extrapolating from -1 makes every
+            // real tick look like "within 2 s of the line" and get suppressed.
+            val seek = lastPushedAt == 0L || lastPushedPos == POSITION_UNKNOWN ||
+                (pos != POSITION_UNKNOWN && kotlin.math.abs(pos - expected) > SEEK_DEDUP_MS)
             if (!seek && state == lastPushedState && rate == lastPushedRate) return
         }
         val ps = PlaybackState.Builder().setActions(ACTIONS)
@@ -607,7 +626,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             .build()
         runCatching { sess.setPlaybackState(ps) }.onFailure { log.e("setPlaybackState failed: ${it.message}") }
         lastPushedState = state; lastPushedPos = pos; lastPushedAt = now; lastPushedRate = rate
-        val line = "card: state=$state pos=$pos rate=$rate"
+        val line = "card: state=$state pos=${if (pos == POSITION_UNKNOWN) "?" else pos.toString()} rate=$rate"
         if (line != stateLogLine) {
             stateLogLine = line
             log.i("$line source=$source")

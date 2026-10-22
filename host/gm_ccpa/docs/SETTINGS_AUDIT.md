@@ -160,12 +160,34 @@ stays (serves Capture Current).
   (`TEL_END`) / Mute (`TEL_MUTE`) overlay on `CarPlayActivity`, draggable with
   persisted fractions, hidden when the call table empties.
 
+## v210 deltas (2026-10-22, versionCode 210 `4.0+log-range`)
+
+- **Upload range** (`Ui.kt buildTroubleshooting`, `logging/UploadWindow.kt`,
+  `upload/UploadFeedback.kt` `UploadCenter.logWindow`): row above Upload Logs with
+  an `EqSegmented` of `1 hour | 6 hours | Today | All`, default **1 hour**,
+  persisted in `upload_center_prefs/log_window` (absent → default, so an older
+  install gains the shorter range rather than an unbounded upload). The button's
+  subtitle names the live range. Whole-OS capture is ~227 MB/h and the directory
+  ceiling is 768 MB, so this is the difference between a support action and a
+  700 MB hotspot upload.
+- **Log upload streaming** (`logging/LogExport.kt`): the window is counted, then
+  posted one 500-line batch at a time instead of accumulating every payload in a
+  list first (that version's peak memory was the capture size). An upload whose
+  window is empty now fails with the oldest capture's name instead of reporting
+  one uploaded line.
+- **Music-sync diagnostics** (`av/NowPlayingState.kt`, `av/CarPlayMediaBrowserService.kt`):
+  `np: sync` 30 s beat (records/title changes/metadata rebuilds/ticks/artwork/
+  ignored kinds), `np: sync SILENT` once per silent gap, first-record latency,
+  session summary at clear, and `browser: bind #n` per `onGetRoot`. See doc 14
+  §14.8.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,
   `versionName = AAB_VERSION_NAME env ?: "4.0+…"`.
-- Doc 14 records high-water 99 (`4.0+vision-launch`); the v100 review bundle
-  records **PUBLISH_OK versionCode=100 `4.0+builtin-templates`**, so the live
-  high-water is 100 and **v101 is the next available code**. Doc 14 should gain
-  the v100 line when this ships (v101 task does not own that doc).
-- Track: `automotive:internal`, status COMPLETED. No auto-publish in v101.
+- **Doc 14 owns the running record** (its "versionCode is not
+  `git rev-list --count`" bullet); read it there instead of trusting a number in
+  this file, which went stale twice. Current: **210 `4.0+log-range`**
+  (2026-10-22, PUBLISH_OK).
+- Track: `automotive:internal`, status COMPLETED. Publishing only happens via
+  `tools/build_aab.sh --publish` (`AAB_VERSION_CODE` env); nothing auto-publishes.

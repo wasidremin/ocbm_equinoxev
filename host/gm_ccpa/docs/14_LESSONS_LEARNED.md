@@ -131,7 +131,7 @@ GM did **not** toast “USB device not recognized” in this capture (no evidenc
 ## 6. Play distribution and the emulator
 
 - Package is `wasidremin.gmccpa` (Play). The `android.car.usb.handler` squat is reverted and **must not** return: Play will not ship that `applicationId`, and the owner already found it did not buy a silent grant.
-- `versionCode` is **not** `git rev-list --count HEAD` on this shallow mirror (that is 8). Play has already consumed 8-14 and 20-62, plus 82 (found live on `automotive:internal` 2026-09-30; published outside this repo record). **High-water mark: versionCode 209** (`4.0+insights-workbench`, 2026-10-20, `automotive:internal` COMPLETED; PUBLISH_OK). Insights EV telemetry workbench (§13). Previous high-water mark: versionCode 208 (`4.0+topbar-slope-glass`, 2026-10-19, `automotive:internal` COMPLETED; PUBLISH_OK). Bar content hangs from the panel-slope clearance (glass line m = 167/2629 from the vehicle cutout wedge `Rect(0,0-2629,167)`): left icons form a level row clearing the slope at the last icon, the smaller right cluster's edge is solved to where its content height fits above the bar bottom (near x 1600, not x 2540 which has 7px of glass), and the width fit-scale is the backstop. Centering had put the whole cluster on missing glass. Previous high-water mark: versionCode 207 (`4.0+topbar-right-fit`, 2026-10-19, `automotive:internal` COMPLETED; PUBLISH_OK). Top-bar right cluster runs smaller than the left icons with a 0.55h end indent (like the car's own bar) and shrinks uniformly via a measured fit scale when the slot is narrow, so it never overlaps the left icons or spills under the cutout. Previous high-water mark: versionCode 206 (`4.0+traced-rect-tick-gate`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Traced rect sizes advertised video before latch (true visible aspect ratio, zero dp squish), top-bar right cluster honours max(safeInsetRight, traced rightPx), live solved-rect preview in the trace activity, tick fires only on elapsedMs advance, non-negative queueId, rail/top-bar play state follows seeks. Previous high-water mark: versionCode 205 (`4.0+metadata-trace`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Tick-deduped PlaybackState (push on change/seek only), single-item queue, SEEK rate fix, rail follows ticks, art clears on id-less titles (§12.1); edge-trace calibration replaces dp sliders + margin presets (§12.2). Previous high-water mark: versionCode 204 (`4.0+topbar-fitment`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Non-rectangular-panel fitment: top-bar clock/temp cluster starts left of the live `safeInsetRight` (285) instead of on missing glass, larger right-cluster text/icons, Right margin stops to 320 with nearest-stop mapping, Right inset (dp) slider to 320. Previous high-water mark: versionCode 203 (`4.0+insights-np-logs`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Insights settings tab, in-call overlay pill, failure-screen restart (d2e2d5d) plus now-playing/artwork silence diagnostics (a5c6906). Previous high-water mark: versionCode 202 (`4.0+fullscreen-capture`, 2026-10-17, `automotive:internal` COMPLETED; PUBLISH_OK, commit a55576a). Whole-window Capture Full Screen (top bar + rail + video composite) alongside video-only capture; sidecar gains windowWidth/Height. NOTE: the outside-repo publisher is far ahead of this file's old record — on 2026-10-17 `automotive:internal` was already live at **201** (`4.0+startup-fix-r201`), and 100/101 were already consumed, so a blind +1 from 99 fails twice over (reuse at upload, then does-not-allow-upgrade at commit for anything ≤ live). To find the true max, open an edit with the SA key and list edit-scoped bundles/tracks (app-scoped tracks/bundles reads 404 for this SA; edits.insert works). Previous high-water mark: versionCode 99 (`4.0+vision-launch`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Strip-first vision launcher (`ScreenModel` fixed 1/4 scale + `VisionLauncher` + `CalibrationUi`): templates cut from saved captures, strip → grid → Home-toggle-then-grid, never taps an app without a 0.85 match; top-bar NAV/MUSIC/PHONE route through it with the old behaviour as the uncalibrated fallback; 24-unit outline glyphs for car/music/nav/phone/energy. Previous high-water mark: versionCode 98 (`4.0+calib-ui`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Icon Templates & App Launch card in the launcher calibration section operates the matcher/launcher engine: template list/delete/capture from a normalized rect of a live stable frame, tap-verify-upload app launches with records to `/api/launches`; dock-row hint (y 0.72..0.88 of 2754x966) measured from the day's HOME_GRID captures — RETIRED in v99 (that region was Spotify podcast artwork, not a dock row; see §9). Previous high-water mark: versionCode 97 (`4.0+warm-relink`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Warm-start relink: `maybeRelinkOnResume` reclaims when the app is opened with USB_CLAIM FAILED on the board, no attempt in flight, and `1314:2d00` on the bus (remote warm-up powers USB with the display off, the dialog defers, the claim aborts, resume never re-ran); per-episode display-off-deferral flag reset; `OcbmProbe.linkAttemptInFlight` funnel flag; `Board.isFailed` reader. Previous high-water mark: versionCode 96 (`4.0+capture-launch`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Calibration capture + launcher record uploads with matching `/api/captures` + `/api/launches` endpoints on the log receiver. Previous high-water mark: versionCode 95 (`4.0+probe-upload`, 2026-10-14, `automotive:internal` COMPLETED; PUBLISH_OK). Adds the probe report upload: `POST /probe` file endpoint on the log receiver plus an `Upload latest report to log server` button in the probe activity reusing the explicit-tap HTTPS-only contract (report.json already embeds `rawLiveEvents`, ZIP/CSV stay local). Codes 93 and 94 were found already consumed on Play (published outside this repo record). Previous high-water mark: versionCode 92 (`4.0+topbar-space`, 2026-10-03, `automotive:internal` COMPLETED; upload and Play edit commit succeeded). Reserves the custom top strip from the laid-out window's stable status / cutout top insets (fraction only as fallback) instead of from a hardcoded 960, applies the sister app's `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS` policy in `DisplayPrefs.applyWindow`, persists per-mode geometry, centers on a root/latched mismatch, and hides (not moves) the bar when GM's status bar is transiently visible. Verified on the AAOS emulator with a synthetic top+left cutout: four screen-mode previews PASS, four surface corners normalize in-range, a live resize logs the mismatch, and a transient status bar does not move the video; 155 self-tests pass. Actual GM-region recovery on the vehicle is unverified. Previous high-water mark: versionCode 91 (`4.0+topbar-sidebar-fix`, 2026-10-03): reserves geometry before SUBSCRIBE and simplifies the sidebar to five metadata-driven controls. Previous high-water mark: versionCode 86 (`4.0+7532873-topbar-test`, 2026-10-02, `automotive:internal` COMPLETED; publisher confirmed upload and committed the edit). Includes the opt-in top bar, 153 passing emulator self-tests, and the current USB announce/permission fixes. Prior recorded release: 83 (`4.0+usb-defer`, 2026-09-30). Next Play upload must be **> 91**. A lower-but-unused code is refused at commit with `403` does-not-allow-upgrade (seen 2026-09-30 with 63 < live 82); a reuse is refused with `403 Version code N has already been used.`
+- `versionCode` is **not** `git rev-list --count HEAD` on this shallow mirror (that is 8). Play has already consumed 8-14 and 20-62, plus 82 (found live on `automotive:internal` 2026-09-30; published outside this repo record). **High-water mark: versionCode 210** (`4.0+log-range`, 2026-10-22, `automotive:internal` COMPLETED; PUBLISH_OK). Log upload range (1 hour / 6 hours / Today / All, default 1 hour), streamed upload batches instead of whole-capture buffering, and the `np: sync` music-sync instrumentation (§14.8). Previous high-water mark: versionCode 209 (`4.0+insights-workbench`, 2026-10-20, `automotive:internal` COMPLETED; PUBLISH_OK). Insights EV telemetry workbench (§13). Previous high-water mark: versionCode 208 (`4.0+topbar-slope-glass`, 2026-10-19, `automotive:internal` COMPLETED; PUBLISH_OK). Bar content hangs from the panel-slope clearance (glass line m = 167/2629 from the vehicle cutout wedge `Rect(0,0-2629,167)`): left icons form a level row clearing the slope at the last icon, the smaller right cluster's edge is solved to where its content height fits above the bar bottom (near x 1600, not x 2540 which has 7px of glass), and the width fit-scale is the backstop. Centering had put the whole cluster on missing glass. Previous high-water mark: versionCode 207 (`4.0+topbar-right-fit`, 2026-10-19, `automotive:internal` COMPLETED; PUBLISH_OK). Top-bar right cluster runs smaller than the left icons with a 0.55h end indent (like the car's own bar) and shrinks uniformly via a measured fit scale when the slot is narrow, so it never overlaps the left icons or spills under the cutout. Previous high-water mark: versionCode 206 (`4.0+traced-rect-tick-gate`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Traced rect sizes advertised video before latch (true visible aspect ratio, zero dp squish), top-bar right cluster honours max(safeInsetRight, traced rightPx), live solved-rect preview in the trace activity, tick fires only on elapsedMs advance, non-negative queueId, rail/top-bar play state follows seeks. Previous high-water mark: versionCode 205 (`4.0+metadata-trace`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Tick-deduped PlaybackState (push on change/seek only), single-item queue, SEEK rate fix, rail follows ticks, art clears on id-less titles (§12.1); edge-trace calibration replaces dp sliders + margin presets (§12.2). Previous high-water mark: versionCode 204 (`4.0+topbar-fitment`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Non-rectangular-panel fitment: top-bar clock/temp cluster starts left of the live `safeInsetRight` (285) instead of on missing glass, larger right-cluster text/icons, Right margin stops to 320 with nearest-stop mapping, Right inset (dp) slider to 320. Previous high-water mark: versionCode 203 (`4.0+insights-np-logs`, 2026-10-18, `automotive:internal` COMPLETED; PUBLISH_OK). Insights settings tab, in-call overlay pill, failure-screen restart (d2e2d5d) plus now-playing/artwork silence diagnostics (a5c6906). Previous high-water mark: versionCode 202 (`4.0+fullscreen-capture`, 2026-10-17, `automotive:internal` COMPLETED; PUBLISH_OK, commit a55576a). Whole-window Capture Full Screen (top bar + rail + video composite) alongside video-only capture; sidecar gains windowWidth/Height. NOTE: the outside-repo publisher is far ahead of this file's old record — on 2026-10-17 `automotive:internal` was already live at **201** (`4.0+startup-fix-r201`), and 100/101 were already consumed, so a blind +1 from 99 fails twice over (reuse at upload, then does-not-allow-upgrade at commit for anything ≤ live). To find the true max, open an edit with the SA key and list edit-scoped bundles/tracks (app-scoped tracks/bundles reads 404 for this SA; edits.insert works). Previous high-water mark: versionCode 99 (`4.0+vision-launch`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Strip-first vision launcher (`ScreenModel` fixed 1/4 scale + `VisionLauncher` + `CalibrationUi`): templates cut from saved captures, strip → grid → Home-toggle-then-grid, never taps an app without a 0.85 match; top-bar NAV/MUSIC/PHONE route through it with the old behaviour as the uncalibrated fallback; 24-unit outline glyphs for car/music/nav/phone/energy. Previous high-water mark: versionCode 98 (`4.0+calib-ui`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Icon Templates & App Launch card in the launcher calibration section operates the matcher/launcher engine: template list/delete/capture from a normalized rect of a live stable frame, tap-verify-upload app launches with records to `/api/launches`; dock-row hint (y 0.72..0.88 of 2754x966) measured from the day's HOME_GRID captures — RETIRED in v99 (that region was Spotify podcast artwork, not a dock row; see §9). Previous high-water mark: versionCode 97 (`4.0+warm-relink`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Warm-start relink: `maybeRelinkOnResume` reclaims when the app is opened with USB_CLAIM FAILED on the board, no attempt in flight, and `1314:2d00` on the bus (remote warm-up powers USB with the display off, the dialog defers, the claim aborts, resume never re-ran); per-episode display-off-deferral flag reset; `OcbmProbe.linkAttemptInFlight` funnel flag; `Board.isFailed` reader. Previous high-water mark: versionCode 96 (`4.0+capture-launch`, 2026-10-15, `automotive:internal` COMPLETED; PUBLISH_OK). Calibration capture + launcher record uploads with matching `/api/captures` + `/api/launches` endpoints on the log receiver. Previous high-water mark: versionCode 95 (`4.0+probe-upload`, 2026-10-14, `automotive:internal` COMPLETED; PUBLISH_OK). Adds the probe report upload: `POST /probe` file endpoint on the log receiver plus an `Upload latest report to log server` button in the probe activity reusing the explicit-tap HTTPS-only contract (report.json already embeds `rawLiveEvents`, ZIP/CSV stay local). Codes 93 and 94 were found already consumed on Play (published outside this repo record). Previous high-water mark: versionCode 92 (`4.0+topbar-space`, 2026-10-03, `automotive:internal` COMPLETED; upload and Play edit commit succeeded). Reserves the custom top strip from the laid-out window's stable status / cutout top insets (fraction only as fallback) instead of from a hardcoded 960, applies the sister app's `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS` policy in `DisplayPrefs.applyWindow`, persists per-mode geometry, centers on a root/latched mismatch, and hides (not moves) the bar when GM's status bar is transiently visible. Verified on the AAOS emulator with a synthetic top+left cutout: four screen-mode previews PASS, four surface corners normalize in-range, a live resize logs the mismatch, and a transient status bar does not move the video; 155 self-tests pass. Actual GM-region recovery on the vehicle is unverified. Previous high-water mark: versionCode 91 (`4.0+topbar-sidebar-fix`, 2026-10-03): reserves geometry before SUBSCRIBE and simplifies the sidebar to five metadata-driven controls. Previous high-water mark: versionCode 86 (`4.0+7532873-topbar-test`, 2026-10-02, `automotive:internal` COMPLETED; publisher confirmed upload and committed the edit). Includes the opt-in top bar, 153 passing emulator self-tests, and the current USB announce/permission fixes. Prior recorded release: 83 (`4.0+usb-defer`, 2026-09-30). Next Play upload must be **> 91**. A lower-but-unused code is refused at commit with `403` does-not-allow-upgrade (seen 2026-09-30 with 63 < live 82); a reuse is refused with `403 Version code N has already been used.`
 - **Publishing is one command, no Play Console needed:** `AAB_VERSION_CODE=<n> AAB_VERSION_NAME=<name> host/gm_ccpa/tools/build_aab.sh --publish`. It builds the JNI libs, packages and signs the `playRelease` bundle, then runs Gradle Play Publisher's `:app:publishPlayReleaseBundle` against the service-account key at `<repo root>/play-service-account.json` (gitignored; override with `PLAY_SERVICE_ACCOUNT`). The `play {}` block in `netprobe_app/app/build.gradle` targets track **`automotive:internal`** with status **COMPLETED**, so the build is live for internal testers as soon as the log reads `Committing changes` / `PUBLISH_OK`. Same mechanism as the sister apps (`~/Code/tmp_carlink_native_ivalen91_update/documents/Play_Store_Upload.md` has the one-time Console setup: API enabled on the Cloud project, SA invited with release rights, dedicated AAOS form-factor track).
 - Do not commit `play-service-account.json`.
 - AAOS emulator with `-usb-passthrough vendorid=0x1314,productid=0x2d00,hostbus=…,hostport=…` **does** deliver the adapter to a 3rd-party app (permission dialog, then full OCBM + HCI). That is a Linux-host USB-host proof, not an Equinox proof. Keep the emulator parent attached; detached qemu dies. Stale AVD lock files from a killed qemu block the next launch.
@@ -365,3 +365,184 @@ from the test run); the structural cause is other tenants' dev stacks (evinsight
 suite (daemons linger), or `--no-daemon` the test run, and treat screenshots as perishable
 evidence — this v209 went out with JVM-green tests and a clean kotlinc compile but no fresh
 screenshots, which is recorded here rather than implied otherwise.
+
+---
+
+## 14. 2026-10-21: now-playing sync — what the 2026-10-20 drive (v209) actually shows
+
+Complaint: the AAOS media card's **time remaining**, **artwork** and **play/pause glyph** do not match
+the audio. The 2026-10-15 capture could not settle it because that build's card line had no
+`dur=/status=` fields; `bb51175` (v209, `4.0+insights-workbench`) does. This section is that capture,
+analysed field by field. Two defects are fixed by it (§14.3, §14.4); one is real, reproduced twice, and
+deliberately **not** touched without hardware (§14.5).
+
+### 14.1 Capture
+
+Upload of 2026-10-20 (`logs.txt`, **718 MB**; this analysis used the last 60 MB, which carries four
+builds end to end). Target: `pid 28313`, `v=4.0+insights-workbench build=bb51175`,
+**162,451 lines, 21:28:49 → 22:29:49 UTC**. Volume is not the story: 307 × `0x5001`, of which **266
+are the 12 B elapsed-only tick** and only 9 are full records. That ratio is why the merge rules matter.
+
+| Signal | Count |
+|---|---|
+| `np: track "…"` (title changes) | 9 |
+| `np: record without title (artworkId=…)` (id follow-ups) | 15 |
+| `card: metadata` publishes | 49 — **9 of them `dur=0`** |
+| `card: state=` pushes | 20 (13 `source=status`, 5 `source=tick`, 2 `source=focus`) |
+| `np: art … accepted` / `card: art decode` | 11 / 11 |
+| `art dropped on title change` | 6 |
+| `media playing at gain 0 with no focus held` | 4 |
+
+The card line is exactly the shape the previous build lacked:
+`card: metadata "Last Night" art=300x300 dur=163854 status=1 queueId=129 (sessionUp=true)`.
+
+### 14.2 The phone splits a track change into three frames (timings now measured)
+
+`22:21:38.058` title only (no PlaybackAttributes, no artworkId), `.069` title-less record naming
+`artworkId=130`, `.189` the 160,674 B JPEG, `.194` `card: art decode`. §12.1 holds: title → id → JPEG,
+11 ms then 120 ms. Two consequences, both confirmed here:
+
+- a track change publishes **three** `MediaMetadata` rebuilds (`art=none`, then `queueId`, then
+  `art=300x300`) — 49 publishes for 9 track changes, and the card shows ~100–150 ms of no art;
+- the **title frame carries no PlaybackAttributes at all** — no `elapsedMs`, no `playbackStatus`.
+  That is §14.4.
+
+### 14.3 FIXED: a `durationMs: 0` from the phone erased a known duration
+
+`22:21:37.536` publishes `dur=163854` for "Last Night"; **3 ms later** `.539` publishes the same title,
+same artwork id and same `queueId` with **`dur=0`**. `21:59:16.277` is the same shape on "230. What
+Happens When the Trump Loyalty Test Goes Wrong?" (`dur=2438400` → `dur=0`), restored to `2438400`
+0.5 s later at `.804`. The only code path that can change a published duration is a record carrying
+`durationMs`, so iOS stated **0** — a duration it had not resolved — and the merge took it literally
+(`json.optLongOrNull("durationMs") ?: base.durationMs`; `0` is not null). `publishNow` then omits
+`METADATA_KEY_DURATION` (`if (s.durationMs > 0)`), so the card loses its remaining-time input until
+some later frame restores it — and for a track that never gets one ("Call It What You Want",
+`22:26:48`, `dur=0` for the whole item) it never comes back.
+
+Fix: `mergeDuration(prev, incoming)` in `NowPlayingState.kt` — a **non-positive** `durationMs` is "not
+stated" and leaves the previous value standing. A track change still starts at 0 (its base is blank),
+so a new item never inherits the old length. Pinned by `zeroDurationNeverErasesAKnownOne`.
+
+### 14.4 FIXED: a track-change frame published a fabricated `pos=0 rate=1.0`
+
+`22:21:42.043` publishes the new title "The Fate of Ophelia" (from 549 ms on the previous item) and
+`.045` publishes `card: state=3 pos=0 rate=1.0 source=status` — position 0, rate 1, from a frame that
+stated no `elapsedMs`. `elapsedMs` fell through to the blank track-change base, so 0 was published as a
+real position. The next tick corrects it only when the true playhead is more than `SEEK_DEDUP_MS`
+(2 s) away; otherwise AAOS interpolates from a baseline that is off by whatever elapsed the phone had
+on the new item — and a boundary received while the phone is **paused** has no tick coming at all, so
+the card sits at 0:00 with `remaining = full length` for the whole paused item.
+
+Fix: `Snapshot.elapsedKnown` (excluded from `equals`, like `elapsedMs`, so it never triggers a
+metadata rebuild) is cleared by a track-change record that omits the field and set by any record that
+states it. `publishedPosition()` then publishes `PlaybackState.PLAYBACK_POSITION_UNKNOWN` instead of a
+fabricated 0, and `publishState` treats a push that left the position unknown as owing AAOS the first
+real one — otherwise extrapolating from `-1` makes every later tick look "within 2 s of the line" and
+the card would sit with no progress indefinitely. The card log prints `pos=?` for it. Pinned by
+`unknownPositionIsNotZero` and `snapshotIgnoresElapsedKnownForMetadataEquality`.
+
+### 14.5 OPEN — the silence chain: GM's source-change probe takes focus, and nothing recovers
+
+This is the "play/pause doesn't match the audio" half, and it is **reproduced identically twice**:
+
+```text
+21:37:07.400  transport: first caller package=com.android.car uid=1000 — candidate steering-wheel source
+21:37:07.401  transport: pause caller=com.android.car uid=1000 dropped — source-change probe
+21:37:07.411  transport: stop  caller=com.android.car uid=1000 dropped — source-change probe
+21:37:07.795  media focus LOSS — request cleared; waiting for user play        (+0.38 s)
+21:37:07.797  focus: LOSS(permanent) → phone PAUSE sent=true (status was 1)
+21:37:07.945  [input] media-btn index=2 sent=true
+22:22:45.289/.302  the same pause+stop probe pair
+22:22:45.858  media focus LOSS — request cleared; waiting for user play        (+0.56 s)
+```
+
+The app does the right thing at the edge: gain 0, phone PAUSE, card PAUSED. What it cannot do is
+recover, because `permanentFocusLoss` is latched for the session and `onStreamStart` returns early:
+
+- `22:03:21` — a new media stream (26 min after the previous one ended, so a phone-side play): decoded
+  at gain 0 for 34 minutes, **23,194 frames played, 23,089 of them at gain 0**, until the lanes retired;
+- `22:21:37` — recovered only because the driver pressed play in GM's UI at `22:20:13`
+  (`transport: play … forwarded` → `media audio focus: GRANTED`);
+- `22:22:45` — same probe → same loss → `22:24:28` another phone-side stream, playing at gain 0 again.
+
+So the phone streams, the card says PAUSED, and the cabin is silent — while the *other* common
+presentation is a card frozen on the last track. The discriminating line in any future capture is
+`media playing at gain 0 with no focus held — driver hears nothing` (4 occurrences here).
+
+**Not changed yet, on purpose.** The comment on `AacPlayer.requestFocus` records a device experiment
+(`4.0+mirror`) where re-requesting inside the loss callback made the phone tear the media stream down
+after 630 frames. A fix has to pick one of two contracts and prove it on the truck:
+
+1. treat the `com.android.car` pause+stop **probe pair** as bookkeeping rather than a displacement —
+   do not latch `permanentFocusLoss` (and do not send PAUSE) when the LOSS lands within ~1 s of that
+   pair, and re-request focus once; or
+2. keep the latch for a real LOSS but let a **fresh media stream with the phone's own PLAY** reclaim
+   it, and on refusal stop decoding rather than burning 34 minutes of muted audio.
+
+Option 2 is the smaller change, but the log cannot confirm what the phone thought at `22:03:21`: the
+only `0x5001` frames there are 12 B ticks — **status frames are not re-sent on resume**, so the card can
+hold PAUSE while the phone plays. That is why this needs `dumpsys audio` alongside the next drive
+(§14.7) rather than a guess.
+
+### 14.6 Not the cause (log-refuted in this capture)
+
+- **Artwork transfer:** 11 transfers, 11 `accepted`, 11 decodes, zero `rejected`, zero `setMetadata
+  failed`. The blank frame is the structural three-publish flash of §14.2, not a fetch failure.
+- **Subscription:** the tunnel identified and sent `3 subscribes (now_playing, route_guidance,
+  call_state)` + `TX 0x5000`; 307 `0x5001` messages arrived.
+- **Tick dedup:** 266 incoming ticks produced **5** `source=tick` pushes — the gate works as designed;
+  a card whose seconds freeze between pushes is AAOS interpolation, not a dropped tick.
+- **Buttons:** `transport: play … -> HID media 1 sent=true`, `next … -> HID media 4 sent=true`, and a
+  wheel-key caller (`com.gm.rhmi`) is a real transport source rather than a source-change probe.
+- **The `pos=0` at `22:21:37.538`** (as opposed to `22:21:42.045`) is the phone's own data — that frame
+  carried `elapsedMs=0` with `status=1`, i.e. the item really did restart from 0:00 after the pause.
+
+### 14.7 Still to capture (updated 2026-10-22)
+
+1. `dumpsys audio` + `dumpsys media_session` alongside a drive, so "who holds focus when the card says
+   PAUSED" is answered by the framework rather than inferred (§14.5).
+2. One session paused by the driver and resumed **on the phone**, to see whether iOS ever sends
+   `playbackStatus=1` on resume — that decides option 1 vs 2 in §14.5.
+3. Whether the three track-change publishes can be coalesced without delaying the title; that is the
+   only remaining candidate for the visible art flash.
+
+### 14.8 The capture that answers §14.7 (v210, 2026-10-22)
+
+§14.1 cost **718 MB** to ask a question that needed the last hour, and answering §14.5 on the truck
+needs two kinds of evidence this build now writes. Both changes are instrumentation, not behaviour —
+nothing about the card or the audio path moved.
+
+**Upload range.** The Logs page gained `Upload range` immediately above the Upload Logs button:
+**1 hour / 6 hours / Today / All**, defaulting to 1 hour (`UploadWindow.DEFAULT`, persisted in
+`upload_center_prefs/log_window`). The range governs both the button and its own subtitle, because a
+window nobody can see is how someone uploads an hour expecting the whole day. Filtering is by each
+line's own logcat stamp — `LogTimeFilter` compares 19 characters of the fixed-width `-v year -v UTC`
+prefix rather than parsing a date per line (~1.4 M lines/h), keeps lines with no stamp (capture
+headers, seam notices) because they are the provenance of the artifact, and falls back to the bare
+`MM-DD`/local form when the device rejected `-v year`/`-v UTC`. "Today" is **local** midnight, not a
+rolling 24 h and not UTC midnight (`uploadCutoffMs`), because it means the driver's day.
+
+Two consequences worth knowing before reading a future capture:
+
+- an upload now **fails with a reason** when every line predates the window ("oldest capture on disk
+  is …; choose a longer range") instead of reporting a successful one-line upload;
+- the previous implementation accumulated every batch in memory before posting, so its peak was the
+  whole capture. It now counts the window, then **streams** one 500-line batch at a time — a 768 MB
+directory no longer means 768 MB of heap on the head unit.
+
+**Music-sync instrumentation.** The card can be wrong two ways and §14.1 could distinguish neither:
+whether the phone sent metadata at all, and whether anyone in the car bound the browser service. Now:
+
+- `np: sync <n>s records=N (titleChanges= metadata= ticks=) artwork= accepted= ignoredKinds=` — one
+  line per 30 s, printed only when something arrived. `records=0 ignoredKinds=60 lastIgnored=routeGuidance`
+  says the `:9004` seam is alive but carrying only navigation, which a per-record log cannot show
+  without drowning the capture;
+- one `np: sync SILENT <n>s` per gap when **nothing** arrived (no records, no art, no ignored kinds),
+  and `np: sync first nowPlaying record <n>s after the seam opened` on the session's first record;
+- `np: sync session records=… artwork=… firstRecordAfter=never|<n>s` at session end — the one number
+  that separates "the phone never sent music" from "the card showed the wrong track";
+- `browser: bind #n package=… uid=… (sessionUp=… sourceSwitchable=…)` per `onGetRoot`, answering
+  "was this app even in the source switcher".
+
+Read together with §14.5's discriminator (`media playing at gain 0 with no focus held`), a 1-hour
+upload after the next drive should be enough to settle option 1 vs option 2 without another 718 MB.

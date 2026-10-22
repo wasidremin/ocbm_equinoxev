@@ -31,6 +31,24 @@ class NowPlayingState {
     }
     private lateinit var art: ArtworkKeeper
 
+    // ---- music-sync instrumentation -----------------------------------------------------------
+    //
+    // The 2026-10-20 drive showed the failure mode a per-line log cannot answer: the card was wrong
+    // and the capture contained no evidence of whether the PHONE sent anything at all. A per-record
+    // log would drown a 227 MB/h capture, so this is a counter plus a 30 s beat: one line that says
+    // how many records, of which kind, arrived in the window — and, when nothing did, says so once
+    // rather than not at all.
+    //
+    // All of it is guarded by this object's own monitor, the same one [onNowPlaying] / [onArtwork]
+    // already hold, so a beat cannot observe a torn tally.
+    private val tally = SyncTally()
+    private var sessionRecords = 0L
+    private var sessionArtwork = 0L
+    private var firstRecordAtMs = 0L
+    private val sessionStartMs = System.currentTimeMillis()
+    private var lastBeatAtMs = sessionStartMs
+    private var silentLogged = false
+
     init {
         art = ArtworkKeeper(
             log = { log.i(it) },
@@ -48,7 +66,40 @@ class NowPlayingState {
                 }, delay, TimeUnit.MILLISECONDS)
             },
         )
+        artSched.scheduleWithFixedDelay({ beat() }, BEAT_MS, BEAT_MS, TimeUnit.MILLISECONDS)
     }
+
+    /**
+     * One `np: sync` line per [BEAT_MS], plus a single "silent" line per gap.
+     *
+     * `scheduleWithFixedDelay` CANCELS all later runs if the task throws, so this must never
+     * propagate — a diagnostic that dies silently is worse than none (the same trap [LogFiles]
+     * documents for its flush executor).
+     */
+    private fun beat() = runCatching {
+        val now = System.currentTimeMillis()
+        var line: String? = null
+        synchronized(this) {
+            val windowSec = ((now - lastBeatAtMs) / 1000L).coerceAtLeast(1L)
+            lastBeatAtMs = now
+            if (tally.isEmpty()) {
+                // Nothing at all — no records, no art, no ignored kinds. Report once per gap: a
+                // silent seam repeated every 30 s for an hour is noise, but one line is the answer
+                // to "did the phone ever send metadata on this session".
+                if (!silentLogged) {
+                    silentLogged = true
+                    line = "np: sync SILENT ${windowSec}s — no nowPlaying JSON, no artwork, no other " +
+                        "kinds on the :9004 seam since the last beat (first record after " +
+                        "${if (firstRecordAtMs == 0L) "never" else "${(firstRecordAtMs - sessionStartMs) / 1000L}s"})"
+                }
+            } else {
+                line = tally.line(windowSec)
+                tally.clear()
+                silentLogged = false
+            }
+        }
+        line?.let { log.i(it) }
+    }.onFailure { log.e("np: sync heartbeat failed: ${it.javaClass.simpleName}: ${it.message}") }
 
     data class Snapshot(
         val title: String? = null,
@@ -59,6 +110,22 @@ class NowPlayingState {
         val appName: String? = null,
         val durationMs: Long = 0,
         val elapsedMs: Long = 0,
+        /**
+         * False when [elapsedMs] is only the field's default, not something the phone stated.
+         *
+         * iOS splits a track change across frames: the title frame usually carries NO
+         * PlaybackAttributes, so `elapsedMs` falls through to the blank base and reads 0. Publishing
+         * that as position 0 at rate 1 makes the card extrapolate "0:00 of this track" and its
+         * remaining time jump to full length on every track boundary before snapping back — the
+         * 2026-10-20 drive logged exactly that (`state=3 pos=0 rate=1.0` at 21:37:06.276 and
+         * 22:21:37.538). A track change whose record omits the field now clears this flag, and
+         * [CarPlayMediaBrowserService.publishState] publishes PLAYBACK_POSITION_UNKNOWN instead of a
+         * fabricated 0 until a record actually carries an elapsed time.
+         *
+         * Excluded from [equals] together with [elapsedMs]: it describes the playback state, not the
+         * displayed metadata, so it must not trigger a `MediaMetadata` rebuild.
+         */
+        val elapsedKnown: Boolean = true,
         val trackNumber: Int = 0,
         val trackCount: Int = 0,
         val artworkId: Int = -1,
@@ -160,12 +227,16 @@ class NowPlayingState {
                 // The seam also carries routeGuidance, maneuver, callState, artworkReady and more.
                 // Only the media picture is consumed — by scope decision there is no navigation or
                 // telephony surface in this app, and half-handling a kind is worse than ignoring it.
-                if (json.optString("kind") == "callState") { onCallState(json); return }
-                if (json.optString("kind") != "nowPlaying") return
+                val kind = json.optString("kind")
+                if (kind == "callState") { onCallState(json); noteIgnoredKind(kind); return }
+                if (kind != "nowPlaying") { noteIgnoredKind(kind); return }
                 val prevElapsed = snapshot.elapsedMs
                 val changed = onNowPlaying(json)
-                if (changed != null) emit(changed)
-                else if (shouldFireTick(prevElapsed, snapshot.elapsedMs)) {
+                if (changed != null) {
+                    noteMetadataPublished()
+                    emit(changed)
+                } else if (shouldFireTick(prevElapsed, snapshot.elapsedMs)) {
+                    noteTick()
                     runCatching { onPlaybackTick?.invoke(snapshot) }
                         .onFailure { log.e("tick consumer threw: ${it.message}") }
                 }
@@ -198,6 +269,13 @@ class NowPlayingState {
         val incomingTitle = json.optStringOrNull("title")
         val recordArtworkId = json.optIntOrNull("artworkId")
         val trackChanged = incomingTitle != null && incomingTitle != prev.title
+        tally.records++
+        sessionRecords++
+        if (trackChanged) tally.titles++
+        if (firstRecordAtMs == 0L) {
+            firstRecordAtMs = System.currentTimeMillis()
+            log.i("np: sync first nowPlaying record ${(firstRecordAtMs - sessionStartMs) / 1000L}s after the seam opened")
+        }
         if (trackChanged) {
             log.i(trackSummaryLine(
                 incomingTitle,
@@ -226,8 +304,17 @@ class NowPlayingState {
             genre = json.optStringOrNull("genre") ?: base.genre,
             composer = json.optStringOrNull("composer") ?: base.composer,
             appName = json.optStringOrNull("appName") ?: base.appName,
-            durationMs = json.optLongOrNull("durationMs") ?: base.durationMs,
+            // NOT `?: base.durationMs`: iOS states 0 for a duration it has not resolved yet, and
+            // taking that literally erased a known duration mid-track (2026-10-20 22:21:37.536 ->
+            // `dur=163854`, .539 -> `dur=0`, same title, same artwork id; and 21:59:16.277 the same
+            // way). A 0 is "not stated", so it must fall through to what we already knew. On a
+            // track change the base is blank, so a new item still starts with no duration rather
+            // than inheriting the old one.
+            durationMs = mergeDuration(base.durationMs, json.optLongOrNull("durationMs")),
             elapsedMs = json.optLongOrNull("elapsedMs") ?: base.elapsedMs,
+            // Only a frame that states elapsed time makes the position trustworthy; a track-change
+            // frame that omits it must not publish the 0 the blank base left behind.
+            elapsedKnown = json.optLongOrNull("elapsedMs") != null || (!trackChanged && base.elapsedKnown),
             trackNumber = json.optIntOrNull("trackNumber") ?: base.trackNumber,
             trackCount = json.optIntOrNull("trackCount") ?: base.trackCount,
             artworkId = art.artworkId,
@@ -246,6 +333,9 @@ class NowPlayingState {
     @Synchronized
     fun onArtwork(id: Int, jpeg: ByteArray): Snapshot? {
         val verdict = art.onTransfer(id, jpeg, !snapshot.title.isNullOrEmpty())
+        tally.artwork++
+        sessionArtwork++
+        if (verdict == "accepted") tally.artAccepted++
         if (verdict != "accepted") return null
         val next = snapshot.copy(artwork = art.artwork, artworkId = art.artworkId)
         snapshot = next
@@ -264,6 +354,17 @@ class NowPlayingState {
             calls.clear()
             snapshot = Snapshot()
             log.i("np: cleared — $why")
+            // Session totals, because the 30 s beats summed over a drive are harder to read than
+            // the one number a reader actually wants: did this session ever have a track at all?
+            log.i(syncSummaryLine(
+                sessionRecords, sessionArtwork,
+                if (firstRecordAtMs == 0L) null else (firstRecordAtMs - sessionStartMs) / 1000L,
+            ))
+            tally.clear()
+            silentLogged = false
+            firstRecordAtMs = 0L
+            sessionRecords = 0L
+            sessionArtwork = 0L
             snapshot
         }
         onCallChanged?.invoke()
@@ -275,7 +376,20 @@ class NowPlayingState {
             .onFailure { log.e("metadata consumer threw: ${it.message}") }
     }
 
+    @Synchronized private fun noteMetadataPublished() { tally.metadata++ }
+
+    @Synchronized private fun noteTick() { tally.ticks++ }
+
+    /** A JSON kind this app deliberately does not consume. Counted, never per-record logged. */
+    @Synchronized private fun noteIgnoredKind(kind: String) {
+        tally.ignored++
+        if (kind.isNotEmpty()) tally.lastIgnoredKind = kind
+    }
+
     companion object {
+        /** Beat period for the `np: sync` line. Long enough not to matter for size at 227 MB/h. */
+        const val BEAT_MS = 30_000L
+
         const val STOP = 0
         const val PLAY = 1
         const val PAUSE = 2
@@ -297,6 +411,66 @@ internal fun JSONObject.optIntOrNull(k: String): Int? = if (has(k) && !isNull(k)
 
 internal fun ByteArray?.contentEqualsOrBothNull(o: ByteArray?): Boolean =
     if (this == null || o == null) this == null && o == null else contentEquals(o)
+
+/**
+ * One beat's worth of music-sync counters. Mutable and package-internal, because the point is to
+ * increment it from three synchronized call sites and render it from a fourth; a copy-on-write
+ * structure would only add garbage at a rate nothing here is starved for.
+ *
+ * Field meanings, in the order the beat line prints them:
+ * - [records] `nowPlaying` JSON records, whatever they contained.
+ * - [titles] of those, how many named a different title (i.e. a track change).
+ * - [metadata] how many produced a card rebuild — records whose DISPLAYED picture changed.
+ * - [ticks] elapsed-only records that moved the position but rebuilt nothing.
+ * - [artwork] JPEG transfers received on the seam; [artAccepted] those that reached the picture.
+ * - [ignored] JSON kinds this app does not consume (`routeGuidance`, `maneuver`, `callState`, …),
+ *   with [lastIgnoredKind] as the most recent. Non-zero `ignored` with zero `records` is the
+ *   signature of a live seam carrying something other than music — a diagnosis no per-line log
+ *   could have produced without drowning the capture.
+ */
+internal class SyncTally {
+    var records = 0L
+    var titles = 0L
+    var metadata = 0L
+    var ticks = 0L
+    var artwork = 0L
+    var artAccepted = 0L
+    var ignored = 0L
+    var lastIgnoredKind: String? = null
+
+    /** True when nothing at all arrived — the case the beat reports once as SILENT. */
+    fun isEmpty(): Boolean = records == 0L && artwork == 0L && ignored == 0L
+
+    fun clear() {
+        records = 0L; titles = 0L; metadata = 0L; ticks = 0L
+        artwork = 0L; artAccepted = 0L; ignored = 0L; lastIgnoredKind = null
+    }
+
+    /**
+     * `np: sync 30s records=12 (titleChanges=1 metadata=1 ticks=11) artwork=1 accepted=1 ignoredKinds=0`
+     *
+     * Titles and artists are deliberately absent: the capture is uploadable, and the counts are what
+     * the diagnosis needs. The one place content appears is [trackSummaryLine].
+     */
+    fun line(windowSec: Long): String = buildString {
+        append("np: sync ${windowSec}s records=$records")
+        append(" (titleChanges=$titles metadata=$metadata ticks=$ticks)")
+        append(" artwork=$artwork accepted=$artAccepted ignoredKinds=$ignored")
+        lastIgnoredKind?.let { append(" lastIgnored=$it") }
+    }
+}
+
+/**
+ * One line for a finished session: did it ever have music, and how long did the phone take to say
+ * so. [firstRecordAfterSec] is null when the seam never carried a single nowPlaying record, which is
+ * a completely different bug from "the card showed the wrong title".
+ */
+internal fun syncSummaryLine(
+    records: Long,
+    artwork: Long,
+    firstRecordAfterSec: Long?,
+): String = "np: sync session records=$records artwork=$artwork firstRecordAfter=" +
+    (firstRecordAfterSec?.let { "${it}s" } ?: "never")
 
 /** Which call-overlay state the pill shows. NONE hides it. */
 enum class CallPhase { NONE, RINGING, ACTIVE }
@@ -320,6 +494,33 @@ internal fun titlelessRecordEvent(
     lastLoggedId: Int,
 ): Int? = if (incomingTitle == null && recordArtworkId != null && recordArtworkId != lastLoggedId)
     recordArtworkId else null
+
+/**
+ * Merge one `durationMs` field. A non-positive value is "not stated" and leaves [prev] standing:
+ * iOS sends 0 for a track whose duration it has not resolved, and letting that through erased a
+ * known duration mid-track (2026-10-20 capture). Pure for unit tests.
+ */
+internal fun mergeDuration(prev: Long, incoming: Long?): Long =
+    if (incoming != null && incoming > 0) incoming else prev
+
+/** `PlaybackState.PLAYBACK_POSITION_UNKNOWN`, restated so the helpers below stay Android-free. */
+internal const val POSITION_UNKNOWN = -1L
+
+/**
+ * The position to publish for one snapshot. Unknown when no record has stated elapsed time, so AAOS
+ * shows no progress rather than interpolating a fabricated 0 (see [NowPlayingState.Snapshot.elapsedKnown]).
+ * A focus pause still pins the frozen position — that value came from a real push.
+ */
+internal fun publishedPosition(
+    elapsedKnown: Boolean,
+    elapsedMs: Long,
+    focusPaused: Boolean,
+    frozenPosition: Long,
+): Long = when {
+    focusPaused -> frozenPosition
+    elapsedKnown -> elapsedMs
+    else -> POSITION_UNKNOWN
+}
 
 /**
  * True when an unchanged-metadata record actually moved [nextElapsed] relative to [prevElapsed].

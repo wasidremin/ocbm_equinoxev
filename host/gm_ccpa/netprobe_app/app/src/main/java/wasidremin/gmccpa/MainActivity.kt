@@ -706,6 +706,11 @@ class MainActivity : Activity() {
                 finishAffinity()
             }
             onCaptureScope = { setCaptureScope(it) }
+            onUploadWindow = { w ->
+                wasidremin.gmccpa.upload.UploadCenter.setLogWindow(this@MainActivity, w)
+                emit("log upload range = ${w.label} (${w.name}) — applies to the next Upload Logs tap")
+                ui.setDetail("uploads will send ${w.phrase}")
+            }
             onLogAction = { a ->
                 when (a) {
                     LogAction.EXPORT -> exportLogs(redact = true)
@@ -1714,19 +1719,29 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Upload a redacted snapshot to the shared Cloud Bridge log receiver. */
+    /**
+     * Upload a redacted snapshot to the shared Cloud Bridge log receiver.
+     *
+     * The range comes from the Logs page's selector ([wasidremin.gmccpa.upload.UploadCenter.logWindow])
+     * and defaults to the last hour — whole-OS capture is ~227 MB/h, so the default must be the
+     * shortest useful range rather than everything on disk. The chosen range is logged with the
+     * result so an upload artifact can be told apart from a later one.
+     */
     private fun uploadLogs() {
         val base = wasidremin.gmccpa.upload.UploadCenter.baseUrl(this)
-        emit(">>> uploading logs (always redacted) to $base/logs")
-        ui.setDetail("uploading redacted logs…")
+        val window = wasidremin.gmccpa.upload.UploadCenter.logWindow(this)
+        emit(">>> uploading logs (always redacted, range=${window.label}) to $base/logs")
+        ui.setDetail("uploading ${window.phrase} of redacted logs…")
         ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Preparing)
         LogExport.upload(
             this,
+            window = window,
             onState = { st -> if (uiAlive()) ui.setUploadLogsState(st) },
         ) { result ->
             result.onSuccess {
-                emit("upload OK: ${it.lines} lines in ${it.batches} batches -> ${it.endpoint}")
-                if (uiAlive()) ui.setDetail("uploaded ${it.lines} redacted log lines")
+                val older = if (it.skippedLines > 0) ", ${it.skippedLines} older lines not sent" else ""
+                emit("upload OK: ${it.lines} lines in ${it.batches} batches (${it.window.label}$older) -> ${it.endpoint}")
+                if (uiAlive()) ui.setDetail("uploaded ${it.lines} redacted log lines (${it.window.label})")
             }.onFailure {
                 emit("upload FAILED: ${it.message}")
                 if (uiAlive()) ui.setDetail("log upload failed: ${it.message}")

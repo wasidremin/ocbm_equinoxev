@@ -227,16 +227,16 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             cx += pitch
         }
 
-        // ---- right cluster (on glass, never overlapping left) ----
-        // Like the car's own bar the right side runs SMALLER than the left icons and indented
-        // from the edge — and it hangs from the slope clearance instead of centering in the
-        // rect, because on the wedge the rect's vertical middle is missing glass. The edge
-        // itself is solved: the furthest-right x where a contentH-tall block still ends above
-        // the bar bottom (on the vehicle: near x 1600, where ~50px of glass exists — NOT x
-        // 2540, where 7px exists). A fit pass then shrinks the cluster uniformly if the slot
-        // between the left block and that edge is narrower than the measured natural width
-        // (narrow window, long clock/temperature strings). Zero slope keeps the centered
-        // layout. Left icons keep their measured size.
+        // ---- right cluster: right-justified to usable glass, never overlapping left ----
+        // Justified placement, solved per frame — see DisplayGeometry.topBarLayout. The left
+        // block above is left-justified to its measured start (the car's own spacing); this
+        // cluster is right-justified to the slope-solved usable-glass edge (on the vehicle
+        // near x 1600, where ~50px of glass exists — NOT the window edge x 2540, where 7px
+        // exists). The middle gap absorbs the remainder, with half a bar height held sacred
+        // so the groups never touch: when the slot is tight the cluster shrinks rather than
+        // closing the gap. Like the car's own bar the right side runs SMALLER than the left
+        // icons and hangs from the slope clearance instead of centering in the rect. Zero
+        // slope keeps the centered layout. Left icons keep their measured size.
         val leftEnd = cx - pitch / 2f
         val clock = DateFormat.getTimeFormat(context).format(Date())
         val baseText = h * 0.24f
@@ -244,8 +244,6 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         val baseAvatarR = h * 0.14f
         val baseSignalW = h * 0.28f
         val contentH = maxOf(baseSmall, baseAvatarR * 2f, baseText)
-        val edge = DisplayGeometry.clusterRightEdgeOnGlass(
-            w, h, rightInsetPx, slopeM, contentH, margin)
         text.textSize = baseText
         var natural = text.measureText(clock) + h * 0.30f +
             baseSmall + h * 0.22f +
@@ -253,7 +251,10 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             baseAvatarR * 2f
         temperature?.let { natural += text.measureText(it) + h * 0.30f }
         if (signalBars >= 0) natural += baseSignalW + h * 0.26f
-        val fit = DisplayGeometry.clusterFitScale(edge - leftEnd, natural)
+        val layout = DisplayGeometry.topBarLayout(
+            w, h, rightInsetPx, slopeM, contentH, margin, leftEnd, natural)
+        val edge = layout.rightEdge
+        val fit = layout.rightScale
         if (fit > 0f) {
             val ts = baseText * fit
             val small = baseSmall * fit

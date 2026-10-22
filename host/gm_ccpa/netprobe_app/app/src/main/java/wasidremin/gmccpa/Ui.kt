@@ -22,6 +22,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import wasidremin.gmccpa.logging.CapturePrefs
 import wasidremin.gmccpa.logging.LogCapture
+import wasidremin.gmccpa.logging.UploadWindow
 import wasidremin.gmccpa.ocbm.UsbIdentity
 import java.io.File
 
@@ -157,6 +158,17 @@ fun launcherStatusText(missingRoles: List<String>): String =
     }
 
 /**
+ * What the range row says, in the operator's terms rather than the enum's. Pure so the wording is
+ * pinned in one place; the button's own line ([uploadLogsSubtitle]) must not disagree with it.
+ */
+internal fun uploadRangeSubtitle(window: UploadWindow): String =
+    "Only lines from ${window.phrase} are sent. Uploads are always redacted."
+
+/** The Upload logs button's line: name the range, or the tap is a surprise. */
+internal fun uploadLogsSubtitle(window: UploadWindow): String =
+    "Streams ${window.phrase} of redacted logs with determinate socket progress"
+
+/**
  * The launcher screen.
  *
  * Settings sit behind the startup animation. The gear on that animation opens them; Done puts the
@@ -178,6 +190,8 @@ class LauncherUi(private val act: Activity) {
     var onUsbAnnounceRetries: (Int) -> Unit = {}
     var onAdvancedOpened: () -> Unit = {}
     var onLogAction: (LogAction) -> Unit = {}
+    /** The Logs page's upload range was changed; [MainActivity] persists it. */
+    var onUploadWindow: (UploadWindow) -> Unit = {}
     var onCaptureScope: (LogCapture.Scope) -> Unit = {}
     var onReturnToCarPlay: () -> Unit = {}
     var onScreenChanged: () -> Unit = {}
@@ -234,6 +248,10 @@ class LauncherUi(private val act: Activity) {
     private lateinit var scopeRow: EqRow
     private lateinit var logStatusRow: EqRow
     private lateinit var uploadLogsButton: wasidremin.gmccpa.upload.UploadActionButton
+    private lateinit var uploadLogsRow: EqRow
+    private lateinit var uploadWindowRow: EqRow
+    /** Mirrors [wasidremin.gmccpa.upload.UploadCenter.logWindow]; kept in sync on every pick. */
+    private var uploadWindow: UploadWindow = UploadWindow.DEFAULT
     private lateinit var launcherStatusRow: EqRow
     private lateinit var latestLaunchRow: EqRow
     private lateinit var captureCurrentRow: EqRow
@@ -350,7 +368,49 @@ class LauncherUi(private val act: Activity) {
         settingsHost.addOnLayoutChangeListener { _, l, _, r, _, _, _, _, _ ->
             considerWidth(r - l - settingsHost.paddingLeft - settingsHost.paddingRight)
         }
+        // Keep the settings UI inside the CarPlay calibration space (the same centered
+        // latch + presentation insets the video path uses) so no row parks under the
+        // panel slope or the right cutout. Re-applied on every frame layout because the
+        // latch (VideoFrame) and the window both settle after first layout.
+        frame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyCalibrationFrame(frame) }
+        settingsHost.post { applyCalibrationFrame(frame) }
         return frame
+    }
+
+    /**
+     * Positions [settingsHost] inside the CarPlay calibration space.
+     *
+     * The frame is the subscribe-time latch ([VideoFrame] block) centered in the live
+     * window via [DisplayGeometry.fitLatched], further inset by the same presentation
+     * [DisplayPrefs.Controls] the video path applies — so settings rows sit on exactly the
+     * visible glass the picture uses. Guarded by equality: re-setting identical margins
+     * would relayout forever. The intro splash stays full-bleed on purpose (transient).
+     */
+    private fun applyCalibrationFrame(frame: FrameLayout) {
+        val rootW = frame.width
+        val rootH = frame.height
+        if (rootW <= 0 || rootH <= 0) return
+        val latchedW = (VideoFrame.leftPx + VideoFrame.railPx + VideoFrame.viewWidth + VideoFrame.rightPx)
+            .coerceAtLeast(1)
+        val latchedH = (VideoFrame.topPx + VideoFrame.topInsetPx + VideoFrame.viewHeight + VideoFrame.bottomPx)
+            .coerceAtLeast(1)
+        val box = DisplayGeometry.settingsFrame(
+            rootW, rootH, latchedW, latchedH,
+            DisplayPrefs.controls(act), act.resources.displayMetrics.density)
+        val lp = settingsHost.layoutParams as? FrameLayout.LayoutParams ?: return
+        if (lp.width == box.width && lp.height == box.height &&
+            lp.leftMargin == box.x && lp.topMargin == box.y) return
+        // System safe padding still applies *inside* the frame (transient bars); the frame
+        // itself already keeps the host off the dead glass.
+        settingsHost.setPadding(safeLeft, settingsHost.paddingTop, safeRight, safeBottom)
+        lp.width = box.width
+        lp.height = box.height
+        lp.leftMargin = box.x
+        lp.topMargin = box.y
+        lp.gravity = Gravity.TOP or Gravity.START
+        settingsHost.layoutParams = lp
+        uiLog.i("settings frame root=${rootW}x${rootH} latched=${latchedW}x${latchedH} " +
+            "frame=${box.width}x${box.height}@${box.x},${box.y}")
     }
 
     fun safeDialogWidth(desired: Int): Int =
@@ -688,13 +748,35 @@ class LauncherUi(private val act: Activity) {
             onStatusAnnounce = { msg -> setDetail(msg) },
             onTrigger = { onLogAction(LogAction.UPLOAD) },
         )
+        // The range selector sits directly above the button it governs, and the button's own
+        // subtitle names the live choice. A window nobody can see is how someone uploads an hour
+        // expecting the whole day — the label and the action have to say the same thing.
+        uploadWindow = wasidremin.gmccpa.upload.UploadCenter.logWindow(act)
+        uploadWindowRow = EqRow(
+            act,
+            "Upload range",
+            uploadRangeSubtitle(uploadWindow),
+            trailing = EqSegmented(
+                act,
+                UploadWindow.values().map { it.label },
+                uploadWindow.ordinal,
+            ) { i ->
+                val picked = UploadWindow.values()[i]
+                uploadWindow = picked
+                uploadWindowRow.setSubtitle(uploadRangeSubtitle(picked))
+                uploadLogsRow.setSubtitle(uploadLogsSubtitle(picked))
+                onUploadWindow(picked)
+            },
+        )
+        uploadLogsRow = EqRow(
+            act, "Upload logs",
+            uploadLogsSubtitle(uploadWindow),
+            trailing = uploadLogsButton,
+        )
         page.addView(eqSectionLabel(act, "Logs"))
         page.addView(EqCard(act)
-            .addRow(EqRow(
-                act, "Upload logs",
-                "Streams redacted logs with determinate socket progress",
-                trailing = uploadLogsButton,
-            ))
+            .addRow(uploadWindowRow)
+            .addRow(uploadLogsRow)
             .addRow(EqRow(act, "Export logs", onClick = { onLogAction(LogAction.EXPORT) }))
             .addRow(EqRow(act, "Clear logs", titleColor = EqTheme.DANGER, onClick = { confirmClearLogs() })))
     }
@@ -1122,7 +1204,10 @@ class LauncherUi(private val act: Activity) {
         if (!::pages.isInitialized || !auditedTabs.add(index)) return
         val page = pages[index]
         page.post {
-            val edge = act.window.decorView.width - safeRight
+            // Audit against the calibration frame's right edge, not the window: settings
+            // must fit the same visible glass the video uses, not just dodge system bars.
+            val hostLp = settingsHost.layoutParams as? FrameLayout.LayoutParams
+            val edge = (hostLp?.leftMargin ?: 0) + settingsHost.width - safeRight
             uiLog.i("layout audit tab=$index pageH=${page.height} safeRightEdge=$edge")
             val loc = IntArray(2)
             for (i in 0 until page.childCount) {

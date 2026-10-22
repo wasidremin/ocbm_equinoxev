@@ -121,6 +121,91 @@ object DisplayGeometry {
     }
 
     /**
+     * Justified placement of the bar's two clusters inside the *usable* glass.
+     *
+     * The panel's right third is dead glass (slope + cutout): on the Equinox EV a 47px-tall
+     * row only fits left of x ~1640 of a 2914px window, so a right cluster pinned to the
+     * window edge (x 2537) would be invisible — and a cluster pinned to x 1640 *looks* like
+     * "everything shoved left" unless the placement is visibly justified. This solver makes
+     * the justification explicit and calculated:
+     *
+     * - LEFT cluster: left-justified to its measured start (car photo: first centre 0.95 x bar
+     *   height, pitch 0.88 x height — see [leftBlockEnd]). Never shrunk; the car's own icons
+     *   keep their measured size.
+     * - RIGHT cluster: right-justified to [clusterRightEdgeOnGlass] — the furthest-right x
+     *   where a [contentH]-tall block still ends above the bar bottom on visible glass. That
+     *   edge, not the window edge, is the right margin: anything further right is missing
+     *   glass, so the empty band beyond it is physics, not a layout choice.
+     * - MIDDLE gap: absorbs whatever is left. [minGap] (default half a bar height) is sacred:
+     *   when the slot is tight the right cluster shrinks to preserve the gap instead of
+     *   touching the left icons, so the two groups always read as separate clusters.
+     *
+     * Returns left/right edges plus the right-cluster scale; scale 0 hides the cluster when
+     * even the gap does not fit. Pure and unit-tested.
+     */
+    data class TopBarLayout(
+        val leftEnd: Float,
+        val rightEdge: Float,
+        val rightScale: Float,
+        val rightStart: Float,
+        val gap: Float,
+    )
+
+    fun topBarLayout(
+        viewWidth: Float,
+        barHeight: Float,
+        rightInsetPx: Int,
+        slopeM: Float,
+        contentH: Float,
+        margin: Float,
+        leftEnd: Float,
+        naturalWidth: Float,
+        minGap: Float = barHeight * 0.5f,
+    ): TopBarLayout {
+        val rightEdge = clusterRightEdgeOnGlass(viewWidth, barHeight, rightInsetPx, slopeM, contentH, margin)
+        val scale = clusterFitScale(rightEdge - leftEnd - minGap, naturalWidth)
+        val rightStart = rightEdge - naturalWidth * scale
+        return TopBarLayout(leftEnd, rightEdge, scale, rightStart, rightStart - leftEnd)
+    }
+
+    /**
+     * The rectangle the settings UI may occupy: the CarPlay calibration space.
+     *
+     * The video pipeline latches a block (rail + strip + picture + dead-glass margins) at
+     * subscribe time and centers it in the live window via [fitLatched]; the picture itself
+     * is then inset by the presentation [DisplayPrefs.Controls] dp sliders via [content].
+     * Settings previously filled the whole window with only system-bar safe insets, so on the
+     * vehicle its right edge sat under the same dead glass the video calibration keeps clear
+     * of. Constraining the settings host to this frame — the centered latch, further inset
+     * by the same presentation controls (scaled, like the video path) — keeps every settings
+     * row on the same visible glass the CarPlay picture uses. The inner scroller still
+     * scrolls vertically; this frame only bounds the horizontal/outer extent so nothing is
+     * parked under the slope or cutout. Pure and unit-tested.
+     */
+    fun settingsFrame(
+        rootW: Int,
+        rootH: Int,
+        latchedW: Int,
+        latchedH: Int,
+        controls: DisplayPrefs.Controls,
+        density: Float,
+    ): Box {
+        if (rootW <= 0 || rootH <= 0) return Box(0, 0, 1, 1)
+        val fit = fitLatched(rootW, rootH, latchedW.coerceAtLeast(1), latchedH.coerceAtLeast(1))
+        val blockW = (latchedW.coerceAtLeast(1) * fit.scale).roundToInt().coerceAtLeast(1)
+        val blockH = (latchedH.coerceAtLeast(1) * fit.scale).roundToInt().coerceAtLeast(1)
+        val l = (controls.left * density * fit.scale).roundToInt().coerceAtLeast(0)
+        val r = (controls.right * density * fit.scale).roundToInt().coerceAtLeast(0)
+        val t = (controls.top * density * fit.scale).roundToInt().coerceAtLeast(0)
+        val b = (controls.bottom * density * fit.scale).roundToInt().coerceAtLeast(0)
+        val x = (fit.x + l).coerceIn(0, (rootW - 1).coerceAtLeast(0))
+        val y = (fit.y + t).coerceIn(0, (rootH - 1).coerceAtLeast(0))
+        val w = (blockW - l - r).coerceIn(1, (rootW - x).coerceAtLeast(1))
+        val h = (blockH - t - b).coerceIn(1, (rootH - y).coerceAtLeast(1))
+        return Box(x, y, w, h)
+    }
+
+    /**
      * Index of the segmented-control preset nearest to a persisted [value]. A saved value from a
      * retired preset list (or a hand-set exact code) maps to its closest stop instead of falling
      * back to a fixed default that silently changes the behaviour. Returns 0 for an empty list.

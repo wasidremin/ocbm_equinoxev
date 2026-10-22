@@ -56,6 +56,12 @@ class CallPhaseTest {
         assertEquals(480, y)
     }
 
+    @Test fun callActionsAreDrivingSized() {
+        // AAOS driving minimum is ~76dp; the pill offers 112dp per action with gaps.
+        assertTrue(CallPillView.TOUCH_DP >= 96)
+        assertTrue(CallPillView.GAP_DP >= 12)
+    }
+
     @Test fun staleFractionsClampIntoSmallerParents() {
         // Saved on the 2400px panel, restored on a 1200px window: must not park off-screen.
         val (x, y) = fractionsToMargins(0.9f, 0.9f, 600, 120, 1200, 960)
