@@ -17,10 +17,11 @@ import java.util.Date
 /**
  * The custom top bar, drawn in code. Framework-only.
  *
- * Left: nine CarPlay-style app tiles ([BarTarget]) — car home, charging, CarPlay home / maps /
- * Spotify, car settings, CarPlay phone, this app's settings and its EV insights — sized by
- * [DisplayGeometry.topBarTiles] so the whole level row is on visible glass whatever the panel
- * slope. Replaces the earlier seven thin outline icons.
+ * Left: nine CarPlay-style app tiles ([BarTarget]) in two families — our app first (CarPlay
+ * home / maps / Spotify / phone, then this app's settings and EV insights), then a divider, then
+ * the car's own apps (home, charging, settings), each flagged with a small corner car badge.
+ * Sized by [DisplayGeometry.topBarTiles] so the whole level row is on visible glass whatever the
+ * panel slope, with an extra gap ([GROUP_GAP_FRAC]) holding the divider between the families.
  *
  * The right cluster is modelled on the car's own bar (measured from a photo):
  *  - Right cluster: profile initial in a dark circle, bell, "5G" over signal bars, small pin,
@@ -135,15 +136,26 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         // still clears the panel slope (DisplayGeometry.topBarTiles). If the right cluster
         // would be crushed below 80% of its natural width the tiles shrink a little instead.
         val targets = BarTarget.values()
+        val breakAfter = targets.indexOfFirst { it.group == BarGroup.CAR }.let { if (it < 0) 0 else it }
         val row = DisplayGeometry.topBarTiles(
             barHeight = h, slopeM = slopeM, count = targets.size, x0 = h * 0.42f, margin = margin,
+            breakAfter = breakAfter, groupGapFrac = GROUP_GAP_FRAC,
             rightClusterRoom = { end ->
                 DisplayGeometry.topBarLayout(w, h, rightInsetPx, slopeM, contentH, margin, end, natural).rightScale
             })
         for ((i, t) in targets.withIndex()) {
-            val tx = row.x0 + i * row.pitch
+            val tx = row.tileLeft(i)
             hitRects[i].set(tx - (row.pitch - row.size) / 2f, 0f, tx + row.size + (row.pitch - row.size) / 2f, h)
-            glyphs.drawTile(c, t, tx, row.top, row.size, selected = t == selected)
+            glyphs.drawTile(c, t, tx, row.top, row.size, selected = t == selected, badge = t.group == BarGroup.CAR)
+        }
+        // Car-vs-ours divider, in the extra gap between the two tile families.
+        if (row.dividerX > 0f) {
+            val dh = row.size * 0.62f
+            val dw = (row.size * 0.045f).coerceAtLeast(2f)
+            val top = row.top + (row.size - dh) / 2f
+            fill.color = hairline
+            r.set(row.dividerX - dw / 2f, top, row.dividerX + dw / 2f, top + dh)
+            c.drawRoundRect(r, dw / 2f, dw / 2f, fill)
         }
 
         // ---- right cluster: right-justified to usable glass, never overlapping left ----
@@ -266,5 +278,7 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     companion object {
         /** Bar height as a fraction of the panel height, from the photo (~80 px of 960). */
         const val HEIGHT_FRACTION = 0.083f
+        /** Extra gap (in tile widths) between the our-app and car-app tile families. */
+        const val GROUP_GAP_FRAC = 0.6f
     }
 }

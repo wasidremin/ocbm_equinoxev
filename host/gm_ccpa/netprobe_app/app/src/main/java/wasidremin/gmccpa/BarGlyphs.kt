@@ -15,23 +15,34 @@ internal const val EXTRA_OPEN_TAB = "gmccpa.open_tab"
 internal const val EXTRA_BAR_TARGET = "gmccpa.bar_target"
 
 /**
+ * Which family a tile belongs to. [OURS] tiles keep you inside this app (the CarPlay surfaces it
+ * projects and its own pages); [CAR] tiles leave for the car's native AAOS apps. The bar draws
+ * all [OURS] first, then a divider, then all [CAR], and badges the [CAR] tiles — so the two
+ * families must stay contiguous in [BarTarget]'s declaration order (asserted in BarTilesTest).
+ */
+enum class BarGroup { OURS, CAR }
+
+/**
  * What a top-bar tile does. One enum for both activities that host the bar so a tap means the
  * same thing from the CarPlay picture and from settings.
  *
- * The first three groups are named for where they GO, not what they look like: AAOS_* and
- * CHARGING leave for the car's own apps, CP_* drive the CarPlay UI on the phone, and
- * APP_SETTINGS / INSIGHTS are this app's own pages.
+ * Declaration order IS the on-bar order (left to right), and [group] splits it into the two
+ * families the bar separates. Named for where they GO, not what they look like: CP_* drive the
+ * CarPlay UI this app projects, APP_SETTINGS / INSIGHTS are this app's own pages (both [OURS]),
+ * and AAOS_* / CHARGING leave for the car's own apps ([CAR]). Owner's order (2026-10-23): our
+ * app's tiles first — CarPlay home/maps/Spotify/phone, then this app's settings and insights —
+ * then the car's own home, charging and settings.
  */
-enum class BarTarget(val description: String) {
-    AAOS_HOME("Car home screen"),
-    CHARGING("Charging"),
-    CP_HOME("CarPlay home"),
-    CP_MAPS("CarPlay Maps"),
-    CP_SPOTIFY("CarPlay Spotify"),
-    AAOS_SETTINGS("Car settings"),
-    CP_PHONE("CarPlay Phone"),
-    APP_SETTINGS("App settings"),
-    INSIGHTS("EV insights"),
+enum class BarTarget(val description: String, val group: BarGroup) {
+    CP_HOME("CarPlay home", BarGroup.OURS),
+    CP_MAPS("CarPlay Maps", BarGroup.OURS),
+    CP_SPOTIFY("CarPlay Spotify", BarGroup.OURS),
+    CP_PHONE("CarPlay Phone", BarGroup.OURS),
+    APP_SETTINGS("App settings", BarGroup.OURS),
+    INSIGHTS("EV insights", BarGroup.OURS),
+    AAOS_HOME("Car home screen", BarGroup.CAR),
+    CHARGING("Charging", BarGroup.CAR),
+    AAOS_SETTINGS("Car settings", BarGroup.CAR),
 }
 
 /**
@@ -66,8 +77,12 @@ internal class BarGlyphs {
         BarTarget.INSIGHTS -> Look(0xFFFFB02E.toInt(), 0xFFE0580C.toInt())
     }
 
-    /** Draws [t]'s tile with its top-left at ([x], [y]) and edge [s]. [selected] adds a ring. */
-    fun drawTile(c: Canvas, t: BarTarget, x: Float, y: Float, s: Float, selected: Boolean = false) {
+    /**
+     * Draws [t]'s tile with its top-left at ([x], [y]) and edge [s]. [selected] adds a ring;
+     * [badge] stamps the small car mark in the top-right corner that flags a tile as leaving for
+     * the car's own app (the caller passes `t.group == BarGroup.CAR`).
+     */
+    fun drawTile(c: Canvas, t: BarTarget, x: Float, y: Float, s: Float, selected: Boolean = false, badge: Boolean = false) {
         val l = look(t)
         val rad = s * 0.225f
         rect.set(x, y, x + s, y + s)
@@ -86,6 +101,45 @@ internal class BarGlyphs {
             c.drawRoundRect(rect, rad * 1.15f, rad * 1.15f, stroke)
         }
         glyph(c, t, x, y, s)
+        if (badge) carBadge(c, x + s, y, s)
+    }
+
+    /**
+     * Small car mark pinned to a tile's top-right corner ([cornerX], [cornerY] is the tile's
+     * top-right point), on a dark translucent disc so it reads over any tile colour. Flags a CAR
+     * tile as "opens the car's own app". A side-view car: rounded body, cabin, two wheels.
+     */
+    private fun carBadge(c: Canvas, cornerX: Float, cornerY: Float, s: Float) {
+        val d = s * 0.42f
+        val cx = cornerX - d * 0.48f
+        val cy = cornerY + d * 0.48f
+        fill.color = 0xE60B1220.toInt()
+        c.drawCircle(cx, cy, d * 0.5f, fill)
+        stroke.color = 0x55FFFFFF
+        stroke.strokeWidth = (d * 0.04f).coerceAtLeast(1f)
+        c.drawCircle(cx, cy, d * 0.5f, stroke)
+        // car on a 10-unit grid centred in the disc
+        c.save()
+        c.translate(cx - d * 0.34f, cy - d * 0.34f)
+        val k = d * 0.068f
+        c.scale(k, k)
+        fill.color = WHITE
+        rect.set(0.6f, 4.6f, 9.4f, 7.4f)          // body
+        c.drawRoundRect(rect, 1.2f, 1.2f, fill)
+        work.reset()                               // cabin
+        work.moveTo(2.6f, 4.8f)
+        work.lineTo(3.7f, 2.9f)
+        work.lineTo(6.6f, 2.9f)
+        work.lineTo(7.4f, 4.8f)
+        work.close()
+        c.drawPath(work, fill)
+        fill.color = 0xE60B1220.toInt()            // wheels (cut into the body colour)
+        c.drawCircle(3.1f, 7.6f, 1.25f, fill)
+        c.drawCircle(6.9f, 7.6f, 1.25f, fill)
+        fill.color = WHITE
+        c.drawCircle(3.1f, 7.6f, 0.62f, fill)
+        c.drawCircle(6.9f, 7.6f, 0.62f, fill)
+        c.restore()
     }
 
     private fun glyph(c: Canvas, t: BarTarget, x: Float, y: Float, s: Float) {

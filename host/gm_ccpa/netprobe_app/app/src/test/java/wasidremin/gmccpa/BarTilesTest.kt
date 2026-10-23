@@ -16,14 +16,50 @@ class BarTilesTest {
 
     @Test fun tilesAreInTheRequestedOrder() {
         assertEquals(
-            listOf("AAOS_HOME", "CHARGING", "CP_HOME", "CP_MAPS", "CP_SPOTIFY",
-                "AAOS_SETTINGS", "CP_PHONE", "APP_SETTINGS", "INSIGHTS"),
+            // Owner's order (2026-10-23): our app first (CarPlay surfaces, then app pages),
+            // then the car's own apps.
+            listOf("CP_HOME", "CP_MAPS", "CP_SPOTIFY", "CP_PHONE", "APP_SETTINGS", "INSIGHTS",
+                "AAOS_HOME", "CHARGING", "AAOS_SETTINGS"),
             BarTarget.values().map { it.name },
         )
     }
 
     @Test fun everyTileHasADescription() {
         assertTrue(BarTarget.values().all { it.description.isNotBlank() })
+    }
+
+    @Test fun theTwoFamiliesAreContiguousOursFirst() {
+        // The bar draws one divider and badges a trailing block, so all OURS must precede all CAR.
+        val groups = BarTarget.values().map { it.group }
+        val firstCar = groups.indexOfFirst { it == BarGroup.CAR }
+        assertTrue("there must be a car group", firstCar > 0)
+        assertTrue("our-app tiles must all come before car-app tiles",
+            groups.take(firstCar).all { it == BarGroup.OURS } &&
+                groups.drop(firstCar).all { it == BarGroup.CAR })
+    }
+
+    @Test fun dividerFallsInsideTheGroupGapOnTheVehicle() {
+        val n = BarTarget.values().size
+        val breakAfter = BarTarget.values().indexOfFirst { it.group == BarGroup.CAR }
+        val row = DisplayGeometry.topBarTiles(h, slopeM, n, h * 0.42f, margin,
+            breakAfter = breakAfter, groupGapFrac = 0.6f)
+        assertTrue("there is a real break", row.breakAfter == breakAfter && row.groupGap > 0f)
+        val aRight = row.tileLeft(breakAfter - 1) + row.size   // last our-app tile's right edge
+        val bLeft = row.tileLeft(breakAfter)                   // first car-app tile's left edge
+        assertTrue("divider ${row.dividerX} must sit between $aRight and $bLeft",
+            row.dividerX in aRight..bLeft)
+        // The group gap is genuinely wider than an ordinary inter-tile gap.
+        assertTrue(bLeft - aRight > row.pitch - row.size + 0.01f)
+    }
+
+    @Test fun clusterKeepsAWiderGapFromTheTiles() {
+        // The sacred gap defaults to 0.8 x bar height now; the cluster never comes closer.
+        val contentH = h * 0.24f
+        val natural = 560f
+        val layout = DisplayGeometry.topBarLayout(w, h, 285, slopeM, contentH, margin, 1000f, natural)
+        if (layout.rightScale > 0f) {
+            assertTrue("gap ${layout.gap} must be >= 0.8h", layout.gap >= h * 0.8f - 0.01f)
+        }
     }
 
     @Test fun lastTileTopClearsTheSlopeOnTheVehicle() {

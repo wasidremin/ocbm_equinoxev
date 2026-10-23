@@ -106,12 +106,29 @@ object DisplayGeometry {
         barHeight * (firstCxFrac + (count - 1) * pitchFrac + pitchFrac / 2f)
 
     /**
-     * One level row of square app tiles hung from the panel slope.
+     * One level row of square app tiles hung from the panel slope, split into two groups by an
+     * extra gap after [breakAfter] tiles.
      *
-     * [size] is the tile edge, [pitch] centre-to-centre spacing, [x0] the first tile's LEFT
-     * edge, [top] the shared tile top, [end] the right edge of the last tile.
+     * [size] is the tile edge, [pitch] centre-to-centre spacing WITHIN a group, [x0] the first
+     * tile's LEFT edge, [top] the shared tile top, [end] the right edge of the last tile.
+     * [groupGap] is the extra space inserted before the first tile of the second group (every
+     * tile at index >= [breakAfter] is shifted right by it), and [dividerX] is the centre of
+     * that gap, where the caller draws the car-vs-ours divider. [breakAfter] 0 or >= count means
+     * one group and no gap.
      */
-    data class TileRow(val size: Float, val pitch: Float, val x0: Float, val top: Float, val end: Float)
+    data class TileRow(
+        val size: Float,
+        val pitch: Float,
+        val x0: Float,
+        val top: Float,
+        val end: Float,
+        val groupGap: Float = 0f,
+        val breakAfter: Int = 0,
+        val dividerX: Float = 0f,
+    ) {
+        /** Left edge of tile [i]. [groupGap] is 0 when there is no break, so this is safe always. */
+        fun tileLeft(i: Int): Float = x0 + i * pitch + if (i >= breakAfter) groupGap else 0f
+    }
 
     /**
      * Largest tile row that is entirely on glass.
@@ -120,13 +137,15 @@ object DisplayGeometry {
      * sloped panel the bottom row of the bar is the part that is always visible; the row is
      * level, so the LAST (rightmost, steepest-slope) tile decides: its top must clear
      * `slopeM * end + margin`. With pitch `(1 + gapFrac) * size` and `x0` fixed this is linear
-     * in size: `size * (1 + slopeM * (count - 1) * (1 + gapFrac) + slopeM) <= barH - 2.5 *
-     * margin - slopeM * x0`. Capped at [maxFrac] of the bar height (a flat panel gets tiles as
-     * large as the car's own icons, never larger) and floored at [minFrac] so an absurd slope
-     * shrinks the tiles rather than making them unreadable. When [rightClusterRoom] says the
-     * right cluster would be crushed, the row shrinks by [shrink] steps (down to [minFrac])
-     * until `end + minGap` leaves the cluster at least [minClusterScale] of its natural width.
-     * Zero slope gives a plain centred-looking row at [maxFrac]. Pure and unit-tested.
+     * in size: `size * (1 + slopeM * ((count - 1) * (1 + gapFrac) + groupGapFrac + 1)) <= barH -
+     * 2.5 * margin - slopeM * x0` — the `groupGapFrac` term is the extra gap inserted after
+     * [breakAfter] tiles to separate the two tile families (0 when [breakAfter] is 0 or >=
+     * count). Capped at [maxFrac] of the bar height (a flat panel gets tiles as large as the
+     * car's own icons, never larger) and floored at [minFrac] so an absurd slope shrinks the
+     * tiles rather than making them unreadable. When [rightClusterRoom] says the right cluster
+     * would be crushed, the row shrinks by [shrink] steps (down to [minFrac]) until the cluster
+     * is at least [minClusterScale] of its natural width. Zero slope gives a plain row at
+     * [maxFrac]. Pure and unit-tested.
      */
     fun topBarTiles(
         barHeight: Float,
@@ -140,16 +159,25 @@ object DisplayGeometry {
         rightClusterRoom: ((end: Float) -> Float)? = null,
         minClusterScale: Float = 0.8f,
         shrink: Float = 0.94f,
+        breakAfter: Int = 0,
+        groupGapFrac: Float = 0f,
     ): TileRow {
         val n = count.coerceAtLeast(1)
         val m = slopeM.coerceAtLeast(0f)
-        val spans = (n - 1) * (1f + gapFrac) + 1f
+        val hasBreak = breakAfter in 1 until n
+        val gg = if (hasBreak) groupGapFrac.coerceAtLeast(0f) else 0f
+        val spans = (n - 1) * (1f + gapFrac) + gg + 1f
         val limit = (barHeight - 2.5f * margin - m * x0) / (1f + m * spans)
         var size = minOf(barHeight * maxFrac, limit).coerceAtLeast(barHeight * minFrac)
         fun rowOf(s: Float): TileRow {
             val pitch = s * (1f + gapFrac)
-            val end = x0 + (n - 1) * pitch + s
-            return TileRow(s, pitch, x0, barHeight - 1.5f * margin - s, end)
+            val groupGap = s * gg
+            val end = x0 + (n - 1) * pitch + s + groupGap
+            // Divider sits mid-way between the last tile of group A and the first of group B.
+            val aRight = x0 + (breakAfter - 1) * pitch + s
+            val bLeft = x0 + breakAfter * pitch + groupGap
+            val dividerX = if (hasBreak) (aRight + bLeft) / 2f else 0f
+            return TileRow(s, pitch, x0, barHeight - 1.5f * margin - s, end, groupGap, if (hasBreak) breakAfter else 0, dividerX)
         }
         var row = rowOf(size)
         if (rightClusterRoom != null) {
@@ -193,9 +221,11 @@ object DisplayGeometry {
      *   where a [contentH]-tall block still ends above the bar bottom on visible glass. That
      *   edge, not the window edge, is the right margin: anything further right is missing
      *   glass, so the empty band beyond it is physics, not a layout choice.
-     * - MIDDLE gap: absorbs whatever is left. [minGap] (default half a bar height) is sacred:
+     * - MIDDLE gap: absorbs whatever is left. [minGap] (default 0.8 x bar height) is sacred:
      *   when the slot is tight the right cluster shrinks to preserve the gap instead of
-     *   touching the left icons, so the two groups always read as separate clusters.
+     *   touching the left icons, so the tile row and the status cluster always read as clearly
+     *   separate zones (widened from 0.5 x 2026-10-23 — the clock/temp sat too close to the
+     *   tiles for the two to read apart).
      *
      * Returns left/right edges plus the right-cluster scale; scale 0 hides the cluster when
      * even the gap does not fit. Pure and unit-tested.
@@ -217,7 +247,7 @@ object DisplayGeometry {
         margin: Float,
         leftEnd: Float,
         naturalWidth: Float,
-        minGap: Float = barHeight * 0.5f,
+        minGap: Float = barHeight * 0.8f,
     ): TopBarLayout {
         val rightEdge = clusterRightEdgeOnGlass(viewWidth, barHeight, rightInsetPx, slopeM, contentH, margin)
         val scale = clusterFitScale(rightEdge - leftEnd - minGap, naturalWidth)

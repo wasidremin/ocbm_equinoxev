@@ -187,11 +187,12 @@ class TopBarFitTest {
 
     @Test fun crowdedLayoutShrinksRightToProtectTheGap() {
         // Vehicle geometry with a wide cluster: the old code let the clusters touch; the
-        // justified solver shrinks the right side to keep half a bar of daylight.
+        // justified solver shrinks the right side to keep the sacred gap (0.8 bar heights
+        // since 2026-10-23) of daylight between the tile row and the status cluster.
         val leftEnd = DisplayGeometry.leftBlockEnd(h)
         val layout = DisplayGeometry.topBarLayout(w, h, inset, slopeM, contentH, margin, leftEnd, 700f)
         assertTrue(layout.rightScale < 1f && layout.rightScale > 0f)
-        assertEquals(h * 0.5f, layout.gap, 1f)
+        assertEquals(h * 0.8f, layout.gap, 1f)
         assertEquals(layout.rightEdge - 700f * layout.rightScale, layout.rightStart, 0.5f)
     }
 

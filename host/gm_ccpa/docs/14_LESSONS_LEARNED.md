@@ -582,36 +582,53 @@ trigger in this window. What it did show, and what changed (v211):
   explained by the log; `CH_FILE pull /tmp/wlan_off.log` / `supervisor.log` `OPEN_FAILED` (files absent
   on the box); 214 `requestLayout() improperly called during layout` warnings (cosmetic).
 
-## 15. The top bar: nine CarPlay-style tiles (v211, 2026-10-22)
+## 15. The top bar: nine CarPlay-style tiles (v211, regrouped 2026-10-23)
 
 The seven thin outline icons (car, apps, controls, music, nav, phone, energy) are replaced by nine
-CarPlay-style app tiles — rounded square, soft gradient, solid glyph — in the owner's order:
+CarPlay-style app tiles — rounded square, soft gradient, solid glyph. **Regrouped 2026-10-23 into two
+families (`BarTarget.group`): our app first, then the car's own apps**, separated by a divider, with
+each car-app tile flagged by a small corner **car badge** so "this leaves for the car" reads at a glance.
 
-| # | Tile (`BarTarget`) | Goes to | Mechanism |
-|---|---|---|---|
-| 1 | `AAOS_HOME` | the car's home screen | `CATEGORY_HOME` (GM's launcher) |
-| 2 | `CHARGING` | GM Charging | resolved: `com.gm.hmi.energy/…MainLauncherActivity` ("Charging") |
-| 3 | `CP_HOME` | CarPlay home | vision launcher role `home` (strip Home toggle, surface-verified) |
-| 4 | `CP_MAPS` | CarPlay Maps | vision launcher `maps` (template match) |
-| 5 | `CP_SPOTIFY` | CarPlay Spotify | vision launcher `spotify` |
-| 6 | `AAOS_SETTINGS` | car settings | resolved: `com.android.car.settings/…Settings_Launcher_Homepage` |
-| 7 | `CP_PHONE` | CarPlay Phone | telephony action while a call exists, else vision launcher `phone` |
-| 8 | `APP_SETTINGS` | this app's settings | `MainActivity`, tab 0 |
-| 9 | `INSIGHTS` | this app's EV insights | `MainActivity`, tab 3 |
+| # | Family | Tile (`BarTarget`) | Goes to | Mechanism |
+|---|---|---|---|---|
+| 1 | ours | `CP_HOME` | CarPlay home | vision launcher role `home` (strip Home toggle, surface-verified) |
+| 2 | ours | `CP_MAPS` | CarPlay Maps | vision launcher `maps` (template match) |
+| 3 | ours | `CP_SPOTIFY` | CarPlay Spotify | vision launcher `spotify` |
+| 4 | ours | `CP_PHONE` | CarPlay Phone | telephony action while a call exists, else vision launcher `phone` |
+| 5 | ours | `APP_SETTINGS` | this app's settings | `MainActivity`, tab 0 |
+| 6 | ours | `INSIGHTS` | this app's EV insights | `MainActivity`, tab 3 |
+| — | | *divider* | — | car-vs-ours boundary, drawn in the group gap |
+| 7 | car | `AAOS_HOME` | the car's home screen | `CATEGORY_HOME` (GM's launcher) — badged |
+| 8 | car | `CHARGING` | GM Charging | resolved: `com.gm.hmi.energy/…MainLauncherActivity` — badged |
+| 9 | car | `AAOS_SETTINGS` | car settings | resolved: `com.android.car.settings/…Settings_Launcher_Homepage` — badged |
+
+Rationale for the order: **"our app" is everything this app draws and keeps you inside** — the CarPlay
+surfaces it projects (home/maps/Spotify/phone) and its own pages (settings/insights); **"car app" is the
+three native AAOS destinations that leave the app** for the car's own UI. CarPlay tiles lead because they
+are the app's purpose and the most-tapped; the app's own pages follow; the car destinations are grouped
+last behind the divider. The two families must stay contiguous (ours then car) in the enum —
+`BarTilesTest.theTwoFamiliesAreContiguousOursFirst` pins it, because the bar draws exactly one divider and
+badges a single trailing block.
 
 Destinations on the car are RESOLVED from what the head unit exports (`VehicleLaunch`, ranking in
 `VehicleDestinations.kt`, pinned by `VehicleDestinationTest`), never hard-coded; a missing one falls back
 to car home. **Where the CarPlay ones lead is only as good as the vision launcher:** in the 2026-10-15/17
 logs `maps` and `phone` verified SUCCESS, `spotify` ended `VERIFY_FAILED` both times it ran (the tap fired
 and the screen changed; the post-tap surface check disagreed), and `home` is new in v211 and unproven on
-the truck. The old Spotify→Music fallback to a play/pause toggle is gone — an explicit Spotify tile that
-cannot find Spotify now sends nothing.
+the truck. The owner's 2026-10-23 short drive reported all nine resolving as expected. The old
+Spotify→Music fallback to a play/pause toggle is gone — an explicit Spotify tile that cannot find Spotify
+now sends nothing.
 
 **Fit.** `DisplayGeometry.topBarTiles` sizes one level, bottom-justified row so the LAST tile still
 clears the panel slope (`size · (1 + m·spans) ≤ barH − 2.5·margin − m·x0`), capped at 0.66 of the bar
 height, floored at 0.34, and shrinks further (×0.94 steps) if the right cluster would fall below 80% of its
-natural width. On the Equinox (168 px bar, m = 0.0635) that is ≈ 83 px tiles ending near x 1000. Pinned by
-`BarTilesTest`. Not yet seen on the vehicle.
+natural width. `spans` now includes the extra group gap (`GROUP_GAP_FRAC` = 0.6 tile widths, folded into
+the slope solve so the regrouped row still clears the slope), and the divider x is returned as
+`TileRow.dividerX`. The sacred gap between the tile row and the right status cluster was widened from 0.5
+to **0.8 bar heights** (`topBarLayout` `minGap`) because the clock/temp sat too close to the tiles to read
+as a separate zone. On the Equinox (168 px bar, m = 0.0635) tiles are ≈ 81 px ending near x 1040, cluster
+right-justified on glass near x 1600. Pinned by `BarTilesTest`/`TopBarFitTest`. Not yet seen on the
+vehicle.
 
 **On the settings screen.** `TopBarHost` builds and positions the same bar for both activities;
 `LauncherUi.applyCalibrationFrame` reserves the strip (`VideoFrame.topPx` × the latch scale) at the top of
