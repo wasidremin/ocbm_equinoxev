@@ -78,25 +78,35 @@ class BarTilesTest {
         assertEquals(row.size * 1.28f, row.pitch, 0.01f)
     }
 
-    // The GmTopBarView call-site parameters (2026-10-23): tiles fill the bar's vertical extent for
-    // a larger touch target. A flat panel reaches the near-full maxFrac; the sloped vehicle grows
-    // to the geometric maximum for nine tiles — meaningfully taller than the old 0.48h.
-    private fun viewRow(barH: Float, slope: Float) = DisplayGeometry.topBarTiles(
-        barH, slope, 9, barH * 0.36f, barH * 0.03f,
-        gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = 6, groupGapFrac = GmTopBarView.GROUP_GAP_FRAC)
+    // The GmTopBarView call-site parameters (2026-10-23): the bar is laid out FLAT (the owner saw
+    // the whole bar on glass in the car, refuting the wedge), tiles fill nearly the bar height and
+    // are left-justified, and the clock/temp cluster is right-justified flush to the picture edge.
+    private val carBarH = 174f        // strip height logged on the vehicle
+    private val carInset = 335        // live rightInsetPx logged on the vehicle
+    private val carContentH = carBarH * 0.24f
+    private val carNatural = carBarH * 3.6f   // generous estimate of the cluster's natural width
+    private fun viewRow(barH: Float) = DisplayGeometry.topBarTiles(
+        barH, 0f, 9, barH * 0.36f, barH * 0.03f,
+        gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = 6, groupGapFrac = GmTopBarView.GROUP_GAP_FRAC,
+        rightClusterRoom = { end -> carLayout(end).rightScale })
+    private fun carLayout(end: Float) = DisplayGeometry.topBarLayout(
+        w, carBarH, carInset, 0f, carContentH, carBarH * 0.05f, end, carNatural,
+        endIndent = carBarH * GmTopBarView.CLUSTER_END_INDENT_FRAC)
 
-    @Test fun tilesFillVerticalExtentOnAFlatPanel() {
-        val row = viewRow(168f, 0f)
-        assertEquals(168f * 0.90f, row.size, 0.5f)
+    @Test fun tilesFillNearlyTheWholeBarOnTheVehicle() {
+        val row = viewRow(carBarH)
+        assertEquals(carBarH * 0.90f, row.size, 0.5f)
+        assertTrue(row.top >= 0f && row.top + row.size <= carBarH)
     }
 
-    @Test fun tilesGrowTowardFullHeightOnTheVehicle() {
-        val row = viewRow(168f, slopeM)
-        // Taller than the previous slope-bound size (~0.484h) and still on glass at the last tile.
-        assertTrue("tile ${row.size / 168f}h must exceed 0.5h", row.size >= 168f * 0.50f)
-        assertTrue("last tile top ${row.top} must clear slope ${slopeM * row.end}",
-            row.top >= slopeM * row.end + 168f * 0.03f - 0.01f)
-        assertTrue(row.top + row.size <= 168f - 168f * 0.03f + 0.5f)
+    @Test fun clusterIsFlushRightAtFullSizeOnTheVehicle() {
+        val row = viewRow(carBarH)
+        val layout = carLayout(row.end)
+        // Ends just inside the picture's right edge (w - inset), not back near x 1600.
+        assertEquals(w - carInset - carBarH * 0.1f, layout.rightEdge, 0.5f)
+        assertEquals(1f, layout.rightScale, 0.001f)
+        assertTrue("cluster starts ${layout.rightStart} right of tiles ${row.end}",
+            layout.rightStart - row.end >= carBarH * 0.8f - 0.01f)
     }
 
     @Test fun steeperSlopeShrinksTheTiles() {

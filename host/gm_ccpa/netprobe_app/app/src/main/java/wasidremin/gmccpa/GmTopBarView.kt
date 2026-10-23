@@ -20,14 +20,18 @@ import java.util.Date
  * Left: nine CarPlay-style app tiles ([BarTarget]) in two families — our app first (CarPlay
  * home / maps / Spotify / phone, then this app's settings and EV insights), then a divider, then
  * the car's own apps (home, charging, settings), each flagged with a small corner car badge.
- * Sized by [DisplayGeometry.topBarTiles] so the whole level row is on visible glass whatever the
- * panel slope, with an extra gap ([GROUP_GAP_FRAC]) holding the divider between the families.
+ * Sized by [DisplayGeometry.topBarTiles] to nearly the full bar height, with an extra gap
+ * ([GROUP_GAP_FRAC]) holding the divider between the families. Left-justified.
  *
  * The right cluster is modelled on the car's own bar (measured from a photo):
  *  - Right cluster: profile initial in a dark circle, bell, "5G" over signal bars, small pin,
- *    clock, outside temperature. Smaller than the left icons, indented from the edge, and hung
- *    from the panel-slope clearance like the car's own bar — centering in the rect puts it on
- *    missing glass where the top edge slopes away.
+ *    clock, outside temperature. Smaller than the tiles, centred vertically, and right-justified
+ *    flush to the picture's right edge (the live right inset).
+ *
+ * The bar is laid out on a FLAT top edge. The top cutout `Rect(0,0-2629,167)` was once read as
+ * a diagonal wedge of missing glass ([slopeM]); the owner, in the car on 2026-10-23, saw the bar
+ * fully visible across its width — that "slope" was only shrinking the tiles and pulling the
+ * clock/temp back to x~1700. [slopeM] is still received and logged but no longer shapes layout.
  *  - Background: near-black navy, faint top-to-bottom gradient; a thin blue hairline at the bottom.
  *
  * Tiles are tappable and call [onButton]. The right cluster is display only.
@@ -59,10 +63,8 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     var rightInsetPx: Int = 0
         set(v) { field = v.coerceAtLeast(0); invalidate() }
     /**
-     * Slope of the panel's top-edge cutout wedge (glass starts at y = slopeM * x; 0.06352 on
-     * the Equinox EV, 0 on a rectangular panel). The bar's bottom row is on glass almost
-     * everywhere while its top is progressively missing, so content hangs from slope-clearing
-     * tops near the bottom instead of centering in the rect. Zero keeps the centered layout.
+     * Slope inferred from the top cutout's bounding rect (0.06352 on the Equinox EV). Kept for
+     * the geometry log only: the in-car view refuted it as missing glass, so layout ignores it.
      */
     var slopeM: Float = 0f
         set(v) { field = v.coerceAtLeast(0f); invalidate() }
@@ -132,23 +134,19 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         if (signalBars >= 0) natural += baseSignalW + h * 0.26f
 
         // ---- left tiles ----
-        // One level row of CarPlay-style tiles, bottom-justified and sized so the LAST tile
-        // still clears the panel slope (DisplayGeometry.topBarTiles). If the right cluster
-        // would be crushed below 80% of its natural width the tiles shrink a little instead.
+        // One level row of CarPlay-style tiles, left-justified at nearly the full bar height
+        // (maxFrac) for a large touch target, laid out flat (see the class doc). If the right
+        // cluster would be crushed below 80% of its natural width the tiles shrink a little.
         val targets = BarTarget.values()
         val breakAfter = targets.indexOfFirst { it.group == BarGroup.CAR }.let { if (it < 0) 0 else it }
-        // Tiles fill as much of the bar height as the panel allows. A dedicated (tighter) slope
-        // clearance, snug inter-tile gaps, and a near-full maxFrac let the square tiles grow toward
-        // the whole bar height for a larger touch target. On a flat panel they reach maxFrac; on the
-        // Equinox wedge the rightmost tile is slope-bound (nine square tiles cannot be taller and
-        // still sit on glass), so this is the practical maximum there. The cluster keeps its own
-        // (larger) margin — only the tiles use the tighter one.
         val tileMargin = h * 0.03f
+        val endIndent = h * CLUSTER_END_INDENT_FRAC
         val row = DisplayGeometry.topBarTiles(
-            barHeight = h, slopeM = slopeM, count = targets.size, x0 = h * 0.36f, margin = tileMargin,
+            barHeight = h, slopeM = 0f, count = targets.size, x0 = h * 0.36f, margin = tileMargin,
             gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = breakAfter, groupGapFrac = GROUP_GAP_FRAC,
             rightClusterRoom = { end ->
-                DisplayGeometry.topBarLayout(w, h, rightInsetPx, slopeM, contentH, margin, end, natural).rightScale
+                DisplayGeometry.topBarLayout(w, h, rightInsetPx, 0f, contentH, margin, end, natural,
+                    endIndent = endIndent).rightScale
             })
         for ((i, t) in targets.withIndex()) {
             val tx = row.tileLeft(i)
@@ -165,27 +163,19 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             c.drawRoundRect(r, dw / 2f, dw / 2f, fill)
         }
 
-        // ---- right cluster: right-justified to usable glass, never overlapping left ----
-        // Justified placement, solved per frame — see DisplayGeometry.topBarLayout. This
-        // cluster is right-justified to the slope-solved usable-glass edge (on the vehicle
-        // near x 1600, where ~50px of glass exists — NOT the window edge x 2540, where 7px
-        // exists). The middle gap absorbs the remainder, with half a bar height held sacred
-        // so the groups never touch: when the slot is tight the cluster shrinks rather than
-        // closing the gap. Like the car's own bar the right side runs SMALLER than the tiles
-        // and hangs from the slope clearance instead of centering in the rect. Zero
-        // slope keeps the centered layout.
+        // ---- right cluster: right-justified flush to the picture edge, never overlapping left ----
+        // Solved per frame — see DisplayGeometry.topBarLayout. The temperature ends just inside
+        // the live right inset (the picture's right edge); the middle gap absorbs everything
+        // else, with a minimum held sacred so the groups never touch: when the slot is tight the
+        // cluster shrinks rather than closing the gap.
         val layout = DisplayGeometry.topBarLayout(
-            w, h, rightInsetPx, slopeM, contentH, margin, row.end, natural)
+            w, h, rightInsetPx, 0f, contentH, margin, row.end, natural, endIndent = endIndent)
         val edge = layout.rightEdge
         val fit = layout.rightScale
         if (fit > 0f) {
             val ts = baseText * fit
             val small = baseSmall * fit
-            val scaledH = contentH * fit
-            // Anchor the TOP on the slope clearance at the edge (worst slope in the span),
-            // grow downward; shrinking only pulls the bottom up, so visibility is monotonic.
-            val top = maxOf(cy - scaledH / 2f, slopeM * edge + margin)
-            val mid = top + scaledH / 2f
+            val mid = cy
             text.textSize = ts
             text.color = textCol
             var x = edge
@@ -288,5 +278,7 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         /** Extra gap (in tile widths) between the our-app and car-app tile families. Kept modest so
          *  the tiles stay large — the divider needs only a slim lane. */
         const val GROUP_GAP_FRAC = 0.4f
+        /** Right cluster's indent from the picture's right edge, in bar heights (was 0.55). */
+        const val CLUSTER_END_INDENT_FRAC = 0.1f
     }
 }

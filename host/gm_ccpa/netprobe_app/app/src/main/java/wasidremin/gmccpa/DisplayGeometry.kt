@@ -49,8 +49,9 @@ object DisplayGeometry {
      * deliberate indent from the side, matching the car's own bar, whose right cluster sits
      * inboard of the edge — not flush against it. Pure and unit-tested.
      */
-    fun clusterRightEdge(viewWidth: Float, barHeight: Float, rightInsetPx: Int): Float =
-        viewWidth - barHeight * 0.55f - rightInsetPx.coerceAtLeast(0).toFloat()
+    fun clusterRightEdge(viewWidth: Float, barHeight: Float, rightInsetPx: Int,
+                         endIndent: Float = barHeight * 0.55f): Float =
+        viewWidth - endIndent - rightInsetPx.coerceAtLeast(0).toFloat()
 
     /**
      * Slope of the panel's top-edge cutout wedge: glass starts at y = slopeM * x.
@@ -89,8 +90,9 @@ object DisplayGeometry {
      * inputs; the caller hides the cluster then instead of overlapping. Pure and unit-tested.
      */
     fun clusterRightEdgeOnGlass(viewWidth: Float, barHeight: Float, rightInsetPx: Int,
-                                slopeM: Float, contentH: Float, margin: Float): Float {
-        val e0 = clusterRightEdge(viewWidth, barHeight, rightInsetPx)
+                                slopeM: Float, contentH: Float, margin: Float,
+                                endIndent: Float = barHeight * 0.55f): Float {
+        val e0 = clusterRightEdge(viewWidth, barHeight, rightInsetPx, endIndent)
         if (slopeM <= 0f || contentH <= 0f) return e0
         return minOf(e0, (barHeight - 2 * margin - contentH) / slopeM)
     }
@@ -248,8 +250,9 @@ object DisplayGeometry {
         leftEnd: Float,
         naturalWidth: Float,
         minGap: Float = barHeight * 0.8f,
+        endIndent: Float = barHeight * 0.55f,
     ): TopBarLayout {
-        val rightEdge = clusterRightEdgeOnGlass(viewWidth, barHeight, rightInsetPx, slopeM, contentH, margin)
+        val rightEdge = clusterRightEdgeOnGlass(viewWidth, barHeight, rightInsetPx, slopeM, contentH, margin, endIndent)
         val scale = clusterFitScale(rightEdge - leftEnd - minGap, naturalWidth)
         val rightStart = rightEdge - naturalWidth * scale
         return TopBarLayout(leftEnd, rightEdge, scale, rightStart, rightStart - leftEnd)
