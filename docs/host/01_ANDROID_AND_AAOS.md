@@ -428,6 +428,55 @@ is GM’s iPhone CarPlay jack, not a generic USB host. Full account:
 `host/gm_ccpa/docs/14_LESSONS_LEARNED.md`. Do not apply the squat, the “always allow” persistence
 work, or a new APK to this vehicle until `deviceList` actually lists `1314:2d00`.
 
+**That "never appears / no Allow dialog" sentence was the pre-composite state and is now superseded.**
+With the `accessory,mass_storage` composite (uDisk, §E1 / `14_LESSONS_LEARNED.md` §5), `1314:2d00`
+*does* enumerate on the Equinox, `USB_DEVICE_ATTACHED` *does* reach `UsbAttachActivity`, and the
+app's own `requestPermission()` *does* raise an Allow dialog. Device-confirmed in the 2026-10-22 car
+capture: `deviceList` lists `0x1314:0x2d06 Auto Box (announce)` → `0x2d00`, `[usbdiag] ATTACH is the
+OCBM adapter, permission held=false`, then `usb permission granted +38912ms after attach (via
+broadcast)` — the 39 s is the driver physically tapping, not a system delay.
+
+### VERDICT (2026-10-23): the per-drive Allow popup CANNOT be made persistent by a Play app on a stock Equinox EV
+
+This is the definitive answer to the recurring "why must I tap Allow every startup" question, so it
+is not re-investigated. The popup is a **GM VCU platform defect**, not an app fault. Android persists
+a USB device grant by exactly two mechanisms, and VCUUM-274.4 has broken both:
+
+1. **"Always" → default-handler map.** The implicit-grant path (`UsbHostManager.usbDeviceAdded` →
+   `deviceAttached()` → `grantDevicePermission`) only runs when
+   `config_UsbDeviceConnectionHandling_component` resolves. On the Equinox the pointed-to package
+   `android.car.usb.handler` is **absent** (log: `Unknown package: android.car.usb.handler`), so the
+   branch that reads the "Always" choice is never reached. There is nothing for an "Always" checkbox
+   to write to.
+2. **`setDevicePersistentPermission` → `usb_permissions.xml`.** That store has **zero callers
+   image-wide**, and a `/data` app writing it directly is a SELinux `neverallow`
+   (`plat_sepolicy.cil:6707`).
+
+So the dialog the driver taps is SystemUI's **one-shot** permission prompt. Its grant is keyed to the
+device's `/dev/bus/usb/BBB/DDD` node, which is re-assigned on every enumeration — new node each boot
+→ fresh prompt each boot, by construction.
+
+**Closed, do not retry (all device- or decompile-confirmed):**
+- Package-name squat as `android.car.usb.handler` — gives a silent grant on the *Silverado*, but is
+  dead on the EV (handler component absent) and is not Play-shippable (reserved `android.*` id).
+- Pre-seeding / writing `usb_permissions.xml` from the app — SELinux `neverallow`.
+- `pm grant … MANAGE_USB` over adb — `MANAGE_USB` is `signature|privileged` with no `development`
+  flag; `pm grant` returns "not a changeable permission type". No `appops` or `cmd usb` grant verb
+  exists either.
+
+**The only path to a true zero-tap grant** is to stop being a `/data` app: a `/system/priv-app`
+install holding `MANAGE_USB`, or a platform-signed app. Both require writing the system partition,
+which the locked VCU does not permit without an unlocked unit / root route that has not been shown to
+exist on this vehicle. Short of that privilege level, **one Allow tap per drive is the floor on a
+stock car.**
+
+What the app already does to minimise it (so there is no further in-app win here): on a cold attach it
+skips the futile 8 s system-dispatch wait and self-requests immediately; it defers the dialog while
+the display is off (warm-up) and re-raises it on the next claim-loop poll once the screen wakes; and
+`MainActivity.maybeRelinkOnResume` re-claims when the app is opened with a failed claim and the
+adapter on the bus. The tap is surfaced as early as the platform allows; it cannot be eliminated or
+auto-dismissed.
+
 **Log-confirmed unique (POTATO capture, 2026-08-17).** A sweep of ~4.9 GB of real `adb logcat` from this
 unit (43 boots, `/Volumes/POTATO/logcat`) found `Default USB handling package (android.car.usb.handler)
 not found` **1,176 times and it is the ONLY variant** of the "handling package (X) not found" grant
