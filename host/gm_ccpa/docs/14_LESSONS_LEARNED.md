@@ -635,6 +635,20 @@ the process that took focus is not in it. The next step is in-app evidence that 
 READ_LOGS. On each LOSS, log the active `AudioPlaybackConfiguration`s (usage/state) and try a
 reflective `CarMediaManager.getMediaSource` (it may throw SecurityException; log that too).
 
+**Landed in v216 (`4.0+focus-who`): `av/FocusForensics.kt`, log tag `focus-who`.** Instrumentation
+only: it makes no focus requests and sends no transport commands. It writes three kinds of line:
+- `players changed: …`: every `AudioPlaybackConfiguration` change, giving usage, content, piid,
+  type and state (the uid is anonymised for a normal app).
+- `snapshot [focus LOSS] …`: written on each focus change and each `com.android.car` probe, plus a
+  `+1000ms` follow-up after a loss or probe. It records `musicActive`, the audio mode and the
+  players, as well as the car media source.
+- `car media source CHANGED …`: from a reflective `MediaSourceChangedListener`.
+
+On the AAOS emulator both CarMediaManager reads are refused with `SecurityException: requires
+android.permission.MEDIA_CONTENT_CONTROL`, and it logs `denied(SecurityException)`. Expect the same
+on GM. The player list is the part that needs no permission. A USAGE_MEDIA (1) player that starts in
+the same second as the LOSS is the competing source.
+
 ## 15. The top bar: nine CarPlay-style tiles (v211, regrouped 2026-10-23)
 
 The seven thin outline icons (car, apps, controls, music, nav, phone, energy) are replaced by nine

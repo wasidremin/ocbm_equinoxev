@@ -384,6 +384,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         applySessionActive()
         if (wantPreparing || sessionUp) publishPreparing()
         if (sessionUp) replayCard()
+        FocusForensics.attach(this)
         log.i("registered as an AAOS media source")
         SessionTrace.Board.up(BOARD, "bound by AAOS; session ${if (sessionUp) "up" else "idle"}")
     }
@@ -734,6 +735,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         tx.execute {
             if (caller.contains("package=com.android.car ")) {
                 log.i("transport: $cmd $caller dropped — source-change probe")
+                if (cmd == "pause") FocusForensics.snapshot("source-change probe", 1_000L)
                 return@execute
             }
             if (pendingCommand != null && pendingCommand != cmd && arrived - pendingAt <= 100L) {

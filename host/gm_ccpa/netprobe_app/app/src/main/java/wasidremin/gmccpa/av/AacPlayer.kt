@@ -527,6 +527,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             if (permanent) "LOSS" else focusName(change)
         }
         CarPlayMediaBrowserService.noteArbitration("focus $label")
+        FocusForensics.snapshot("focus $label", if (gain == 0f) 1_000L else 0L)
         noteFocus(label, gain)
         CarPlayMediaBrowserService.onMediaFocus(change, voice)
         if (wasidremin.gmccpa.DisplayPrefs.holdLauncher) {
