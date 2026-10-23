@@ -78,6 +78,27 @@ class BarTilesTest {
         assertEquals(row.size * 1.28f, row.pitch, 0.01f)
     }
 
+    // The GmTopBarView call-site parameters (2026-10-23): tiles fill the bar's vertical extent for
+    // a larger touch target. A flat panel reaches the near-full maxFrac; the sloped vehicle grows
+    // to the geometric maximum for nine tiles — meaningfully taller than the old 0.48h.
+    private fun viewRow(barH: Float, slope: Float) = DisplayGeometry.topBarTiles(
+        barH, slope, 9, barH * 0.36f, barH * 0.03f,
+        gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = 6, groupGapFrac = GmTopBarView.GROUP_GAP_FRAC)
+
+    @Test fun tilesFillVerticalExtentOnAFlatPanel() {
+        val row = viewRow(168f, 0f)
+        assertEquals(168f * 0.90f, row.size, 0.5f)
+    }
+
+    @Test fun tilesGrowTowardFullHeightOnTheVehicle() {
+        val row = viewRow(168f, slopeM)
+        // Taller than the previous slope-bound size (~0.484h) and still on glass at the last tile.
+        assertTrue("tile ${row.size / 168f}h must exceed 0.5h", row.size >= 168f * 0.50f)
+        assertTrue("last tile top ${row.top} must clear slope ${slopeM * row.end}",
+            row.top >= slopeM * row.end + 168f * 0.03f - 0.01f)
+        assertTrue(row.top + row.size <= 168f - 168f * 0.03f + 0.5f)
+    }
+
     @Test fun steeperSlopeShrinksTheTiles() {
         val gentle = DisplayGeometry.topBarTiles(h, 0.03f, 9, 70f, margin)
         val steep = DisplayGeometry.topBarTiles(h, 0.10f, 9, 70f, margin)

@@ -450,6 +450,8 @@ class CarPlayActivity : Activity() {
     private var chrome: View? = null
     /** Which chrome is currently attached, so a focus callback does not rebuild it every time. */
     private var chromeIsRail: Boolean? = null
+    /** Top-bar state the current rail was built for; a change flips Home/Settings on the rail. */
+    private var chromeTopBarOn: Boolean = false
     /** Index into [VIEW_AREAS] the surface is currently laid out for. */
     @Volatile private var viewAreaIndex = 0
     /** Cancels a pending shrink if another transition arrives first. */
@@ -665,7 +667,10 @@ class CarPlayActivity : Activity() {
         val resized = VideoFrame.railPx > 0 && viewAreaIndex == 0
         val rail = resized || (DisplayPrefs.sidebar(this) && viewAreaIndex == 0 && !wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this))
         applyVideoFrame()
-        if (chromeIsRail == rail && chrome != null) {
+        // Keep the current chrome unless the kind changed, or the rail's Home/Settings visibility
+        // (driven by the top-bar toggle) no longer matches what it was built for.
+        val railStale = rail && chromeTopBarOn != DisplayPrefs.customTopBar(this)
+        if (chromeIsRail == rail && chrome != null && !railStale) {
             chrome!!.layoutParams = chromeParams(rail)
             return
         }
@@ -809,6 +814,11 @@ class CarPlayActivity : Activity() {
     }
 
     private fun buildRail(): View {
+        // Home and Settings duplicate tiles the custom top bar already carries. When the bar is on
+        // they are dropped from the rail; the voice / play / phone trio — which the bar does not
+        // provide — always stays. Tracked so syncChrome rebuilds the rail when the toggle changes.
+        val topBarOn = DisplayPrefs.customTopBar(this)
+        chromeTopBarOn = topBarOn
         val rail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -820,27 +830,26 @@ class CarPlayActivity : Activity() {
         val top = railGroup()
         val bottom = railGroup()
         val gap = dp(20)
-        val buttons = mutableListOf<View>()
-        rail.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            val size = minOf(dp(96), ((rail.height - dp(32) - gap * 3) / 5).coerceAtLeast(1))
-            buttons.forEach { button ->
-                if (button.layoutParams.width != size) {
-                    button.layoutParams = (button.layoutParams as LinearLayout.LayoutParams).apply {
-                        width = size; height = size
-                    }
-                }
-            }
-        }
+        // Fixed, equal-sized circular buttons. The mic is NOT in here: it fills the space between
+        // the groups via layout weight, so it is excluded from the disc sizing below.
+        val discs = mutableListOf<View>()
         fun add(parent: LinearLayout, child: View, first: Boolean) {
-            buttons.add(child)
+            discs.add(child)
             parent.addView(child, LinearLayout.LayoutParams(dp(96), dp(96)).apply {
                 if (!first) topMargin = gap
                 gravity = Gravity.CENTER_HORIZONTAL
             })
         }
-        add(top, railButton(RailIcon.HOME, "AAOS Home", RailTone.Default) { _ -> openHome() }, true)
-        add(top, railButton(RailIcon.SETTINGS, "Settings", RailTone.Default) { _ -> openSettings() }, false)
-        add(bottom, railButton(RailIcon.VOICE, "Voice Assistant", RailTone.Default) { _ -> sendSiri() }, true)
+
+        if (!topBarOn) {
+            add(top, railButton(RailIcon.HOME, "AAOS Home", RailTone.Default) { _ -> openHome() }, true)
+            add(top, railButton(RailIcon.SETTINGS, "Settings", RailTone.Default) { _ -> openSettings() }, false)
+        }
+
+        // The mic (Siri) is the always-present primary: a tall capsule that grows into the rail's
+        // freed middle so it is the largest, easiest target instead of a lone disc above a gap.
+        val voice = railButton(RailIcon.VOICE, "Voice Assistant", RailTone.Default, capsule = true) { _ -> sendSiri() }
+
         val play = railButton(RailIcon.PLAY, "Play", RailTone.Highlight) { _ ->
             val index = when {
                 nowPlaying.snapshot.playing -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
@@ -851,7 +860,6 @@ class CarPlayActivity : Activity() {
         }
         railPlayButton = play
         updateRailPlayback()
-        add(bottom, play, false)
         val phone = railButton(RailIcon.PHONE, "Phone — no call", RailTone.Default) { _ ->
             val action = nowPlaying.phoneAction()
             if (previewOnly) log.i("phone preview: $action")
@@ -872,9 +880,34 @@ class CarPlayActivity : Activity() {
         }
         updatePhone()
         nowPlaying.onCallChanged = { runOnUiThread { if (!isDestroyed) { updatePhone(); updateCallPill() } } }
+        add(bottom, play, true)
         add(bottom, phone, false)
+
+        // Discs are square and equal; the capsule matches their width, its height being the weighted
+        // remainder. Discs shrink only if the rail is too short to seat them all plus a disc of mic.
+        rail.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val n = discs.size
+            val slots = n + 1   // + the mic's minimum
+            val avail = rail.height - dp(32) - gap * slots
+            val size = minOf(dp(96), (avail / slots).coerceAtLeast(1))
+            (discs + voice).forEach { button ->
+                val lp = button.layoutParams as LinearLayout.LayoutParams
+                if (lp.width != size || (button !== voice && lp.height != size)) {
+                    button.layoutParams = lp.apply {
+                        width = size
+                        if (button !== voice) height = size
+                    }
+                }
+            }
+        }
+
         rail.addView(top, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        rail.addView(View(this), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        // The mic capsule IS the spacer now — weight 1 so it absorbs all the room between the groups.
+        rail.addView(voice, LinearLayout.LayoutParams(dp(96), 0, 1f).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = gap
+            bottomMargin = gap
+        })
         rail.addView(bottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         return rail
     }
@@ -932,8 +965,10 @@ class CarPlayActivity : Activity() {
         gravity = Gravity.CENTER_HORIZONTAL
     }
 
-    private fun railButton(icon: RailIcon, description: String, tone: RailTone, onClick: (RailButton) -> Unit) =
-        RailButton(this, icon, description, tone, onClick)
+    private fun railButton(
+        icon: RailIcon, description: String, tone: RailTone,
+        capsule: Boolean = false, onClick: (RailButton) -> Unit,
+    ) = RailButton(this, icon, description, tone, capsule, onClick)
 
     /**
      * Bring the launcher forward and restart the wireless session. The launcher stays up
@@ -1866,6 +1901,10 @@ private class RailButton(
     initial: RailIcon,
     description: String,
     private val tone: RailTone,
+    // When true and taller than it is wide, the button draws as a vertical capsule (stadium) that
+    // fills the space it is given, instead of a disc — used for the mic so it grows into the rail's
+    // empty middle. The glyph stays centred and sized from the width.
+    private val capsule: Boolean = false,
     private val onTap: (RailButton) -> Unit,
 ) : View(ctx) {
     var icon: RailIcon = initial
@@ -1892,17 +1931,23 @@ private class RailButton(
     override fun onDraw(canvas: Canvas) {
         val cx = width / 2f
         val cy = height / 2f
-        val r = minOf(width, height) / 2f
         disc.color = tone.container
         disc.alpha = when {
             !isEnabled -> 90
             isPressed -> 200
             else -> 255
         }
-        canvas.drawCircle(cx, cy, r, disc)
+        if (capsule && height > width) {
+            val cr = width / 2f
+            canvas.drawRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), cr, cr, disc)
+        } else {
+            canvas.drawCircle(cx, cy, minOf(width, height) / 2f, disc)
+        }
         ink.color = tone.ink
         ink.alpha = if (isEnabled) 255 else 120
-        val iconPx = minOf(width, height) * (30f / 72f)
+        // A capsule's glyph is sized from the WIDTH (a little larger than a disc's) so it keeps a
+        // confident presence however tall the capsule grows; a disc stays on its smaller dimension.
+        val iconPx = if (capsule) width * (40f / 72f) else minOf(width, height) * (30f / 72f)
         canvas.save()
         canvas.translate(cx - iconPx / 2f, cy - iconPx / 2f)
         canvas.scale(iconPx / 24f, iconPx / 24f)

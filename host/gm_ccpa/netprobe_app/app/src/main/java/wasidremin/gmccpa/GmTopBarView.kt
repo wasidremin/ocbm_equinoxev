@@ -137,9 +137,16 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         // would be crushed below 80% of its natural width the tiles shrink a little instead.
         val targets = BarTarget.values()
         val breakAfter = targets.indexOfFirst { it.group == BarGroup.CAR }.let { if (it < 0) 0 else it }
+        // Tiles fill as much of the bar height as the panel allows. A dedicated (tighter) slope
+        // clearance, snug inter-tile gaps, and a near-full maxFrac let the square tiles grow toward
+        // the whole bar height for a larger touch target. On a flat panel they reach maxFrac; on the
+        // Equinox wedge the rightmost tile is slope-bound (nine square tiles cannot be taller and
+        // still sit on glass), so this is the practical maximum there. The cluster keeps its own
+        // (larger) margin — only the tiles use the tighter one.
+        val tileMargin = h * 0.03f
         val row = DisplayGeometry.topBarTiles(
-            barHeight = h, slopeM = slopeM, count = targets.size, x0 = h * 0.42f, margin = margin,
-            breakAfter = breakAfter, groupGapFrac = GROUP_GAP_FRAC,
+            barHeight = h, slopeM = slopeM, count = targets.size, x0 = h * 0.36f, margin = tileMargin,
+            gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = breakAfter, groupGapFrac = GROUP_GAP_FRAC,
             rightClusterRoom = { end ->
                 DisplayGeometry.topBarLayout(w, h, rightInsetPx, slopeM, contentH, margin, end, natural).rightScale
             })
@@ -278,7 +285,8 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     companion object {
         /** Bar height as a fraction of the panel height, from the photo (~80 px of 960). */
         const val HEIGHT_FRACTION = 0.083f
-        /** Extra gap (in tile widths) between the our-app and car-app tile families. */
-        const val GROUP_GAP_FRAC = 0.6f
+        /** Extra gap (in tile widths) between the our-app and car-app tile families. Kept modest so
+         *  the tiles stay large — the divider needs only a slim lane. */
+        const val GROUP_GAP_FRAC = 0.4f
     }
 }
