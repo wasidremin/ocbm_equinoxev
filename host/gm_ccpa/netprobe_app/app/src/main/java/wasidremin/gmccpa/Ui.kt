@@ -443,6 +443,8 @@ class LauncherUi(private val act: Activity) {
         val glass = TopBarHost.glass(insets)
         if (bar.rightInsetPx != glass.rightInsetPx) bar.rightInsetPx = glass.rightInsetPx
         if (bar.slopeM != glass.slopeM) bar.slopeM = glass.slopeM
+        bar.outline = DisplayPrefs.glassOutline(act, act.window.decorView.width.toFloat(),
+            act.window.decorView.height.toFloat())
         val lp = bar.layoutParams as FrameLayout.LayoutParams
         if (lp.height != stripPx) { lp.height = stripPx; bar.layoutParams = lp }
         if (bar.visibility != View.VISIBLE) {
@@ -604,10 +606,10 @@ class LauncherUi(private val act: Activity) {
     private lateinit var scribbleRow: EqRow
 
     /**
-     * Edge-trace calibration (replaces the retired dp inset sliders) plus the remaining numeric
-     * controls. The trace solves the largest visible rectangle and the top-bar wedge from a
-     * finger painting of the dead glass; manual per-edge guessing cannot express a sloped top
-     * and a swooping cutout, so the sliders are gone rather than kept alongside.
+     * Screen-outline calibration (replaces the retired dp inset sliders) plus the remaining
+     * numeric controls. Eight dots dragged onto the visible edge ([GlassOutline]) give the
+     * largest visible picture rectangle and the shape the top bar fits to; manual per-edge
+     * guessing cannot express a sloped top and a swooping cutout, so the sliders are gone.
      */
     private fun buildDisplayOverrides(page: LinearLayout) {
         var pending = displayDraft ?: DisplayPrefs.controls(act)
@@ -628,13 +630,13 @@ class LauncherUi(private val act: Activity) {
             }, LinearLayout.LayoutParams(-1, EqTheme.px(48f)))
             page.addView(row)
         }
-        page.addView(eqSectionLabel(act, "Visible edges · traced"))
-        scribbleRow = EqRow(act, "Edge trace", scribbleSubtitle(),
-            trailing = eqButton(act, "Trace edges", EqButtonStyle.SECONDARY) {
+        page.addView(eqSectionLabel(act, "Visible screen · outline"))
+        scribbleRow = EqRow(act, "Screen outline", scribbleSubtitle(),
+            trailing = eqButton(act, "Set outline", EqButtonStyle.SECONDARY) {
                 act.startActivity(android.content.Intent(act, ScribbleActivity::class.java))
             })
         page.addView(EqCard(act).addRow(scribbleRow)
-            .addRow(EqRow(act, "Clear trace",
+            .addRow(EqRow(act, "Clear outline",
                 "Falls back to the measured cutout bounds.",
                 trailing = eqButton(act, "Clear", EqButtonStyle.SECONDARY) {
                     DisplayPrefs.clearScribble(act)
@@ -1594,12 +1596,22 @@ class LauncherUi(private val act: Activity) {
 
     private fun scribbleSubtitle(): String =
         if (DisplayPrefs.scribbleEnabled(act))
-            (DisplayPrefs.scribbleNote(act) ?: "Trace saved.") + " Takes effect at the next connection."
-        else "No trace — using the measured cutout bounds. Trace the dead glass to fit CarPlay exactly."
+            outlineSummary() + " Picture takes effect at the next connection."
+        else "No outline — using the measured cutout bounds. Set the outline to fit CarPlay and the top bar exactly."
+
+    /** Short summary for the row; the full note (with all eight points) stays in the log. */
+    private fun outlineSummary(): String {
+        val note = DisplayPrefs.scribbleNote(act) ?: return "Outline saved."
+        if (!note.startsWith("outline ")) return "Old paint trace saved — set the outline to replace it."
+        return "Outline saved: " + note.substringAfter(" rect ").substringBefore(" pts").let { "picture $it." }
+    }
 
     private fun refreshScribbleRow() = act.runOnUiThread {
         if (act.isFinishing || act.isDestroyed) return@runOnUiThread
         if (::scribbleRow.isInitialized) scribbleRow.setSubtitle(scribbleSubtitle())
+        // A just-saved (or cleared) outline reshapes the bar now, without waiting for a relayout.
+        settingsBar?.outline = DisplayPrefs.glassOutline(act, act.window.decorView.width.toFloat(),
+            act.window.decorView.height.toFloat())
     }
 
     private fun sizePending(): Boolean {

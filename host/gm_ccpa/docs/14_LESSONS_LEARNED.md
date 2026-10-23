@@ -303,22 +303,38 @@ queue/track numbers are parsed but deliberately NOT subscribed (the proven 40 B 
 a 2026-07-12 superset subscribe degraded to zero titles). The queue carries the current track,
 never the phone's list.
 
-### 12.2 Edge-trace calibration replaces the dp inset sliders
+### 12.2 Screen-outline calibration replaces the dp inset sliders (8 points since 2026-10-23)
 
 Manual per-edge dp sliders cannot express this panel (straight left/bottom, top sloping down,
 right swooping to the bottom), and the right-margin presets duplicated the YAML safe area.
-Settings ▸ Display now offers **Trace edges**: a full-panel activity where the driver paints
-the DEAD glass; `ScribbleSolver` (pure, `ScribbleSolverTest` (4) on a synthetic 2914x1134
-panel) takes per-band dead-paint extremes, median-smooths, seeds untraced bands from the live
-cutout, gates votes to central ranges (a full-width top stroke must not vote the right
-profile), derives T as the deepest dead paint spanned and searches R for max area, and applies
-a fingertip safety margin only where paint contributed. At capture time the solved rect sizes
-the advertised `viewWidth`×`viewHeight` directly (with presentation dp insets forced to 0, so
-iOS encodes at the true visible aspect ratio rather than squishing horizontally after decode),
-the strip above it becomes the top bar's space (bar auto-armed on save, and its right cluster
-insets by the greater of `safeInsetRight` and `VideoFrame.rightPx`), and the YAML safe inset
-is forced to 0. Sliders and margin presets are removed; untraced sessions honour the measured
-cutout bounds plus the last saved margin pref. Takes effect at the next connection.
+Settings ▸ Display ▸ **Set outline** opens a full-panel activity (`ScribbleActivity` +
+`OutlineView`) where the driver drags **eight dots onto the edge of the visible screen**: four
+corners plus one point per side that bends the side into a shallow triangle (peak or dip).
+Drags are relative (the finger never covers the dot), the last-touched dot takes 2-px arrow
+nudges, and off-glass is dimmed red with the solved picture rectangle drawn live in green.
+`GlassOutline` (pure, `GlassOutlineTest`) reads each side as a function (top/bottom y of x,
+left/right x of y) and derives:
+
+- **the picture**: the largest axis-aligned rectangle inside (`maxRect`), saved as the old
+  per-mille `ScribbleRect`, so `VideoFrame.capture` is unchanged — it sizes the advertised
+  `viewWidth`×`viewHeight` directly (presentation dp insets forced to 0, YAML safe inset 0), the
+  strip above it is the top bar's space (bar auto-armed on save). Next connection.
+- **the top bar** (immediately): `GmTopBarView.outline` (window px, via `getLocationInWindow`).
+  Tiles stay at 0.9 bar height unless the traced top dips into a tile (`topBarTiles(topClear)`);
+  the clock/temperature end where their block is fully on glass (`blockRightEdge`), dropping to
+  the bar bottom if a dipping top leaves no room at mid-height. No outline → flat layout at the
+  picture's right edge.
+
+**Why it replaced the finger-painting trace (v205–212).** Painting the DEAD glass was awkward, and
+`ScribbleSolver` kept the INNERMOST paint per band (one stray stroke onto good glass shrank the
+picture), the narrowest point of the right edge set the whole picture, a fixed 8 px fingertip
+margin came off every traced side, and paint could only shrink past the OS cutout bounds — so the
+top trace never moved off the cutout's 167. Separately, the bar read the top cutout
+`Rect(0,0-2629,167)` as a diagonal wedge of missing glass (m = 0.0635); the owner, in the car
+2026-10-23, saw the whole bar on glass. That inferred slope capped tiles at ~0.5 bar height and
+pulled the clock/temp back to x ~1700; the bar no longer uses it (`slopeM` is log-only).
+An old paint trace still drives the picture until replaced (the row says so); it has no outline,
+so the bar lays out flat.
 
 ---
 
@@ -619,16 +635,14 @@ the truck. The owner's 2026-10-23 short drive reported all nine resolving as exp
 Spotify→Music fallback to a play/pause toggle is gone — an explicit Spotify tile that cannot find Spotify
 now sends nothing.
 
-**Fit.** `DisplayGeometry.topBarTiles` sizes one level, bottom-justified row so the LAST tile still
-clears the panel slope (`size · (1 + m·spans) ≤ barH − 2.5·margin − m·x0`), capped at 0.66 of the bar
-height, floored at 0.34, and shrinks further (×0.94 steps) if the right cluster would fall below 80% of its
-natural width. `spans` now includes the extra group gap (`GROUP_GAP_FRAC` = 0.6 tile widths, folded into
-the slope solve so the regrouped row still clears the slope), and the divider x is returned as
-`TileRow.dividerX`. The sacred gap between the tile row and the right status cluster was widened from 0.5
-to **0.8 bar heights** (`topBarLayout` `minGap`) because the clock/temp sat too close to the tiles to read
-as a separate zone. On the Equinox (168 px bar, m = 0.0635) tiles are ≈ 81 px ending near x 1040, cluster
-right-justified on glass near x 1600. Pinned by `BarTilesTest`/`TopBarFitTest`. Not yet seen on the
-vehicle.
+**Fit (reworked 2026-10-23, see §12.2).** Tiles are one level, left-justified, bottom-justified
+row at 0.9 of the bar height (`topBarTiles` at the `GmTopBarView` call site: gap 0.18, group gap
+`GROUP_GAP_FRAC` 0.4), shrunk only where the driver's traced outline dips into a tile, or (×0.94
+steps) if the right cluster would fall below 80% of its natural width. The clock/temperature
+cluster is right-justified `CLUSTER_END_INDENT_FRAC` (0.1 bar height) inside the traced right edge
+— or the picture's right edge when untraced — with the 0.8-bar-height minimum gap to the tiles.
+The earlier slope solve (tiles ≈ 0.5 h, cluster near x 1600) rested on the misread cutout wedge.
+Pinned by `BarTilesTest`/`GlassOutlineTest`.
 
 **On the settings screen.** `TopBarHost` builds and positions the same bar for both activities;
 `LauncherUi.applyCalibrationFrame` reserves the strip (`VideoFrame.topPx` × the latch scale) at the top of

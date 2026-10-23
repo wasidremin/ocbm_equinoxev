@@ -82,6 +82,7 @@ object DisplayPrefs {
     private const val KEY_SCRIBBLE_RECT = "scribble_rect"
     private const val KEY_SCRIBBLE_PANEL = "scribble_panel"
     private const val KEY_SCRIBBLE_NOTE = "scribble_note"
+    private const val KEY_GLASS_OUTLINE = "glass_outline"
     fun scribbleEnabled(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_SCRIBBLE, false) && scribbleRect(ctx) != null
     fun scribbleRect(ctx: Context): ScribbleRect? {
@@ -91,13 +92,30 @@ object DisplayPrefs {
         if (l !in 0..1000 || t !in 0..1000 || r !in 0..1000 || b !in 0..1000 || l >= r || t >= b) return null
         return ScribbleRect(l, t, r, b)
     }
+    /**
+     * The eight-point visible-glass outline ([GlassOutline]) saved with the trace, as per-mille
+     * fractions; null when there is no outline (no trace, or a pre-outline paint trace).
+     * [w]x[h] is the window to scale it to.
+     */
+    fun glassOutline(ctx: Context, w: Float, h: Float): GlassOutline? {
+        if (!scribbleEnabled(ctx) || w <= 0f || h <= 0f) return null
+        return GlassOutline.fromPerMille(glassOutlineRaw(ctx) ?: return null, w, h)
+    }
+    /** The stored per-mille outline as saved, for a save/restore round trip. */
+    fun glassOutlineRaw(ctx: Context): IntArray? =
+        prefs(ctx).getString(KEY_GLASS_OUTLINE, null)?.split(",")?.mapNotNull { it.toIntOrNull() }
+            ?.toIntArray()?.takeIf { it.size == 16 }
     fun scribbleNote(ctx: Context): String? =
         prefs(ctx).getString(KEY_SCRIBBLE_NOTE, null)?.takeIf { it.isNotEmpty() }
     /** Persist a trace. Also arms the custom top bar: the traced top wedge is bar space. */
-    fun saveScribble(ctx: Context, rect: ScribbleRect, panelW: Int, panelH: Int, note: String): Boolean {
+    fun saveScribble(ctx: Context, rect: ScribbleRect, panelW: Int, panelH: Int, note: String,
+                     outline: IntArray? = null): Boolean {
         require(rect.l in 0..1000 && rect.t in 0..1000 && rect.r in 0..1000 && rect.b in 0..1000)
         require(rect.l < rect.r && rect.t < rect.b)
-        val ok = prefs(ctx).edit()
+        val e = prefs(ctx).edit()
+        if (outline != null && outline.size == 16) e.putString(KEY_GLASS_OUTLINE, outline.joinToString(","))
+        else e.remove(KEY_GLASS_OUTLINE)
+        val ok = e
             .putString(KEY_SCRIBBLE_RECT, "${rect.l},${rect.t},${rect.r},${rect.b}")
             .putString(KEY_SCRIBBLE_PANEL, "${panelW}x${panelH}")
             .putString(KEY_SCRIBBLE_NOTE, note)
@@ -107,7 +125,7 @@ object DisplayPrefs {
         return ok
     }
     fun clearScribble(ctx: Context) {
-        prefs(ctx).edit().remove(KEY_SCRIBBLE_RECT).remove(KEY_SCRIBBLE_PANEL)
+        prefs(ctx).edit().remove(KEY_SCRIBBLE_RECT).remove(KEY_SCRIBBLE_PANEL).remove(KEY_GLASS_OUTLINE)
             .remove(KEY_SCRIBBLE_NOTE).putBoolean(KEY_SCRIBBLE, false).apply()
     }
     private const val PREFS = "carplay_screen"

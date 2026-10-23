@@ -147,7 +147,9 @@ object DisplayGeometry {
      * tiles rather than making them unreadable. When [rightClusterRoom] says the right cluster
      * would be crushed, the row shrinks by [shrink] steps (down to [minFrac]) until the cluster
      * is at least [minClusterScale] of its natural width. Zero slope gives a plain row at
-     * [maxFrac]. Pure and unit-tested.
+     * [maxFrac]. [topClear], when given, is the traced top edge ([GlassOutline]) in bar
+     * coordinates — the deepest glass top over an x span — and the row shrinks until every
+     * tile's top is a [margin] below it. Pure and unit-tested.
      */
     fun topBarTiles(
         barHeight: Float,
@@ -163,6 +165,7 @@ object DisplayGeometry {
         shrink: Float = 0.94f,
         breakAfter: Int = 0,
         groupGapFrac: Float = 0f,
+        topClear: ((x0: Float, x1: Float) -> Float)? = null,
     ): TileRow {
         val n = count.coerceAtLeast(1)
         val m = slopeM.coerceAtLeast(0f)
@@ -182,6 +185,16 @@ object DisplayGeometry {
             return TileRow(s, pitch, x0, barHeight - 1.5f * margin - s, end, groupGap, if (hasBreak) breakAfter else 0, dividerX)
         }
         var row = rowOf(size)
+        if (topClear != null) {
+            fun onGlass(r: TileRow) = (0 until n).all { i ->
+                r.top >= topClear(r.tileLeft(i), r.tileLeft(i) + r.size) + margin
+            }
+            var guard = 0
+            while (!onGlass(row) && size > barHeight * minFrac && guard++ < 80) {
+                size = (size * 0.98f).coerceAtLeast(barHeight * minFrac)
+                row = rowOf(size)
+            }
+        }
         if (rightClusterRoom != null) {
             var guard = 0
             while (rightClusterRoom(row.end) < minClusterScale && size > barHeight * minFrac && guard++ < 24) {

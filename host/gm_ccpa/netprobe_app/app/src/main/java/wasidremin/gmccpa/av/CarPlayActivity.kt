@@ -244,6 +244,9 @@ class CarPlayActivity : Activity() {
             }
             if (bar.rightInsetPx != rightInset.coerceAtLeast(0)) bar.rightInsetPx = rightInset
             if (bar.slopeM != slopeM.coerceAtLeast(0f)) bar.slopeM = slopeM.coerceAtLeast(0f)
+            val decor = window.decorView
+            bar.outline = wasidremin.gmccpa.DisplayPrefs.glassOutline(
+                this, decor.width.toFloat(), decor.height.toFloat())
             bar.visibility = if (window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.statusBars()) == true)
                 View.GONE else View.VISIBLE
         } else {

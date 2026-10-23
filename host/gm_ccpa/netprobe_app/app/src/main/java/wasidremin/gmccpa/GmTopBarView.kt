@@ -28,10 +28,13 @@ import java.util.Date
  *    clock, outside temperature. Smaller than the tiles, centred vertically, and right-justified
  *    flush to the picture's right edge (the live right inset).
  *
- * The bar is laid out on a FLAT top edge. The top cutout `Rect(0,0-2629,167)` was once read as
- * a diagonal wedge of missing glass ([slopeM]); the owner, in the car on 2026-10-23, saw the bar
- * fully visible across its width — that "slope" was only shrinking the tiles and pulling the
- * clock/temp back to x~1700. [slopeM] is still received and logged but no longer shapes layout.
+ * Panel shape comes from the driver's eight-point [outline] when one is saved: tiles shrink only
+ * where the traced top edge dips into them, and the clock/temperature go as far right as the
+ * traced right edge allows at the bar's height. With no outline the bar is laid out flat. The top
+ * cutout `Rect(0,0-2629,167)` was once read as a diagonal wedge of missing glass ([slopeM]); the
+ * owner, in the car on 2026-10-23, saw the bar fully visible across its width — that "slope" was
+ * only shrinking the tiles and pulling the clock/temp back to x~1700. [slopeM] is still received
+ * and logged but no longer shapes layout.
  *  - Background: near-black navy, faint top-to-bottom gradient; a thin blue hairline at the bottom.
  *
  * Tiles are tappable and call [onButton]. The right cluster is display only.
@@ -68,6 +71,10 @@ class GmTopBarView(ctx: Context) : View(ctx) {
      */
     var slopeM: Float = 0f
         set(v) { field = v.coerceAtLeast(0f); invalidate() }
+    /** The traced visible glass in WINDOW pixels ([ScribbleActivity]), or null for a flat layout. */
+    var outline: GlassOutline? = null
+        set(v) { if (field != v) { field = v; invalidate() } }
+    private val loc = IntArray(2)
 
     // Colours sampled from the photo.
     private val bgTop = 0xFF0B1220.toInt()
@@ -133,10 +140,33 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         temperature?.let { natural += text.measureText(it) + h * 0.30f }
         if (signalBars >= 0) natural += baseSignalW + h * 0.26f
 
+        // ---- traced glass, in bar coordinates ----
+        val glass = outline
+        getLocationInWindow(loc)
+        val ox = loc[0].toFloat()
+        val oy = loc[1].toFloat()
+        val topClear: ((Float, Float) -> Float)? = glass?.let { g -> { a, b -> g.topClearance(a + ox, b + ox) - oy } }
+        // The cluster ends where a contentH-tall block centred at cy is still fully on glass;
+        // without an outline, at the live right inset (the picture's right edge). If a dipping
+        // top leaves no room at cy, it drops to the bottom of the bar; failing that it keeps to
+        // the traced right edge and lets the fit scale shrink it.
+        var clusterMid = cy
+        val clusterInset = if (glass == null) rightInsetPx else {
+            fun edgeAt(mid: Float) = glass.blockRightEdge(mid - contentH / 2f + oy, mid + contentH / 2f + oy, natural, ox) - ox
+            var glassRight = edgeAt(cy)
+            if (glassRight <= 0f) {
+                clusterMid = h - margin - contentH / 2f
+                glassRight = edgeAt(clusterMid)
+            }
+            if (glassRight <= 0f) glassRight = glass.rightLimit(clusterMid - contentH / 2f + oy, clusterMid + contentH / 2f + oy) - ox
+            (w - glassRight).toInt().coerceAtLeast(0)
+        }
+
         // ---- left tiles ----
         // One level row of CarPlay-style tiles, left-justified at nearly the full bar height
-        // (maxFrac) for a large touch target, laid out flat (see the class doc). If the right
-        // cluster would be crushed below 80% of its natural width the tiles shrink a little.
+        // (maxFrac) for a large touch target, shrunk only where the traced top edge dips into
+        // the row (see the class doc). If the right cluster would be crushed below 80% of its
+        // natural width the tiles shrink a little.
         val targets = BarTarget.values()
         val breakAfter = targets.indexOfFirst { it.group == BarGroup.CAR }.let { if (it < 0) 0 else it }
         val tileMargin = h * 0.03f
@@ -144,8 +174,9 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         val row = DisplayGeometry.topBarTiles(
             barHeight = h, slopeM = 0f, count = targets.size, x0 = h * 0.36f, margin = tileMargin,
             gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = breakAfter, groupGapFrac = GROUP_GAP_FRAC,
+            topClear = topClear,
             rightClusterRoom = { end ->
-                DisplayGeometry.topBarLayout(w, h, rightInsetPx, 0f, contentH, margin, end, natural,
+                DisplayGeometry.topBarLayout(w, h, clusterInset, 0f, contentH, margin, end, natural,
                     endIndent = endIndent).rightScale
             })
         for ((i, t) in targets.withIndex()) {
@@ -163,19 +194,19 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             c.drawRoundRect(r, dw / 2f, dw / 2f, fill)
         }
 
-        // ---- right cluster: right-justified flush to the picture edge, never overlapping left ----
+        // ---- right cluster: right-justified flush to visible glass, never overlapping left ----
         // Solved per frame — see DisplayGeometry.topBarLayout. The temperature ends just inside
-        // the live right inset (the picture's right edge); the middle gap absorbs everything
+        // the traced right edge (or the picture's right edge, untraced); the middle gap absorbs everything
         // else, with a minimum held sacred so the groups never touch: when the slot is tight the
         // cluster shrinks rather than closing the gap.
         val layout = DisplayGeometry.topBarLayout(
-            w, h, rightInsetPx, 0f, contentH, margin, row.end, natural, endIndent = endIndent)
+            w, h, clusterInset, 0f, contentH, margin, row.end, natural, endIndent = endIndent)
         val edge = layout.rightEdge
         val fit = layout.rightScale
         if (fit > 0f) {
             val ts = baseText * fit
             val small = baseSmall * fit
-            val mid = cy
+            val mid = clusterMid
             text.textSize = ts
             text.color = textCol
             var x = edge

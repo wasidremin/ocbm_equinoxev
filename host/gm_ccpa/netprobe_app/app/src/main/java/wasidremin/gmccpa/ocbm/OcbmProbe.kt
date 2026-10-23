@@ -338,6 +338,7 @@ class OcbmProbe(context: Context) {
         val savedScribRect = wasidremin.gmccpa.DisplayPrefs.scribbleRect(ctx)
         val savedScribNote = wasidremin.gmccpa.DisplayPrefs.scribbleNote(ctx)
         val savedScribOn = wasidremin.gmccpa.DisplayPrefs.scribbleEnabled(ctx)
+        val savedOutline = wasidremin.gmccpa.DisplayPrefs.glassOutlineRaw(ctx)
         VideoFrame.testingGeometry = true
         try {
             wasidremin.gmccpa.DisplayPrefs.clearScribble(ctx)
@@ -398,7 +399,7 @@ class OcbmProbe(context: Context) {
         } finally {
             VideoFrame.testingGeometry = false
             if (savedScribOn && savedScribRect != null) {
-                wasidremin.gmccpa.DisplayPrefs.saveScribble(ctx, savedScribRect, 2914, 1134, savedScribNote ?: "")
+                wasidremin.gmccpa.DisplayPrefs.saveScribble(ctx, savedScribRect, 2914, 1134, savedScribNote ?: "", savedOutline)
             } else {
                 wasidremin.gmccpa.DisplayPrefs.clearScribble(ctx)
             }

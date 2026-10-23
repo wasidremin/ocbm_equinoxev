@@ -1326,6 +1326,8 @@ class MainActivity : Activity() {
                 val sub = i.getIntExtra("subtab", 0)
                 ui.openTabFromScript(tab, sub)
             }
+            // The screen-outline calibration (not exported, so scripts reach it through here).
+            "outline" -> startActivity(Intent(this, ScribbleActivity::class.java))
             // Hardware-free preview: real insets + real vehicle reads, no OCBM
             // claim or SUBSCRIBE. Never report this as a live CarPlay negotiation.
             "topbar_preview" -> {
