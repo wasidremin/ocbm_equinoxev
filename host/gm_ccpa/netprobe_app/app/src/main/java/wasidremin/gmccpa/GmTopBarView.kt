@@ -124,7 +124,6 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         fill.shader = null
 
         // ---- right cluster measurements (needed first: they bound the tile row) ----
-        val cy = h * 0.47f
         val margin = h * 0.05f               // glass to spare above content and below it
         val clock = DateFormat.getTimeFormat(context).format(Date())
         val baseText = h * 0.24f
@@ -146,19 +145,16 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         val ox = loc[0].toFloat()
         val oy = loc[1].toFloat()
         val topClear: ((Float, Float) -> Float)? = glass?.let { g -> { a, b -> g.topClearance(a + ox, b + ox) - oy } }
-        // The cluster ends where a contentH-tall block centred at cy is still fully on glass;
-        // without an outline, at the live right inset (the picture's right edge). If a dipping
-        // top leaves no room at cy, it drops to the bottom of the bar; failing that it keeps to
-        // the traced right edge and lets the fit scale shrink it.
-        var clusterMid = cy
+        // The cluster is bottom-justified (the owner's call: the glass top dips toward the right,
+        // and the bottom rows reach furthest into that corner). With an outline it ends where its
+        // contentH-tall block is still fully on glass, failing that at the traced right edge with
+        // the fit scale shrinking it; without one, at the live right inset (picture's right edge).
+        val clusterMid = h - margin - contentH / 2f
         val clusterInset = if (glass == null) rightInsetPx else {
-            fun edgeAt(mid: Float) = glass.blockRightEdge(mid - contentH / 2f + oy, mid + contentH / 2f + oy, natural, ox) - ox
-            var glassRight = edgeAt(cy)
-            if (glassRight <= 0f) {
-                clusterMid = h - margin - contentH / 2f
-                glassRight = edgeAt(clusterMid)
-            }
-            if (glassRight <= 0f) glassRight = glass.rightLimit(clusterMid - contentH / 2f + oy, clusterMid + contentH / 2f + oy) - ox
+            val y0 = clusterMid - contentH / 2f + oy
+            val y1 = clusterMid + contentH / 2f + oy
+            var glassRight = glass.blockRightEdge(y0, y1, natural, ox) - ox
+            if (glassRight <= 0f) glassRight = glass.rightLimit(y0, y1) - ox
             (w - glassRight).toInt().coerceAtLeast(0)
         }
 
@@ -206,7 +202,8 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         if (fit > 0f) {
             val ts = baseText * fit
             val small = baseSmall * fit
-            val mid = clusterMid
+            // Shrunk content stays sitting on the same bottom line.
+            val mid = h - margin - contentH * fit / 2f
             text.textSize = ts
             text.color = textCol
             var x = edge

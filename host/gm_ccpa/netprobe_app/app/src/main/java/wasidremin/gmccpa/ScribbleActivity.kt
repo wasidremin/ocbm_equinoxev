@@ -44,30 +44,30 @@ class ScribbleActivity : Activity() {
         hint = TextView(this).apply {
             text = INSTRUCTIONS
             setTextColor(0xFFFFFFFF.toInt())
-            textSize = 18f
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            setBackgroundColor(0xB0000000.toInt())
+            textSize = 13f
+            maxWidth = dp(360)
+            setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(0xB0000000.toInt())
-        }
-        bar.addView(cmd("Reset") { view.outline = start(fresh = true); refresh() })
-        bar.addView(cmd("Cancel") { finish() })
-        bar.addView(cmd("◀") { view.nudge(-NUDGE, 0f) })
-        bar.addView(cmd("▲") { view.nudge(0f, -NUDGE) })
-        bar.addView(cmd("▼") { view.nudge(0f, NUDGE) })
-        bar.addView(cmd("▶") { view.nudge(NUDGE, 0f) })
-        bar.addView(cmd("Save outline") { save() })
-        // Controls sit in the middle of the panel, out of the way of every edge being outlined.
+        // Small, two rows, in the middle of the panel: every dot sits on an edge, so a compact
+        // centre panel never covers one. It also fades out while a dot is being dragged.
+        val arrows = row(
+            cmd("◀") { view.nudge(-NUDGE, 0f) }, cmd("▲") { view.nudge(0f, -NUDGE) },
+            cmd("▼") { view.nudge(0f, NUDGE) }, cmd("▶") { view.nudge(NUDGE, 0f) })
+        val actions = row(
+            cmd("Reset") { view.outline = start(fresh = true); refresh() },
+            cmd("Cancel") { finish() },
+            cmd("Save") { save() })
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
+            setBackgroundColor(0xB0000000.toInt())
+            setPadding(dp(6), dp(4), dp(6), dp(6))
             addView(hint, LinearLayout.LayoutParams(-2, -2))
-            addView(bar, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+            addView(arrows, LinearLayout.LayoutParams(-2, -2))
+            addView(actions, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
         }
         root.addView(panel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        view.onDragging = { on -> panel.animate().alpha(if (on) 0.15f else 1f).setDuration(120).start() }
         setContentView(root)
         view.onChanged = { refresh() }
         view.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
@@ -79,7 +79,18 @@ class ScribbleActivity : Activity() {
     private fun cmd(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
+            textSize = 14f
+            isAllCaps = false
+            minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0
+            setPadding(dp(14), dp(6), dp(14), dp(6))
             setOnClickListener { onClick() }
+        }
+
+    private fun row(vararg buttons: Button): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            for (b in buttons) addView(b, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(3); marginEnd = dp(3) })
         }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
@@ -113,7 +124,7 @@ class ScribbleActivity : Activity() {
             o == null -> INSTRUCTIONS
             r == null -> "$INSTRUCTIONS\nNo picture fits inside this outline yet."
             else -> "$INSTRUCTIONS\nPicture " + r.width.roundToInt() + "x" + r.height.roundToInt() +
-                " at " + r.l.roundToInt() + "," + r.t.roundToInt() + " — Save when every dot is on the edge."
+                " at " + r.l.roundToInt() + "," + r.t.roundToInt() + ""
         }
     }
 
@@ -147,7 +158,7 @@ class ScribbleActivity : Activity() {
     companion object {
         private const val NUDGE = 2f
         private const val INSTRUCTIONS =
-            "Drag each dot onto the edge of the visible screen: 4 corners, then the middle dot on each " +
-                "side to follow any slope or curve. Tap a dot, then use the arrows to fine-tune."
+            "Drag each dot onto the edge of the visible screen; middle dots follow any slope. " +
+                "Tap a dot, then the arrows fine-tune it."
     }
 }

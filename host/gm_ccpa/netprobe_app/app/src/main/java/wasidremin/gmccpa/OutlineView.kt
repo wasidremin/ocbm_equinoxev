@@ -26,6 +26,8 @@ class OutlineView(ctx: Context) : View(ctx) {
     var selected: Int = GlassOutline.TR
         private set
     var onChanged: (() -> Unit)? = null
+    /** True while a dot is being dragged (the controls fade so they never hide the dot). */
+    var onDragging: ((Boolean) -> Unit)? = null
 
     private val deadPaint = Paint().apply { color = 0x66FF3030; style = Paint.Style.FILL }
     private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -87,6 +89,7 @@ class OutlineView(ctx: Context) : View(ctx) {
                 offX = near.value.x - e.x
                 offY = near.value.y - e.y
                 parent?.requestDisallowInterceptTouchEvent(true)
+                onDragging?.invoke(true)
                 invalidate()
                 return true
             }
@@ -97,7 +100,7 @@ class OutlineView(ctx: Context) : View(ctx) {
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (dragging >= 0) { dragging = -1; invalidate(); onChanged?.invoke() }
+                if (dragging >= 0) { dragging = -1; onDragging?.invoke(false); invalidate(); onChanged?.invoke() }
                 return true
             }
         }

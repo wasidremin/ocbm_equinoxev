@@ -77,6 +77,24 @@ class GlassOutlineTest {
         assertTrue(shaped.topClearance(high - 600f, high) <= 60f)
     }
 
+    @Test fun bottomJustifiedClusterReachesIntoTheCorner() {
+        // The owner's 2026-10-23 car outline, estimated from the photo (picture 2334x1063 at 30,66):
+        // the top dips to ~66 at TR, then the right side swoops out.
+        val car = GlassOutline(listOf(pt(0f, 0f), pt(1200f, 30f), pt(2364f, 66f), pt(2600f, 560f),
+            pt(2660f, 1134f), pt(1300f, 1134f), pt(30f, 1134f), pt(10f, 560f)))
+        val barH = 174f
+        val contentH = barH * 0.24f
+        val margin = barH * 0.05f
+        val natural = 700f
+        val centred = car.blockRightEdge(barH * 0.47f - contentH / 2f, barH * 0.47f + contentH / 2f, natural, 0f)
+        val bottom = car.blockRightEdge(barH - margin - contentH, barH - margin, natural, 0f)
+        // Centred rows run into the dipping top short of the picture's edge; bottom rows clear it
+        // and end past the picture, on the swooping right side.
+        assertTrue("centred $centred", centred < 2364f)
+        assertTrue("bottom $bottom", bottom > 2380f)
+        assertEquals(car.rightLimit(barH - margin - contentH, barH - margin), bottom, 4f)
+    }
+
     // ---- top-bar tiles against a traced top edge ----
 
     private fun tiles(topClear: ((Float, Float) -> Float)?) = DisplayGeometry.topBarTiles(

@@ -311,7 +311,9 @@ Settings ▸ Display ▸ **Set outline** opens a full-panel activity (`ScribbleA
 `OutlineView`) where the driver drags **eight dots onto the edge of the visible screen**: four
 corners plus one point per side that bends the side into a shallow triangle (peak or dip).
 Drags are relative (the finger never covers the dot), the last-touched dot takes 2-px arrow
-nudges, and off-glass is dimmed red with the solved picture rectangle drawn live in green.
+nudges, and off-glass is dimmed red with the solved picture rectangle drawn live in green. The
+controls are a small two-row panel in the centre that fades while a dot is dragged (the first
+in-car build's full-width button row hid the side dots).
 `GlassOutline` (pure, `GlassOutlineTest`) reads each side as a function (top/bottom y of x,
 left/right x of y) and derives:
 
@@ -321,9 +323,10 @@ left/right x of y) and derives:
   strip above it is the top bar's space (bar auto-armed on save). Next connection.
 - **the top bar** (immediately): `GmTopBarView.outline` (window px, via `getLocationInWindow`).
   Tiles stay at 0.9 bar height unless the traced top dips into a tile (`topBarTiles(topClear)`);
-  the clock/temperature end where their block is fully on glass (`blockRightEdge`), dropping to
-  the bar bottom if a dipping top leaves no room at mid-height. No outline → flat layout at the
-  picture's right edge.
+  the clock/temperature are bottom-justified (owner, 2026-10-23) and end where their block is
+  fully on glass (`blockRightEdge`): the top dips toward the right corner, so bottom rows reach
+  past the picture's right edge onto the swooping side, where mid-height rows stopped short of it.
+  No outline → flat layout at the picture's right edge.
 
 **Why it replaced the finger-painting trace (v205–212).** Painting the DEAD glass was awkward, and
 `ScribbleSolver` kept the INNERMOST paint per band (one stray stroke onto good glass shrank the
@@ -639,7 +642,7 @@ now sends nothing.
 row at 0.9 of the bar height (`topBarTiles` at the `GmTopBarView` call site: gap 0.18, group gap
 `GROUP_GAP_FRAC` 0.4), shrunk only where the driver's traced outline dips into a tile, or (×0.94
 steps) if the right cluster would fall below 80% of its natural width. The clock/temperature
-cluster is right-justified `CLUSTER_END_INDENT_FRAC` (0.1 bar height) inside the traced right edge
+cluster is bottom-justified and right-justified `CLUSTER_END_INDENT_FRAC` (0.1 bar height) inside the traced right edge
 — or the picture's right edge when untraced — with the 0.8-bar-height minimum gap to the tiles.
 The earlier slope solve (tiles ≈ 0.5 h, cluster near x 1600) rested on the misread cutout wedge.
 Pinned by `BarTilesTest`/`GlassOutlineTest`.
