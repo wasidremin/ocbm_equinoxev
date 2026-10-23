@@ -607,6 +607,34 @@ trigger in this window. What it did show, and what changed (v211):
   explained by the log; `CH_FILE pull /tmp/wlan_off.log` / `supervisor.log` `OPEN_FAILED` (files absent
   on the box); 214 `requestLayout() improperly called during layout` warnings (cosmetic).
 
+### 14.10 The 2026-10-23 drive (v214, pid 18774) — §14.5 again, and the latch is not the whole story
+
+Reproduced at a track boundary, then twice more on the driver's own play presses:
+
+```text
+22:44:18.703  card: state=3 pos=554 source=tick      (track boundary: "When I Was Your Man" → "Shake It Off")
+22:44:18.770  transport: pause+stop caller=com.android.car — source-change probe
+22:44:19.619  media focus LOSS(permanent) → phone PAUSE sent=true; gain 0
+22:44:22.047  partial TEARDOWN — the phone stops the media stream
+22:46:55.362  sidebar play → focus GRANTED → phone PLAY sent=true
+22:46:55.605  LOSS(permanent) again, 243 ms later; probe pair at .640
+22:46:56.648  sidebar play → GRANTED; .921 LOSS again (273 ms); probe pair at .966
+22:47:00.971  phone status=0 — stopped for good
+```
+
+New evidence against §14.5's option 1: re-requesting focus does not stick. Two driver presses each won
+focus and lost it in under 300 ms, each followed by the `com.android.car` pause+stop pair, so
+something actively takes focus back. The first play of the session (22:36:37) came through
+`com.gm.car.media.gmcarmediaservice` (GM's media UI, which selects the source) and held for 7 minutes.
+The failed recoveries came from this app's own sidebar, which does not change GM's selected source.
+This app cannot select itself either: `CarMediaManager` has no 1-argument `setMediaSource` here
+(`sourceSwitchable=false`). Working hypothesis: CarMediaService or GM's media service switched the
+primary source away from CarPlay at the boundary and re-asserts it on every grab. It is unconfirmed.
+The capture is app-only (`scope: OWN_PROCESS (requested WHOLE_OS, READ_LOGS granted=false)`), so
+the process that took focus is not in it. The next step is in-app evidence that needs no
+READ_LOGS. On each LOSS, log the active `AudioPlaybackConfiguration`s (usage/state) and try a
+reflective `CarMediaManager.getMediaSource` (it may throw SecurityException; log that too).
+
 ## 15. The top bar: nine CarPlay-style tiles (v211, regrouped 2026-10-23)
 
 The seven thin outline icons (car, apps, controls, music, nav, phone, energy) are replaced by nine
