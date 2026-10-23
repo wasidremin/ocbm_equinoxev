@@ -1,6 +1,8 @@
 package wasidremin.gmccpa
 
 import android.content.Context
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
@@ -500,8 +502,8 @@ object VideoFrame {
         var top = reserveTop(m, panelH, enabled)
         var bottom = m.visibleBottom.coerceIn(0, (panelH - top).coerceAtLeast(0))
         var topInset = 0
-        val leftDead = if (scribF != null) (scribF[0] * panelW).roundToInt().coerceAtLeast(0) else 0
-        val rightDead = if (scribF != null) (panelW - (scribF[2] * panelW).roundToInt()).coerceAtLeast(0) else 0
+        var leftDead = if (scribF != null) (scribF[0] * panelW).roundToInt().coerceAtLeast(0) else 0
+        var rightDead = if (scribF != null) (panelW - (scribF[2] * panelW).roundToInt()).coerceAtLeast(0) else 0
         if (scribF != null) {
             val tracedBar = (scribF[1] * panelH).roundToInt() and 1.inv()
             val tracedBottom = (panelH - (scribF[3] * panelH).roundToInt()).coerceAtLeast(0)
@@ -524,6 +526,20 @@ object VideoFrame {
         if (videoH < 480) {
             actualTop = 0; actualTopInset = 0; actualBottom = 0
             videoH = if (panelH >= 480) panelH and 1.inv() else PANEL_H
+        }
+        // The saved rect was solved for the tallest picture the outline holds (its top can sit
+        // well above the bar). The picture's rows are now fixed by the bar and the bottom margin,
+        // so re-solve the sides from the outline for exactly those rows: a top-right corner that
+        // cuts in above the bar no longer pulls the right edge in (2026-10-23: 2504 → ~2631).
+        if (scribF != null && videoH >= 480) {
+            val y0 = (actualTop + actualTopInset).toFloat()
+            val span = DisplayPrefs.glassOutline(ctx, panelW.toFloat(), panelH.toFloat())
+                ?.spanFor(y0, y0 + videoH)
+            if (span != null) {
+                leftDead = ceil(span.first).toInt().coerceIn(0, panelW)
+                rightDead = (panelW - floor(span.second).toInt()).coerceIn(0, panelW)
+                captureTopSource += "+outline"
+            }
         }
         topPx = actualTop
         topInsetPx = actualTopInset

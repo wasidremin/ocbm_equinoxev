@@ -217,6 +217,13 @@ class EqChevron(ctx: Context) : View(ctx) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    // A bare View takes every pixel offered under wrap_content, so a chevron used directly as an
+    // EqRow trailing view swallowed the row's text and grew into a tall blank block (Advanced ▸
+    // Adapter info, 2026-10-23). Wrap to the 28dp size eqValueChevron gives it.
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val s = EqTheme.px(28f)
+        setMeasuredDimension(resolveSize(s, widthMeasureSpec), resolveSize(s, heightMeasureSpec))
+    }
     override fun onDraw(c: Canvas) {
         val s = min(width, height).toFloat()
         p.strokeWidth = s * 0.1f

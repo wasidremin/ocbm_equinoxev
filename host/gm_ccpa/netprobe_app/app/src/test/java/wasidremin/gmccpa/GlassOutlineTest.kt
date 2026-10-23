@@ -95,6 +95,20 @@ class GlassOutlineTest {
         assertEquals(car.rightLimit(barH - margin - contentH, barH - margin), bottom, 4f)
     }
 
+    @Test fun pictureBelowTheBarReachesFurtherRightThanTheTallestRect() {
+        // The owner's saved outline (log, 2026-10-23 21:33): maxRect solved 0,73-2504,1128, so the
+        // picture stopped at 2504. Under the 168-px bar the corner is already past, and the glass
+        // reaches to where the TM->TR top edge crosses y 168.
+        val saved = GlassOutline(listOf(pt(0f, 10f), pt(2506f, 73f), pt(2646f, 179f), pt(2828f, 672f),
+            pt(2884f, 1127f), pt(1282f, 1134f), pt(0f, 1134f), pt(0f, 647f)))
+        val (l, r) = saved.spanFor(168f, 1128f)!!
+        assertEquals(0f, l, 1f)
+        assertEquals(2506f + (168f - 73f) * 140f / 106f, r, 2f)
+        assertTrue(saved.contains(r, 168f) && saved.contains(r - 1f, 1127f))
+        // Rows starting higher up meet the sloping top much further left (top(x) = 40 near x 1193).
+        assertEquals(1193f, saved.spanFor(40f, 1128f)!!.second, 3f)
+    }
+
     // ---- top-bar tiles against a traced top edge ----
 
     private fun tiles(topClear: ((Float, Float) -> Float)?) = DisplayGeometry.topBarTiles(

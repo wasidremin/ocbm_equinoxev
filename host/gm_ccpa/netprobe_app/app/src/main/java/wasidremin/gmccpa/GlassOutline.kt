@@ -50,6 +50,30 @@ data class GlassOutline(val pts: List<Pt>) {
     fun rightLimit(y0: Float, y1: Float): Float =
         minOver(y0, y1, floatArrayOf(tr.y, rm.y, br.y), ::right)
 
+    /** Rightmost point of the left edge over [y0, y1]. */
+    fun leftLimit(y0: Float, y1: Float): Float =
+        maxOver(y0, y1, floatArrayOf(tl.y, lm.y, bl.y), ::left)
+
+    /** Shallowest point of the bottom edge over [x0, x1]. */
+    fun bottomFloor(x0: Float, x1: Float): Float =
+        minOver(x0, x1, floatArrayOf(bl.x, bm.x, br.x), ::bottom)
+
+    /**
+     * Widest [l, r] such that the rectangle l..r × y0..y1 is on glass, for rows already fixed by
+     * something else (the top bar above, the bottom margin below). The side edges bound it, then
+     * each end steps inward until the top and bottom edges clear the corner. Null if the rows
+     * themselves leave the glass anywhere in between (a top dip or bottom peak inside the span).
+     */
+    fun spanFor(y0: Float, y1: Float): Pair<Float, Float>? {
+        var l = leftLimit(y0, y1)
+        var r = rightLimit(y0, y1)
+        fun clear(x: Float) = top(x) <= y0 && bottom(x) >= y1
+        while (r > l && !clear(r)) r -= 1f
+        while (l < r && !clear(l)) l += 1f
+        if (r - l < 2f || topClearance(l, r) > y0 || bottomFloor(l, r) < y1) return null
+        return l to r
+    }
+
     /**
      * Furthest-right x where a block spanning rows [y0, y1] is fully on glass: left of the right
      * edge on those rows, and with the top edge above [y0] over the whole block. Scans leftward

@@ -321,6 +321,12 @@ left/right x of y) and derives:
   per-mille `ScribbleRect`, so `VideoFrame.capture` is unchanged — it sizes the advertised
   `viewWidth`×`viewHeight` directly (presentation dp insets forced to 0, YAML safe inset 0), the
   strip above it is the top bar's space (bar auto-armed on save). Next connection.
+  `maxRect` is the best picture with NO bar, and its top can sit far above the bar (owner's
+  outline: rect top 73, bar 168). Once the bar and bottom margin fix the picture's rows,
+  `VideoFrame.capture` re-solves the sides for exactly those rows (`GlassOutline.spanFor`), so a
+  top-right corner that cuts in above the bar no longer pulls the right edge in (2026-10-23
+  drive: right edge 2504 → ~2631, video 2342 → ~2470 wide). Log: `captureSource` gains
+  `+outline`.
 - **the top bar** (immediately): `GmTopBarView.outline` (window px, via `getLocationInWindow`).
   Tiles stay at 0.9 bar height unless the traced top dips into a tile (`topBarTiles(topClear)`);
   the clock/temperature are bottom-justified (owner, 2026-10-23) and end where their block is

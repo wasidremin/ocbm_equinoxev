@@ -258,7 +258,6 @@ class LauncherUi(private val act: Activity) {
     /** Mirrors [wasidremin.gmccpa.upload.UploadCenter.logWindow]; kept in sync on every pick. */
     private var uploadWindow: UploadWindow = UploadWindow.DEFAULT
     private lateinit var launcherStatusRow: EqRow
-    private lateinit var latestLaunchRow: EqRow
     private lateinit var captureCurrentRow: EqRow
     private lateinit var captureCurrentButton: wasidremin.gmccpa.upload.UploadActionButton
     private lateinit var captureFullRow: EqRow
@@ -268,7 +267,6 @@ class LauncherUi(private val act: Activity) {
     private lateinit var baseUrlRow: EqRow
     private lateinit var queueStatusRow: EqRow
     private lateinit var drainQueueButton: wasidremin.gmccpa.upload.UploadActionButton
-    private lateinit var iconTemplateRow: EqRow
     private val calib by lazy { CalibrationUi(act, { safeDialogWidth(it) }) { setDetail(it) } }
     private lateinit var wifiToggle: EqToggle
     private val queueListener: (Int) -> Unit = { _ -> refreshUploadQueueRow() }
@@ -725,12 +723,6 @@ class LauncherUi(private val act: Activity) {
             .addRow(logStatusRow)
             .addRow(EqRow(act, "Recover", "Tries the automatic recovery steps now.", onClick = { onRecover() })))
 
-        latestLaunchRow = EqRow(act, "Launch diagnostics", "No launches yet",
-            trailing = EqChevron(act), onClick = { showLaunchDiagnosticsDialog() })
-        page.addView(eqSectionLabel(act, "Launch diagnostics"))
-        page.addView(EqCard(act).addRow(latestLaunchRow))
-        refreshLatestLaunchRow()
-
         captureCurrentButton = wasidremin.gmccpa.upload.UploadActionButton(
             ctx = act,
             defaultLabel = "Capture Current Screen",
@@ -821,167 +813,6 @@ class LauncherUi(private val act: Activity) {
             .addRow(EqRow(act, "Clear logs", titleColor = EqTheme.DANGER, onClick = { confirmClearLogs() })))
     }
 
-    private fun saveShotsSubtitle(): String =
-        if (wasidremin.gmccpa.av.VisionLauncher.saveScreenshots) {
-            "ON for this session — before/after CarPlay images are saved for troubleshooting. " +
-                "Images may include map locations, contacts, and media."
-        } else {
-            "Temporarily saves before/after CarPlay images for troubleshooting. " +
-                "Images may include map locations, contacts, and media."
-        }
-
-    private fun latestLaunchDetail(): String {
-        val rec = wasidremin.gmccpa.av.CarPlayLauncher.listLaunches(act).firstOrNull()
-            ?: return "No launches yet"
-        val shots = wasidremin.gmccpa.av.LaunchEvidence.listAttempts(act).size
-        return "${rec.targetName} → ${rec.outcome} · ${rec.id}" +
-            (rec.error?.let { " · $it" } ?: "") +
-            " · screenshots: $shots attempt(s) saved"
-    }
-
-    private fun latestLaunchSubtitle(): String {
-        val shots = if (wasidremin.gmccpa.av.VisionLauncher.saveScreenshots) "screenshots on" else "screenshots off"
-        val rec = wasidremin.gmccpa.av.CarPlayLauncher.listLaunches(act).firstOrNull()
-            ?: return "No launches yet · $shots"
-        return "Last: ${rec.targetName} → ${rec.outcome} · $shots"
-    }
-
-    private fun showLaunchDiagnosticsDialog() {
-        val dialog = Dialog(act)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setDimAmount(0.6f)
-        val body = LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            background = EqTheme.rounded(0xFF111826.toInt(), 28f, EqTheme.CARD_LINE)
-            setPadding(EqTheme.px(36f), EqTheme.px(28f), EqTheme.px(36f), EqTheme.px(24f))
-            addView(EqTheme.text(act, 28f, EqTheme.TEXT, EqTheme.Weight.LIGHT).apply { text = "Launch diagnostics" })
-        }
-        val detail = EqRow(act, "Latest launch", "Loading…")
-        lateinit var shots: EqRow
-        shots = EqRow(act, "Save launch screenshots", saveShotsSubtitle(),
-            trailing = EqToggle(act, wasidremin.gmccpa.av.VisionLauncher.saveScreenshots) { on ->
-                wasidremin.gmccpa.av.VisionLauncher.saveScreenshots = on
-                shots.setSubtitle(saveShotsSubtitle())
-                refreshLatestLaunchRow()
-                setDetail(if (on) "Launch screenshots ON for this session only" else "Launch screenshots off")
-            })
-        body.addView(EqCard(act)
-            .addRow(EqRow(act, "Test app launch", "Strip first, then the Home grid. Never taps an app without a match.",
-                trailing = EqChevron(act), onClick = { dialog.dismiss(); calib.showTestLaunch() }))
-            .addRow(detail)
-            .addRow(shots)
-            .addRow(EqRow(act, "Export launch diagnostics", "Records + saved screenshots. Nothing uploads automatically.",
-                onClick = { dialog.dismiss(); exportLaunchDiagnostics() }))
-            .addRow(EqRow(act, "Clear saved launch screenshots", titleColor = EqTheme.DANGER,
-                onClick = { dialog.dismiss(); confirmClearEvidence() })),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(16f) })
-        body.addView(eqButton(act, "Close", EqButtonStyle.SECONDARY) { dialog.dismiss() },
-            LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END; topMargin = EqTheme.px(20f) })
-        dialog.setContentView(ScrollView(act).apply { addView(body) },
-            ViewGroup.LayoutParams(safeDialogWidth(EqTheme.px(860f)), ViewGroup.LayoutParams.WRAP_CONTENT))
-        dialog.show()
-        Thread({
-            val s = latestLaunchDetail()
-            act.runOnUiThread { if (dialog.isShowing) detail.setSubtitle(s) }
-        }, "launch-diag-read").apply { isDaemon = true }.start()
-    }
-
-    /** Disk reads stay off the UI thread; the row updates when the scan lands. */
-    private fun refreshLatestLaunchRow() {
-        Thread({
-            val subtitle = latestLaunchSubtitle()
-            act.runOnUiThread {
-                if (act.isFinishing || act.isDestroyed) return@runOnUiThread
-                if (::latestLaunchRow.isInitialized) latestLaunchRow.setSubtitle(subtitle)
-            }
-        }, "latest-launch-read").apply { isDaemon = true }.start()
-    }
-
-    private fun confirmClearEvidence() {
-        EqDialog.confirm(
-            act, "Clear launch screenshots",
-            "Deletes launch screenshots and diagnostic ZIPs stored in this app. " +
-                "Copies you already exported or shared are not affected.",
-            "Clear", true,
-        ) {
-            wasidremin.gmccpa.av.LaunchEvidence.clear(act)
-            setDetail("launch screenshots cleared")
-            refreshLatestLaunchRow()
-        }
-    }
-
-    /**
-     * buildZip runs on this background thread (it throws on the main thread by design);
-     * the MediaStore copy runs here too. Only the share intent and status text go back
-     * to the UI thread. The share flow and wording are unchanged.
-     */
-    private fun exportLaunchDiagnostics() {
-        setDetail("packing launch diagnostics…")
-        Thread({
-            val zip: java.io.File? = try {
-                wasidremin.gmccpa.av.LaunchDiagnosticsBundle.buildZip(act)
-            } catch (t: Throwable) {
-                postExportResult(null, null, t)
-                return@Thread
-            }
-            if (zip == null) {
-                postExportResult(null, null, null)
-                return@Thread
-            }
-            val uri: android.net.Uri? = try {
-                copyZipToDownloads(zip)
-            } catch (t: Throwable) {
-                postExportResult(zip, null, t)
-                return@Thread
-            }
-            postExportResult(zip, uri, null)
-        }, "launch-diag-export").apply { isDaemon = true }.start()
-    }
-
-    private fun copyZipToDownloads(zip: java.io.File): android.net.Uri {
-        if (android.os.Build.VERSION.SDK_INT < 29) {
-            throw java.io.IOException("launch export needs the downloads collection (API 29+)")
-        }
-        val values = android.content.ContentValues().apply {
-            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, zip.name)
-            put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/zip")
-            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-        }
-        val uri = act.contentResolver.insert(
-            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: throw java.io.IOException("MediaStore insert returned null")
-        act.contentResolver.openOutputStream(uri)?.use { out ->
-            java.io.FileInputStream(zip).use { it.copyTo(out) }
-        } ?: throw java.io.IOException("MediaStore openOutputStream returned null")
-        return uri
-    }
-
-    private fun postExportResult(zip: java.io.File?, uri: android.net.Uri?, error: Throwable?) {
-        act.runOnUiThread {
-            if (act.isFinishing || act.isDestroyed) return@runOnUiThread
-            if (error != null) {
-                setDetail("Error: launch export failed: ${error.message ?: error.javaClass.simpleName}")
-                return@runOnUiThread
-            }
-            if (zip == null) {
-                setDetail("Nothing to export: no launch records or evidence yet")
-                return@runOnUiThread
-            }
-            try {
-                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                    type = "application/zip"
-                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                act.startActivity(android.content.Intent.createChooser(send, "Share launch diagnostics"))
-                setDetail("launch diagnostics packed (${zip.length() / 1024} KB) — pick where to send it")
-            } catch (t: Throwable) {
-                setDetail("Error: launch export failed: ${t.message ?: t.javaClass.simpleName}")
-            }
-        }
-    }
-
     fun setUploadLogsState(state: wasidremin.gmccpa.upload.UploadState) = act.runOnUiThread {
         if (::uploadLogsButton.isInitialized) {
             uploadLogsButton.setState(state)
@@ -1037,18 +868,6 @@ class LauncherUi(private val act: Activity) {
                 targetRow.setSubtitle(err)
                 setDetail(err)
             }
-        }
-    }
-
-
-    private fun templateRowSubtitle(): String =
-        runCatching { calib.missingSummary(act) }.getOrElse { "Templates unreadable: ${it.message}" }
-
-    private fun refreshTemplateRow() = act.runOnUiThread {
-        if (act.isFinishing || act.isDestroyed) return@runOnUiThread
-        if (::iconTemplateRow.isInitialized) {
-            iconTemplateRow.subtitleView.setTextColor(EqTheme.TEXT_DIM)
-            iconTemplateRow.setSubtitle(templateRowSubtitle())
         }
     }
 
@@ -1193,16 +1012,6 @@ class LauncherUi(private val act: Activity) {
             .addRow(testConnectionRow)
             .addRow(queueStatusRow))
 
-        iconTemplateRow = EqRow(
-            act,
-            "Template overrides",
-            templateRowSubtitle(),
-            trailing = EqChevron(act),
-            onClick = { calib.showTemplates { refreshTemplateRow() } },
-        )
-        page.addView(eqSectionLabel(act, "Recognition"))
-        page.addView(EqCard(act).addRow(iconTemplateRow))
-
         page.addView(eqSectionLabel(act, "App"))
         page.addView(EqCard(act).addRow(EqRow(
             act, "Forget pairing",
@@ -1223,7 +1032,6 @@ class LauncherUi(private val act: Activity) {
     private fun showTab(index: Int) {
         selectedTab = index
         refreshLauncherStatusRow()
-        if (index == 1) refreshLatestLaunchRow()
         if (::pages.isInitialized) {
             pages.forEachIndexed { i, p -> p.visibility = if (i == index) View.VISIBLE else View.GONE }
         }
