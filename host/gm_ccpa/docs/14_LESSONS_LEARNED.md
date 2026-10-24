@@ -659,6 +659,13 @@ happened at a track boundary ("Toxic") and the sidebar re-plays lost it again in
 uid is anonymised, but the owner saw it on the car: **the car's built-in Spotify app**. Most likely
 cause: Spotify Connect moves the account's playback to the car's own Spotify device. The app cannot
 stop another app, so the fix is outside it: sign out of, or disable, the car's built-in Spotify.
+The 14:20:42 retry supports the Connect reading. The PLAY came from `gmcarmediaservice`. Focus was
+granted, then lost after 280 ms as piid 511 resumed. Once the car is the account's active Connect
+device, a HID PLAY to the phone's Spotify plays on the car. Reclaiming focus therefore cannot win.
+Only a Connect transfer back to the iPhone can (Web API `PUT /v1/me/player`, as Cloud-Bridge does
+with its remembered device id). Spotify has no setting to turn off automatic device switching
+(community thread "[Connect] Disable automatic switching between devices"). openautolink's
+troubleshooting doc also says to disable native copies of Spotify on the head unit.
 
 **v217 adds "Play Spotify on connect"** (Settings ▸ Playback; `AudioRoute.autoPlay`, on by default).
 Once per session it opens Spotify with the vision launcher, the same path as the top bar's Spotify
