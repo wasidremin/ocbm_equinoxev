@@ -35,6 +35,15 @@ object AudioRoute {
 
     fun label(): String = if (bluetooth) "Bluetooth" else "Adapter"
 
+    /** Press play on the phone once each time a CarPlay session comes up. On by default. */
+    fun autoPlay(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_AUTO_PLAY, true)
+
+    fun setAutoPlay(ctx: Context, on: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_AUTO_PLAY, on).apply()
+    }
+
+    private const val KEY_AUTO_PLAY = "auto_play_on_connect"
+
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }

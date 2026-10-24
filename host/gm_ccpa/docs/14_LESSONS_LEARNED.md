@@ -649,6 +649,25 @@ android.permission.MEDIA_CONTENT_CONTROL`, and it logs `denied(SecurityException
 on GM. The player list is the part that needs no permission. A USAGE_MEDIA (1) player that starts in
 the same second as the LOSS is the competing source.
 
+**Answered by the 2026-10-24 drive (v216, pid 13711, 14:18–14:21 UTC): a second media player.**
+Our AacPlayer is piid 503. Its piid comes back on a user-play GAIN at 14:20:54. At each of the
+three permanent LOSSes (14:18:24.7, 14:20:42.7, 14:21:02.5), piid 511 starts within 10 ms, then 503
+goes. piid 511 is USAGE_MEDIA and CONTENT_MUSIC, and `musicActive` stays true +1000 ms later. The
+`com.android.car` pause+stop probe sits within 400 ms of each LOSS, on either side of it. That is
+CarMediaService stopping the old source when another session starts playing. The first takeover
+happened at a track boundary ("Toxic") and the sidebar re-plays lost it again in about 280 ms. The
+uid is anonymised, but the owner saw it on the car: **the car's built-in Spotify app**. Most likely
+cause: Spotify Connect moves the account's playback to the car's own Spotify device. The app cannot
+stop another app, so the fix is outside it: sign out of, or disable, the car's built-in Spotify.
+
+**v217 adds "Play music on connect"** (Settings ▸ Playback; `AudioRoute.autoPlay`, on by default).
+It sends one PLAY per session, through the same path as a sidebar press (focus first, then the HID
+media key). It waits 3 s after session up, then up to 8 s more for the phone's first playback
+status. It sends nothing if the phone is already playing, if the user has pressed play or pause, or
+on the Bluetooth route. HID failures are retried until 20 s. iOS resumes the app that last played.
+Opening a named app such as Spotify would need a `requestUI` URL from the adapter. No such OCBM
+command exists, and the URL forms are not verified.
+
 ## 15. The top bar: nine CarPlay-style tiles (v211, regrouped 2026-10-23)
 
 The seven thin outline icons (car, apps, controls, music, nav, phone, energy) are replaced by nine

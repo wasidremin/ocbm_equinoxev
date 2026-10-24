@@ -161,6 +161,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          */
         @Volatile private var arbitrationUntil = 0L
         private const val ARBITRATION_MS = 5_000L
+        /** One autoplay per session: set at session up, cleared once it is sent or stood down. */
+        @Volatile private var autoPlayPending = false
+        private const val AUTO_PLAY_DELAY_MS = 3_000L
+        private const val AUTO_PLAY_STATUS_WAIT_MS = 8_000L
+        private const val AUTO_PLAY_GIVE_UP_MS = 20_000L
         fun onMediaFocus(change: Int, voice: Boolean) {
             live?.get()?.let { service -> service.tx.execute { service.handleFocus(change, voice) } }
         }
@@ -246,6 +251,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             announcePreparing()
             live?.get()?.resetCardLog()
             replayCard()
+            autoPlayPending = true
+            live?.get()?.let { service -> service.tx.execute { service.scheduleAutoPlay() } }
             // Not a fault at this instant — AAOS binds Media Center on its own schedule, routinely
             // after RECORD — but a session that ends with this still DOWN never appeared in the
             // source switcher, and the board is the only place that is visible.
@@ -259,7 +266,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          * also drops any seam record still in flight from the dead session.
          */
         fun onSessionDown() {
-            sessionUp = false; last = null; wantPreparing = false
+            sessionUp = false; last = null; wantPreparing = false; autoPlayPending = false
             AacPlayer.clearPermanentLoss()
             live?.get()?.let { service -> service.tx.execute { service.resetTransport() } }
             cardDropLogged = false
@@ -384,6 +391,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         applySessionActive()
         if (wantPreparing || sessionUp) publishPreparing()
         if (sessionUp) replayCard()
+        if (sessionUp && autoPlayPending) tx.execute { scheduleAutoPlay() }
         FocusForensics.attach(this)
         log.i("registered as an AAOS media source")
         SessionTrace.Board.up(BOARD, "bound by AAOS; session ${if (sessionUp) "up" else "idle"}")
@@ -761,7 +769,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         NativeCore.MediaBtn.NEXT -> "next"
         NativeCore.MediaBtn.PREV -> "previous"
         else -> "play-pause"
-    }) {
+    }): Boolean {
         log.i("transport: $name $caller forwarded")
         val changesPlayback = index == NativeCore.MediaBtn.PLAY || index == NativeCore.MediaBtn.PAUSE ||
             index == NativeCore.MediaBtn.PLAY_PAUSE
@@ -777,7 +785,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             AacPlayer.clearPermanentLoss()
             if (!AacPlayer.requestUserFocus()) {
                 log.w("focus: GAIN → phone PLAY sent=false reason=user-play (focus not granted)")
-                return
+                return false
             }
         }
         val status = last?.playbackStatus
@@ -794,6 +802,52 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             val deadline = SystemClock.elapsedRealtime() + 3_000L
             log.i("transport: $name $caller queued for 3000ms — no HID channel yet")
             retryPause(index, caller, generation, deadline)
+        }
+        return ok || duplicate
+    }
+
+    /**
+     * "Play music on connect": one PLAY per session, sent like a sidebar press (focus first). iOS
+     * resumes whichever app last played. Waits for the phone's first playback status (up to
+     * [AUTO_PLAY_STATUS_WAIT_MS]) so an already-playing phone is left alone, and stands down for the
+     * session as soon as the user presses play or pause themselves.
+     */
+    private fun scheduleAutoPlay() {
+        val generation = commandGeneration
+        val start = SystemClock.elapsedRealtime()
+        tx.schedule({ tryAutoPlay(generation, start) }, AUTO_PLAY_DELAY_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    private fun tryAutoPlay(generation: Int, start: Long) {
+        if (!sessionUp || !autoPlayPending) return
+        val elapsed = SystemClock.elapsedRealtime() - start
+        val status = last?.playbackStatus
+        val skip = when {
+            wasidremin.gmccpa.AudioRoute.bluetooth -> "Bluetooth route"
+            !wasidremin.gmccpa.AudioRoute.autoPlay(this) -> "off in Settings"
+            generation != commandGeneration -> "user pressed play/pause"
+            status == NowPlayingState.PLAY -> "phone already playing"
+            else -> null
+        }
+        if (skip != null) {
+            autoPlayPending = false
+            log.i("autoplay: not sent — $skip")
+            return
+        }
+        if (status == null && elapsed < AUTO_PLAY_STATUS_WAIT_MS) {
+            tx.schedule({ tryAutoPlay(generation, start) }, 500L, java.util.concurrent.TimeUnit.MILLISECONDS)
+            return
+        }
+        val sent = forward(NativeCore.MediaBtn.PLAY, "caller=autoplay")
+        if (sent) {
+            autoPlayPending = false
+            log.i("autoplay: PLAY sent ${elapsed}ms after session up (status was $status)")
+        } else if (elapsed < AUTO_PLAY_GIVE_UP_MS) {
+            // forward() bumped commandGeneration; carry the new one so the retry is not mistaken for a user press.
+            tx.schedule({ tryAutoPlay(commandGeneration, start) }, 1_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } else {
+            autoPlayPending = false
+            log.w("autoplay: gave up after ${elapsed}ms — no focus or HID channel")
         }
     }
 
