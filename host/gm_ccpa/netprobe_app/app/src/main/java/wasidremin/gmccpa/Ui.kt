@@ -577,8 +577,8 @@ class LauncherUi(private val act: Activity) {
         )
         page.addView(eqSectionLabel(act, "Playback"))
         page.addView(EqCard(act).addRow(audioRow).addRow(EqRow(
-            act, "Play music on connect",
-            "Presses play on the iPhone once CarPlay is up. The phone resumes the app it last played.",
+            act, "Play Spotify on connect",
+            "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },
         )))
     }

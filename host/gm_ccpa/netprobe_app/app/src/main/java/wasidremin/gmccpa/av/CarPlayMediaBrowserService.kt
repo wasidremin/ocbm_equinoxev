@@ -163,7 +163,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         private const val ARBITRATION_MS = 5_000L
         /** One autoplay per session: set at session up, cleared once it is sent or stood down. */
         @Volatile private var autoPlayPending = false
-        private const val AUTO_PLAY_DELAY_MS = 3_000L
+        /** Spotify is opened at most once per session, even if PLAY then has to retry. */
+        @Volatile private var autoPlayLaunched = false
+        private const val AUTO_PLAY_APP = "spotify"
+        /** Lets the opened app settle before PLAY so the key reaches it, not the previous app. */
+        private const val AUTO_PLAY_AFTER_LAUNCH_MS = 1_500L
+        private const val AUTO_PLAY_DELAY_MS = 4_000L
         private const val AUTO_PLAY_STATUS_WAIT_MS = 8_000L
         private const val AUTO_PLAY_GIVE_UP_MS = 20_000L
         fun onMediaFocus(change: Int, voice: Boolean) {
@@ -251,7 +256,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             announcePreparing()
             live?.get()?.resetCardLog()
             replayCard()
-            autoPlayPending = true
+            autoPlayPending = true; autoPlayLaunched = false
             live?.get()?.let { service -> service.tx.execute { service.scheduleAutoPlay() } }
             // Not a fault at this instant — AAOS binds Media Center on its own schedule, routinely
             // after RECORD — but a session that ends with this still DOWN never appeared in the
@@ -807,8 +812,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     }
 
     /**
-     * "Play music on connect": one PLAY per session, sent like a sidebar press (focus first). iOS
-     * resumes whichever app last played. Waits for the phone's first playback status (up to
+     * "Play Spotify on connect": opens Spotify through the vision launcher, then one PLAY per
+     * session, sent like a sidebar press (focus first). Waits for the phone's first playback status (up to
      * [AUTO_PLAY_STATUS_WAIT_MS]) so an already-playing phone is left alone, and stands down for the
      * session as soon as the user presses play or pause themselves.
      */
@@ -837,6 +842,21 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         if (status == null && elapsed < AUTO_PLAY_STATUS_WAIT_MS) {
             tx.schedule({ tryAutoPlay(generation, start) }, 500L, java.util.concurrent.TimeUnit.MILLISECONDS)
             return
+        }
+        // Open Spotify on the CarPlay screen first — the top bar's Spotify tile, same vision
+        // launcher — so PLAY lands on Spotify rather than whichever app last played. Any outcome
+        // continues to PLAY; a phone that started playing on its own is caught by the status check.
+        if (!autoPlayLaunched) {
+            autoPlayLaunched = true
+            if (VisionLauncher.isCalibrated(this, AUTO_PLAY_APP)) {
+                val started = VisionLauncher.launchAsync(this, AUTO_PLAY_APP, "autoplay") { rec ->
+                    log.i("autoplay: open $AUTO_PLAY_APP -> ${rec.outcome}" + (rec.error?.let { " ($it)" } ?: ""))
+                    tx.schedule({ tryAutoPlay(generation, start) }, AUTO_PLAY_AFTER_LAUNCH_MS,
+                        java.util.concurrent.TimeUnit.MILLISECONDS)
+                }
+                if (started) { log.i("autoplay: opening $AUTO_PLAY_APP"); return }
+                log.i("autoplay: launcher busy — PLAY without opening $AUTO_PLAY_APP")
+            } else log.i("autoplay: no $AUTO_PLAY_APP template — PLAY resumes the last app")
         }
         val sent = forward(NativeCore.MediaBtn.PLAY, "caller=autoplay")
         if (sent) {

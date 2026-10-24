@@ -660,13 +660,13 @@ uid is anonymised, but the owner saw it on the car: **the car's built-in Spotify
 cause: Spotify Connect moves the account's playback to the car's own Spotify device. The app cannot
 stop another app, so the fix is outside it: sign out of, or disable, the car's built-in Spotify.
 
-**v217 adds "Play music on connect"** (Settings ▸ Playback; `AudioRoute.autoPlay`, on by default).
-It sends one PLAY per session, through the same path as a sidebar press (focus first, then the HID
-media key). It waits 3 s after session up, then up to 8 s more for the phone's first playback
-status. It sends nothing if the phone is already playing, if the user has pressed play or pause, or
-on the Bluetooth route. HID failures are retried until 20 s. iOS resumes the app that last played.
-Opening a named app such as Spotify would need a `requestUI` URL from the adapter. No such OCBM
-command exists, and the URL forms are not verified.
+**v217 adds "Play Spotify on connect"** (Settings ▸ Playback; `AudioRoute.autoPlay`, on by default).
+Once per session it opens Spotify with the vision launcher, the same path as the top bar's Spotify
+tile (built-in `strip/grid.spotify` templates). 1.5 s after the launcher finishes it sends one PLAY,
+through the same path as a sidebar press (focus first, then the HID media key). It starts 4 s after
+session up and waits up to 8 s more for the phone's first playback status. It does nothing if the
+phone is already playing, if the user has pressed play or pause, or on the Bluetooth route. If the
+launcher fails or is busy it sends PLAY anyway, and HID failures are retried until 20 s.
 
 ## 15. The top bar: nine CarPlay-style tiles (v211, regrouped 2026-10-23)
 
