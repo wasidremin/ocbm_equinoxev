@@ -190,6 +190,10 @@ class LauncherUi(private val act: Activity) {
     var adapterWifi: Boolean = false
         private set
     var onBoxAction: (BoxAction) -> Unit = {}
+    /** The Settings page opened: re-read the adapter's paired phones. */
+    var onPhonesWanted: () -> Unit = {}
+    /** Forget one phone, already confirmed. */
+    var onForgetOnePhone: (PhoneBook.Phone) -> Unit = {}
     /** Advanced-page USB announce segment. Index 0 Off, 1 Image, 2 No medium. */
     var onUsbAnnounce: (Int) -> Unit = {}
     var onUsbAnnounceRetries: (Int) -> Unit = {}
@@ -272,6 +276,7 @@ class LauncherUi(private val act: Activity) {
     private val queueListener: (Int) -> Unit = { _ -> refreshUploadQueueRow() }
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
+    private lateinit var phonesCard: EqCard
     private lateinit var customTopBarControl: EqSegmented
     private lateinit var insightsPage: InsightsPage
 
@@ -581,6 +586,56 @@ class LauncherUi(private val act: Activity) {
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },
         )))
+        page.addView(eqSectionLabel(act, "Phones"))
+        phonesCard = EqCard(act)
+        page.addView(phonesCard)
+        // The pages are rebuilt when the settings width settles; keep what was last shown.
+        fillPhones(shownPhones, shownPhonesNote)
+    }
+
+    private var shownPhones: List<PhoneBook.Phone>? = null
+    private var shownPhonesNote: String? = "Adapter not connected. Paired iPhones show here once it is."
+
+    /**
+     * The adapter's paired iPhones. Null [phones] shows [note] in place of the list (adapter not
+     * connected, or it did not answer).
+     */
+    fun setPhones(phones: List<PhoneBook.Phone>?, note: String? = null) = act.runOnUiThread {
+        uiLog.i("phones: ${phones?.let { l -> "${l.size} paired, connected=${l.count { it.connected }}" } ?: note}")
+        shownPhones = phones
+        shownPhonesNote = note
+        if (act.isFinishing || !::phonesCard.isInitialized) return@runOnUiThread
+        fillPhones(phones, note)
+    }
+
+    private fun fillPhones(phones: List<PhoneBook.Phone>?, note: String?) {
+        phonesCard.removeAllViews()
+        if (phones == null) {
+            phonesCard.addRow(EqRow(act, "Paired iPhones", note))
+            return
+        }
+        for (p in phones) {
+            val status = listOfNotNull(if (p.connected) "Connected" else "Paired", p.model).joinToString(" · ")
+            phonesCard.addRow(EqRow(
+                act, p.label, status,
+                trailing = eqButton(act, "Forget", EqButtonStyle.DANGER) { confirmForgetOne(p) },
+            ))
+        }
+        phonesCard.addRow(EqRow(
+            act, if (phones.isEmpty()) "No iPhones paired" else "Add an iPhone",
+            "On the iPhone: Settings ▸ General ▸ CarPlay ▸ Available Cars, then pick this car.",
+        ))
+    }
+
+    private fun confirmForgetOne(p: PhoneBook.Phone) {
+        val live = if (p.connected) "CarPlay on this iPhone ends now.\n\n" else ""
+        EqDialog.confirm(
+            act, "Forget ${p.label}",
+            live + "The adapter restarts Bluetooth and Wi-Fi for about 15 seconds, so a connected " +
+                "iPhone drops and reconnects.\n\nAlso forget this car on that iPhone: Settings ▸ " +
+                "General ▸ CarPlay.",
+            "Forget", true,
+        ) { onForgetOnePhone(p) }
     }
 
     /**
@@ -1018,8 +1073,8 @@ class LauncherUi(private val act: Activity) {
 
         page.addView(eqSectionLabel(act, "App"))
         page.addView(EqCard(act).addRow(EqRow(
-            act, "Forget pairing",
-            "Clears the adapter and this app. Also forget this car on the iPhone.",
+            act, "Forget all iPhones",
+            "Clears every pairing on the adapter and this app. Also forget this car on each iPhone.",
             titleColor = EqTheme.DANGER,
             onClick = { confirmForget() },
         )).addRow(EqRow(
@@ -1042,6 +1097,7 @@ class LauncherUi(private val act: Activity) {
         if (::rail.isInitialized) rail.select(index)
         settingsBar?.selected = if (index == 3) BarTarget.INSIGHTS else BarTarget.APP_SETTINGS
         if (::scroller.isInitialized) scroller.scrollTo(0, 0)
+        if (index == 0) onPhonesWanted()
         if (index == 2) onAdvancedOpened()
         if (index == 3 && ::insightsPage.isInitialized) insightsPage.refresh()
         auditLayout(index)
@@ -1462,11 +1518,11 @@ class LauncherUi(private val act: Activity) {
     private fun confirmForget() {
         val running = if (sessionIsLive()) "A CarPlay session is RUNNING and this will end it.\n\n" else ""
         EqDialog.confirm(
-            act, "Forget Pairing",
-            running + "Clear the pairing on both the adapter and this app?\n\nYou must ALSO forget " +
-                "this car on the iPhone — a one-sided pairing makes the next attempt fail in a " +
+            act, "Forget All iPhones",
+            running + "Clear every iPhone's pairing on both the adapter and this app?\n\nYou must ALSO " +
+                "forget this car on each iPhone — a one-sided pairing makes the next attempt fail in a " +
                 "way that looks like broken encryption.",
-            "Forget Pairing", true,
+            "Forget All", true,
         ) { onBoxAction(BoxAction.FORGET_PHONE) }
     }
 

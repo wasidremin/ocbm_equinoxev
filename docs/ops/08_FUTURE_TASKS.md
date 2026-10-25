@@ -248,6 +248,29 @@ comes first. The mic DSP and the two detectors do not exist on the box.
 **Done means.** With the toggle on, a wake word on the car mic starts Siri, the reply plays on
 AuxOut, and media keeps running. With the toggle off, button Siri is unchanged.
 
+## T12. GM app: pick which iPhone connects, and in what order (raised 2026-10-25)
+
+**Why.** The Carlink app let the driver choose among paired phones (targeted
+`AutoConnect_By_BtAddress`) and set who connects first. With two iPhones in the car, the GM app
+takes whichever phone reaches the adapter first, and nothing lets the driver change that.
+
+**State.** The adapter can do it already. `btd`'s loopback control port
+(`crates/vendor/wireless/src/control.rs`, `127.0.0.1:9115`) answers `list`, `connect`
+(one address, or none for first-to-connect), `policy` (`autoConnect`, `order`) and `forget`, and
+reconnect walks `ordered_bonds()`. OCBM carries only `MGMT_GET_INFO` (bond list) and
+`MGMT_FORGET_DEVICE`/`MGMT_FORGET_ALL`, so the app cannot reach `connect` or `policy`. The GM app's
+Settings ▸ Phones (2026-10-25) lists bonds by name (`PhoneBook`, names joined from
+`CT_PHONE_IDENT.deviceID`) and forgets one; that is step 1, app-only.
+
+**Work.** New `CH_MGMT` verbs in `ccpa/ocbm-proto` mapped by `ocbmd` onto the `btd` control port.
+Suggested: `MGMT_CONNECT_DEVICE [ascii MAC]` and `MGMT_SET_POLICY [utf8 JSON]`. Then a Connect
+button per phone and a priority order (up/down) in Settings ▸ Phones, pushed as `policy`. This
+needs an adapter firmware update (`tools/ocbm_install.sh`), not only a Play release. Decide whether
+`connect` to one phone ends a live session of the other, and say so in the button's dialog.
+
+**Done means.** With two paired iPhones in range, the one at the top of the list connects. Connect
+on the other one moves CarPlay to it. Both survive an adapter reboot.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.

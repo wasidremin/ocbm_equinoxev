@@ -346,6 +346,55 @@ class MainActivity : Activity() {
         if (json.isNotEmpty()) emit("phone identity: $json")
         val name = jsonStringField(json, "name")
         if (name.isNotEmpty()) ui.setPhoneName(name)
+        PhoneBook.remember(applicationContext, json)
+        connectedPhoneMac = jsonStringField(json, "deviceID").ifEmpty { null }
+        // Off this thread: CT_* dispatch runs on ocbm-read, and MGMT_GET_INFO waits on that thread.
+        runAsync { refreshPhones() }
+    }
+
+    /** `deviceID` of the phone in the live session, from `CT_PHONE_IDENT`; null when cleared. */
+    @Volatile private var connectedPhoneMac: String? = null
+
+    /** Settings ▸ Phones: the adapter's bonds, named from [PhoneBook]. Blocking; never on ocbm-read. */
+    private fun refreshPhones() {
+        val probe = ocbmProbe
+        if (probe == null || probe.client?.helloAcked != true) {
+            if (uiAlive()) ui.setPhones(null, "Adapter not connected. Paired iPhones show here once it is.")
+            return
+        }
+        val bonded = probe.bondedDevicesOrNull()
+        if (!uiAlive()) return
+        if (bonded == null) ui.setPhones(null, "The adapter did not answer. Open Settings again to retry.")
+        else ui.setPhones(PhoneBook.list(applicationContext, bonded, connectedPhoneMac))
+    }
+
+    /**
+     * One phone's Bluetooth bond (`MGMT_FORGET_DEVICE`). The box then restarts its wireless, which
+     * drops any live session, so the supervisor is told first, as for Restart Wi-Fi.
+     *
+     * This app's CarPlay peer store is left alone. It is keyed by the phone's pairing id, which
+     * this side cannot match to a Bluetooth address, and the other phones' records are in it. A
+     * stale record is harmless: once the iPhone forgets the car, its next pair-setup saves a fresh
+     * one. "Forget all iPhones" still clears both stores together.
+     */
+    private fun forgetOnePhone(p: PhoneBook.Phone) {
+        if (supervisor.blocksWirelessRestart()) {
+            ui.setDetail("Bluetooth was just restarted — try forgetting ${p.label} again in a minute")
+            return
+        }
+        ui.setDetail("forgetting ${p.label} on the adapter…")
+        supervisor.onManualWirelessRestart()
+        val ok = ocbmProbe?.forgetPhone(p.mac) == true
+        emit("forget one: ${p.mac} ${if (ok) "cleared" else "NOT cleared"}")
+        if (ok) {
+            PhoneBook.forget(applicationContext, p.mac)
+            if (p.connected) connectedPhoneMac = null
+        }
+        ui.setDetail(
+            if (ok) "${p.label} forgotten — also forget this car on that iPhone (Settings ▸ General ▸ CarPlay)"
+            else "could not forget ${p.label} — see the log"
+        )
+        refreshPhones()
     }
 
     /** One string field from the box's phone-identity JSON. Honours `\"`, same as [OcbmClient]. */
@@ -685,6 +734,8 @@ class MainActivity : Activity() {
             setAdapterWifi(wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this@MainActivity))
             // The settings screen confirms the destructive verbs before it calls this.
             onBoxAction = { a -> runAsync { boxAction(a) } }
+            onPhonesWanted = { runAsync { refreshPhones() } }
+            onForgetOnePhone = { p -> runAsync { forgetOnePhone(p) } }
             onUsbAnnounce = { index -> runAsync { applyUsbAnnounce(index) } }
             onUsbAnnounceRetries = { index -> runAsync { applyUsbAnnounceRetries(index) } }
             onAdvancedOpened = { runAsync { refreshUsbAnnounce() } }
@@ -1325,6 +1376,21 @@ class MainActivity : Activity() {
                 val tab = i.getIntExtra("tab", 3)
                 val sub = i.getIntExtra("subtab", 0)
                 ui.openTabFromScript(tab, sub)
+            }
+            // Settings ▸ Phones with two made-up phones, for layout checks with no adapter attached.
+            // Display only: Forget on these goes to the real adapter path and finds no link.
+            "phones_preview" -> {
+                ui.openTabFromScript(0)
+                // Queued behind the tab's own refreshes (same serial executor, and again when the
+                // pages rebuild ~2 s in), which report "adapter not connected" here.
+                ui.root.postDelayed({
+                    runAsync {
+                        ui.setPhones(listOf(
+                            PhoneBook.Phone("AA:BB:CC:DD:EE:01", "Preview iPhone", "iPhone17,1", connected = true),
+                            PhoneBook.Phone("AA:BB:CC:DD:EE:02", null, null, connected = false),
+                        ))
+                    }
+                }, 4_000L)
             }
             // The screen-outline calibration (not exported, so scripts reach it through here).
             "outline" -> startActivity(Intent(this, ScribbleActivity::class.java))

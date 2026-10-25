@@ -1324,8 +1324,11 @@ class OcbmProbe(context: Context) {
      * Bonded phone MACs, from the `devices` array in the MGMT_INFO JSON snapshot.
      * Hand-parsed — the payload is a small hand-rolled JSON document, not worth a parser.
      */
-    fun bondedDevices(): List<String> {
-        val json = client?.mgmtGetInfo() ?: return emptyList()
+    fun bondedDevices(): List<String> = bondedDevicesOrNull() ?: emptyList()
+
+    /** The bonded list, or null when there is no link or the adapter did not answer. */
+    fun bondedDevicesOrNull(timeoutMs: Long = 1500): List<String>? {
+        val json = client?.mgmtGetInfo(timeoutMs) ?: return null
         val i = json.indexOf("\"devices\"")
         if (i < 0) return emptyList()
         val open = json.indexOf('[', i)
