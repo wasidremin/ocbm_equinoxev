@@ -42,6 +42,14 @@
         <intent>
             <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
         </intent>
+        <!-- Whether the car's Settings has an assistant picker (voice/SiriAssistant.kt AssistantRole):
+             CarSettings is not visible to an app without these. -->
+        <intent>
+            <action android:name="android.settings.VOICE_INPUT_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.MANAGE_DEFAULT_APPS_SETTINGS" />
+        </intent>
     </queries>
 
     <!-- Network + discovery. All are normal/dangerous perms an ordinary app UID can hold;
@@ -241,6 +249,37 @@
                  classified "non media template" by MediaSource.isMediaTemplate() unless this is
                  present, which hides it from the homescreen Media card. -->
             <meta-data android:name="androidx.car.app.launchable" android:value="true" />
+        </service>
+
+        <!-- The steering-wheel voice button -> Siri (voice/SiriAssistant.kt). A digital-assistant
+             CANDIDATE: inert until the driver picks GM CCPA under Settings > Apps > Default apps, and
+             picking it replaces Google Assistant. android:permission is a requirement on the BINDER —
+             only the system holds BIND_VOICE_INTERACTION; the app needs no new permission. Ported
+             from host/CarlinkAndroid (emulator-proven: VHAL PTT -> session onShow -> Siri). -->
+        <service
+            android:name="wasidremin.gmccpa.voice.SiriAssistantService"
+            android:exported="true"
+            android:label="GM CCPA (Siri)"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/siri_assistant" />
+        </service>
+        <service
+            android:name="wasidremin.gmccpa.voice.SiriAssistantSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <!-- Required by the assistant descriptor; refuses every request (recognition is on the iPhone). -->
+        <service
+            android:name="wasidremin.gmccpa.voice.SiriRecognitionService"
+            android:exported="true"
+            android:label="GM CCPA (Siri)">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
         </service>
 
         <!-- Declares the app to AAOS as a media app; see res/xml/automotive_app_desc.xml. -->

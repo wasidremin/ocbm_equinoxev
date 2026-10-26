@@ -277,6 +277,7 @@ class LauncherUi(private val act: Activity) {
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
     private lateinit var navRow: EqRow
+    private lateinit var voiceRow: EqRow
     private lateinit var phonesCard: EqCard
     private lateinit var customTopBarControl: EqSegmented
     private lateinit var insightsPage: InsightsPage
@@ -598,6 +599,15 @@ class LauncherUi(private val act: Activity) {
             },
         )
         page.addView(EqCard(act).addRow(navRow))
+        page.addView(eqSectionLabel(act, "Voice"))
+        val role = wasidremin.gmccpa.voice.AssistantRole
+        voiceRow = EqRow(
+            act, "Steering-wheel voice button", role.statusText(act),
+            // The car decides; this only opens its own picker. Absent when the car has none.
+            trailing = if (role.state(act).picker != null)
+                eqButton(act, "Choose", EqButtonStyle.SECONDARY) { role.openPicker(act) } else null,
+        )
+        page.addView(EqCard(act).addRow(voiceRow))
         page.addView(eqSectionLabel(act, "Phones"))
         phonesCard = EqCard(act)
         page.addView(phonesCard)
@@ -1450,6 +1460,8 @@ class LauncherUi(private val act: Activity) {
         }
         // Bound/unbound changes with no Settings interaction, so re-read it with the rest.
         if (::navRow.isInitialized) navRow.setSubtitle(wasidremin.gmccpa.nav.ClusterNav.statusText(act))
+        // Changes when the driver comes back from the car's assistant picker.
+        if (::voiceRow.isInitialized) voiceRow.setSubtitle(wasidremin.gmccpa.voice.AssistantRole.statusText(act))
         if (::customTopBarControl.isInitialized) {
             customTopBarControl.setSelected(if (DisplayPrefs.customTopBar(act)) 1 else 0, animate = false)
         }

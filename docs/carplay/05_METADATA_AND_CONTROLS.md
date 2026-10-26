@@ -1430,8 +1430,12 @@ CarPlaySimulator's dispatcher (disasm 0x11940‑0x11cc4) reads `AirPlaySiriActio
 on **both** branches, `RequestSiriAction(session, rawValue, NULL, NULL)` (@0x11c5c) or
 `RequestSiriActionWithLatency(session, rawValue, 0, NULL, NULL)` (@0x11cc0) — **with NO AuxIn/mic setup and
 NO AcquireFocus** on the button path. The mic path is a **separate feature**:
-- **Classic Siri** = just `RequestSiriAction` with the enum int. iOS brings up Siri using the **phone's own
-  mic**. This is what the hardware button does. [E — "Requesting Classic Siri Action for %d" @0x11bac]
+- **Classic Siri** = just `RequestSiriAction` with the enum int. This is what the hardware button does.
+  [E — "Requesting Classic Siri Action for %d" @0x11bac] **Corrected 2026-10-26:** this said iOS then
+  uses the phone's own mic. Device logs say otherwise. After the trigger, iOS SETUPs MainAudio (100)
+  with `input=true`, and Siri listens through the car's mic uplink (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md`
+  §4, every Equinox Siri turn). What Classic does not need is AuxIn and the always-on buffer. Absent
+  Enhanced Siri, the phone's own mic hears only the "Hey Siri" wake word.
 - **Enhanced Siri** = accessory streams car-mic audio to iOS over an **AuxIn** uplink
   (`_AirPlayReceiverSessionAuxInStart` @stub, logs "Starting AuxIn for Enhanced Siri", "Started AuxIn …
   setting zllBuffered to true"), gated on `_AirPlayReceiverSessionHasFeatureEnhancedSiri` (@0x7fbc, bool at

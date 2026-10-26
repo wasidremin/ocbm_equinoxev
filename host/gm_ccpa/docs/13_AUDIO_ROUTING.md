@@ -484,9 +484,22 @@ an activity-based gate would clip the onset.
   framing, encryption with the stream input key, and the byte-order swap.
 - **Capture**: `AudioRecord(VOICE_COMMUNICATION, 16000, MONO, PCM_16BIT, minBufferSize × 3)`, 20 ms
   chunks, dedicated thread at `URGENT_AUDIO`.
-- **Manifest**: `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE`, granted at install (`-g`).
-- **`ERROR_DEAD_OBJECT` is recoverable** — recreate in place, cap retries, guard against a recreate
-  completing after `stop()` timed out (otherwise holds the Intel SST HAL input stream open forever).
+- **Manifest**: `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE`. A Play install asks for the mic at
+  first launch; `-g` is the sideload equivalent.
+- **A refused or dying recorder is retried (since 2026-10-26).** Until then this bullet said "recreate
+  in place, cap retries" and the code did neither: any failure meant no mic until the next
+  `uplink on`. The Equinox shows why it matters. On 2026-10-14 22:08:09 the phone opened Siri and
+  the car refused the input (`E AudioRecord: start(89): status -61`). Java's `startRecording()` does
+  not throw for that; it leaves the recorder STOPPED, so the app logged "capturing", read 0 at once,
+  and Siri heard silence for the turn. This was the only failure in the Sept 22 – Oct 24 uploads.
+  `MicUplink` now opens the recorder on the capture thread, which keeps the OCBM reader free. It
+  checks `recordingState` after starting and tries a fresh recorder up to three more times
+  (150 / 400 / 1000 ms). It also reopens up to twice after a mid-capture read failure. Each failure
+  logs `micDiag()`: audio mode, mic mute, and every active recording's source and silenced flag.
+- **Which mic hears "Hey Siri" on the Equinox.** The car has no Enhanced Siri, so the iPhone's own
+  mic listens for the wake word. Siri then opens MainAudio with `input=true` and listens through this
+  uplink. The Sept 23, Sept 24, Sept 25, Oct 3 and Oct 14 uploads all show phone-started Siri turns
+  with no `requestSiri` from us. A car-mic wake word is `docs/ops/08_FUTURE_TASKS.md` T11.
 
 ### Build — DONE (2026-08-12)
 

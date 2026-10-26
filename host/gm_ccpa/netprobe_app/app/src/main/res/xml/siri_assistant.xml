@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Assistant descriptor for wasidremin.gmccpa.voice.SiriAssistantService (the wheel button -> Siri).
+     sessionService and recognitionService are both REQUIRED by the platform parser
+     (VoiceInteractionServiceInfo); the recognizer is a refusing stub because recognition happens on
+     the iPhone. supportsAssist lets the assist gesture reach the session as well as the PTT key.
+     Same shape as host/CarlinkAndroid's voice_interaction_service.xml. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="wasidremin.gmccpa.voice.SiriAssistantSessionService"
+    android:recognitionService="wasidremin.gmccpa.voice.SiriRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false"
+    android:supportsLocalInteraction="false" />

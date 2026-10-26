@@ -245,6 +245,18 @@ Enhanced Siri is the wake-word path: `enhancedSiriInfo` in `/info`, a dedicated 
 `ccpa/`. The SETUP arm that omits MainBuffered also omits AuxIn and AuxOut, so T8's audio plane
 comes first. The mic DSP and the two detectors do not exist on the box.
 
+On the Equinox today, "Hey Siri" depends on the iPhone's own mic hearing the wake word over the car's
+audio, and it misses (owner, 2026-10-26). Siri then listens through the car mic over MainAudio
+(`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). The `/info` shape of `enhancedSiriInfo` and the
+`setEnhancedSiriParams` handshake are still unrecovered. They come from `CarPlaySDK.framework` on
+the Mac, so that recovery is the first step.
+
+Split, when this is picked up:
+- **The app** runs the always-on capture, echo and noise reduction, the keyword and voice-activity
+  detectors, and the ring buffer. The head unit has the CPU and the mic; the CCPA has neither.
+- **The box** advertises the feature, serves AuxIn/AuxOut, and sends
+  `requestSiri{siriAction:4, siriTriggerTimestamp}`. The ring buffer reaches it over new OCBM frames.
+
 **Done means.** With the toggle on, a wake word on the car mic starts Siri, the reply plays on
 AuxOut, and media keeps running. With the toggle off, button Siri is unchanged.
 
@@ -316,6 +328,31 @@ The beat line now reads `nav=N`.
 
 **Done means.** On the Equinox, a CarPlay route shows its next turn with the right GM arrow,
 distance counting down, and the ETA. The cluster clears when the route ends.
+
+## T14. GM app: the steering-wheel voice button starts Siri (raised 2026-10-26; candidate shipped, unverified)
+
+**Why.** The owner keeps the iPhone off the car's own Bluetooth, because the car then takes the
+calls. On AAOS the wheel's push-to-talk is routed by `CarInputService`:
+- A short press goes to the selected digital assistant.
+- A long press goes to projection receivers (system-only), then a Bluetooth phone, then the
+  assistant (source.android.com automotive voice "Integration flows").
+
+With no Bluetooth phone, both presses end at the assistant, which is Google Assistant.
+
+**State.** The app declares itself an assistant candidate (`voice/SiriAssistant.kt`, ported from
+`host/CarlinkAndroid/.../voice/`, emulator-proven there). It is inert until the driver picks it under
+Settings ▸ Apps ▸ Default apps. Selected, a press reaches `SiriAssistantSession.onShow`, which sends
+the same Siri press/release pair as the sidebar button. Settings ▸ Voice shows the state and a Choose
+button when the car has a picker.
+
+At every start the app logs
+`voice: assistant role available=… heldByUs=… current=… picker=…`. That line answers whether GM
+exposes the choice at all; the VCU has no adb to set it otherwise. Cost of selecting: Google
+Assistant ("Hey Google", car voice commands) is off, and the default `SpeechRecognizer` is a stub
+that refuses.
+
+**Done means.** The `voice:` line shows a picker, GM CCPA can be selected, and a wheel press during
+CarPlay logs `voice: wheel button … -> Siri press sent=true` and brings up Siri.
 
 ## Left off this plan
 

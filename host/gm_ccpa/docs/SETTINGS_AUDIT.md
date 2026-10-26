@@ -53,6 +53,7 @@ wherever the rows live; no key changes.
 | Current label | Source | Persisted key | Actual behavior | Proposed location | Verdict | Reason |
 |---|---|---|---|---|---|---|
 | Audio source (Adapter/Bluetooth) | `buildAudio`, `audioRow` | `audio_route/bluetooth` (immediate) | Car plays iPhone over BT vs app audio path | Settings | keep | Useful playback preference |
+| Steering-wheel voice button (2026-10-26) | `buildSettings` ▸ Voice, `voiceRow`, `voice/AssistantRole` | none (the car's own assistant role) | Status of the assistant role; "Choose" opens the car's assistant picker (`VOICE_INPUT_SETTINGS` / `MANAGE_DEFAULT_APPS_SETTINGS`) when one resolves. Selecting GM CCPA makes a wheel press send the Siri press/release pair and turns off Google Assistant | Settings | keep | `docs/ops/08_FUTURE_TASKS.md` T14; whether GM shows a picker is unverified |
 | Turn-by-turn in the cluster (2026-10-26) | `buildSettings` ▸ Navigation, `navRow`, `nav/ClusterNav` | `cluster_nav/enabled` (default off) | Enables `ClusterNavService` and relays CarPlay route guidance to the cluster through the Car App Library; first route after app start flashes the hidden `CarAppActivity` for ~1 s. Subtitle reports support/bound state; "Not in this build" on a `build_apk.sh` APK | Settings | keep | `docs/ops/08_FUTURE_TASKS.md` T13; unverified on the car |
 
 ## Logs page (`Ui.kt buildLogs`) — becomes Troubleshooting + Advanced

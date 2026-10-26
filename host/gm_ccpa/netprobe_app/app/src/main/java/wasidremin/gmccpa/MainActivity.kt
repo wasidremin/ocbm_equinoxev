@@ -694,6 +694,8 @@ class MainActivity : Activity() {
         AndroidUser.noteProcess(applicationContext)
         // Early, so its front-screen tracker sees this Activity resume (cluster turn-by-turn).
         wasidremin.gmccpa.nav.ClusterNav.load(applicationContext)
+        // One line: can the wheel's voice button be made to start Siri on this car (voice/SiriAssistant.kt).
+        runCatching { wasidremin.gmccpa.voice.AssistantRole.probe(applicationContext) }
         // A launcher screen, not an instrument panel. The instrument is logcat (`-s NETPROBE`), which
         // is the only channel that survives the CarPlay screen taking over the display anyway — this
         // Activity is backgrounded for the entire session it is meant to report on. What is left is

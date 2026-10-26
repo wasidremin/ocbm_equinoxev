@@ -2,8 +2,10 @@ package wasidremin.gmccpa.av
 
 import android.annotation.SuppressLint
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import wasidremin.gmccpa.ProbeLog
 import wasidremin.gmccpa.logging.SessionTrace
 import java.io.BufferedReader
@@ -39,7 +41,10 @@ import java.util.concurrent.atomic.AtomicLong
  * (`docs/13_AUDIO_ROUTING.md` §4). The ELD bail exists only for an aarch64/Pi build made with
  * `--no-default-features`. Do not assume this class is dormant.
  */
-class MicUplink {
+class MicUplink(
+    /** Only for [micDiag]: who else is recording when ours fails. Null skips the diagnosis. */
+    private val audio: AudioManager? = null,
+) {
 
     private val log = ProbeLog.sub("mic")
     private val running = AtomicBoolean(false)
@@ -86,6 +91,14 @@ class MicUplink {
         const val FIRST_CHUNK_MS = 2_000L
         /** [SessionTrace.Board] entry. */
         const val BOARD = "mic-uplink"
+        /**
+         * Waits before each re-open of a refused recorder. ~1.5 s in all: inside a Siri turn (the
+         * phone keeps listening for several seconds), short enough that a mic that recovers costs
+         * the driver one repeated word, not the whole request.
+         */
+        val OPEN_RETRY_MS = longArrayOf(150L, 400L, 1_000L)
+        /** Re-opens after a mid-capture read failure, per gate, before giving up until the next one. */
+        const val MAX_REOPENS = 2
     }
 
     /** Adapter-Wi-Fi gate. `on` opens capture at [rate] Hz / [channels]; off closes it. */
@@ -179,7 +192,6 @@ class MicUplink {
         }
     }
 
-    @SuppressLint("MissingPermission")   // RECORD_AUDIO is declared and granted at install (-g)
     private fun startCapture(rate: Int, channels: Int) {
         // A re-SETUP can change the format, and the peer broadcasts a fresh `uplink on` for each.
         // Without this the CAS below swallows it and we keep capturing at the old rate while the
@@ -197,72 +209,157 @@ class MicUplink {
             log.e("getMinBufferSize failed ($rate/$channels) — no mic for this gate"); capturing.set(false)
             SessionTrace.Board.note(BOARD, "FAILED (getMinBufferSize($rate/$channels) refused — no mic this gate)"); return
         }
-        val rec = try {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, rate, mask,
-                AudioFormat.ENCODING_PCM_16BIT, minBuf * 3)
-        } catch (t: Throwable) {
-            log.e("AudioRecord: ${t.javaClass.simpleName}: ${t.message} — no mic for this gate"); capturing.set(false)
-            SessionTrace.Board.note(BOARD, "FAILED (AudioRecord threw ${t.javaClass.simpleName} — no mic this gate)"); return
-        }
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            log.e("AudioRecord uninitialised — releasing; no mic for this gate"); runCatching { rec.release() }   // deliberate: discard
-            capturing.set(false)
-            SessionTrace.Board.note(BOARD, "FAILED (AudioRecord uninitialised — no mic this gate)"); return
-        }
-        runCatching { rec.startRecording() }.onFailure {
-            log.e("startRecording: ${it.message} — no mic for this gate"); runCatching { rec.release() }   // deliberate: discard
-            capturing.set(false)
-            SessionTrace.Board.note(BOARD, "FAILED (startRecording threw — no mic this gate)"); return
-        }
         val bytesPerChunk = rate / 1000 * CHUNK_MS * 2 * channels
         firstChunkThisCapture = false
         captures++
-        // Armed here, after every synchronous failure above has had its own line: what remains
-        // silent is a read() that never returns data. Met in [send] on this capture's first chunk.
-        SessionTrace.expect(EXPECT_FIRST_CHUNK, FIRST_CHUNK_MS,
-            "the receiver said `uplink on ${rate} ${channels}` and AudioRecord is recording, so PCM " +
-            "should reach the seam within one bring-up (262ms on 2026-09-09)")
-        captureThread = Thread({ captureLoop(rec, bytesPerChunk) }, "mic-capture").apply {
+        val capture = captures
+        // The recorder is opened ON the capture thread, not here. This runs on whichever thread
+        // delivered the gate — in adapter mode the OCBM reader, which also carries video — and an
+        // open can now wait out [OPEN_RETRY_MS] between attempts.
+        captureThread = Thread({ captureLoop(rate, channels, mask, minBuf, bytesPerChunk, capture) }, "mic-capture").apply {
             isDaemon = true; start()
         }
-        log.i("capturing VOICE_COMMUNICATION ${rate}Hz ${channels}ch, ${bytesPerChunk}B/chunk (capture #$captures)")
-        SessionTrace.Board.up(BOARD, "gate OPEN — capturing VOICE_COMMUNICATION ${rate}Hz ${channels}ch, ${bytesPerChunk}B/${CHUNK_MS}ms")
     }
 
-    private fun captureLoop(rec: AudioRecord, chunk: Int) {
+    /**
+     * Open and START one recorder, retrying a refusal. Null when every attempt failed or the gate
+     * closed meanwhile; each failure has its own line.
+     *
+     * Why retry, and why check [AudioRecord.getRecordingState]: on 2026-10-14 22:08:09 the car
+     * refused the input (`E AudioRecord: start(89): status -61`, Siri just opened). Java's
+     * `startRecording()` does NOT throw for that — it only logs and leaves the recorder STOPPED — so
+     * the old code logged "capturing", then read 0 at once and gave up until the next `uplink on`.
+     * Siri heard silence for that turn. A refusal like that can be momentary (the car's own audio
+     * path is switching for the same voice event), so a fresh recorder a moment later is worth trying.
+     */
+    @SuppressLint("MissingPermission")   // RECORD_AUDIO is declared and asked for at first launch
+    private fun openRecorder(rate: Int, mask: Int, minBuf: Int, capture: Int): AudioRecord? {
+        for (attempt in 0..OPEN_RETRY_MS.size) {
+            if (attempt > 0 && !pauseWhileCapturing(OPEN_RETRY_MS[attempt - 1])) return null
+            if (!capturing.get()) return null
+            val tag = "capture #$capture attempt ${attempt + 1}/${OPEN_RETRY_MS.size + 1}"
+            val rec = try {
+                AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, rate, mask,
+                    AudioFormat.ENCODING_PCM_16BIT, minBuf * 3)
+            } catch (t: Throwable) {
+                log.e("AudioRecord: ${t.javaClass.simpleName}: ${t.message} ($tag) — ${micDiag()}"); continue
+            }
+            if (rec.state != AudioRecord.STATE_INITIALIZED) {
+                log.e("AudioRecord uninitialised ($tag) — ${micDiag()}"); runCatching { rec.release() }   // deliberate: discard
+                continue
+            }
+            val threw = runCatching { rec.startRecording() }.exceptionOrNull()
+            val recording = rec.recordingState == AudioRecord.RECORDSTATE_RECORDING
+            if (threw != null || !recording) {
+                log.e("startRecording ${threw?.let { "threw ${it.javaClass.simpleName}: ${it.message}" } ?: "left the recorder STOPPED (car refused the input)"}" +
+                    " ($tag) — ${micDiag()}")
+                runCatching { rec.release() }   // deliberate: discard
+                continue
+            }
+            if (attempt > 0) log.w("mic opened on retry ($tag)")
+            return rec
+        }
+        return null
+    }
+
+    private fun captureLoop(rate: Int, channels: Int, mask: Int, minBuf: Int, chunk: Int, capture: Int) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
         val buf = ByteArray(chunk)
+        var rec: AudioRecord? = null
+        var reopens = 0
         try {
             while (capturing.get() && running.get()) {
-                var off = 0
-                while (off < chunk && capturing.get()) {
-                    val n = rec.read(buf, off, chunk - off)
-                    if (n <= 0) {
-                        // Any non-positive read (0, ERROR, ERROR_BAD_VALUE, ERROR_INVALID_OPERATION,
-                        // ERROR_DEAD_OBJECT) ends this capture; all are treated alike and none is
-                        // retried here — the next `uplink on` re-arms. The
-                        // flag MUST be cleared here: the peer only sends `uplink off` on full control
-                        // teardown, not per-SETUP, so the gate edge that would have reset it may never
-                        // arrive — and iOS re-SETUPs MainAudio several times per Siri turn. Leaving it
-                        // set made every later `uplink on` fail its CAS silently and killed the mic for
-                        // the rest of the session.
-                        if (capturing.get()) {
-                            // A mid-gate read failure is the mic dying under Siri: E, and the board
-                            // says so until the next `uplink on` re-arms it.
-                            log.e("AudioRecord.read -> $n mid-capture; ending this capture — no mic until the next `uplink on`")
-                            SessionTrace.Board.note(BOARD, "FAILED (AudioRecord.read -> $n mid-capture — no mic until the next gate)")
-                            if (!firstChunkThisCapture) SessionTrace.cancel(EXPECT_FIRST_CHUNK, "AudioRecord.read failed ($n) first — already reported")
-                        }
-                        capturing.set(false)
-                        return
+                val r = openRecorder(rate, mask, minBuf, capture)
+                if (r == null) {
+                    if (capturing.get()) {
+                        log.e("no mic for this gate — the car refused the input ${OPEN_RETRY_MS.size + 1} times (capture #$capture)")
+                        SessionTrace.Board.note(BOARD, "FAILED (car refused the mic ${OPEN_RETRY_MS.size + 1} times — no mic this gate)")
                     }
-                    off += n
+                    if (!firstChunkThisCapture) SessionTrace.cancel(EXPECT_FIRST_CHUNK, "the recorder never opened — already reported")
+                    capturing.set(false)
+                    return
                 }
-                if (off == chunk) send(buf, chunk)
+                rec = r
+                if (!firstChunkThisCapture) {
+                    // Armed once the recorder is RECORDING: what remains silent is a read() that
+                    // never returns data. Met in [send] on this capture's first chunk.
+                    SessionTrace.expect(EXPECT_FIRST_CHUNK, FIRST_CHUNK_MS,
+                        "the receiver said `uplink on ${rate} ${channels}` and AudioRecord is recording, so PCM " +
+                        "should reach the seam within one bring-up (262ms on 2026-09-09)")
+                }
+                if (reopens == 0) {
+                    log.i("capturing VOICE_COMMUNICATION ${rate}Hz ${channels}ch, ${chunk}B/chunk (capture #$capture)")
+                    SessionTrace.Board.up(BOARD, "gate OPEN — capturing VOICE_COMMUNICATION ${rate}Hz ${channels}ch, ${chunk}B/${CHUNK_MS}ms")
+                }
+                val n = pump(r, buf, chunk) ?: return   // null: the gate closed normally
+                runCatching { r.stop() }; runCatching { r.release() }   // deliberate: replaced or given up
+                rec = null
+                if (!capturing.get()) return
+                // Any non-positive read (0, ERROR, ERROR_BAD_VALUE, ERROR_INVALID_OPERATION,
+                // ERROR_DEAD_OBJECT) is the mic dying under Siri. Reopen a bounded number of times;
+                // past that, give up until the next `uplink on`. The flag MUST be cleared when giving
+                // up: the peer only sends `uplink off` on full control teardown, not per-SETUP, so the
+                // gate edge that would have reset it may never arrive — and iOS re-SETUPs MainAudio
+                // several times per Siri turn. Leaving it set made every later `uplink on` fail its
+                // CAS silently and killed the mic for the rest of the session.
+                if (reopens >= MAX_REOPENS) {
+                    log.e("AudioRecord.read -> $n mid-capture after $reopens reopen(s); ending this capture — no mic until the next `uplink on` — ${micDiag()}")
+                    SessionTrace.Board.note(BOARD, "FAILED (AudioRecord.read -> $n mid-capture — no mic until the next gate)")
+                    if (!firstChunkThisCapture) SessionTrace.cancel(EXPECT_FIRST_CHUNK, "AudioRecord.read failed ($n) first — already reported")
+                    capturing.set(false)
+                    return
+                }
+                reopens++
+                log.w("AudioRecord.read -> $n mid-capture — reopening the mic ($reopens/$MAX_REOPENS, capture #$capture) — ${micDiag()}")
             }
         } finally {
-            runCatching { rec.stop() }; runCatching { rec.release() }   // deliberate: teardown
+            rec?.let { runCatching { it.stop() }; runCatching { it.release() } }   // deliberate: teardown
         }
+    }
+
+    /** Read whole chunks until the gate closes (null) or a read fails (that read's return code). */
+    private fun pump(rec: AudioRecord, buf: ByteArray, chunk: Int): Int? {
+        while (capturing.get() && running.get()) {
+            var off = 0
+            while (off < chunk && capturing.get()) {
+                val n = rec.read(buf, off, chunk - off)
+                if (n <= 0) return if (capturing.get()) n else null
+                off += n
+            }
+            if (off == chunk) send(buf, chunk)
+        }
+        return null
+    }
+
+    /** Sleep [ms] in slices so [stopCapture]'s 500 ms join is not outlasted. False once the gate closed. */
+    private fun pauseWhileCapturing(ms: Long): Boolean {
+        var left = ms
+        try {
+            while (left > 0 && capturing.get()) {
+                val step = minOf(left, 50L)
+                Thread.sleep(step)
+                left -= step
+            }
+        } catch (_: InterruptedException) {
+            return false
+        }
+        return capturing.get()
+    }
+
+    /**
+     * Who else holds the mic, at the moment ours failed. Other apps' entries are anonymised by the
+     * platform, but the source and the silenced flag still say whether the car's own voice or call
+     * path had it.
+     */
+    private fun micDiag(): String {
+        val am = audio ?: return "no AudioManager"
+        return runCatching {
+            val cfgs = am.activeRecordingConfigurations
+            val list = cfgs.joinToString(",") { c ->
+                "src=${c.clientAudioSource}" + if (Build.VERSION.SDK_INT >= 29) "/silenced=${c.isClientSilenced}" else ""
+            }
+            "mode=${am.mode} micMute=${am.isMicrophoneMute} recording=${cfgs.size}[$list]"
+        }.getOrElse { "mic diag failed: ${it.javaClass.simpleName}" }
     }
 
     private fun send(pcm: ByteArray, len: Int) {
