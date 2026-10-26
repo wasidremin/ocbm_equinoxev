@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Gradle-build override of src/main/res/xml/automotive_app_desc.xml (a flavor res set outranks main),
+  so the aapt2-only build, which has no Car App code, keeps declaring media alone.
+
+  - media      : as in src/main — the media source switcher and homescreen Media card.
+  - template   : the app ships a Car App Library service (wasidremin.gmccpa.nav.ClusterNavService).
+  - navigation : that service's NAVIGATION category. lvalen91/carlink declares the same three for its
+                 cluster service, and that is the configuration that bound on GM; FEATURE_CLUSTER keeps
+                 it off the main display, so it does not compete with the car's own Maps.
+-->
+<automotiveApp>
+    <uses name="media"/>
+    <uses name="template"/>
+    <uses name="navigation"/>
+</automotiveApp>

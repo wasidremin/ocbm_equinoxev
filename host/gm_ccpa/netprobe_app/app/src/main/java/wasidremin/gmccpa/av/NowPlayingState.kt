@@ -220,6 +220,16 @@ class NowPlayingState {
     @Volatile var onPlaybackTick: ((Snapshot) -> Unit)? = null
 
     /**
+     * A `routeGuidance` / `maneuver` record, on the `cp-meta` thread. A hook rather than a direct call
+     * so only the process-wide instance ([CarPlayActivity.nowPlaying]) feeds the cluster — the
+     * self-test builds its own instance and must not touch a live route.
+     */
+    @Volatile var onNavRecord: ((kind: String, json: JSONObject) -> Unit)? = null
+
+    /** The session ended ([clear]). Same reasoning as [onNavRecord]. */
+    @Volatile var onCleared: ((why: String) -> Unit)? = null
+
+    /**
      * Seam entry point. Runs on the `cp-meta` thread: JSON parse inline (cheap), callbacks must post
      * anything expensive elsewhere — see the blocking note on [MetadataSeam].
      */
@@ -228,9 +238,15 @@ class NowPlayingState {
             MetadataSeam.META_JSON -> {
                 val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull() ?: return
                 // The seam also carries routeGuidance, maneuver, callState, artworkReady and more.
-                // Only the media picture is consumed — by scope decision there is no navigation or
-                // telephony surface in this app, and half-handling a kind is worse than ignoring it.
+                // Navigation goes to [onNavRecord] (the cluster turn-by-turn, wasidremin.gmccpa.nav);
+                // callState drives the call pill; everything else is counted and dropped.
                 val kind = json.optString("kind")
+                if (kind == "routeGuidance" || kind == "maneuver") {
+                    noteNavRecord()
+                    runCatching { onNavRecord?.invoke(kind, json) }
+                        .onFailure { log.e("nav consumer threw: ${it.javaClass.simpleName}: ${it.message}") }
+                    return
+                }
                 if (kind == "callState") { onCallState(json); noteIgnoredKind(kind); return }
                 if (kind != "nowPlaying") { noteIgnoredKind(kind); return }
                 val prevElapsed = snapshot.elapsedMs
@@ -386,6 +402,8 @@ class NowPlayingState {
             snapshot
         }
         onCallChanged?.invoke()
+        runCatching { onCleared?.invoke(why) }
+            .onFailure { log.e("clear consumer threw: ${it.javaClass.simpleName}: ${it.message}") }
         emit(cleared)
     }
 
@@ -397,6 +415,8 @@ class NowPlayingState {
     @Synchronized private fun noteMetadataPublished() { tally.metadata++ }
 
     @Synchronized private fun noteTick() { tally.ticks++ }
+
+    @Synchronized private fun noteNavRecord() { tally.nav++ }
 
     /** A JSON kind this app deliberately does not consume. Counted, never per-record logged. */
     @Synchronized private fun noteIgnoredKind(kind: String) {
@@ -441,10 +461,12 @@ internal fun ByteArray?.contentEqualsOrBothNull(o: ByteArray?): Boolean =
  * - [metadata] how many produced a card rebuild — records whose DISPLAYED picture changed.
  * - [ticks] elapsed-only records that moved the position but rebuilt nothing.
  * - [artwork] JPEG transfers received on the seam; [artAccepted] those that reached the picture.
- * - [ignored] JSON kinds this app does not consume (`routeGuidance`, `maneuver`, `callState`, …),
- *   with [lastIgnoredKind] as the most recent. Non-zero `ignored` with zero `records` is the
- *   signature of a live seam carrying something other than music — a diagnosis no per-line log
- *   could have produced without drowning the capture.
+ * - [nav] `routeGuidance` + `maneuver` records handed to the cluster turn-by-turn. Before that
+ *   existed they were the bulk of [ignored]: 60 per beat on a navigated drive (doc 14 §14.8).
+ * - [ignored] JSON kinds this app does not consume (`callState`, `artworkReady`, …), with
+ *   [lastIgnoredKind] as the most recent. Non-zero `ignored` with zero `records` is the signature of
+ *   a live seam carrying something other than music — a diagnosis no per-line log could have
+ *   produced without drowning the capture.
  */
 internal class SyncTally {
     var records = 0L
@@ -453,19 +475,20 @@ internal class SyncTally {
     var ticks = 0L
     var artwork = 0L
     var artAccepted = 0L
+    var nav = 0L
     var ignored = 0L
     var lastIgnoredKind: String? = null
 
     /** True when nothing at all arrived — the case the beat reports once as SILENT. */
-    fun isEmpty(): Boolean = records == 0L && artwork == 0L && ignored == 0L
+    fun isEmpty(): Boolean = records == 0L && artwork == 0L && nav == 0L && ignored == 0L
 
     fun clear() {
         records = 0L; titles = 0L; metadata = 0L; ticks = 0L
-        artwork = 0L; artAccepted = 0L; ignored = 0L; lastIgnoredKind = null
+        artwork = 0L; artAccepted = 0L; nav = 0L; ignored = 0L; lastIgnoredKind = null
     }
 
     /**
-     * `np: sync 30s records=12 (titleChanges=1 metadata=1 ticks=11) artwork=1 accepted=1 ignoredKinds=0`
+     * `np: sync 30s records=12 (titleChanges=1 metadata=1 ticks=11) artwork=1 accepted=1 nav=0 ignoredKinds=0`
      *
      * Titles and artists are deliberately absent: the capture is uploadable, and the counts are what
      * the diagnosis needs. The one place content appears is [trackSummaryLine].
@@ -473,7 +496,7 @@ internal class SyncTally {
     fun line(windowSec: Long): String = buildString {
         append("np: sync ${windowSec}s records=$records")
         append(" (titleChanges=$titles metadata=$metadata ticks=$ticks)")
-        append(" artwork=$artwork accepted=$artAccepted ignoredKinds=$ignored")
+        append(" artwork=$artwork accepted=$artAccepted nav=$nav ignoredKinds=$ignored")
         lastIgnoredKind?.let { append(" lastIgnored=$it") }
     }
 }

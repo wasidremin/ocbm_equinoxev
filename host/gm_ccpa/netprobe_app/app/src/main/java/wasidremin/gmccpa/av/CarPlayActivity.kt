@@ -371,6 +371,10 @@ class CarPlayActivity : Activity() {
                 CarPlayMediaBrowserService.publishPlaybackState(it)
                 live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
             }
+            // Cluster turn-by-turn rides the same seam and the same session end. Every teardown
+            // path already clears this object, so hooking the clear covers all of them.
+            onNavRecord = { kind, json -> wasidremin.gmccpa.nav.ClusterNav.onRecord(kind, json) }
+            onCleared = { why -> wasidremin.gmccpa.nav.ClusterNav.onSessionEnded(why) }
         }
 
         /**

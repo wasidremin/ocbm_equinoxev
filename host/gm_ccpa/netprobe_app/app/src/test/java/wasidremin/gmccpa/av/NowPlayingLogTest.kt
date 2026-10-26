@@ -86,22 +86,27 @@ class NowPlayingLogTest {
         val art = SyncTally()
         art.artwork = 1
         assertFalse(art.isEmpty())
-        // …and so is a kind we ignore: a live seam carrying only navigation still means the seam is up.
+        // …and so is navigation alone: a seam carrying only route records is still up.
         val nav = SyncTally()
-        nav.ignored = 12
-        nav.lastIgnoredKind = "routeGuidance"
+        nav.nav = 60
         assertFalse(nav.isEmpty())
         assertTrue(nav.line(30L).contains("records=0"))
+        assertTrue(nav.line(30L).contains("nav=60"))
+        // …and a kind we ignore.
+        val other = SyncTally()
+        other.ignored = 12
+        other.lastIgnoredKind = "artworkReady"
+        assertFalse(other.isEmpty())
     }
 
     @Test fun beatLineCarriesEveryCount() {
         val t = SyncTally().apply {
             records = 12; titles = 1; metadata = 1; ticks = 11
-            artwork = 1; artAccepted = 1; ignored = 3; lastIgnoredKind = "maneuver"
+            artwork = 1; artAccepted = 1; nav = 30; ignored = 3; lastIgnoredKind = "callState"
         }
         assertEquals(
             "np: sync 30s records=12 (titleChanges=1 metadata=1 ticks=11) " +
-                "artwork=1 accepted=1 ignoredKinds=3 lastIgnored=maneuver",
+                "artwork=1 accepted=1 nav=30 ignoredKinds=3 lastIgnored=callState",
             t.line(30L),
         )
         // clear() must reset the kind name too, or the next beat names a stale kind.

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cluster maneuver glyph (ManeuverMap.icon). Drawn for this app; see ManeuverMap for why the VCU cluster never shows it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+        <path android:pathData="M15,21 V7 L6,16 M6,10 V16 H12"
+            android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.4"
+            android:strokeLineCap="round" android:strokeLineJoin="round"/>
+</vector>

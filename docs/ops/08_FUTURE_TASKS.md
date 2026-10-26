@@ -271,6 +271,52 @@ needs an adapter firmware update (`tools/ocbm_install.sh`), not only a Play rele
 **Done means.** With two paired iPhones in range, the one at the top of the list connects. Connect
 on the other one moves CarPlay to it. Both survive an adapter reboot.
 
+## T13. GM app: CarPlay turn-by-turn in the instrument cluster (raised 2026-10-26; IMPLEMENTED, unverified on the car)
+
+**Why.** Apple Maps' next turn, distance and ETA belong in the Equinox cluster. The box already
+delivers them: the Proven tier declares and subscribes iAP2 route guidance (`features.rs`), and
+`metadata.rs` emits `routeGuidance` (`0x5201`) and `maneuver` (`0x5202`) JSON on `:9004`. Until
+2026-10-26 the app dropped both (`ignoredKinds=60 lastIgnored=routeGuidance`,
+`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.8).
+
+**How (app-only, no adapter change).** The only third-party route into a GM cluster is the Car App
+Library: a navigation `CarAppService` calls `NavigationManager.updateTrip()`. The Templates Host,
+which holds the privileged `CAR_NAVIGATION_MANAGER`, forwards it to CarService, GM's VMSPlugin and
+the cluster. On the VCU, VMSPlugin forwards only the maneuver TYPE enum and the cluster draws GM's
+own glyph (lvalen91 `gminfo_resources` `projection/cluster_navigation.md`, firmware-verified on a
+CT5). Ported from lvalen91/carlink (Unlicense): the maneuver table, the trip shape and the
+primary-session logic. Code: `host/gm_ccpa/netprobe_app/app/src/main/java/wasidremin/gmccpa/nav/`
+(`RouteGuidance` merge, `ClusterNav` toggle and bootstrap) and `app/src/carapp/` (Gradle builds only,
+since `tools/build_apk.sh` has no AndroidX). It is off by default, under Settings ▸ Navigation.
+The Templates Host binds only after the app launches a hidden `CarAppActivity`, so the first route
+after the app starts flashes the screen for about a second.
+
+**Verify on a drive.** Turn it on, start an Apple Maps route, then grep the capture for `nav:`.
+Expect, in order:
+1. `nav: route state - -> 1`;
+2. `nav: bootstrap — launched CarAppActivity`;
+3. `nav: session bound`;
+4. `nav: navigationStarted`;
+5. `nav: updateTrip #1 … -> TYPE n`.
+
+Then check the cluster's turn view.
+
+These lines mean something specific when they appear:
+- `EXPECTED-MISSING session` means the host never bound. Read the `CarApp.*` lines for the reason,
+  for example a validator rejection.
+- `host stopped navigation` means another navigation app took the cluster.
+
+The beat line now reads `nav=N`.
+
+**Later (adapter firmware, `tools/ocbm_install.sh`).**
+- Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.
+- Add `0x5200` selectors 3–5 so ExitInfo, time zone and EV fields arrive (doc 03 selector gap).
+- `0x5204` lane guidance is Extended-tier only. Moving it into Proven changes a proven Identify and
+  risks an unrecoverable `0x1D03`, so prove it at the Extended tier first.
+
+**Done means.** On the Equinox, a CarPlay route shows its next turn with the right GM arrow,
+distance counting down, and the ETA. The cluster clears when the route ends.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.

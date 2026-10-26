@@ -53,6 +53,7 @@ wherever the rows live; no key changes.
 | Current label | Source | Persisted key | Actual behavior | Proposed location | Verdict | Reason |
 |---|---|---|---|---|---|---|
 | Audio source (Adapter/Bluetooth) | `buildAudio`, `audioRow` | `audio_route/bluetooth` (immediate) | Car plays iPhone over BT vs app audio path | Settings | keep | Useful playback preference |
+| Turn-by-turn in the cluster (2026-10-26) | `buildSettings` ▸ Navigation, `navRow`, `nav/ClusterNav` | `cluster_nav/enabled` (default off) | Enables `ClusterNavService` and relays CarPlay route guidance to the cluster through the Car App Library; first route after app start flashes the hidden `CarAppActivity` for ~1 s. Subtitle reports support/bound state; "Not in this build" on a `build_apk.sh` APK | Settings | keep | `docs/ops/08_FUTURE_TASKS.md` T13; unverified on the car |
 
 ## Logs page (`Ui.kt buildLogs`) — becomes Troubleshooting + Advanced
 
@@ -120,9 +121,10 @@ stays (serves Capture Current).
 - Export today: `LogExport.export` (SAF → USB volume → MediaStore → filesDir
   ladder, text artifact) for logs; `UploadCenter` HTTPS POSTs for logs,
   captures, launches. No FileProvider exists in the manifest (verified in the
-  source and merged release manifests) and v101 adds none — the app has no
-  AndroidX, so launch-diagnostics export reuses the MediaStore + share-sheet
-  path instead.
+  source and merged release manifests) and v101 adds none — `src/main` has no
+  AndroidX (the only AndroidX dependency, the Car App Library, is confined to
+  `src/carapp` since 2026-10-26), so launch-diagnostics export reuses the
+  MediaStore + share-sheet path instead.
 
 ## Bitmap ownership and locking (`CarPlayFrameGrabber`)
 
@@ -178,7 +180,7 @@ stays (serves Capture Current).
   one uploaded line.
 - **Music-sync diagnostics** (`av/NowPlayingState.kt`, `av/CarPlayMediaBrowserService.kt`):
   `np: sync` 30 s beat (records/title changes/metadata rebuilds/ticks/artwork/
-  ignored kinds), `np: sync SILENT` once per silent gap, first-record latency,
+  nav records (since 2026-10-26)/ignored kinds), `np: sync SILENT` once per silent gap, first-record latency,
   session summary at clear, and `browser: bind #n` per `onGetRoot`. See doc 14
   §14.8.
 

@@ -276,6 +276,7 @@ class LauncherUi(private val act: Activity) {
     private val queueListener: (Int) -> Unit = { _ -> refreshUploadQueueRow() }
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
+    private lateinit var navRow: EqRow
     private lateinit var phonesCard: EqCard
     private lateinit var customTopBarControl: EqSegmented
     private lateinit var insightsPage: InsightsPage
@@ -586,6 +587,17 @@ class LauncherUi(private val act: Activity) {
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },
         )))
+        page.addView(eqSectionLabel(act, "Navigation"))
+        val nav = wasidremin.gmccpa.nav.ClusterNav
+        navRow = EqRow(
+            act, "Turn-by-turn in the cluster", nav.statusText(act),
+            // Shown even where it cannot work, so the subtitle can say why.
+            trailing = EqToggle(act, nav.enabled) { on ->
+                nav.setEnabled(act, on)
+                navRow.setSubtitle(nav.statusText(act))
+            },
+        )
+        page.addView(EqCard(act).addRow(navRow))
         page.addView(eqSectionLabel(act, "Phones"))
         phonesCard = EqCard(act)
         page.addView(phonesCard)
@@ -1436,6 +1448,8 @@ class LauncherUi(private val act: Activity) {
         if (::hotspotRow.isInitialized) {
             setRowShown(hotspotRow, !adapterWifi)
         }
+        // Bound/unbound changes with no Settings interaction, so re-read it with the rest.
+        if (::navRow.isInitialized) navRow.setSubtitle(wasidremin.gmccpa.nav.ClusterNav.statusText(act))
         if (::customTopBarControl.isInitialized) {
             customTopBarControl.setSelected(if (DisplayPrefs.customTopBar(act)) 1 else 0, animate = false)
         }

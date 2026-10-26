@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cluster turn-by-turn. Merged into the Gradle builds only (play + sideload flavors, see
+  app/build.gradle); tools/build_apk.sh never sees this file, so an aapt2-built APK declares none of it
+  and the Templates Host has nothing to bind.
+
+  Ported from lvalen91/carlink (public domain, app/src/main/AndroidManifest.xml), the app that first
+  got CarPlay turn-by-turn into a GM cluster. The chain is:
+
+    ClusterNavService (CarAppService, NAVIGATION + FEATURE_CLUSTER)
+      -> NavigationManager.navigationStarted() / updateTrip() / navigationEnded()
+      -> Templates Host (com.google.android.apps.automotive.templates.host, which holds the
+         privileged CAR_NAVIGATION_MANAGER / CAR_DISPLAY_IN_CLUSTER this app cannot)
+      -> CarService -> GM VMSPlugin -> cluster.
+
+  On the VCU radios (Equinox EV, AAOS 14) GM's VMSPlugin forwards only the maneuver TYPE enum and the
+  cluster draws its own glyph (gminfo_resources projection/cluster_navigation.md, firmware-verified on
+  a CT5). So what reaches the cluster is the Maneuver.TYPE_* mapping, distance, road names and ETA;
+  the icons in res/drawable are carried because the proven path always had one, not because they show.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- app-automotive declares minSdk 29; this app's is 26. Overridden rather than raising minSdk,
+         which would change the Play device list for a feature that is optional: ClusterNav refuses to
+         run below API 29, and every GM radio this ships to is API 32 or later. -->
+    <uses-sdk tools:overrideLibrary="androidx.car.app.automotive"/>
+
+    <!-- Car App Library navigation apps must hold this to call NavigationManager. Normal protection. -->
+    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES"/>
+    <!-- The host provisions a render surface to a navigation CarAppService; carlink rev 143 added it
+         for Play AAOS review. This app never draws a map into it. -->
+    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE"/>
+    <!-- Normal protection. Puts the CarPlay screen back in front of the hidden CarAppActivity by task
+         id (ClusterNav.bootstrap), so no Activity of ours receives a stray onNewIntent. -->
+    <uses-permission android:name="android.permission.REORDER_TASKS"/>
+
+    <!-- required=false: the Templates Host is what makes this work, but the app's job is CarPlay, and
+         a required feature narrows the Play device list (carlink revs 143/153 fought exactly that). The
+         runtime check in ClusterNav reports a missing host instead. -->
+    <uses-feature android:name="android.software.car.templates_host" android:required="false"/>
+
+    <application>
+        <!-- The Templates Host binds a CarAppService only once a CarAppActivity has been launched.
+             This one exists solely to start that binding: not a launcher, its own task, out of
+             recents, translucent. ClusterNav.bootstrap launches it and returns the screen to CarPlay
+             about a second later, which is the visible flash. -->
+        <activity
+            android:name="androidx.car.app.activity.CarAppActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="wasidremin.gmccpa.templates"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <meta-data android:name="distractionOptimized" android:value="true"/>
+        </activity>
+
+        <!-- Ships DISABLED. ClusterNav enables it only while Settings ▸ Navigation is on, so with the
+             feature off the host never discovers it and nothing changes for the car. -->
+        <service
+            android:name="wasidremin.gmccpa.nav.ClusterNavService"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService"/>
+                <category android:name="androidx.car.app.category.NAVIGATION"/>
+                <category android:name="androidx.car.app.category.FEATURE_CLUSTER"/>
+            </intent-filter>
+        </service>
+
+        <!-- Read by the library at bind time from the APPLICATION meta-data, not the service's.
+             6 is carlink's value, which bound on both GM platforms it was tried on. -->
+        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="6"/>
+    </application>
+</manifest>

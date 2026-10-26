@@ -28,7 +28,10 @@ NETPROBE`, and **Save** writes a text report for `adb pull`.
 
 ## Build
 
-Zero external dependencies, pure platform SDK.
+`src/main` is pure platform SDK, with zero external dependencies. The Gradle builds add one, the
+Car App Library, for cluster turn-by-turn. It is confined to `app/src/carapp`, which the Gradle-free
+path below never compiles, so that path still builds with no AndroidX (its APK reports the feature
+as "not in this build").
 
 **Use the Gradle-free path** — the Mac's JDK is 21, which fights AGP 7.4:
 

@@ -30,6 +30,18 @@ android {
         main.java.srcDirs = ["src/main/java"]
         main.jniLibs.srcDirs = [System.getenv('GM_JNI_DIR') ?: "${rootProject.buildDir}/jniLibs"]
         main.assets.srcDirs = [System.getenv('GM_ASSETS_DIR') ?: 'src/main/assets']
+        // Cluster turn-by-turn (Car App Library -> Templates Host -> GM cluster). Kept out of src/main
+        // because tools/build_apk.sh compiles src/main alone, with aapt2 and no AndroidX: an APK built
+        // there has none of these classes AND none of these manifest entries, so the Templates Host can
+        // never bind a service whose class is missing. src/main reaches this code only by class name
+        // (wasidremin.gmccpa.nav.ClusterNav) and reports "not in this build" when it is absent.
+        ['play', 'sideload'].each { flavor ->
+            getByName(flavor) {
+                java.srcDirs += 'src/carapp/java'
+                res.srcDirs += 'src/carapp/res'
+                manifest.srcFile 'src/carapp/AndroidManifest.xml'
+            }
+        }
     }
 
     signingConfigs {
@@ -86,4 +98,9 @@ dependencies {
     // it as an optional uses-library.
     def sdkDir = System.getenv("ANDROID_SDK_ROOT") ?: (System.getenv("ANDROID_HOME") ?: "${System.getProperty('user.home')}/Android/Sdk")
     compileOnly files("${sdkDir}/platforms/android-35/optional/android.car.jar")
+    // Cluster navigation, src/carapp only (see sourceSets). Same versions as lvalen91/carlink, whose
+    // GM cluster path this ports. app-automotive supplies androidx.car.app.activity.CarAppActivity,
+    // the hidden activity that makes the Templates Host bind the CarAppService.
+    implementation 'androidx.car.app:app:1.7.0'
+    implementation 'androidx.car.app:app-automotive:1.7.0'
 }

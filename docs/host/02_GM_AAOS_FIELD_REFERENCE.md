@@ -88,7 +88,7 @@ The GM app also ships on the Play internal track.
 | Pure AOA / vendor gadget (`1314:1520` stock, `1314:2d00` OCBM) | **Enumerates.** `UsbManager.getDeviceList()` lists it, Allow dialog appears. | **Refused.** HU toasts *"USB device not supported"*; `deviceList` shows only the Microchip USB249xx bridge (`0424:4915/49a0/4911`) and xHCI roots. No `USB_DEVICE_ATTACHED`. |
 | `accessory,mass_storage` composite (stock `UdiskMode=1`) | Not needed | **Enumerates** — Allow dialog, working session. Device-proven Equinox EV, Silverado EV, Sierra EV, Escalade IQ (§3). |
 | USB port hardware | direct host port | **USB24915P** automotive CarPlay multi-host bridge in front of the host port. It passes composites through; it is *not* iPhone-only (we believed that for a week — wrong). |
-| Cluster maneuver icons | App-supplied icons **do** reach the cluster via the unregistered `ClusterIconContentProvider` authority (Tachi91 owns it on Play — nobody else can claim it) | GM VMSPlugin **ignores** supplied icons, renders from the maneuver enum (`setManeuverType`). Text-only nav for any third-party app. |
+| Cluster maneuver icons | App-supplied icons **do** reach the cluster via the unregistered `ClusterIconContentProvider` authority (Tachi91 owns it on Play — nobody else can claim it) | GM VMSPlugin **ignores** supplied icons and forwards the maneuver enum (`setManeuverType`); the cluster draws **GM's own glyph** for it, next to distance, road name and ETA. So a third-party app gets full turn-by-turn, and the `Maneuver.TYPE_*` mapping is what decides the arrow (lvalen91 `gminfo_resources` `projection/cluster_navigation.md`, firmware-verified on a CT5). The GM app's path: `host/gm_ccpa/.../nav/ClusterNav.kt`. |
 | NCM (`functions=ncm`) on the radio | Recognised as NCM-capable, **never brought up** — sits idle, interface locked to system | Same (Tachi91, p.25, Jul 8 2026) |
 | "Always allow" for the USB app | broken: dangling `config_UsbDeviceConnectionHandling_component` (`android.car.usb.handler`) | absent `android.car.usb.handler` on VCUUM-274.4; app-requested permission “Always” does not persist |
 
@@ -230,8 +230,12 @@ speaks OCBM.
 
 - Play package is Tachi91's; it claims the GM cluster authority
   `com.google.android.apps.automotive.templates.host.ClusterIconContentProvider`. Google locks an
-  authority to its first publisher, so **no other Play bundle can claim it** — forks get text-only
-  cluster nav. On VCU it does not matter (GM ignores supplied icons anyway).
+  authority to its first publisher, so **no other Play bundle can claim it** — on gminfo3.7 a fork's
+  cluster turn card has distance and road name but no arrow. On VCU it does not matter: GM ignores
+  supplied icons and draws its own glyph from the maneuver type, so a fork gets the same picture.
+- His cluster path is the Car App Library (`NavigationManager.updateTrip()` through the Templates Host),
+  bootstrapped by launching a hidden `CarAppActivity` — the one-second flash. The GM app ports it
+  (Unlicense code: maneuver table, trip shape, session); see `docs/ops/08_FUTURE_TASKS.md` T13.
 - AA frames over a hard-coded **512 KB** were dropped → pixelation with satellite view; fixed by
   raising the cap (p.24, Jun 2026). Our pipeline should not have a similar cap.
 - USB **ZLP** stall on the stock adapter with certain metadata (album art / three specific Apple Music

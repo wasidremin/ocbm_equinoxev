@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cluster maneuver glyph (ManeuverMap.icon): counter-clockwise ring (right-hand traffic), entry from below, exit upper right. Drawn for this app; see ManeuverMap for why the VCU cluster never shows it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+        <path android:pathData="M16,11 A4,4 0 1 0 8,11 A4,4 0 1 0 16,11 M12,21 V15 M14.83,8.17 L19,4 M14,4 H19 V9"
+            android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.4"
+            android:strokeLineCap="round" android:strokeLineJoin="round"/>
+</vector>
