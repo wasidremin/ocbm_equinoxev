@@ -326,14 +326,17 @@ log, the toggle went on with a route already running (11:03:09). The bootstrap l
 followed. MainActivity was back in front at +1.1 s. `updateTrip` then ran at about 1 Hz through two
 reroutes. One open check remains: whether the cluster clears when a route ends at the destination.
 
-**Open (2026-10-27 evening, versionCode 221): the cluster stopped showing album art.** The owner
-reports no artwork in the cluster. The app side is unchanged. Every track still publishes a 300×300
-bitmap under both `ALBUM_ART` and `ART` (`card: metadata "Mexico" art=300x300 …`), the same as
-before T13. No route ran on that drive, and there are no `nav:` lines. The cluster's own process
-(`com.gm.rhmi`) is not in an `OWN_PROCESS` capture. The morning drive's route (versionCode 220) was
-still running when that capture ended at 11:16 UTC. The app update then killed the process at
-11:40, so `navigationEnded` may never have reached the host. Unproven suspect: the cluster is still
-holding that navigation state. A drive with the toggle off would separate the two causes.
+**Watch (2026-10-27 evening, versionCode 221): the cluster went without album art for a while.**
+The owner reports that title and artist showed the whole time, with only the artwork missing.
+The artwork came back when they switched playlists. The navigation toggle was not touched. The
+app side is unchanged. Every track still publishes a 300×300 bitmap under both `ALBUM_ART` and
+`ART` (`card: metadata "Mexico" art=300x300 …`), the same as before T13. The cluster's own process
+(`com.gm.rhmi`) is not in an `OWN_PROCESS` capture. The earlier suspect was stale navigation state
+left by the morning route, which the 11:40 update cut off before `navigationEnded`. It is unlikely
+now, since a playlist change would not clear it. One lead, unproven: each track change publishes
+twice. A first `art=none` publish goes out under the new `queueId`, then the art follows 20–80 ms
+later. A consumer that latches the first publish for a queue item would miss the art until the next
+track. If it recurs, note which track it starts on.
 
 **Later (adapter firmware, `tools/ocbm_install.sh`).**
 - Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.

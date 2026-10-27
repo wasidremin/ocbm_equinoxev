@@ -1595,8 +1595,9 @@ class CarPlayActivity : Activity() {
      * `resources[]{resourceID, entity, permanentEntity}`, and appStateID 1 is the one entry that
      * carries `speechMode` — Apple's Speech app state. `-1` is NotApplicable; in Apple's writer it is
      * the frame's only 8-byte integer, and its departure is the whole of the 287 B → 277 B bracket
-     * around the Siri turn in the 2026-09-09 capture. appStateID 2/3 are believed to be
-     * PhoneCall/TurnByTurn (AirPlayCommon.h order, unverified in this checkout) and are passed for
+     * around the Siri turn in the 2026-09-09 capture. appStateID 2 is PhoneCall: car-verified
+     * 2026-10-27, its entity was non-zero for exactly the two calls of that drive, and it sets
+     * CALL's idle clock. appStateID 3 is believed to be TurnByTurn (unverified) and is passed for
      * logging only. `BPlist` decodes arrays to `List` and dicts to `Map<String, Any?>` with `Long`
      * integers, which is what this destructures; an unexpected shape yields `-1`, i.e. "not
      * applicable", i.e. today's energy-gate behaviour.

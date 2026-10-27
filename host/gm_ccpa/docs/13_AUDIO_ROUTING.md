@@ -277,9 +277,10 @@ Rules 2 and 3 diverge between the two sinks (rule 3 is still an open code defect
    realtime feed — 2× into a 400–640 ms buffer — and the track is full within half a second.
    **Two clocks are needed:** a new `lastAuAt` (last *delivered* AU) to gate `keepAlive`, and
    `lastAudioAt` (last *loud* frame) kept for duck, idle and the assistant edge, all of which must
-   go on ignoring iOS's streamed silence. Note `Purpose.idleMs` is on the loud clock too, which is
-   fine for ASSISTANT but suspect for **CALL**: 3 s of far-end silence mid-call would release the
-   sink from `cp-voice-sweep` while `feed` decodes on the consume thread. Not yet adjudicated.
+   go on ignoring iOS's streamed silence. `Purpose.idleMs` is on the loud clock too, which is
+   fine for ASSISTANT but was wrong for **CALL**: 3 s of far-end silence mid-call released the
+   sink. Car-confirmed 2026-10-27 (16 rebuilds inside two calls). Fixed in versionCode 222: while
+   `modesChanged`'s PhoneCall entity is non-zero, CALL idles on `lastAuAt` (`VoiceRouter.quietFor`).
    **Also: `keepAlive` and `feed` write to the same `AudioTrack` from two threads with no lock**
    (`cp-voice-sweep` and the consume thread), and they overlap in exactly this window.
    `AudioTrack.write` is not safe for concurrent callers. Needs a `writeLock`.
@@ -510,11 +511,18 @@ an activity-based gate would clip the onset.
   was about 2.5 s at 21:28:25, right after two taps on the call screen. The callback 10 s later, made
   through Siri, ran 6.3 min (12,645 frames) through the same path and played normally. So the silence
   came from the phone or the network, not from this app. One app-side defect is visible here,
-  although it did not cause the silence. `Purpose.CALL` times out on the loud clock rather than the
-  delivery clock. Every pause in the far end's speech longer than 3 s therefore tears the call
-  track down. The next word then waits about 0.5 s for a new codec and buffer fill, and the volume
-  knob falls back to media for that gap. The same cycling shows in the good call
-  (21:32:24-21:33:17).
+  although it did not cause the silence. `Purpose.CALL` timed out on the loud clock rather than the
+  delivery clock. Every pause in the far end's speech longer than 3 s therefore tore the call
+  track down. The next word then waited 0.45-0.65 s for a new codec and buffer fill
+  (`FIRST AUDIO OUT`), and the volume knob fell back to media for that gap. That was 6 rebuilds in
+  the first call and 10 in the good one (21:32:24-21:33:17).
+  **Fixed in versionCode 222, not yet car-verified.** The PhoneCall app state in `modesChanged`
+  (`modes: … phone=1`) bracketed both calls. It rose at the ring or the answer and fell after
+  hang-up. iOS set up the telephony stream inside it and tore it down no later than 0.2 s after it
+  fell. While it is up, CALL now idles on the delivery clock. The bound is unchanged. AUs stop at
+  the stream teardown, so the sink still goes 3 s later if the `phone=0` edge is lost. After
+  `phone=0` the loud clock applies again. On the next call the check is that no
+  `call: idle 3s — released` line appears before hang-up.
 - **Manifest**: `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE`. A Play install asks for the mic at
   first launch; `-g` is the sideload equivalent.
 - **A refused or dying recorder is retried (since 2026-10-26).** Until then this bullet said "recreate

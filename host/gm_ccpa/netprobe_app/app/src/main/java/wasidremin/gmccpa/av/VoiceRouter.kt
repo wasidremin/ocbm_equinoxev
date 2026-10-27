@@ -108,7 +108,8 @@ class VoiceRouter(
     ) {
         // bus4_call_out — shortest: a lingering CALL context is the most disruptive to the knob.
         // No keep-alive: call audio is continuous, and filling silence would hold the telephony
-        // context active after the call ends, which is exactly the stuck-knob bug.
+        // context active after the call ends, which is exactly the stuck-knob bug. During a call the
+        // 3 s runs on the AU clock, not the loud one — see [quietFor].
         CALL(AudioAttributes.USAGE_VOICE_COMMUNICATION, AudioAttributes.CONTENT_TYPE_SPEECH, "call", 3_000L),
         // bus2_voice_command_out — keep-alive: Siri goes quiet between prompt and answer, and a
         // drained track stops being an active player, which is what makes the head unit's volume knob
@@ -453,6 +454,15 @@ class VoiceRouter(
     /** `elapsedRealtime` of the last START/END edge; 0 until one has arrived. */
     @Volatile private var ctrlSpeechAt = 0L
     @Volatile private var ctrlSeen = false
+    /**
+     * Control-plane PhoneCall state: `modesChanged`'s phone entity is non-zero. Car-verified
+     * 2026-10-27 on both calls of that drive: it went 1 at the ring or the answer and 0 after
+     * hang-up, and iOS's telephony stream (type 100, `audioType=telephony`) was set up inside it
+     * and torn down no later than 0.2 s after it fell. Read only by
+     * [quietFor], to move CALL's idle window onto the AU clock. Never sent: stays false, and CALL
+     * idles on the loud clock exactly as before.
+     */
+    @Volatile private var ctrlPhone = false
     /** Last logged tuple, so the `modes:` line prints per change rather than per frame (iOS sends
      *  3-5 identical frames per transition). `cp-meta` only. */
     private var lastModesLogged = Long.MIN_VALUE
@@ -468,10 +478,9 @@ class VoiceRouter(
      * falsifier: a 277 B frame logging `mode=-1` means the byte argument was wrong and this must be
      * reverted.
      *
-     * `phone` (appStateID 2) and `turns` (3) are logged and deliberately NOT acted on: no call has
-     * been captured, so PhoneCall's entity behaviour is unverified, and a second call-state machine
-     * beside the `atype` byte would be two inferences that can disagree. When a call is captured,
-     * the right shape is to shorten CALL's idle window from here, not to add a parallel path.
+     * `phone` (appStateID 2) feeds [ctrlPhone] and nothing else: it changes which clock CALL's idle
+     * window runs on, not which sink an AU goes to, so the `atype` byte is still the only routing
+     * input. `turns` (3) is logged and not acted on.
      */
     fun onModes(speechMode: Long, speechEntity: Long, phoneEntity: Long, turnsEntity: Long, size: Int) {
         val active = speechMode != -1L
@@ -481,6 +490,7 @@ class VoiceRouter(
             log.i("modes: speech mode=$speechMode entity=$speechEntity phone=$phoneEntity turns=$turnsEntity ($size B)")
         }
         ctrlSeen = true
+        ctrlPhone = phoneEntity != 0L
         if (active != ctrlSpeech) {
             // Stamp BEFORE flag. Both readers ([assistantTick], [ctrlEnded]) read the volatile flag
             // first and the stamp second, so this order guarantees a reader that sees the new flag
@@ -544,7 +554,9 @@ class VoiceRouter(
      *     session.
      *
      * Both clocks here are the LOUD clock ([Sink.lastAudioAt]), deliberately: idle on the AU clock
-     * would never release a sink iOS keeps streaming silence into, which is the wedge above.
+     * would never release a sink iOS keeps streaming silence into, which is the wedge above. The
+     * one exception is CALL's idle window while iOS says a call is up — see [quietFor]. The duck
+     * stays on the loud clock for every purpose.
      *
      * Runs on `cp-voice-sweep`, NOT the consume thread — this KDoc used to claim the consume thread
      * and that it was "the only thread allowed to release", which stopped being true when [start]
@@ -578,7 +590,7 @@ class VoiceRouter(
                 // Per-purpose hold folded into ONE boolean — the duck is shared, so a sink inside its
                 // hold keeps media ducked for everyone; see [Purpose.duckHoldMs].
                 if (quiet < p.duckHoldMs && !ended) anyLoud = true
-                if (quiet > p.idleMs || ended) dead.add(p)   // per-purpose, not one global window — see [Purpose]
+                if (quietFor(p, now, s) > p.idleMs || ended) dead.add(p)   // per-purpose, not one global window — see [Purpose]
             }
         }
         // Un-duck FIRST, outside the sinks lock (it is a call out to AacPlayer.setVoiceDucked, which
@@ -592,7 +604,7 @@ class VoiceRouter(
             for (p in dead) {
                 val s = sinks[p] ?: continue
                 val ended = p == Purpose.ASSISTANT && ctrlEnded(now, s)
-                if (now - s.lastAudioAt <= p.idleMs && !ended) continue   // went loud between the two blocks
+                if (quietFor(p, now, s) <= p.idleMs && !ended) continue   // went loud between the two blocks
                 sinks.remove(p)
                 val why = if (ended) "iOS says Siri ended ${now - ctrlSpeechAt}ms ago" else "idle ${p.idleMs / 1000}s"
                 s.release(why)
@@ -612,6 +624,25 @@ class VoiceRouter(
             }
         }
     }
+
+    /**
+     * How long [s] has been idle, for its [Purpose.idleMs]. The loud clock, except for CALL while
+     * iOS says a call is up ([ctrlPhone]): then the AU clock, because inside a call a delivered AU
+     * means the line is in use, and silence is part of the conversation.
+     *
+     * On the loud clock a call came apart at every pause. Three seconds without the far end speaking
+     * released the sink, the next AU rebuilt it, and a rebuilt track is inaudible until its pre-fill
+     * is written (`FIRST AUDIO OUT` +454-648 ms), so the start of whatever followed every pause was
+     * lost, and between release and rebuild the knob fell back to media. 2026-10-27: 16 rebuilds
+     * inside two calls.
+     *
+     * Bounded on both sides. iOS tears the telephony stream down at hang-up (21:28:38.294 and
+     * 21:35:17.249: 6.9 s before `phone=0`, and 0.1 s after it), so AUs stop and the sink is released 3 s later
+     * even if the END edge is lost on the seam. And once `phone=0` arrives the loud clock is back, so
+     * a telephony stream left up after a call is released exactly as it was before.
+     */
+    private fun quietFor(p: Purpose, now: Long, s: Sink): Long =
+        now - if (p == Purpose.CALL && ctrlPhone) s.lastAuAt else s.lastAudioAt
 
     @Volatile private var lastSweep = 0L
     /** Warn once per unknown atype rather than per access unit. */
@@ -676,15 +707,16 @@ class VoiceRouter(
         @Volatile var isConfigured = false
         /**
          * The LOUD clock: last frame whose peak cleared [DUCK_PEAK_THRESHOLD], or configure time.
-         * Gates the duck ([sweepIdle]), the idle window ([Purpose.idleMs]), the assistant edge
-         * ([assistantTick]) and [keepAlive]'s UPPER bound — every consumer that must ignore the
-         * digital silence iOS streams on an idle voice channel.
+         * Gates the duck ([sweepIdle]), the idle window ([Purpose.idleMs]) outside a call, the
+         * assistant edge ([assistantTick]) and [keepAlive]'s UPPER bound — every consumer that must
+         * ignore the digital silence iOS streams on an idle voice channel.
          */
         @Volatile var lastAudioAt = 0L
         /**
          * The AU clock: last access unit DELIVERED to [feed], loud or silent, or configure time.
-         * Gates only [keepAlive]'s LOWER bound — "has the stream stopped feeding the track?" — which
-         * is a question about delivery, not loudness. Gating it on [lastAudioAt] was A6.
+         * Gates [keepAlive]'s LOWER bound — "has the stream stopped feeding the track?" — which is a
+         * question about delivery, not loudness (gating it on [lastAudioAt] was A6) — and CALL's idle
+         * window while a call is up ([quietFor]).
          */
         @Volatile var lastAuAt = 0L
         /** Track underruns as of the last [release]; -1 until one has happened. Latched there because
