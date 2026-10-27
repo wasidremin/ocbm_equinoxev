@@ -1168,6 +1168,10 @@ GPS/vehicle telemetry to iOS* for dead-reckoning — `RouteStatus`/`SystemInform
 services plus **NMEA-0183** (`GPRMC/GPGGA/…` + Apple `OHPR`/`PAACD`/`PAGCD`/`PASCD`) sensor forwarding. This
 is **input to** Apple Maps, not turn info **from** it. Do not put VDC in the Metadata (display) window — it
 belongs to a GPS-uplink workstream. [E — direction is explicit in docs/carplay/03_SDK_GROUND_TRUTH.md §6]
+**Corrected 2026-10-27 for `RouteSharing` only.** That service runs the other way. WWDC26 session
+212 says route sharing (iOS 26.4+, driver-approved per vehicle) sends the active route as route
+segments from the phone to the vehicle whenever the trip changes. The vehicle may propose a
+waypoint back, such as a charging stop. The GPS/NMEA half of this paragraph is unchanged.
 
 **(iii) AirPlay `/command`** carries only `changeMapZoomLevel` (`{zoomDirection}`, accessory→iOS) and the
 `turns` audio mode — no route text. [E — docs/carplay/03_SDK_GROUND_TRUTH.md §6/§9]

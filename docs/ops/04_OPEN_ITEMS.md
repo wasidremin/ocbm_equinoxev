@@ -232,9 +232,13 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
   Source: `docs/carplay/04_CAPABILITIES_AND_CONFIG.md` §4 Mechanism A, `docs/host/00_MACOS_HOST_APP.md` Tier 4. Verified open 2026-08-16:
   `grep -rn "vehicleStateProtocol" crates ccpa --include="*.rs"` → no hits in box code.
 
-- **`videoPlayback` is inert and blocked on an Apple-approval-only entitlement.** No lever, no
-  `/info` advertisement, no `lunaConfig`/`videoPresetSizes`, no echo. The non-code action is
-  requesting `com.apple.developer.carplay-video`; the `/info` wire shape is also uncaptured.
+- **`videoPlayback` is inert.** No lever, no `/info` advertisement, no `lunaConfig` or
+  `videoPresetSizes`, no echo. **Corrected 2026-10-27:** this said the receiver was blocked on
+  Apple granting `com.apple.developer.carplay-video`. That is the iPhone app's entitlement: WWDC26
+  session 212 says apps holding it appear on the CarPlay home screen only when the car supports
+  video. What blocks the receiver is the uncaptured wire contract. That covers the `/info` shape,
+  how the car signals parked or video-unavailable (iOS then falls back to audio-only), and how the
+  video is delivered. Whether iOS also checks vehicle certification is unknown.
   Source: `docs/carplay/04_CAPABILITIES_AND_CONFIG.md` §7. Verified open 2026-08-16:
   `grep -rn "videoPlayback\|lunaConfig\|videoPresetSizes" --include="*.rs" crates ccpa` → only
   `vehicle_config.rs` test fixtures.

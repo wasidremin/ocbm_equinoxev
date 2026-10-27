@@ -407,8 +407,11 @@ Kept here so a later session does not promote them into tasks.
 - **No wire to build against.** DCX has no CarPlaySDK feature string. File transfer's `/info`
   dictionary shape is unknown. UI sync needs the CarPlayClusterControl UUID, which is unrecovered,
   and cluster hardware this car has not exposed to the app.
-- **Entitlement.** Full-screen video playback (`enablesVideoPlayback`, `lunaConfig`) requires Apple
-  to grant `com.apple.developer.carplay-video`.
+- **No contract yet.** Full-screen video playback (`enablesVideoPlayback`, `lunaConfig`) was
+  parked here as needing Apple to grant `com.apple.developer.carplay-video`. That is the iPhone
+  app's entitlement, not the car's (WWDC26 session 212, iOS 27). What the car needs is the
+  receiver feature plus a parked signal. The app already has that signal in `VehicleStateWatcher`
+  (`GEAR_SELECTION`). It stays parked until the Mac-side sources yield the wire contract.
 - **Wrong panel.** Knob, d-pad, and touchpad descriptors are for other head units. The Equinox is
   a touchscreen.
 - **No surface yet.** A second CarPlay video stream on the Equinox cluster waits until the VCU
