@@ -3,9 +3,8 @@
 #
 # `cargo test` and `cargo test --workspace` at the repo root do NOT run most of this project's tests:
 # `crates/vendor/{iap2-core,receiver,rtsp,pairing,mfi,mfi-i2c-local,metadata,eld-codec}` are all in
-# the root Cargo.toml `exclude` list, so they build as path dependencies only. The root workspace also
-# fails to compile on macOS (`carplayd` uses `libc::TCP_KEEPIDLE`, Linux-only). Both facts together
-# meant ~130 tests could be added, or silently broken, without anything noticing.
+# the root Cargo.toml `exclude` list, so they build as path dependencies only. That meant ~130 tests
+# could be added, or silently broken, without anything noticing.
 #
 # `receiver` is run with --no-default-features: the default set pulls `eld-codec`, whose build script
 # needs a cross-built libfdk-aac that is not present on a plain host checkout.
@@ -52,15 +51,6 @@ run "pairing"    cargo test --manifest-path crates/vendor/pairing/Cargo.toml --q
 run "rtsp"       cargo test --manifest-path crates/vendor/rtsp/Cargo.toml --quiet
 run "mfi"        cargo test --manifest-path crates/vendor/mfi/Cargo.toml --quiet
 run "ocbm-host"  cargo test -p ocbm-host --quiet
-
-# host/MacHost's own hardware-free Swift harness (tests/run_tests.sh) — no Xcode project, no
-# dongle. Skipped (not a failure) when the Swift toolchain isn't on this machine, since the rest of
-# this script is Rust-only and must still be runnable without Xcode installed.
-if command -v xcrun >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1; then
-  run "host/MacHost (Swift)" bash host/MacHost/tests/run_tests.sh
-else
-  echo "=== host/MacHost (Swift) — SKIPPED (xcrun/swiftc not found)"
-fi
 
 [ "$fail" -eq 0 ] || { echo "FAILURES"; exit 1; }
 echo "all suites passed"

@@ -3785,7 +3785,7 @@ impl Daemon {
                     let mut ok = false;
                     if let Ok(sec) = secs_t {
                         // Built field-by-field from `zeroed()`, NOT with a struct literal. Under
-                        // `musl32_time64` (required on riscv32 — see c2air/README.md) these types carry
+                        // `musl32_time64` (required on riscv32, the removed C2Air port's target) these types carry
                         // private padding fields and a literal will not compile. This form builds on
                         // every target.
                         let mut tv: libc::timeval = unsafe { std::mem::zeroed() };

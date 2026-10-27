@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build OCBM v1 (Rust). Box daemon = armv7-musl via cargo-zigbuild (zig linker, no Linux VM);
+# Build OCBM v1 (Rust). Box daemon = armv7-musl via cargo-zigbuild (zig linker);
 # host client = native. Needs: rustup + `rustup target add armv7-unknown-linux-musleabihf`
 # + `cargo install cargo-zigbuild`.
 set -e
@@ -19,8 +19,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # no debugger anywhere. Keep the messages; take the 15%.
 #
 # Requires nightly + the `rust-src` component (`rustup component add rust-src --toolchain
-# nightly`). The riscv32 C2Air port has built this way since it existed
-# (c2air/tools/c2air_ocbm_install.sh:161) — this brings the CCPA box target into line with it.
+# nightly`).
 # The host binaries below (ocbm-host, mfi-probe) stay on stable: they are not size-constrained.
 BOX_CARGO="rustup run nightly cargo"
 BOX_STD="-Z build-std=std,panic_abort"

@@ -14,27 +14,24 @@ Rules that keep it that way:
    git remembers it either way.
 4. Anything genuinely dead is deleted, not left as a file a skimming reader can land on.
 
+**Removed from this fork on 2026-10-27:** the macOS host app (`host/MacHost`), the Silverado
+AAOS app (`host/CarlinkAndroid`), Android Auto (box daemons, test tools and the `androidauto/`
+docs), and the Raspberry Pi, Pi Zero and C2Air ports. The owner runs an iPhone in a Chevrolet
+Equinox EV and has no Mac. Older analysis below still cites those components and Mac-side
+reference paths; read those mentions as history. Git has the removed files.
+
 ## carplay/ — the CarPlay protocol and session
 
 | File | Owns |
 |---|---|
 | [00_ARCHITECTURE.md](carplay/00_ARCHITECTURE.md) | vision, the box/host split, USB/NCM transport |
-| [01_OCBM_PROTOCOL.md](carplay/01_OCBM_PROTOCOL.md) | the OCBM envelope, channel ids, seam framing, backpressure — **projection-agnostic**: it carries Android Auto too |
+| [01_OCBM_PROTOCOL.md](carplay/01_OCBM_PROTOCOL.md) | the OCBM envelope, channel ids, seam framing, backpressure |
 | [02_SESSION_LIFECYCLE.md](carplay/02_SESSION_LIFECYCLE.md) | session states, start ordering, the app-driven SETUP relay, teardown |
 | [03_SDK_GROUND_TRUTH.md](carplay/03_SDK_GROUND_TRUTH.md) | what Apple's licensed SDK says; conformance and Simulator verification |
 | [04_CAPABILITIES_AND_CONFIG.md](carplay/04_CAPABILITIES_AND_CONFIG.md) | app-driven doctrine, the YAML VehicleConfig framework, field glossary, capability dossiers |
 | [05_METADATA_AND_CONTROLS.md](carplay/05_METADATA_AND_CONTROLS.md) | the metadata surface, iAP2 declaration rules, the DataStream/RCS carrier |
 | [06_AV_PIPELINE.md](carplay/06_AV_PIPELINE.md) | audio (capability + pipeline), video, cornerMasks, touch/HID uplink |
 | [07_PHONE_SIDE.md](carplay/07_PHONE_SIDE.md) | iPhone-side behaviour we cannot change |
-
-## androidauto/ — the Android Auto protocol and session
-
-| File | Owns |
-|---|---|
-| [00_ARCHITECTURE.md](androidauto/00_ARCHITECTURE.md) | scope, why AA differs from CarPlay, the stock stack, the GAL credential, the box/host split, video geometry |
-| [01_SESSION_AND_AV.md](androidauto/01_SESSION_AND_AV.md) | what works today, resolved defects and their causes, open items |
-| [02_ARBITRATION.md](androidauto/02_ARBITRATION.md) | CarPlay vs Android Auto — phone-type detection, the single owner flag, closed failure modes |
-| [03_WIRELESS.md](androidauto/03_WIRELESS.md) | wireless Android Auto — unbuilt; the transport it needs and what is reusable |
 
 ## wireless/ — the wireless transport
 
@@ -47,8 +44,7 @@ Rules that keep it that way:
 
 | File | Owns |
 |---|---|
-| [00_MACOS_HOST_APP.md](host/00_MACOS_HOST_APP.md) | the shipping macOS app |
-| [01_ANDROID_AND_AAOS.md](host/01_ANDROID_AND_AAOS.md) | the Android projection app and AAOS integration |
+| [01_ANDROID_AND_AAOS.md](host/01_ANDROID_AND_AAOS.md) | the GM AAOS app (`host/gm_ccpa`) and AAOS integration |
 | [02_GM_AAOS_FIELD_REFERENCE.md](host/02_GM_AAOS_FIELD_REFERENCE.md) | GM platform map (gminfo37 vs VCU), per-vehicle field reports, stock uDisk mechanics, Tachi91/XDA source index |
 
 ## ops/ — running, verifying and governing the work
@@ -63,7 +59,7 @@ Rules that keep it that way:
 | [05_AUDITS.md](ops/05_AUDITS.md) | code audits and their remediation |
 | [06_CORRECTIONS_LEDGER.md](ops/06_CORRECTIONS_LEDGER.md) | historical record; `R-<doc>-<n>` ids key to the pre-consolidation numbering |
 | [07_AUTHORIZATION.md](ops/07_AUTHORIZATION.md) | scope/authorization statement and session framing |
-| [08_FUTURE_TASKS.md](ops/08_FUTURE_TASKS.md) | owner-directed planned work that is not a defect (settings redesign, AA metadata services, mSBC) |
+| [08_FUTURE_TASKS.md](ops/08_FUTURE_TASKS.md) | owner-directed planned work that is not a defect (car GPS, EV status, cluster nav, Siri) |
 | ops/captures/ | raw session captures kept as evidence |
 
 ## Where the old numbers went
@@ -71,5 +67,5 @@ Rules that keep it that way:
 `docs/56` → carplay/04 · `docs/45`, `docs/47`, `docs/20_METADATA` → carplay/05 · `docs/13`,
 `docs/43`, `docs/49` → carplay/03 · `docs/27`, `docs/62`, `docs/23`, `docs/52` → carplay/06 ·
 `docs/20_WIRELESS`, `docs/29–39` → wireless/00 · `docs/40`, `docs/41`, `docs/51`, `docs/57` →
-wireless/01 · `docs/60` → androidauto/00+01, `docs/61` → androidauto/02 (both moved out of host/02 on 2026-08-31 when Android Auto got its own category) · `docs/25`, `docs/48`, `docs/50` → ops/05 ·
+wireless/01 · `docs/60`, `docs/61` → androidauto/ (removed 2026-10-27) · `docs/25`, `docs/48`, `docs/50` → ops/05 ·
 `REVISIONS.md` → ops/06. Full map: the `<!-- absorbed: … -->` marker at the head of every section.

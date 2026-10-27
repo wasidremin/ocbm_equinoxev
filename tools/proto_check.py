@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Check every OCBM client against the canonical constant table.
 
-`crates/ocbm-proto/src/lib.rs` is the protocol. Every other implementation -- the macOS Swift
-client, the CarlinkAndroid Kotlin client, and gm_ccpa's own Kotlin client -- restates those
-constants by hand in its own language, and nothing has ever verified that the restatements agree. They did not: CT_PROJ_MODE, CT_BOX_HEALTH, the BH_* health bits, F_REPLAY and the whole
-CH_FILE opcode set reached the box and the gm_ccpa client while this repo's own Kotlin and Swift
-clients never learned them (found 2026-08-31).
+`crates/ocbm-proto/src/lib.rs` is the protocol. The GM app's Kotlin client restates those
+constants by hand, and nothing else verifies that the restatement agrees. When this repo still
+carried the macOS Swift client and the CarlinkAndroid Kotlin client (both removed 2026-10-27), they
+did not: CT_PROJ_MODE, CT_BOX_HEALTH, the BH_* health bits, F_REPLAY and the whole CH_FILE opcode
+set reached the box and the gm_ccpa client while the other two never learned them (found
+2026-08-31).
 
 A value that disagrees is a wire bug: two endpoints of one link mean different things by the same
 byte. That is an ERROR here. A constant a client simply does not define yet is drift, not a bug
@@ -15,12 +16,8 @@ flags), which every client must be able to name even where it does not act on th
 Usage:  tools/proto_check.py [--strict]
         --strict  treat every gap as an error, not just the core set.
 
-All three clients live in this repo and are always checked. Until 2026-09-11 gm_ccpa was covered
-only when its root was passed as an argument -- and then only by accident, because its OcbmProto.kt
-was a symlink into CarlinkAndroid's copy, so the "third client" was the second one read twice. The
-file is now an app-owned fork, so it is a real third client and it is in CLIENTS. A positional path
-is rejected rather than ignored: the only thing it could name is a second checkout, i.e. exactly the
-stale copy the fork exists to stop anyone checking by mistake.
+The client lives in this repo and is always checked. A positional path is rejected rather than
+ignored: the only thing it could name is a second checkout, i.e. a stale copy.
 """
 
 import re
@@ -30,9 +27,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 CANON = REPO / "crates/ocbm-proto/src/lib.rs"
 CLIENTS = {
-    "kotlin (CarlinkAndroid)": REPO / "host/CarlinkAndroid/app/src/main/kotlin/com/carlink/ocbm/OcbmProto.kt",
     "kotlin (gm_ccpa)": REPO / "host/gm_ccpa/netprobe_app/app/src/main/java/wasidremin/gmccpa/ocbm/OcbmProto.kt",
-    "swift (carlink_macOS)": REPO / "host/MacHost/carlink_macOS/OCBM/OCBMFraming.swift",
 }
 
 # Prefixes every client must be able to name: the channel map, the control opcodes, the frame flags.
@@ -65,8 +60,8 @@ def canonical():
 def _container(text: str, opener: str) -> str:
     """The body of the protocol container only.
 
-    Both clients define a SECOND object beside the protocol one -- Kotlin's `object Mfi`, Swift's
-    `struct OCBMFrame` -- and `Mfi.HDR_LEN` is 3 while the frame header is 16. Reading the file flat
+    The client defines a SECOND object beside the protocol one -- `object Mfi` -- and
+    `Mfi.HDR_LEN` is 3 while the frame header is 16. Reading the file flat
     reports that as a wire divergence, which is exactly the kind of false alarm that gets a checker
     switched off. Cut at the next top-level declaration instead.
     """
@@ -81,18 +76,6 @@ def kotlin(p: Path):
     return {m.group(1): _int(m.group(2)) for m in re.finditer(r"const val ([A-Z][A-Za-z0-9_]*)\s*:[^=]+=\s*([^\n]+)", t)}
 
 
-def swift(p: Path):
-    """Swift spells the same constants in camelCase; map them back to the canonical name."""
-    t = _container(p.read_text(), "enum OCBM {")
-    out = {}
-    for m in re.finditer(r"static let ([a-z][A-Za-z0-9_]*)\s*:?[^=]*=\s*([^\n]+)", t):
-        name = re.sub(r"(?<!^)(?=[A-Z])", "_", m.group(1)).upper()
-        v = _int(m.group(2))
-        if v is not None:
-            out[name] = v
-    return out
-
-
 def kotlin_container(p: Path, opener: str):
     """Constants from a named Kotlin object (used for `object Mfi`)."""
     txt = p.read_text()
@@ -100,10 +83,6 @@ def kotlin_container(p: Path, opener: str):
         return {}
     body = _container(txt, opener)
     return {m.group(1): _int(m.group(2)) for m in re.finditer(r"const val ([A-Z][A-Za-z0-9_]*)\s*:[^=]+=\s*([^\n]+)", body)}
-
-
-def read(p: Path):
-    return swift(p) if p.suffix == ".swift" else kotlin(p)
 
 
 def main() -> int:
@@ -126,7 +105,7 @@ def main() -> int:
         if not path.is_file():
             errors.append(f"{label}: missing file {path}")
             continue
-        got = read(path)
+        got = kotlin(path)
         for name, want in sorted(canon.items()):
             if name in EXEMPT:
                 continue
@@ -136,7 +115,7 @@ def main() -> int:
             elif got[name] != want:
                 errors.append(
                     f"{label}: {name} = {got[name]:#04x}, canonical says {want:#04x}")
-        if mfi_canon and path.suffix != ".swift":
+        if mfi_canon:
             mfi_got = kotlin_container(path, "object Mfi {")
             for name, want in sorted(mfi_canon.items()):
                 if name not in mfi_got:

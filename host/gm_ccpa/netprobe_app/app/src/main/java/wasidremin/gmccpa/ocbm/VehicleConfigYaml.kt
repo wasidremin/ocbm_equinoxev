@@ -9,7 +9,8 @@ package wasidremin.gmccpa.ocbm
  * its compiled defaults — 1920x720, H.264, `wired_pcm`, the baseline metadata tier — and nothing tells
  * the host. Video simply comes up at the wrong resolution with HEVC off.
  *
- * That is a recorded incident, not a hypothetical: `tools/regen_app_yaml_fixture.py:1-14` describes a
+ * That is a recorded incident, not a hypothetical: `tools/regen_app_yaml_fixture.py:1-14` (removed with the
+ * macOS app on 2026-10-27; see git history) described a
  * hand-typed fixture certifying a broken emitter because one Swift literal lacked a trailing newline,
  * gluing the next key onto `drawUIOutsideSafeArea: false` and "silently revert[ing] resolution, HEVC,
  * appDrivenSetup, audio and the metadata tier at once."
@@ -291,7 +292,7 @@ object VehicleConfigYaml {
      *     fix.** They must be STRIPPED, not escaped.
      *
      * The stripped set is Cc only — C0 (`0x00`-`0x1F`), DEL and C1 (`0x7F`-`0x9F`) — matching the
-     * reference emitter (`host/MacHost/carlink_macOS/App/VehicleConfig.swift`, `YamlEmit`), whose
+     * macOS app's reference emitter (`VehicleConfig.swift`, `YamlEmit`; removed 2026-10-27), whose
      * comment records the set as verified codepoint-by-codepoint against the box's own `serde_yaml` 0.9
      * and libyaml rather than reasoned about.
      *
@@ -326,8 +327,8 @@ object VehicleConfigYaml {
      * scalar; serde then rejects the whole file and the adapter falls back to H.264. [HevcRenderer]
      * cannot play that, and the failure is silent on the box.
      *
-     * Kept equal to CarlinkAndroid's `VehicleConfigYamlTest` expected literal (oem icon omitted,
-     * which the default emitter already skips).
+     * Was kept equal to CarlinkAndroid's `VehicleConfigYamlTest` expected literal (oem icon omitted,
+     * which the default emitter already skips) until that app was removed on 2026-10-27.
      */
     const val PINNED_DEFAULT: String =
         "name: \"CarLink GM 2400x960\"\n" +

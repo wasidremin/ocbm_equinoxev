@@ -775,7 +775,7 @@ correctness failure — it means a stale frame or a stale map position is waitin
   (`VideoDecoder.swift` — "drop on backpressure, never buffer"); buffering *there* really would show a
   stale frame. Refined 2026-09-03: the mechanism is no longer a single latest-wins slot but a depth-3
   bounded FIFO that never blocks its producer and picks the CHEAPEST frame to lose (see
-  [../host/00_MACOS_HOST_APP.md](../host/00_MACOS_HOST_APP.md) "Host decode pipeline"). The principle is
+  `docs/host/00_MACOS_HOST_APP.md` "Host decode pipeline", removed with the macOS app 2026-10-27). The principle is
   unchanged — a two-frame cushion is not "buffering", it is the difference between dropping a stale P
   and dropping the IDR the next two seconds of video depend on.
 

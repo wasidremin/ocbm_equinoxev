@@ -1712,10 +1712,10 @@ mod tests {
 
     /// Every JSON key the metadata plane emits, with the message that produces it.
     ///
-    /// This is a CONTRACT with `host/MacHost/carlink_macOS/App/MetadataWindow.swift`. The box can
-    /// parse a message perfectly and the host still shows an empty pane if one side renames a key,
-    /// and nothing in either build fails — that cost a full hardware session on 2026-07-25 with
-    /// CommunicationsUpdate, PowerUpdate and the device updates all arriving and three panes blank.
+    /// This was a contract with the macOS app's `MetadataWindow.swift` (removed 2026-10-27, along
+    /// with the test that read it). A host can show an empty pane if one side renames a key while
+    /// nothing in either build fails — that cost a full hardware session on 2026-07-25. The list
+    /// still pins the parsers' output (below), so a rename on the box side fails here.
     const EMITTED_KEYS: &[(&str, &str)] = &[
         ("power", "batteryChargeLevel"),
         ("power", "batteryChargingState"),
@@ -1758,37 +1758,6 @@ mod tests {
         ("voiceOver", "enabled"),
         ("mediaLibrary", "revision"),
     ];
-
-    /// The host must read every key the box emits. Cross-language, so it reads the Swift source
-    /// directly — a rename on either side fails here instead of silently blanking a pane.
-    #[test]
-    fn host_app_reads_every_emitted_key() {
-        let swift = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../host/MacHost/carlink_macOS/App/MetadataWindow.swift"
-        );
-        let Ok(src) = std::fs::read_to_string(swift) else {
-            // The host app is not part of every checkout; skip rather than fail spuriously.
-            eprintln!("skipping: {swift} not present");
-            return;
-        };
-        let mut missing = Vec::new();
-        for (kind, key) in EMITTED_KEYS {
-            if !src.contains(&format!("\"{key}\"")) {
-                missing.push(format!("{kind}.{key}"));
-            }
-            if !src.contains(&format!("case \"{kind}\"")) {
-                missing.push(format!("kind {kind} (no case)"));
-            }
-        }
-        missing.sort();
-        missing.dedup();
-        assert!(
-            missing.is_empty(),
-            "host app does not read these emitted keys — the pane will render empty:\n  {}",
-            missing.join("\n  ")
-        );
-    }
 
     /// And the reverse: the parsers must actually emit those keys from a representative body, so the
     /// contract list cannot drift away from the code it describes.
