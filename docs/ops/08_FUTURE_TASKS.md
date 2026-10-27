@@ -326,6 +326,15 @@ log, the toggle went on with a route already running (11:03:09). The bootstrap l
 followed. MainActivity was back in front at +1.1 s. `updateTrip` then ran at about 1 Hz through two
 reroutes. One open check remains: whether the cluster clears when a route ends at the destination.
 
+**Open (2026-10-27 evening, versionCode 221): the cluster stopped showing album art.** The owner
+reports no artwork in the cluster. The app side is unchanged. Every track still publishes a 300×300
+bitmap under both `ALBUM_ART` and `ART` (`card: metadata "Mexico" art=300x300 …`), the same as
+before T13. No route ran on that drive, and there are no `nav:` lines. The cluster's own process
+(`com.gm.rhmi`) is not in an `OWN_PROCESS` capture. The morning drive's route (versionCode 220) was
+still running when that capture ended at 11:16 UTC. The app update then killed the process at
+11:40, so `navigationEnded` may never have reached the host. Unproven suspect: the cluster is still
+holding that navigation state. A drive with the toggle off would separate the two causes.
+
 **Later (adapter firmware, `tools/ocbm_install.sh`).**
 - Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.
 - Add `0x5200` selectors 3–5 so ExitInfo, time zone and EV fields arrive (doc 03 selector gap).
@@ -335,7 +344,7 @@ reroutes. One open check remains: whether the cluster clears when a route ends a
 **Done means.** On the Equinox, a CarPlay route shows its next turn with the right GM arrow,
 distance counting down, and the ETA. The cluster clears when the route ends.
 
-## T14. GM app: the steering-wheel voice button starts Siri (raised 2026-10-26; button WORKS 2026-10-27, mic fix unverified)
+## T14. GM app: the steering-wheel voice button starts Siri (raised 2026-10-26; WORKS on the car 2026-10-27, versionCode 221)
 
 **Why.** The owner keeps the iPhone off the car's own Bluetooth, because the car then takes the
 calls. On AAOS the wheel's push-to-talk is routed by `CarInputService`:
@@ -367,12 +376,19 @@ that refuses.
 - **Siri heard nothing.** Holding the role makes Android silence the app's `VOICE_COMMUNICATION`
   mic: zeros, with no error. See `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
 
-The fix records with `VOICE_RECOGNITION` while the role is held. It is in source and not published.
+The fix records with `VOICE_RECOGNITION` while the role is held.
+
+**Car result (2026-10-27 evening, versionCode 221).** Siri heard the driver. The 21:28:50 Siri turn
+logged `capture #2 heard: VOICE_RECOGNITION peak 5746 (-15 dBFS), 5/266 chunks all-zero,
+silenced=false`, and placed the call that followed. The two calls also captured real speech
+(`peak 9541 (-11 dBFS)` and `peak 12633 (-8 dBFS)`). The owner confirms the far end heard them on
+the first call.
 
 **Done means.** The `voice:` line shows a picker, GM CCPA can be selected, and a wheel press during
-CarPlay logs `voice: wheel button … -> Siri press sent=true` and brings up Siri. The first three
-were met on 2026-10-27. What remains is that Siri hears the request: the capture's
-`capture #N heard: VOICE_RECOGNITION …` line shows a real peak, with no all-zero `E`.
+CarPlay logs `voice: wheel button … -> Siri press sent=true` and brings up Siri. Siri hears the
+request: `capture #N heard: VOICE_RECOGNITION …` shows a real peak, with no all-zero `E`. All of it
+was met on 2026-10-27. One question remains open: whether calls echo for the far end while the role
+is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on that drive.
 
 ## Left off this plan
 

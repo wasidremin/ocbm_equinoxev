@@ -472,10 +472,19 @@ stock car.**
 
 What the app already does to minimise it (so there is no further in-app win here): on a cold attach it
 skips the futile 8 s system-dispatch wait and self-requests immediately; it defers the dialog while
-the display is off (warm-up) and re-raises it on the next claim-loop poll once the screen wakes; and
+the display is off (warm-up) and re-raises it on the next 250 ms claim-loop poll once the screen wakes
+(`UsbBulkTransport.dialogDeferredForDisplay`); and
 `MainActivity.maybeRelinkOnResume` re-claims when the app is opened with a failed claim and the
 adapter on the bus. The tap is surfaced as early as the platform allows; it cannot be eliminated or
 auto-dismissed.
+
+Until 2026-10-27 the "re-raises once the screen wakes" step did not exist. Nothing re-checked the
+display after a deferral, so the dialog waited for the claim loop's 30 s re-raise
+(`REQUEST_INTERVAL_MS`). The car wakes with the adapter enumerating about 8 s later and the screen still
+dark, so every such start lost roughly 30 s. The startup lines (`[startup] startup: permission +N`)
+show it: +31.5 s on 2026-10-27 21:25, +38.9 s on 2026-10-22, +34.9 s and +31.8 s on 2026-10-23. Starts
+with the screen already lit took 1.7-2.1 s. In the 2026-10-27 start the dialog appeared at +30 s and
+was accepted 1.4 s later.
 
 **Log-confirmed unique (POTATO capture, 2026-08-17).** A sweep of ~4.9 GB of real `adb logcat` from this
 unit (43 boots, `/Volumes/POTATO/logcat`) found `Default USB handling package (android.car.usb.handler)

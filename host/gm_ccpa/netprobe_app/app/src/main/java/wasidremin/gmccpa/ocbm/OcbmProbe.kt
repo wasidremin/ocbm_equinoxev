@@ -818,7 +818,15 @@ class OcbmProbe(context: Context) {
             }
             if (dev != null) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                if (now - lastRequestAt >= REQUEST_INTERVAL_MS) {
+                if (requests > 0 && UsbBulkTransport.dialogDeferredForDisplay && UsbBulkTransport.isDisplayOn(ctx)) {
+                    // The last request never showed a dialog because the display was dark. It is
+                    // lit now, so raise it here instead of at the next REQUEST_INTERVAL_MS re-raise.
+                    // Not counted against the re-raise cap: the driver has not seen a dialog yet.
+                    lastRequestAt = now
+                    log.i("display is on — raising the USB permission dialog held back while it was dark (${(now - startedAt) / 1000}s into the wait)")
+                    wasidremin.gmccpa.logging.SessionSummary.permissionDialogObserved()
+                    t.requestPermissionAsync(dev)
+                } else if (now - lastRequestAt >= REQUEST_INTERVAL_MS) {
                     lastRequestAt = now
                     if (requests == 0) {
                         requests = 1

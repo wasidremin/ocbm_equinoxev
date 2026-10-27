@@ -62,6 +62,7 @@ class UsbBulkTransport(
          */
         fun requestPermissionEarly(ctx: Context, dev: UsbDevice) {
             lastPermissionRequestAt = android.os.SystemClock.elapsedRealtime()
+            dialogDeferredForDisplay = false
             // Marks the result broadcast (the permission receiver) as OURS, so its one-line
             // attribution reads via=self_request rather than via=system_dispatch.
             selfRequestInFlight = true
@@ -95,6 +96,16 @@ class UsbBulkTransport(
         @Volatile private var lastHandlerDiagAt = 0L
         @Volatile private var attachHandlersLoggedOnce = false
         @Volatile private var displayOffDeferLogged = false
+
+        /**
+         * A dialog was held back because the display was dark and none has been raised since. The
+         * claim loop raises it as soon as the display is on rather than at its next 30 s re-raise:
+         * the car wakes with the adapter already on the bus and the screen still dark, so every such
+         * start sat out the interval (2026-10-27: deferred at +0 s, re-raised at +30 s, granted 1.4 s
+         * later; the same +31-39 s on 2026-10-22 and twice on 2026-10-23).
+         */
+        @Volatile var dialogDeferredForDisplay = false
+            private set
 
         /**
          * How long the attach paths wait for the system's own attach dispatch (UsbAttachActivity,
@@ -214,6 +225,7 @@ class UsbBulkTransport(
 
         /** One line when a dialog is deferred for a dark display; re-arms when the display returns. */
         fun logDisplayOffDeferred() {
+            dialogDeferredForDisplay = true
             synchronized(permLock) {
                 if (displayOffDeferLogged) return
                 displayOffDeferLogged = true
@@ -288,6 +300,7 @@ class UsbBulkTransport(
                     // from the first display-off deferral (2026-10-15: set at 22:17, still set
                     // at 03:23+) and every later deferral was silent in the log.
                     displayOffDeferLogged = false
+                    dialogDeferredForDisplay = false
                 }
                 if (permWatch != null) return
                 val r = object : BroadcastReceiver() {

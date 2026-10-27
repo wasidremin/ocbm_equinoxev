@@ -32,7 +32,7 @@ Media took **6 underruns in 843 frames** (§3 rule 2). All four are filed as row
 | Per-purpose sinks: CALL and NAV routing, AAC-ELD decode, silence-fill watchdog (`VoiceRouter.kt`) | **Owner-confirmed on the truck 2026-09-04** (no capture committed): Siri→`Voice`, Call→`Phone`/`Call`, Nav→`Navigation` each audible on the correct volume group. The **ALERT** sink is still unexercised. The energy-gated **ducking** IS now exercised (2026-09-09 capture) and is defective — see §3 Ducking |
 | AAC-ELD decode of the Siri downlink | **Device-proven 2026-09-09**: `[voice] siri: AAC-ELD 16000Hz 1ch -> AudioTrack(usage=16), decoder=c2.android.aac.decoder`. Note the decoder is SOFTWARE — this head unit has no hardware audio codec of any kind (§5) |
 | `VoiceRouter` AU delivery | **DEFECTIVE, measured 2026-09-09**: `stopping — 249 AUs routed, 42 dropped` — 17 % of one Siri turn discarded by the `w == 0` branch in `Sink.feed`. Filed as A6 |
-| Mic uplink (`MicUplink.kt`, `mic-uplink-eld` feature) | **Owner-confirmed on the truck 2026-09-04**: works. CarPlay raises the AAOS mic-in-use indicator when it requests the mic and it clears cleanly on release; no GM AAOS mic volume/gain control exists (expected). **Broken while GM CCPA holds the assistant role** (2026-10-27: Android silences the assistant's `VOICE_COMMUNICATION` capture). The fix switches the source to `VOICE_RECOGNITION` and is not yet truck-verified (§4) |
+| Mic uplink (`MicUplink.kt`, `mic-uplink-eld` feature) | **Owner-confirmed on the truck 2026-09-04**: works. CarPlay raises the AAOS mic-in-use indicator when it requests the mic and it clears cleanly on release; no GM AAOS mic volume/gain control exists (expected). **While GM CCPA holds the assistant role it records with `VOICE_RECOGNITION`**, because Android silences the assistant's `VOICE_COMMUNICATION` capture. Car-verified 2026-10-27 (versionCode 221): a Siri turn and two calls all heard real speech (§4) |
 | `AacPlayer.reclaimFocus()` (recovers from `AUDIOFOCUS_LOSS` without a permanent hang) | Landed 2026-08-28, compiles — **not truck-verified** |
 | Media recovery after a voice/call turn | **FIXED 2026-09-08 (`b8e8736`); truck re-measurement RECORDED 2026-09-09 at 1.95 s.** Owner-observed 2026-09-04 as 10–20 s of silence; device-measured at **12.0 s** before the fix, **1.95 s** after (assistant edge `22:55:50.348` → `media resumed after focus gain` `22:55:52.295`). Two clocks: `assistantTick` cleared `pausedForAssistant` after `ASSISTANT_HOLD_MS` (4 s), but focus was abandoned only by `Sink.release()` at `Purpose.idleMs` (15 s for ASSISTANT), so media resumed on the focus edge, not the assistant edge. `ASSISTANT.idleMs` is now `ASSISTANT_HOLD_MS + 1` sweep period. The design target was ~1 s; the measured 1.95 s is the sweep's 1 Hz throttle on top of it, and is accepted — see §3a |
 
@@ -485,8 +485,8 @@ an activity-based gate would clip the onset.
 - **Capture**: `AudioRecord(<source>, 16000, MONO, PCM_16BIT, minBufferSize × 3)`, 20 ms chunks,
   dedicated thread at `URGENT_AUDIO`. The source is `VOICE_COMMUNICATION` unless the app holds the
   car's assistant role, in which case it is `VOICE_RECOGNITION` (next bullet).
-- **Holding the assistant role silences `VOICE_COMMUNICATION` (2026-10-27 drive, fixed in source,
-  not yet truck-verified).** Picking GM CCPA as the assistant (T14, the wheel-button path) makes our
+- **Holding the assistant role silences `VOICE_COMMUNICATION` (2026-10-27 drive; fixed in
+  versionCode 221 and car-verified the same evening).** Picking GM CCPA as the assistant (T14, the wheel-button path) makes our
   UID the assistant. Android 14's `AudioPolicyService::updateUidStates_l`
   (`AudioPolicyService.cpp:1024-1058`, android14-release) then denies every capture by default while
   the assistant is on top. Its assistant branch re-allows only `VOICE_RECOGNITION` and `HOTWORD`. A
@@ -497,8 +497,24 @@ an activity-based gate would clip the onset.
   whenever `AssistantRole.held()` is true. At every capture's end it logs
   `capture #N heard: <source> peak … dBFS, z/n chunks all-zero, silenced=…` (an `E` when every chunk
   was zero). The `silenced` flag comes from `AudioRecord.getActiveRecordingConfiguration()`.
-  Consequence, unverified: while the role is held, CarPlay calls also use `VOICE_RECOGNITION`. They
-  therefore lose whatever echo cancellation the platform attaches to `VOICE_COMMUNICATION`.
+  On the 2026-10-27 evening drive (221), the 21:28:50 Siri turn logged `capture #2 heard:
+  VOICE_RECOGNITION peak 5746 (-15 dBFS), 5/266 chunks all-zero, silenced=false`. The two calls
+  either side logged -11 dBFS and -8 dBFS. Consequence, still unverified: while the role is held,
+  CarPlay calls also use `VOICE_RECOGNITION`. They therefore lose whatever echo cancellation the
+  platform attaches to `VOICE_COMMUNICATION`. No echo was reported on that drive.
+- **A call whose far end was silent (2026-10-27 21:28, incoming, answered from the call pill).** The
+  far end heard the driver, but the driver heard nothing. The capture rules out the receive path. The
+  phone's telephony stream carried 794 frames (`stream 100 ended after 794 frames (0 drops)`) and the
+  app decoded and played all 794. The call sink's loudness clock (`DUCK_PEAK_THRESHOLD`, peak 800)
+  saw almost nothing: the sink was released for "idle 3s" seven times in 24 s. The only loud audio
+  was about 2.5 s at 21:28:25, right after two taps on the call screen. The callback 10 s later, made
+  through Siri, ran 6.3 min (12,645 frames) through the same path and played normally. So the silence
+  came from the phone or the network, not from this app. One app-side defect is visible here,
+  although it did not cause the silence. `Purpose.CALL` times out on the loud clock rather than the
+  delivery clock. Every pause in the far end's speech longer than 3 s therefore tears the call
+  track down. The next word then waits about 0.5 s for a new codec and buffer fill, and the volume
+  knob falls back to media for that gap. The same cycling shows in the good call
+  (21:32:24-21:33:17).
 - **Manifest**: `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE`. A Play install asks for the mic at
   first launch; `-g` is the sideload equivalent.
 - **A refused or dying recorder is retried (since 2026-10-26).** Until then this bullet said "recreate
