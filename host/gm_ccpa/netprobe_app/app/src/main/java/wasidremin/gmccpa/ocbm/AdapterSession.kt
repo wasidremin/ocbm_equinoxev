@@ -94,7 +94,8 @@ object AdapterSession {
             StartupClock.note("keyed")
             main.post { if (epoch.get() == e) onKeyed?.invoke() }
         }
-        val uplink = MicUplink(app.getSystemService(android.media.AudioManager::class.java))
+        val uplink = MicUplink(app.getSystemService(android.media.AudioManager::class.java),
+            assistantHeld = { wasidremin.gmccpa.voice.AssistantRole.held(app) })
         uplink.directSink = { pcm, len -> c.sendMicPcm(pcm, len) }
         uplink.start()
         mic = uplink

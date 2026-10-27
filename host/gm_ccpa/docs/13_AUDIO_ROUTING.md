@@ -32,7 +32,7 @@ Media took **6 underruns in 843 frames** (§3 rule 2). All four are filed as row
 | Per-purpose sinks: CALL and NAV routing, AAC-ELD decode, silence-fill watchdog (`VoiceRouter.kt`) | **Owner-confirmed on the truck 2026-09-04** (no capture committed): Siri→`Voice`, Call→`Phone`/`Call`, Nav→`Navigation` each audible on the correct volume group. The **ALERT** sink is still unexercised. The energy-gated **ducking** IS now exercised (2026-09-09 capture) and is defective — see §3 Ducking |
 | AAC-ELD decode of the Siri downlink | **Device-proven 2026-09-09**: `[voice] siri: AAC-ELD 16000Hz 1ch -> AudioTrack(usage=16), decoder=c2.android.aac.decoder`. Note the decoder is SOFTWARE — this head unit has no hardware audio codec of any kind (§5) |
 | `VoiceRouter` AU delivery | **DEFECTIVE, measured 2026-09-09**: `stopping — 249 AUs routed, 42 dropped` — 17 % of one Siri turn discarded by the `w == 0` branch in `Sink.feed`. Filed as A6 |
-| Mic uplink (`MicUplink.kt`, `mic-uplink-eld` feature) | **Owner-confirmed on the truck 2026-09-04**: works. CarPlay raises the AAOS mic-in-use indicator when it requests the mic and it clears cleanly on release; no GM AAOS mic volume/gain control exists (expected) |
+| Mic uplink (`MicUplink.kt`, `mic-uplink-eld` feature) | **Owner-confirmed on the truck 2026-09-04**: works. CarPlay raises the AAOS mic-in-use indicator when it requests the mic and it clears cleanly on release; no GM AAOS mic volume/gain control exists (expected). **Broken while GM CCPA holds the assistant role** (2026-10-27: Android silences the assistant's `VOICE_COMMUNICATION` capture). The fix switches the source to `VOICE_RECOGNITION` and is not yet truck-verified (§4) |
 | `AacPlayer.reclaimFocus()` (recovers from `AUDIOFOCUS_LOSS` without a permanent hang) | Landed 2026-08-28, compiles — **not truck-verified** |
 | Media recovery after a voice/call turn | **FIXED 2026-09-08 (`b8e8736`); truck re-measurement RECORDED 2026-09-09 at 1.95 s.** Owner-observed 2026-09-04 as 10–20 s of silence; device-measured at **12.0 s** before the fix, **1.95 s** after (assistant edge `22:55:50.348` → `media resumed after focus gain` `22:55:52.295`). Two clocks: `assistantTick` cleared `pausedForAssistant` after `ASSISTANT_HOLD_MS` (4 s), but focus was abandoned only by `Sink.release()` at `Purpose.idleMs` (15 s for ASSISTANT), so media resumed on the focus edge, not the assistant edge. `ASSISTANT.idleMs` is now `ASSISTANT_HOLD_MS + 1` sweep period. The design target was ~1 s; the measured 1.95 s is the sweep's 1 Hz throttle on top of it, and is accepted — see §3a |
 
@@ -474,7 +474,7 @@ indicator when it requests the mic and it clears cleanly on release; there is no
 control (none is expected).
 
 
-`MicUplink.kt` (204 lines) connects eagerly to `127.0.0.1:9112` (the same socket carries the capture
+`MicUplink.kt` connects eagerly to `127.0.0.1:9112` (the same socket carries the capture
 gate and the outbound PCM — a data-triggered connect would deadlock). Gates on the control line, never
 on downlink activity: the receiver writes `uplink on <rate> <ch>\n` when iOS SETUPs type 100 with
 `input=true` and `uplink off\n` at teardown — Siri wants the mic before any downlink audio arrives, so
@@ -482,8 +482,23 @@ an activity-based gate would clip the onset.
 
 - **Send**: `mic <len>\n` + `<len>` bytes S16LE PCM at the gated rate/channels. The Rust side does RTP
   framing, encryption with the stream input key, and the byte-order swap.
-- **Capture**: `AudioRecord(VOICE_COMMUNICATION, 16000, MONO, PCM_16BIT, minBufferSize × 3)`, 20 ms
-  chunks, dedicated thread at `URGENT_AUDIO`.
+- **Capture**: `AudioRecord(<source>, 16000, MONO, PCM_16BIT, minBufferSize × 3)`, 20 ms chunks,
+  dedicated thread at `URGENT_AUDIO`. The source is `VOICE_COMMUNICATION` unless the app holds the
+  car's assistant role, in which case it is `VOICE_RECOGNITION` (next bullet).
+- **Holding the assistant role silences `VOICE_COMMUNICATION` (2026-10-27 drive, fixed in source,
+  not yet truck-verified).** Picking GM CCPA as the assistant (T14, the wheel-button path) makes our
+  UID the assistant. Android 14's `AudioPolicyService::updateUidStates_l`
+  (`AudioPolicyService.cpp:1024-1058`, android14-release) then denies every capture by default while
+  the assistant is on top. Its assistant branch re-allows only `VOICE_RECOGNITION` and `HOTWORD`. A
+  denied recorder raises no error: it reports RECORDING, delivers full-rate chunks of zeros, and the
+  uplink faithfully sends them. On the 2026-10-27 drive there were four wheel-button Siri turns.
+  Each logged `capturing VOICE_COMMUNICATION`, about 300 chunks were sent per turn, and Siri heard
+  nothing. iOS ended each turn about 6 s after it opened. `MicUplink` now picks `VOICE_RECOGNITION`
+  whenever `AssistantRole.held()` is true. At every capture's end it logs
+  `capture #N heard: <source> peak … dBFS, z/n chunks all-zero, silenced=…` (an `E` when every chunk
+  was zero). The `silenced` flag comes from `AudioRecord.getActiveRecordingConfiguration()`.
+  Consequence, unverified: while the role is held, CarPlay calls also use `VOICE_RECOGNITION`. They
+  therefore lose whatever echo cancellation the platform attaches to `VOICE_COMMUNICATION`.
 - **Manifest**: `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE`. A Play install asks for the mic at
   first launch; `-g` is the sideload equivalent.
 - **A refused or dying recorder is retried (since 2026-10-26).** Until then this bullet said "recreate

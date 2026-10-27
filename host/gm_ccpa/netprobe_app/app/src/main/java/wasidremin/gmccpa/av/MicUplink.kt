@@ -44,6 +44,8 @@ import java.util.concurrent.atomic.AtomicLong
 class MicUplink(
     /** Only for [micDiag]: who else is recording when ours fails. Null skips the diagnosis. */
     private val audio: AudioManager? = null,
+    /** True while this app holds the car's assistant role. It picks the capture source; see [sourceFor]. */
+    private val assistantHeld: () -> Boolean = { false },
 ) {
 
     private val log = ProbeLog.sub("mic")
@@ -233,14 +235,13 @@ class MicUplink(
      * path is switching for the same voice event), so a fresh recorder a moment later is worth trying.
      */
     @SuppressLint("MissingPermission")   // RECORD_AUDIO is declared and asked for at first launch
-    private fun openRecorder(rate: Int, mask: Int, minBuf: Int, capture: Int): AudioRecord? {
+    private fun openRecorder(source: Int, rate: Int, mask: Int, minBuf: Int, capture: Int): AudioRecord? {
         for (attempt in 0..OPEN_RETRY_MS.size) {
             if (attempt > 0 && !pauseWhileCapturing(OPEN_RETRY_MS[attempt - 1])) return null
             if (!capturing.get()) return null
             val tag = "capture #$capture attempt ${attempt + 1}/${OPEN_RETRY_MS.size + 1}"
             val rec = try {
-                AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, rate, mask,
-                    AudioFormat.ENCODING_PCM_16BIT, minBuf * 3)
+                AudioRecord(source, rate, mask, AudioFormat.ENCODING_PCM_16BIT, minBuf * 3)
             } catch (t: Throwable) {
                 log.e("AudioRecord: ${t.javaClass.simpleName}: ${t.message} ($tag) — ${micDiag()}"); continue
             }
@@ -262,14 +263,38 @@ class MicUplink(
         return null
     }
 
+    /**
+     * VOICE_RECOGNITION while this app is the car's assistant, VOICE_COMMUNICATION otherwise.
+     *
+     * Android silences the assistant's own mic unless it records with VOICE_RECOGNITION or HOTWORD.
+     * `AudioPolicyService::updateUidStates_l` (android14-release, AudioPolicyService.cpp:1024-1058)
+     * starts every capture at `allowCapture = !isAssistantOnTop && …`, and the assistant-UID branch
+     * allows only those two sources again. Holding the role (Settings ▸ Voice, the wheel-button
+     * path) makes our UID the assistant, and CarPlay on screen makes it "on top". After that, a
+     * VOICE_COMMUNICATION recorder starts, reports RECORDING, and delivers full-rate chunks of
+     * zeros with no error anywhere. On the 2026-10-27 drive there were four wheel-button Siri turns.
+     * Every chunk was sent, and Siri heard nothing each time. The mic itself was owner-confirmed on
+     * 2026-09-04, before the role existed.
+     *
+     * When we do not hold the role, keep the proven VOICE_COMMUNICATION and its call processing.
+     * When we do hold it, CarPlay calls also go out through VOICE_RECOGNITION, because the other
+     * source is silenced. Whether the car still cancels echo on calls is unverified.
+     */
+    private fun sourceFor(): Pair<Int, String> =
+        if (runCatching { assistantHeld() }.getOrDefault(false))
+            MediaRecorder.AudioSource.VOICE_RECOGNITION to "VOICE_RECOGNITION"
+        else MediaRecorder.AudioSource.VOICE_COMMUNICATION to "VOICE_COMMUNICATION"
+
     private fun captureLoop(rate: Int, channels: Int, mask: Int, minBuf: Int, chunk: Int, capture: Int) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
         val buf = ByteArray(chunk)
         var rec: AudioRecord? = null
         var reopens = 0
+        val (source, sourceName) = sourceFor()
+        val level = MicLevel()
         try {
             while (capturing.get() && running.get()) {
-                val r = openRecorder(rate, mask, minBuf, capture)
+                val r = openRecorder(source, rate, mask, minBuf, capture)
                 if (r == null) {
                     if (capturing.get()) {
                         log.e("no mic for this gate — the car refused the input ${OPEN_RETRY_MS.size + 1} times (capture #$capture)")
@@ -288,10 +313,11 @@ class MicUplink(
                         "should reach the seam within one bring-up (262ms on 2026-09-09)")
                 }
                 if (reopens == 0) {
-                    log.i("capturing VOICE_COMMUNICATION ${rate}Hz ${channels}ch, ${chunk}B/chunk (capture #$capture)")
-                    SessionTrace.Board.up(BOARD, "gate OPEN — capturing VOICE_COMMUNICATION ${rate}Hz ${channels}ch, ${chunk}B/${CHUNK_MS}ms")
+                    val why = if (source == MediaRecorder.AudioSource.VOICE_RECOGNITION) " (we hold the assistant role)" else ""
+                    log.i("capturing $sourceName$why ${rate}Hz ${channels}ch, ${chunk}B/chunk (capture #$capture)")
+                    SessionTrace.Board.up(BOARD, "gate OPEN — capturing $sourceName ${rate}Hz ${channels}ch, ${chunk}B/${CHUNK_MS}ms")
                 }
-                val n = pump(r, buf, chunk) ?: return   // null: the gate closed normally
+                val n = pump(r, buf, chunk, level) ?: return   // null: the gate closed normally
                 runCatching { r.stop() }; runCatching { r.release() }   // deliberate: replaced or given up
                 rec = null
                 if (!capturing.get()) return
@@ -313,12 +339,13 @@ class MicUplink(
                 log.w("AudioRecord.read -> $n mid-capture — reopening the mic ($reopens/$MAX_REOPENS, capture #$capture) — ${micDiag()}")
             }
         } finally {
+            reportLevel(capture, sourceName, level, rec)   // before stop(): the silenced flag needs a live recorder
             rec?.let { runCatching { it.stop() }; runCatching { it.release() } }   // deliberate: teardown
         }
     }
 
     /** Read whole chunks until the gate closes (null) or a read fails (that read's return code). */
-    private fun pump(rec: AudioRecord, buf: ByteArray, chunk: Int): Int? {
+    private fun pump(rec: AudioRecord, buf: ByteArray, chunk: Int, level: MicLevel): Int? {
         while (capturing.get() && running.get()) {
             var off = 0
             while (off < chunk && capturing.get()) {
@@ -326,9 +353,30 @@ class MicUplink(
                 if (n <= 0) return if (capturing.get()) n else null
                 off += n
             }
-            if (off == chunk) send(buf, chunk)
+            if (off == chunk) {
+                level.add(buf, chunk)
+                send(buf, chunk)
+            }
         }
         return null
+    }
+
+    /**
+     * One line per capture: how loud it was, and Android's own silenced flag. A silenced recorder
+     * raises no error at all (see [sourceFor]), so this line is the only evidence that Siri was fed zeros.
+     */
+    private fun reportLevel(capture: Int, source: String, level: MicLevel, rec: AudioRecord?) {
+        if (level.chunks == 0) return
+        val silenced = if (rec != null && Build.VERSION.SDK_INT >= 29)
+            runCatching { rec.activeRecordingConfiguration?.isClientSilenced?.toString() }.getOrNull() ?: "?" else "?"
+        val line = "capture #$capture heard: $source peak ${level.peak} (${level.dbfs()} dBFS), " +
+            "${level.zeroChunks}/${level.chunks} chunks all-zero, silenced=$silenced"
+        if (level.allZero) {
+            log.e("$line — pure digital silence, so the phone heard nothing this turn — ${micDiag()}")
+            SessionTrace.Board.note(BOARD, "SILENT (capture #$capture: every chunk zero, silenced=$silenced)")
+        } else {
+            log.i(line)
+        }
     }
 
     /** Sleep [ms] in slices so [stopCapture]'s 500 ms join is not outlasted. False once the gate closed. */
@@ -411,4 +459,32 @@ class MicUplink(
         captureThread = null   // the capture thread owns AudioRecord stop()/release() in its finally
         log.i("capture stopped — $why")
     }
+}
+
+/**
+ * Loudness of one capture, from S16LE chunks. A live car mic never delivers an exact zero for a
+ * whole chunk, because there is always a noise floor. Zero chunks are what Android hands a silenced recorder.
+ */
+internal class MicLevel {
+    var chunks = 0; private set
+    var zeroChunks = 0; private set
+    /** Largest |sample| seen, 0..32768. */
+    var peak = 0; private set
+    val allZero get() = chunks > 0 && zeroChunks == chunks
+
+    fun add(pcm: ByteArray, len: Int) {
+        var p = 0
+        var i = 0
+        while (i + 1 < len) {
+            val s = (pcm[i].toInt() and 0xFF) or (pcm[i + 1].toInt() shl 8)
+            val a = if (s < 0) -s else s
+            if (a > p) p = a
+            i += 2
+        }
+        chunks++
+        if (p == 0) zeroChunks++
+        if (p > peak) peak = p
+    }
+
+    fun dbfs(): String = if (peak == 0) "-inf" else "%.0f".format(20 * kotlin.math.log10(peak / 32768.0))
 }

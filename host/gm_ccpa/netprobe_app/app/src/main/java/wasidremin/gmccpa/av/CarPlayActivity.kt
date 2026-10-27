@@ -1190,7 +1190,8 @@ class CarPlayActivity : Activity() {
         ).also { it.start() }
         // Connect eagerly: the same socket carries the capture gate, so a data-triggered connect
         // would deadlock (no connection -> no gate -> no capture -> no data).
-        micUplink = MicUplink(getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager).also { it.start() }
+        micUplink = MicUplink(getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager,
+            assistantHeld = { wasidremin.gmccpa.voice.AssistantRole.held(applicationContext) }).also { it.start() }
 
         // Bind BEFORE returning so a failure is visible and retryable, not swallowed on a thread.
         val vs = bindOrNull(9001) ?: run { failStart("video"); return }

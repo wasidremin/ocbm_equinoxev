@@ -283,7 +283,7 @@ needs an adapter firmware update (`tools/ocbm_install.sh`), not only a Play rele
 **Done means.** With two paired iPhones in range, the one at the top of the list connects. Connect
 on the other one moves CarPlay to it. Both survive an adapter reboot.
 
-## T13. GM app: CarPlay turn-by-turn in the instrument cluster (raised 2026-10-26; IMPLEMENTED, unverified on the car)
+## T13. GM app: CarPlay turn-by-turn in the instrument cluster (raised 2026-10-26; WORKS on the car 2026-10-27)
 
 **Why.** Apple Maps' next turn, distance and ETA belong in the Equinox cluster. The box already
 delivers them: the Proven tier declares and subscribes iAP2 route guidance (`features.rs`), and
@@ -320,6 +320,12 @@ These lines mean something specific when they appear:
 
 The beat line now reads `nav=N`.
 
+**Car result (2026-10-27, versionCode 220).** The owner reports the cluster shows the turns. In the
+log, the toggle went on with a route already running (11:03:09). The bootstrap launched
+`CarAppActivity`, the host bound a session 0.5 s later, and `navigationStarted` and `updateTrip #1`
+followed. MainActivity was back in front at +1.1 s. `updateTrip` then ran at about 1 Hz through two
+reroutes. One open check remains: whether the cluster clears when a route ends at the destination.
+
 **Later (adapter firmware, `tools/ocbm_install.sh`).**
 - Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.
 - Add `0x5200` selectors 3–5 so ExitInfo, time zone and EV fields arrive (doc 03 selector gap).
@@ -329,7 +335,7 @@ The beat line now reads `nav=N`.
 **Done means.** On the Equinox, a CarPlay route shows its next turn with the right GM arrow,
 distance counting down, and the ETA. The cluster clears when the route ends.
 
-## T14. GM app: the steering-wheel voice button starts Siri (raised 2026-10-26; candidate shipped, unverified)
+## T14. GM app: the steering-wheel voice button starts Siri (raised 2026-10-26; button WORKS 2026-10-27, mic fix unverified)
 
 **Why.** The owner keeps the iPhone off the car's own Bluetooth, because the car then takes the
 calls. On AAOS the wheel's push-to-talk is routed by `CarInputService`:
@@ -351,8 +357,22 @@ exposes the choice at all; the VCU has no adb to set it otherwise. Cost of selec
 Assistant ("Hey Google", car voice commands) is off, and the default `SpeechRecognizer` is a stub
 that refuses.
 
+**Car result (2026-10-27, versionCode 220).**
+- **The picker exists.** The log shows
+  `picker=com.android.car.settings/…AssistantAndVoiceSettingsActivity`, `current=com.google.android.carassistant`.
+- **Selection works.** At 11:05:21 the app logged "selected as the car's assistant".
+- **The button works.** Four wheel presses each logged `wheel button (assistant session,
+  flags=0x23) -> Siri press sent=true`. Each time, iOS opened the `speechRecognition` input stream
+  and Siri spoke.
+- **Siri heard nothing.** Holding the role makes Android silence the app's `VOICE_COMMUNICATION`
+  mic: zeros, with no error. See `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
+
+The fix records with `VOICE_RECOGNITION` while the role is held. It is in source and not published.
+
 **Done means.** The `voice:` line shows a picker, GM CCPA can be selected, and a wheel press during
-CarPlay logs `voice: wheel button … -> Siri press sent=true` and brings up Siri.
+CarPlay logs `voice: wheel button … -> Siri press sent=true` and brings up Siri. The first three
+were met on 2026-10-27. What remains is that Siri hears the request: the capture's
+`capture #N heard: VOICE_RECOGNITION …` line shows a real peak, with no all-zero `E`.
 
 ## Left off this plan
 

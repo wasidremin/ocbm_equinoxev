@@ -136,10 +136,16 @@ object AssistantRole {
         val current: String?,
     )
 
+    /** Just the role check. MicUplink asks it at every capture, because holding the role changes which mic source Android lets through. */
+    fun held(ctx: Context): Boolean =
+        Build.VERSION.SDK_INT >= 29 && runCatching {
+            ctx.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT)
+        }.getOrNull() == true
+
     fun state(ctx: Context): State {
         val rm = if (Build.VERSION.SDK_INT >= 29) ctx.getSystemService(RoleManager::class.java) else null
         val available = rm?.let { runCatching { it.isRoleAvailable(RoleManager.ROLE_ASSISTANT) }.getOrNull() } ?: false
-        val held = rm?.let { runCatching { it.isRoleHeld(RoleManager.ROLE_ASSISTANT) }.getOrNull() } ?: false
+        val held = held(ctx)
         val picker = PICKERS.map { Intent(it) }.firstOrNull { intent ->
             runCatching { intent.resolveActivity(ctx.packageManager) != null }.getOrDefault(false)
         }
