@@ -108,13 +108,6 @@ impl Drop for LocalMfiSigner {
 
 impl LocalMfiSigner {
     pub fn open() -> io::Result<Self> {
-        // Remote coprocessor (Raspberry Pi port): there is no /dev/i2c-1 on this host, so opening it
-        // here would fail the whole control connection before a single trait method ran — which is
-        // exactly what "MFi open: No such file or directory" was. Hand back a signer with no fd; the
-        // trait impls below dispatch over the network and never touch `self.fd`.
-        if mfi_wire::client::addr().is_some() {
-            return Ok(Self { fd: -1 });
-        }
         // O_CLOEXEC: never let the chip handle leak into a child process.
         let fd = unsafe {
             libc::open(c"/dev/i2c-1".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC)
@@ -161,15 +154,7 @@ impl LocalMfiSigner {
     }
 
     /// DeviceVersion (reg 0x00) — a cheap warm-up/liveness read (=0x03 on this unit).
-    ///
-    /// `None` with no fd: on the remote-coprocessor path `open()` hands back `fd = -1` and there is
-    /// no local register to read, so a raw `rd` here just burns five EBADF retries and reports a
-    /// chip failure the host does not have. `mfid` exposes no DeviceVersion opcode, so the honest
-    /// answer is "unknown", not "failed".
     pub fn device_version(&self) -> Option<u8> {
-        if self.fd < 0 {
-            return None;
-        }
         let _lock = MfiLock::acquire().ok()?;
         let mut v = [0u8; 1];
         if self.rd(0x00, &mut v) {
@@ -251,15 +236,12 @@ impl Drop for MfiLock {
     }
 }
 
+/// CreateSignature input: a SHA-1 digest.
+const MFI_DIGEST_LEN: usize = 20;
+
 impl MfiSigner for LocalMfiSigner {
     /// CopyCertificate: reg 0x30 = length (2 BE), reg 0x31 = cert bytes (the genuine ~945-byte cert).
     fn copy_certificate(&mut self) -> io::Result<Vec<u8>> {
-        // Remote coprocessor (Raspberry Pi port): this host has no /dev/i2c-1, so the chip is
-        // reached over USB-NCM. Dispatching INSIDE the impl keeps `LocalMfiSigner`'s type identical,
-        // so `ControlServer<_, LocalMfiSigner>` and every other generic instantiation are unchanged.
-        if let Some(addr) = mfi_wire::client::addr() {
-            return mfi_wire::client::cert(addr).map_err(io::Error::from);
-        }
         let _lock = MfiLock::acquire()?; // held for the whole 0x30→0x31 transaction
         let mut lb = [0u8; 2];
         if !self.rd(0x30, &mut lb) {
@@ -279,18 +261,15 @@ impl MfiSigner for LocalMfiSigner {
     /// CreateSignature over a 20-byte SHA-1 digest: write challenge (0x20 len / 0x21 data), trigger
     /// (0x10=1), poll status (0x10 bit4), read sig (0x11 len / 0x12 data) — genuine 128-byte RSA-1024.
     fn create_signature(&mut self, digest: &[u8]) -> io::Result<Vec<u8>> {
-        if let Some(addr) = mfi_wire::client::addr() {
-            return mfi_wire::client::sign(addr, digest).map_err(io::Error::from);
-        }
-        // Same length guard the remote path applies, so a wrong-length digest is refused here
-        // instead of being written to reg 0x20/0x21 for the chip to NAK opaquely.
-        if digest.len() != mfi_wire::DIGEST_LEN {
+        // A wrong-length digest is refused here instead of being written to reg 0x20/0x21 for the
+        // chip to NAK opaquely.
+        if digest.len() != MFI_DIGEST_LEN {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
                     "digest is {} bytes, expected {}",
                     digest.len(),
-                    mfi_wire::DIGEST_LEN
+                    MFI_DIGEST_LEN
                 ),
             ));
         }
@@ -462,14 +441,8 @@ fn mfi_selftest() {
         eprintln!("[carplayd] open /dev/i2c-1: {e}");
         std::process::exit(1);
     });
-    let remote = mfi_wire::client::addr();
     match signer.device_version() {
         Some(v) => println!("[carplayd] MFi chip open (local i2c), DeviceVersion=0x{v:02x}"),
-        // The remote path has no local register to read; cert + sign below still exercise the real
-        // chip over the wire, so failing the whole self-test here would be a false negative.
-        None if remote.is_some() => {
-            println!("[carplayd] MFi via remote coprocessor — DeviceVersion not available, skipped")
-        }
         None => {
             eprintln!("[carplayd] MFi DeviceVersion read failed");
             std::process::exit(1);
@@ -591,8 +564,8 @@ const CARPLAY_CFG_FILE_DEFAULT: &str = "/tmp/carplay_cfg.yaml";
 /// sandbox's writable set), so `com.carlink.projection` writes into its own data directory and
 /// points us at it. carplayd runs as root there, so reading an app-private path is fine.
 ///
-/// Same opt-in shape as every other Pi-port override (`CARPLAY_MFI_ADDR`, `BOX_STATE_DIR`,
-/// `BOX_HOSTAPD_CONF`): unset, the CCPA behaves exactly as before. Resolved once and cached —
+/// Same opt-in shape as every other Pi-port override (`BOX_STATE_DIR`, `BOX_HOSTAPD_CONF`):
+/// unset, the CCPA behaves exactly as before. Resolved once and cached —
 /// `getenv`/`setenv` are not mutually thread-safe and this is read from the per-connection config
 /// load while other threads may still be arming levers.
 fn carplay_cfg_file() -> &'static str {

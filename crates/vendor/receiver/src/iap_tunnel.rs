@@ -585,7 +585,6 @@ enum ExecOutcome {
 /// |---|---|---|---|
 /// | CCPA box, wired/wireless CarPlay (`carplayd`) | the box | same board, `/dev/i2c-1` | local — `local-mfi` |
 /// | gm_ccpa: GM `gminfo37` head unit owns the SoftAP and the CarPlay session; the CCPA is **only** a BT radio + MFi coprocessor | the head-unit Android app | on the **box**, across USB | remote — OCBM `CH_MFI` |
-/// | Pi / NCM bring-up | the host | on the box, across USB-NCM | remote — `mfi-wire` to `mfid` |
 ///
 /// Other OCBM hosts exist with their own arrangements; the rule is the invariant, not the table.
 ///
@@ -622,9 +621,9 @@ static REMOTE_SIGNER: Mutex<Option<Arc<Mutex<dyn mfi::auth_client::MfiSigner + S
 /// Embedders today, for calibration:
 ///  - gm_ccpa's OCBM `CH_MFI` relay uses its short-budget methods, 4 s TOTAL per op (lock
 ///    acquisition and reply wait come out of one clock). Cert measures ~1.1 s, sign ~1.7 s.
-///  - `mfi-wire` (Pi / NCM bring-up) uses a 5 s connect + 30 s I/O timeout, i.e. up to ~35 s. That
-///    is far too long to hold `SESSION` and is only survivable because that host is a bench tool,
-///    not a live projection session. Do not copy those numbers into a vehicle path.
+///  - The removed `mfi-wire` client (Pi / NCM bring-up) used a 5 s connect + 30 s I/O timeout,
+///    i.e. up to ~35 s. That is far too long to hold `SESSION`. Do not use numbers like that in a
+///    vehicle path.
 ///
 /// If you need a budget larger than a few seconds, restructure so the call happens outside the
 /// `SESSION` guard rather than raising it here.

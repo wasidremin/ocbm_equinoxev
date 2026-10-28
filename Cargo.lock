@@ -96,7 +96,6 @@ dependencies = [
  "bt-common",
  "carplay-iap2-core",
  "libc",
- "mfi-wire",
  "ocbm-proto",
  "sha2",
  "signal-hook",
@@ -129,7 +128,6 @@ dependencies = [
  "libc",
  "mdns-sd",
  "mfi",
- "mfi-wire",
  "ocbm-proto",
  "pairing",
  "portable-atomic",
@@ -526,27 +524,6 @@ name = "mfi-i2c-local"
 version = "0.0.0"
 dependencies = [
  "libc",
- "mfi-wire",
-]
-
-[[package]]
-name = "mfi-probe"
-version = "0.0.0"
-dependencies = [
- "mfi-wire",
-]
-
-[[package]]
-name = "mfi-wire"
-version = "0.0.0"
-
-[[package]]
-name = "mfid"
-version = "0.0.0"
-dependencies = [
- "mfi-i2c-local",
- "mfi-wire",
- "portable-atomic",
 ]
 
 [[package]]

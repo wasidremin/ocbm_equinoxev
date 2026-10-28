@@ -20,10 +20,6 @@ portable-atomic = "1"
 # scratchpad/fdk/install). DELIBERATE, PENDING DECISION: drop this back to ["mic-uplink"] to reclaim
 # the size if the wireless AAC-ELD uplink is not wanted.
 mfi = { path = "../../crates/vendor/mfi" }
-# MFI1 client for the REMOTE coprocessor (`CARPLAY_MFI_ADDR`). Needed by the Raspberry Pi port,
-# which runs this daemon on a host with no MFi chip of its own and reaches the CCPA's over USB-NCM.
-# Zero transitive deps; dormant when the env var is unset, i.e. on the CCPA itself.
-mfi-wire = { path = "../../crates/mfi-wire" }
 pairing = { path = "../../crates/vendor/pairing" }
 # local-mfi is explicit: carplayd runs ON THE BOX where /dev/i2c-1 is the correct chip path, and this
 # dep sets default-features = false so it would not inherit it from `default`.

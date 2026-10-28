@@ -20,7 +20,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 #
 # Requires nightly + the `rust-src` component (`rustup component add rust-src --toolchain
 # nightly`).
-# The host binaries below (ocbm-host, mfi-probe) stay on stable: they are not size-constrained.
+# The host binary below (ocbm-host) stays on stable: it is not size-constrained.
 BOX_CARGO="rustup run nightly cargo"
 BOX_STD="-Z build-std=std,panic_abort"
 
@@ -72,11 +72,3 @@ if command -v zig >/dev/null 2>&1; then
 else
   echo "skip   iap_role_switch (zig not found)"
 fi
-
-# mfid + mfi-probe — NCM bring-up instruments, NOT shipped. mfid serves the two MFi chip ops over
-# TCP so the Pi can reach the coprocessor while OCBM is not the transport; mfi-probe exercises it
-# from the host. Deployed only via tools/run_mfid.sh, which stages to /tmp and cleans up after.
-$BOX_CARGO zigbuild $BOX_STD --target armv7-unknown-linux-musleabihf --release -p mfid
-echo "built  target/armv7-unknown-linux-musleabihf/release/mfid  ($(wc -c < target/armv7-unknown-linux-musleabihf/release/mfid) bytes, armv7 static, bring-up only)"
-cargo build --release -p mfi-probe
-echo "built  target/release/mfi-probe  ($(wc -c < target/release/mfi-probe) bytes, host)"
