@@ -42,7 +42,7 @@ re-validated; this arms on the wired receiver Identify only.
 `0xFFFC`, the phone subscribes, a logged `0xFFFB` carries a real fix, and `accessoryd` accepts the
 Identify (no `0x1D03`).
 
-## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27, not yet on the car)
+## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27, box firmware installed 2026-10-28, not yet tested on a drive)
 
 **Why.** The Equinox is electric. Maps will not treat it as one until Identify says so and a status
 update follows.
@@ -91,6 +91,8 @@ logs the rejected param ids (`RX 0x1D03 decoded`). Turn the setting off and reco
 
 **Needs to reach the car.** Box firmware via `ocbm_install.sh --full` (the Identify and the answer
 both live in `carplayd`), and app build 223 or later (`4.0+ev-maps`, on the internal track 2026-10-28).
+The firmware is installed on the Equinox's adapter: reinstalled and finalized 2026-10-28 from
+commit 78d89cb (carplayd md5 `a978deab…`). What remains is the app update and a drive.
 
 **Done means.** With the setting on, the box log shows `Identify carries the app-pushed vehicle
 identity`, then `RX 0xA100 StartVehicleStatusUpdates` and `TX 0xA101 VehicleStatusUpdate`, with
