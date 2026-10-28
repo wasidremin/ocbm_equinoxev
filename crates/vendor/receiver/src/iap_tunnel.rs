@@ -351,6 +351,7 @@ pub fn handle_inbound(data: &[u8]) -> bool {
 
     let mut off = 0;
     let mut aborted = false;
+    let mut auth_failed = false;
     while off < data.len() {
         let Some(plen) = link::packet_len(&data[off..]) else {
             // Only reachable for a trailing remainder now (off > 0), since a non-frame at off == 0
@@ -372,7 +373,10 @@ pub fn handle_inbound(data: &[u8]) -> bool {
             // (2000 ms retransmit, 30 retries) iOS would retransmit every metadata update — each one
             // re-dispatched, so duplicated — and eventually declare the link dead. Two independent
             // reviewers reached this same conclusion. Now the established link keeps being serviced.
-            handle_established(sess, packet);
+            if handle_established(sess, packet) {
+                auth_failed = true;
+                break;
+            }
         } else if handle_one(sess, packet) {
             aborted = true;
             break;
@@ -381,6 +385,14 @@ pub fn handle_inbound(data: &[u8]) -> bool {
         // NB: no `break` on reaching Identified mid-walk any more — the remainder of a coalesced read
         // (e.g. the first metadata update arriving alongside IdentificationAccepted) now falls into
         // the branch above and is dispatched instead of being logged and dropped.
+    }
+    if auth_failed {
+        // The full teardown, as `reset()` does it. `reset()` takes SESSION itself and std's Mutex is
+        // not re-entrant, so release our guard first: calling it from inside `handle_established`
+        // hung this DataStream thread (found 2026-10-27, never seen on a phone).
+        drop(guard);
+        reset();
+        return true;
     }
     if aborted {
         log("tunnel session aborted (second IdentificationRejected) — clearing; next start() rebuilds fresh");
@@ -392,16 +404,19 @@ pub fn handle_inbound(data: &[u8]) -> bool {
 /// Service one link packet on an ESTABLISHED (post-Identify) tunnel session: parse it out of the link
 /// layer, ACK it, and hand the inner iAP2 payload to the normal metadata dispatcher. The ACK is the
 /// point — see the note in `handle_inbound`.
-fn handle_established(sess: &mut Session, data: &[u8]) {
+///
+/// Returns true when the phone abandoned the session (`0xAA04`). The caller holds the SESSION lock, so
+/// it does the teardown after releasing it.
+fn handle_established(sess: &mut Session, data: &[u8]) -> bool {
     let Some(rx) = sess.link.parse(data) else {
         log(&format!(
             "RX ({} B) post-Identify didn't parse as a link frame — ignoring",
             data.len()
         ));
-        return;
+        return false;
     };
     if rx.payload.is_empty() {
-        return; // bare ACK from the phone — nothing to dispatch
+        return false; // bare ACK from the phone — nothing to dispatch
     }
     crate::events::send_iap_message(&sess.link.build_ack());
 
@@ -414,8 +429,7 @@ fn handle_established(sess: &mut Session, data: &[u8]) {
     if let Some(msg_id) = link::parse_msg_id(&rx.payload) {
         if msg_id == spec::MSG_AUTHENTICATION_FAILED {
             log("RX 0xAA04 AuthenticationFailed on the established tunnel — aborting session");
-            reset();
-            return;
+            return true;
         }
     }
 
@@ -434,11 +448,12 @@ fn handle_established(sess: &mut Session, data: &[u8]) {
             let sent = crate::events::send_iap_message(&sess.link.build_raw(2, &reply));
             log(&format!("TX session-2 reply ({} B, sent={sent})", reply.len()));
         }
-        return;
+        return false;
     }
     // `rx.payload` is the bare `[40 40][len][msg-id][body][cks]` form; the dispatcher's own
     // declared-length clamp handles the trailing payload-checksum byte.
     crate::events::dispatch_iap_tunnel_message(&rx.payload);
+    false
 }
 
 /// Process exactly one link packet against the session. Returns true if the state machine aborted
@@ -889,6 +904,37 @@ mod bt_mac_tests {
         assert_eq!(parse_bd_addr("11:22:33:44:55:66:77"), None);
         assert_eq!(parse_bd_addr(""), None);
         assert_eq!(PLACEHOLDER_BT_MAC[0] & 0x02, 0x02, "not locally administered");
+    }
+}
+
+#[cfg(test)]
+mod established_abort_tests {
+    use super::*;
+
+    /// `0xAA04` on an Identified tunnel tears the session down and returns. It used to call `reset()`
+    /// while `handle_inbound` still held SESSION, which hangs on std's non-re-entrant Mutex, so the
+    /// call runs on its own thread and a hang fails the test instead of hanging the suite.
+    #[test]
+    fn auth_failed_on_an_established_tunnel_clears_the_session_without_hanging() {
+        *crate::plock(&SESSION) = Some(Session {
+            link: Link::new(),
+            state: State::Identified,
+            syn: Vec::new(),
+            started: Instant::now(),
+            syn_fallback: false,
+            link_up: true,
+            art: Default::default(),
+        });
+        let frame = Link::new().build_msg(1, spec::MSG_AUTHENTICATION_FAILED, &[]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(handle_inbound(&frame));
+        });
+        let owned = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("handle_inbound hung on 0xAA04 (SESSION re-locked by reset())");
+        assert!(owned, "the frame belongs to the tunnel session");
+        assert!(crate::plock(&SESSION).is_none(), "the abandoned session must be cleared");
     }
 }
 

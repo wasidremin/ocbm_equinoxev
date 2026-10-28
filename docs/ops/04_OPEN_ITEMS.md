@@ -74,12 +74,12 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 
 ### Box daemons — `ocbmd` / `carplayd` / `iap2d` / the supervisor
 
-- **Latent self-deadlock on a post-Identify `0xAA04 AuthenticationFailed` (found 2026-10-27, not
-  fixed).** `iap_tunnel::handle_established` calls `reset()`, which locks `SESSION`, while its caller
-  `handle_inbound` still holds that same `SESSION` guard. `std::sync::Mutex` is not re-entrant, so the
-  DataStream thread would hang there. Only reachable if the phone fails authentication on an already
-  Identified tunnel, which has not been seen. Fix shape: have `handle_established` report the abort
-  and let `handle_inbound` clear the guard, as it already does for the second `0x1D03`.
+- **CLOSED 2026-10-28 — self-deadlock on a post-Identify `0xAA04 AuthenticationFailed` (found
+  2026-10-27, never seen on a phone).** `iap_tunnel::handle_established` called `reset()`, which locks
+  `SESSION`, while its caller `handle_inbound` still held that guard; `std::sync::Mutex` is not
+  re-entrant, so the DataStream thread would have hung. `handle_established` now returns true on
+  `0xAA04`, and `handle_inbound` drops its guard before calling `reset()`. Test:
+  `iap_tunnel::established_abort_tests` (fails with a timeout against the old code).
 
 > **Also see [../ops/04_OPEN_ITEMS.md](../ops/04_OPEN_ITEMS.md) Phase 4**
 > for the ten catalogued code defects (the CT_HELLO `out_console` resync, `custom_init.sh`'s
