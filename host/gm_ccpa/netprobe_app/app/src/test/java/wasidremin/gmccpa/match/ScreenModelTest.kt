@@ -120,7 +120,7 @@ class ScreenModelTest {
         for ((role, ny) in listOf("maps" to 0.331f, "spotify" to 0.441f, "phone" to 0.555f)) {
             val t = strip(role, ny)
             for ((label, g) in listOf("app" to app, "home" to home, "dash" to dash)) {
-                val hit = ScreenModel.find(g, t, ScreenModel.STRIP_ROI, ScreenModel.Kind.STRIP.stride)
+                val hit = ScreenModel.find(g, t, ScreenModel.REFERENCE.stripRoi, ScreenModel.Kind.STRIP.stride)
                 assertTrue("$role on $label scored ${hit.score}", hit.passed && hit.score >= 0.95f)
                 assertEquals("$role y on $label", ny, hit.ny, 0.02f)
             }
@@ -131,11 +131,11 @@ class ScreenModelTest {
         val grid = listOf("phone" to 0.186f, "music" to 0.351f, "maps" to 0.517f, "spotify" to 0.848f)
         for ((role, nx) in grid) {
             val t = ScreenModel.cutTemplate(home, ScreenModel.Kind.GRID, role, nx, 0.232f, "cap2", null)
-            val onHome = ScreenModel.find(home, t, ScreenModel.GRID_ROI, ScreenModel.Kind.GRID.stride)
+            val onHome = ScreenModel.find(home, t, ScreenModel.REFERENCE.gridRoi, ScreenModel.Kind.GRID.stride)
             assertTrue("$role on home scored ${onHome.score}", onHome.passed && onHome.score >= 0.95f)
             assertEquals("$role x on home", nx, onHome.nx, 0.01f)
             for ((label, g) in listOf("app" to app, "dash" to dash)) {
-                val miss = ScreenModel.find(g, t, ScreenModel.GRID_ROI, ScreenModel.Kind.GRID.stride)
+                val miss = ScreenModel.find(g, t, ScreenModel.REFERENCE.gridRoi, ScreenModel.Kind.GRID.stride)
                 assertTrue("$role false positive on $label: ${miss.score}", !miss.passed && miss.score < 0.70f)
             }
         }
@@ -167,9 +167,9 @@ class ScreenModelTest {
 
     @Test fun namingAndRouting() {
         assertEquals("grid.maps", ScreenModel.templateName(ScreenModel.Kind.GRID, "Maps"))
-        assertEquals(ScreenModel.Kind.STRIP, ScreenModel.kindForPoint(0.03f, 0.5f))
-        assertEquals(ScreenModel.Kind.GLYPH, ScreenModel.kindForPoint(0.03f, 0.9f))
-        assertEquals(ScreenModel.Kind.GRID, ScreenModel.kindForPoint(0.5f, 0.5f))
+        assertEquals(ScreenModel.Kind.STRIP, ScreenModel.REFERENCE.kindForPoint(0.03f, 0.5f))
+        assertEquals(ScreenModel.Kind.GLYPH, ScreenModel.REFERENCE.kindForPoint(0.03f, 0.9f))
+        assertEquals(ScreenModel.Kind.GRID, ScreenModel.REFERENCE.kindForPoint(0.5f, 0.5f))
     }
 
     @Test fun nativeSizeTemplateRoundTripsJson() {

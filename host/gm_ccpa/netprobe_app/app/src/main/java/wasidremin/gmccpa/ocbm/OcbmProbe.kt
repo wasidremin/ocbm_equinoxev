@@ -507,27 +507,6 @@ class OcbmProbe(context: Context) {
         if (fail == 0) sink("=> framing + client state machine are correct with no hardware in the loop.")
     }
 
-    /**
-     * Physical size is not a YAML key. `assets/info.bplist` `displays[0]` carries
-     * `widthPhysical` / `heightPhysical` (both 0, matching the box's `/info`) and no dpi field.
-     * Logged once per subscribe. The values are not modified.
-     */
-    private fun logPhysicalSize() {
-        val bytes = runCatching { ctx.assets.open("info.bplist").use { it.readBytes() } }.getOrNull()
-        val root = bytes?.let { wasidremin.gmccpa.av.BPlist.parse(it) } as? Map<*, *>
-        val display = (root?.get("displays") as? List<*>)?.firstOrNull() as? Map<*, *>
-        fun num(key: String): String = when (val v = display?.get(key)) {
-            is Long -> v.toString()
-            is Int -> v.toString()
-            null -> "absent"
-            else -> v.toString()
-        }
-        val dpi = display?.keys?.map { it.toString() }?.filter {
-            it.contains("dpi", ignoreCase = true) || it.contains("density", ignoreCase = true)
-        }.orEmpty()
-        log.i("display: widthPhysical=${num("widthPhysical")} heightPhysical=${num("heightPhysical")} dpi=${if (dpi.isEmpty()) "none" else dpi.joinToString()}")
-    }
-
     // ---- the real link ---------------------------------------------------------------------------
 
     /** Serializes every session-control operation, so no two can interleave on one device. */
@@ -1092,8 +1071,9 @@ class OcbmProbe(context: Context) {
         // The live surface, decoder advertisement and touch mapping share this snapshot.
         VideoFrame.capture(ctx, advertise = adapterWifi)
         log.i("display: ui scale ${VideoFrame.uiScalePercent}% → advertise ${VideoFrame.width}x${VideoFrame.height} into view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}")
-        log.i("display: UI calibration=${VideoFrame.controls.uiPercent}% physical=${VideoFrame.physicalWidthMm}x${VideoFrame.physicalHeightMm}mm coded=${VideoFrame.width}x${VideoFrame.height} (requires updated receiver)")
-        logPhysicalSize()
+        log.i("display: UI calibration=${VideoFrame.controls.uiPercent}% physical=${VideoFrame.physicalWidthMm}x${VideoFrame.physicalHeightMm}mm coded=${VideoFrame.width}x${VideoFrame.height} " +
+            "→ CarPlay UI at %.2fx its default".format(java.util.Locale.US,
+                wasidremin.gmccpa.match.ScreenModel.expectedUi(VideoFrame.width, VideoFrame.physicalWidthMm)))
         if (VideoFrame.railPx > 0) {
             log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px, panel ${VideoFrame.panelPx}px")
         }

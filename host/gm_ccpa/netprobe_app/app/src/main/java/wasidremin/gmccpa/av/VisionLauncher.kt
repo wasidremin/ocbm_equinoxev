@@ -31,6 +31,10 @@ import java.util.concurrent.Executors
  * ("nav 0x06 dropped — D-Pad not advertised", 2026-10-15 log).
  * After every tap we wait for the screen to CHANGE before waiting for it to settle, otherwise the
  * stable-frame gate can return the pre-tap frame before the iPhone has reacted.
+ *
+ * Every search and tap uses the UI scale CarPlay drew the frame at ([resolveUi]): the scale this
+ * display config was last measured at, else the one its physical size predicts, checked against
+ * the strip and toggle on the first frame and measured from them when it does not fit.
  */
 object VisionLauncher {
     private val log = ProbeLog.sub("vlaunch")
@@ -90,6 +94,8 @@ object VisionLauncher {
         var glyphOtherSource = "missing"
         var verifyDashScore: Float? = null
         var verifyOtherScore: Float? = null
+        /** Set from the first frame by [resolveUi]; the reference geometry only until then. */
+        var geo: ScreenModel.Geometry = ScreenModel.REFERENCE
         /** At most these two owned images per attempt; handed to LaunchEvidence or recycled. */
         var beforeOwned: Bitmap? = null
         var verifyOwned: Bitmap? = null
@@ -217,6 +223,7 @@ object VisionLauncher {
             put("gitSha", CarPlayFrameGrabber.resolveGitSha(r.ctx))
             put("frameWidth", VideoFrame.width)
             put("frameHeight", VideoFrame.height)
+            put("uiScale", r.geo.ui.toDouble())
             put("templateSourceStrip", r.stripSource)
             put("templateSourceGrid", r.gridSource)
             put("templateSourceGlyphDashboard", r.glyphDashSource)
@@ -260,12 +267,13 @@ object VisionLauncher {
         var frame = stable(r, surface)
         r.beforeOwned = frame.owned
         r.mark("capture")
+        r.geo = resolveUi(r, frame.gray)
         r.step("frame0", "stable ${frame.gray.width}x${frame.gray.height} at 1/${ScreenModel.SCALE}; " +
-            "surface=${ScreenModel.surface(frame.gray, glyphDash, glyphOther)}")
+            "surface=${ScreenModel.surface(frame.gray, glyphDash, glyphOther, r.geo)}")
 
         // 1. Recent-apps strip: one tap, no Home.
         if (strip != null) {
-            val hit = ScreenModel.find(frame.gray, strip, ScreenModel.STRIP_ROI, ScreenModel.Kind.STRIP.stride)
+            val hit = ScreenModel.find(frame.gray, strip, ScreenModel.Kind.STRIP, r.geo)
             recordMatch(r, strip.name, hit)
             r.step("strip", "${strip.name} best at (%.3f, %.3f)".format(Locale.US, hit.nx, hit.ny), hit.score, hit.passed)
             if (hit.passed) {
@@ -278,7 +286,7 @@ object VisionLauncher {
                 val graced = graceUntilNotDashboard(r, surface, post, glyphDash, glyphOther)
                 if (graced !== post) post.owned?.recycle()
                 r.verifyOwned = graced.owned
-                val ev = ScreenModel.surfaceDetailed(graced.gray, glyphDash, glyphOther)
+                val ev = ScreenModel.surfaceDetailed(graced.gray, glyphDash, glyphOther, r.geo)
                 r.verifyDashScore = ev.dashboardScore
                 r.verifyOtherScore = ev.otherScore
                 r.mark("verify")
@@ -296,12 +304,12 @@ object VisionLauncher {
         // 3. Home/Dashboard toggle in the strip, then the grid.
         for (i in 1..MAX_TOGGLES) {
             checkBudget(r)
-            tap(r, ScreenModel.TOGGLE_NX, ScreenModel.TOGGLE_NY, "toggle", isTarget = false)
+            tap(r, r.geo.toggleNx, r.geo.toggleNy, "toggle", isTarget = false)
             val settled = afterChange(r, surface, frame.gray) ?: stable(r, surface)
             // Intermediate toggle frames are not evidence: only before + verification are kept.
             settled.owned?.recycle()
             frame = Frame(settled.gray, null)
-            val surf = ScreenModel.surface(frame.gray, glyphDash, glyphOther)
+            val surf = ScreenModel.surface(frame.gray, glyphDash, glyphOther, r.geo)
             r.step("toggle$i", "surface=$surf")
             if (surf == ScreenModel.Surface.DASHBOARD) continue
             if (grid != null) {
@@ -331,15 +339,16 @@ object VisionLauncher {
         var frame = stable(r, surface)
         r.beforeOwned = frame.owned
         r.mark("capture")
+        r.geo = resolveUi(r, frame.gray)
         for (i in 1..MAX_TOGGLES) {
             checkBudget(r)
-            tap(r, ScreenModel.TOGGLE_NX, ScreenModel.TOGGLE_NY, "toggle", isTarget = i == 1)
+            tap(r, r.geo.toggleNx, r.geo.toggleNy, "toggle", isTarget = i == 1)
             val settled = afterChange(r, surface, frame.gray)
             if (settled == null) {
                 r.step("toggle$i", "screen did not change within $CHANGE_WAIT_MS ms")
                 return CarPlayLauncher.Outcome.UNVERIFIED
             }
-            val ev = ScreenModel.surfaceDetailed(settled.gray, glyphDash, glyphOther)
+            val ev = ScreenModel.surfaceDetailed(settled.gray, glyphDash, glyphOther, r.geo)
             r.step("toggle$i", "surface=${ev.surface}")
             if (ev.surface == ScreenModel.Surface.UNKNOWN) {
                 settled.owned?.recycle()
@@ -375,7 +384,7 @@ object VisionLauncher {
         glyphDash: IconMatcher.IconTemplate?,
         glyphOther: IconMatcher.IconTemplate?,
     ): CarPlayLauncher.Outcome? {
-        val hit = ScreenModel.find(frame, grid, ScreenModel.GRID_ROI, ScreenModel.Kind.GRID.stride)
+        val hit = ScreenModel.find(frame, grid, ScreenModel.Kind.GRID, r.geo)
         recordMatch(r, grid.name, hit)
         r.step("grid", "${grid.name} best at (%.3f, %.3f)".format(Locale.US, hit.nx, hit.ny), hit.score, hit.passed)
         if (!hit.passed) return null
@@ -389,8 +398,8 @@ object VisionLauncher {
         val graced = graceUntilNotDashboard(r, surface, post, glyphDash, glyphOther)
         if (graced !== post) post.owned?.recycle()
         r.verifyOwned = graced.owned
-        val still = ScreenModel.find(graced.gray, grid, ScreenModel.GRID_ROI, ScreenModel.Kind.GRID.stride)
-        val ev = ScreenModel.surfaceDetailed(graced.gray, glyphDash, glyphOther)
+        val still = ScreenModel.find(graced.gray, grid, ScreenModel.Kind.GRID, r.geo)
+        val ev = ScreenModel.surfaceDetailed(graced.gray, glyphDash, glyphOther, r.geo)
         r.verifyDashScore = ev.dashboardScore
         r.verifyOtherScore = ev.otherScore
         r.mark("verify")
@@ -492,7 +501,7 @@ object VisionLauncher {
         other: IconMatcher.IconTemplate?,
     ): Frame {
         var current = first
-        if (ScreenModel.surface(current.gray, dash, other) != ScreenModel.Surface.DASHBOARD) return current
+        if (ScreenModel.surface(current.gray, dash, other, r.geo) != ScreenModel.Surface.DASHBOARD) return current
         val start = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - start < VERIFY_GRACE_MS) {
             try {
@@ -504,11 +513,64 @@ object VisionLauncher {
             val next = stable(r, surface)
             if (current !== first) current.owned?.recycle()
             current = next
-            if (ScreenModel.surface(current.gray, dash, other) != ScreenModel.Surface.DASHBOARD) break
+            if (ScreenModel.surface(current.gray, dash, other, r.geo) != ScreenModel.Surface.DASHBOARD) break
         }
         r.step("grace", "+${SystemClock.elapsedRealtime() - start}ms surface=" +
-            ScreenModel.surface(current.gray, dash, other))
+            ScreenModel.surface(current.gray, dash, other, r.geo))
         return current
+    }
+
+    // ---- UI scale ---------------------------------------------------------------------------------
+
+    private const val PREFS = "vision_launcher"
+
+    /** The strip icons and toggle glyphs: what every CarPlay screen shows, so what the scale is read from. */
+    private val anchorNames: List<String> =
+        ScreenModel.ROLES.map { ScreenModel.templateName(ScreenModel.Kind.STRIP, it) } +
+            listOf(ScreenModel.GLYPH_DASHBOARD, ScreenModel.GLYPH_OTHER)
+
+    private fun anchors(ctx: Context): List<IconMatcher.IconTemplate> =
+        anchorNames.mapNotNull { IconTemplateStore.loadTemplate(ctx, it) }
+
+    /** A measured scale belongs to one display config: a new size or physical size starts from its prediction. */
+    private fun scaleKey(): String =
+        "ui_scale_${VideoFrame.width}x${VideoFrame.height}_${VideoFrame.physicalWidthMm}x${VideoFrame.physicalHeightMm}"
+
+    private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /**
+     * The UI scale [g] was drawn at. Tries the scale last measured for this display config, else
+     * the one its physical size predicts. When no strip icon or toggle glyph matches there, it
+     * sweeps every scale and remembers the result. Never taps.
+     */
+    private fun resolveUi(r: Run, g: ScreenModel.Gray): ScreenModel.Geometry {
+        val expected = ScreenModel.expectedUi(VideoFrame.width, VideoFrame.physicalWidthMm)
+        val key = scaleKey()
+        val learned = prefs(r.ctx).getFloat(key, 0f).takeIf { it > 0f }
+        val start = learned ?: expected
+        val anchors = anchors(r.ctx)
+        val check = ScreenModel.anchorFit(g, anchors, start)
+        if (check.passed) {
+            r.step("scale", "ui=%.3f (%s; predicted %.3f) via %s".format(Locale.US, start,
+                if (learned != null) "measured before" else "predicted", expected, check.anchor), check.score, true)
+            return ScreenModel.geometry(g, start)
+        }
+        val fit = ScreenModel.measureUi(g, anchors, prefer = start)
+        if (!fit.passed) {
+            r.step("scale", "ui=%.3f unconfirmed: no strip icon or toggle glyph matched at any scale (best %.3f at %.3f)"
+                .format(Locale.US, start, fit.score, fit.ui), check.score, false)
+            return ScreenModel.geometry(g, start)
+        }
+        prefs(r.ctx).edit().putFloat(key, fit.ui).apply()
+        r.step("scale", "ui=%.3f measured via %s (predicted %.3f; %.3f scored %.3f)".format(Locale.US, fit.ui,
+            fit.anchor, expected, start, check.score), fit.score, true)
+        return ScreenModel.geometry(g, fit.ui)
+    }
+
+    /** The scale a saved capture was drawn at, measured from its strip and toggle; the default when nothing matches. */
+    fun geometryOf(ctx: Context, g: ScreenModel.Gray): ScreenModel.Geometry {
+        val fit = ScreenModel.measureUi(g, anchors(ctx))
+        return ScreenModel.geometry(g, if (fit.passed) fit.ui else 1f)
     }
 
     private fun toGray(bmp: Bitmap): ScreenModel.Gray {

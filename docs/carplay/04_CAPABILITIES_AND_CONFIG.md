@@ -583,11 +583,22 @@ emits `mainDisplayPanel.physicalDimensions`, parsed by `vehicle_config.rs` and f
 `DeviceConfig.display_width_mm/display_height_mm` to `/info` `widthPhysical/heightPhysical`.
 Both dimensions must be in 1–2000 mm; absent/invalid pairs preserve the legacy 0/0 offer.
 The new `carplay_ui_size_percent` preference does NOT alter coded resolution or the surface;
-100 retains unknown physical size, other values calibrate relative to a nominal 200 mm width.
-This is a calibration hint, not a continuous DPI guarantee: iOS may quantize layouts.
-Requires an updated box receiver; no live iPhone validation is claimed. The legacy host path
-still serves its static `info.bplist` and does not support this new calibration control.
-The GM legacy `ui_scale` preference continues to mean resolution scaling, not this control.
+100 retains unknown physical size. The legacy host path still serves its static `info.bplist`
+and does not support this calibration control. The GM legacy `ui_scale` preference continues to
+mean resolution scaling, not this control.
+
+**First live result (2026-10-28, iOS 27.2, box firmware 78d89cb).** The original mapping,
+`20000 / percent` mm, assumed a 200 mm default. At 83% it sent 240x93 mm for a 2470x960 picture,
+and CarPlay drew its UI **1.276x larger**, not smaller. The strip icons were 111 px instead of 87,
+measured on the car's capture. So with no physical size reported, CarPlay assumes about
+**8.066 px/mm**, which is ~306 mm for 2470 px. CarPlay's scale follows px/mm. The app now sends
+`width / 8.066 × 100 / percent` mm (`ScreenModel.physicalWidthMmFor`), so the percentage is the
+size CarPlay draws.
+
+Only that one point is measured, so whether iOS rounds other sizes to steps is still unknown. The
+vision launcher logs the scale it predicted against the one it found (`[scale]` lines), which will
+answer it. Any change to this mapping moves every tap target the launcher uses
+(`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4).
 
 #### displayProperties
 Special roles for this panel.
@@ -1006,7 +1017,7 @@ nothing, because no box implementation sits behind those keys.
 | 2 | logTransfer | `enablesLogTransfer` (parsed) | `/info logTransferInfo` + SETUP `"logTransfer"` | **Advertise tier done, device-proven 2026-08-07.** The chunk transfer itself is unimplemented; the RCS client-type allowlist would have to admit it. |
 | 3 | uiContext | not parsed | `/info uiContextURLs`, `uiContextLastOnDisplayURLs`, `uiContextNowOnDisplayURLs`; `changeUIContext` command | **Unbuilt.** |
 | 4 | vehicleDataProtocol (VDC route-sharing) | not parsed | RCS DataStream, VDC client types | **Unbuilt.** Blocked on the RCS allowlist-of-one and a VDC handler that does not exist. |
-| 4b | iAP2 VehicleStatus / EV telematics | `iapConfig:` (`vehicleInfo`, `vehicleStatus`) → Identify params 20/21 + 6/7 | iAP2 `0xA100`/`0xA101`/`0xA102` | **Built 2026-10-27; box firmware on the car 2026-10-28, not yet tested on a drive** (docs/ops/08_FUTURE_TASKS.md T7): EngineType Electric, connectors, range and battery over the AirPlay tunnel, behind an app setting that is off by default. Still unbuilt: the `ChargingParameter`/`ConsumptionParameter` EV-routing JSON, which may gate Maps' full EV route planning. Its `model_id` must name one of Apple's own models, and Apple publishes neither the ids nor their keys (T7 records the evidence). GPS (`0xFFFA`/`0xFFFB`) is T6. |
+| 4b | iAP2 VehicleStatus / EV telematics | `iapConfig:` (`vehicleInfo`, `vehicleStatus`) → Identify params 20/21 + 6/7 | iAP2 `0xA100`/`0xA101`/`0xA102` | **Built 2026-10-27; accepted by the phone on the car 2026-10-28** (docs/ops/08_FUTURE_TASKS.md T7): EngineType Electric, connectors, range and battery over the AirPlay tunnel, behind an app setting that is off by default. Still unbuilt: the `ChargingParameter`/`ConsumptionParameter` EV-routing JSON, which may gate Maps' full EV route planning. Its `model_id` must name one of Apple's own models, and Apple publishes neither the ids nor their keys (T7 records the evidence). GPS (`0xFFFA`/`0xFFFB`) is T6. |
 | 5 | mainBufferedAudio | `enablesMainBufferedAudio` (parsed) | `/info mainBufferedInfo` (presence-only) + SETUP `"mainBuffered"` | **Phase A only** — advertise + echo, wired-device-proven. Phase B unbuilt: SETUP phase 2 omits MainBuffered/AuxIn/AuxOut, so no buffered stream can arrive. Blocked on the stream-type number and the `mainBufferedInfo` shape, neither captured. Default OFF: advertising without serving is the hazard. |
 | 6 | enhancedSiri | not parsed | `/info enhancedSiriInfo` (shape unknown) | **Unbuilt.** Needs the AuxIn(107)/AuxOut(106) audio plane — shared with #5 — plus on-box mic DSP and a keyword/voice-activity detector. |
 | 7 | videoPlayback | not parsed | feature token `"videoPlayback"`, `lunaConfig.videoPresetSizes[]` | **Unbuilt.** Corrected 2026-10-27: `com.apple.developer.carplay-video` is the iPhone app's entitlement (WWDC26 session 212), not the receiver's, so it blocks nothing here. Blocked on the uncaptured wire contract: the `/info` shape, the parked or unavailable signal, and the delivery path. Whether iOS also checks vehicle certification is unknown. |

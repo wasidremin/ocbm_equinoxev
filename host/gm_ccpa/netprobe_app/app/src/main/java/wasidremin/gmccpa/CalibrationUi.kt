@@ -193,7 +193,9 @@ class CalibrationUi(
             return
         }
         val gray = grayOf(full)
-        val preview = CapturePreview(act, full)
+        // The capture's own UI scale: a template cut here is stored at the default scale like the built-ins.
+        val geo = VisionLauncher.geometryOf(act, gray)
+        val preview = CapturePreview(act, full, geo)
         val (dialog, body) = dialogShell(
             "Mark icons · ${cap.id}",
             "Tap an icon, check the blue box, then press its name. Left column = strip, bottom-left button = glyph, everything else = grid.",
@@ -210,17 +212,17 @@ class CalibrationUi(
 
         fun save(kind: ScreenModel.Kind, role: String) {
             val p = preview.marked ?: return
-            val t = ScreenModel.cutTemplate(gray, kind, role, p.first, p.second, cap.id, isoNow())
+            val t = ScreenModel.cutTemplate(gray, kind, role, p.first, p.second, cap.id, isoNow(), geo)
             IconTemplateStore.saveTemplate(act, t)
             onChanged()
-            val msg = "Saved ${t.name} (${t.width}×${t.height}) from ${cap.id}"
+            val msg = "Saved ${t.name} (${t.width}×${t.height}) from ${cap.id} (UI scale %.2f)".format(Locale.US, geo.ui)
             status.text = msg
             status.setTextColor(EqTheme.OK)
             setDetail(msg)
         }
 
         preview.onMark = { nx, ny ->
-            val kind = ScreenModel.kindForPoint(nx, ny)
+            val kind = geo.kindForPoint(nx, ny)
             status.setTextColor(EqTheme.TEXT_DIM)
             status.text = "Selected ${kind.prefix} at (%.3f, %.3f). Press the matching name.".format(Locale.US, nx, ny)
             roleRow.removeAllViews()
@@ -254,11 +256,13 @@ class CalibrationUi(
                 val bmp = BitmapFactory.decodeFile(cap.pngFile.absolutePath) ?: continue
                 val g = grayOf(bmp)
                 bmp.recycle()
-                report.append(cap.id).append("   surface=").append(ScreenModel.surface(g, dash, other)).append('\n')
+                val geo = VisionLauncher.geometryOf(act, g)
+                report.append(cap.id).append("   surface=").append(ScreenModel.surface(g, dash, other, geo))
+                    .append("   ui=%.3f".format(Locale.US, geo.ui)).append('\n')
                 for (t in templates) {
                     if (t.name.startsWith("glyph.")) continue
                     val kind = if (t.name.startsWith("strip.")) ScreenModel.Kind.STRIP else ScreenModel.Kind.GRID
-                    val hit = ScreenModel.find(g, t, kind.roi, kind.stride)
+                    val hit = ScreenModel.find(g, t, kind, geo)
                     report.append(
                         "   %-16s %.3f %-5s (%.3f, %.3f)\n".format(
                             Locale.US, t.name, hit.score, if (hit.passed) "MATCH" else "-", hit.nx, hit.ny,
@@ -330,7 +334,11 @@ class CalibrationUi(
 }
 
 /** Screenshot preview that reports the tapped point in normalized frame coordinates. */
-private class CapturePreview(ctx: Context, private val bmp: Bitmap) : View(ctx) {
+private class CapturePreview(
+    ctx: Context,
+    private val bmp: Bitmap,
+    private val geo: ScreenModel.Geometry,
+) : View(ctx) {
     var onMark: ((Float, Float) -> Unit)? = null
     var marked: Pair<Float, Float>? = null
         private set
@@ -356,12 +364,12 @@ private class CapturePreview(ctx: Context, private val bmp: Bitmap) : View(ctx) 
     override fun onDraw(c: Canvas) {
         dst.set(0f, 0f, width.toFloat(), height.toFloat())
         c.drawBitmap(bmp, null, dst, bitmapPaint)
-        for (r in listOf(ScreenModel.STRIP_ROI, ScreenModel.GRID_ROI, ScreenModel.GLYPH_ROI)) {
+        for (r in listOf(geo.stripRoi, geo.gridRoi, geo.glyphRoi)) {
             c.drawRect(r.x0 * width, r.y0 * height, r.x1 * width, r.y1 * height, roiPaint)
         }
         val m = marked ?: return
-        val kind = ScreenModel.kindForPoint(m.first, m.second)
-        val half = kind.sizeFullPx / 2f * width / bmp.width
+        val kind = geo.kindForPoint(m.first, m.second)
+        val half = kind.sizeFullPx * geo.ui / 2f * width / bmp.width
         val cx = m.first * width
         val cy = m.second * height
         c.drawRect(cx - half, cy - half, cx + half, cy + half, boxPaint)
@@ -371,7 +379,7 @@ private class CapturePreview(ctx: Context, private val bmp: Bitmap) : View(ctx) 
         if (e.action != MotionEvent.ACTION_UP || width == 0 || height == 0) return true
         var nx = (e.x / width).coerceIn(0f, 1f)
         val ny = (e.y / height).coerceIn(0f, 1f)
-        if (ScreenModel.kindForPoint(nx, ny) != ScreenModel.Kind.GRID) nx = ScreenModel.STRIP_CENTER_NX
+        if (geo.kindForPoint(nx, ny) != ScreenModel.Kind.GRID) nx = geo.stripCenterNx
         marked = nx to ny
         invalidate()
         onMark?.invoke(nx, ny)

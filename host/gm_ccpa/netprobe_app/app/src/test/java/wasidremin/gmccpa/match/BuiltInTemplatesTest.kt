@@ -58,7 +58,7 @@ class BuiltInTemplatesTest {
         val dash = ScreenModelTest.loadForTest("cap3_dashboard.png")
         val t = generated().mapValues { IconMatcher.IconTemplate.fromJson(JSONObject(it.value)) }
         for (role in listOf("maps", "spotify", "phone")) {
-            val hit = ScreenModel.find(dash, t.getValue("strip.$role"), ScreenModel.STRIP_ROI, 1)
+            val hit = ScreenModel.find(dash, t.getValue("strip.$role"), ScreenModel.REFERENCE.stripRoi, 1)
             assertTrue("strip.$role on dashboard ${hit.score}", hit.passed)
         }
         assertEquals(ScreenModel.Surface.DASHBOARD,

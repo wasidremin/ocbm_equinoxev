@@ -1,6 +1,7 @@
 package wasidremin.gmccpa
 
 import android.content.Context
+import wasidremin.gmccpa.match.ScreenModel
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -575,9 +576,11 @@ object VideoFrame {
         panelPx = panel
         val scaled = DisplayScale.even(insetAt100, percent)
         safeRightPx = scaled.coerceIn(0, (width - 2).coerceAtLeast(0)) and 1.inv()
-        // Physical-size calibration only; never change coded pixels for the new UI slider.
-        physicalWidthMm = if (controls.uiPercent == 100) 0 else
-            (20000.0 / controls.uiPercent).toInt().coerceAtLeast(1)
+        // Physical-size calibration only; never change coded pixels for the new UI slider. The width
+        // is measured from CarPlay's own default density, so the percentage is the size the phone
+        // draws. (It was 20000 / percent mm, which took 200 mm as the default; the default for 2470 px
+        // is ~306 mm, so 83% reported 240 mm and CarPlay drew 1.28x LARGER, 2026-10-28.)
+        physicalWidthMm = ScreenModel.physicalWidthMmFor(width, controls.uiPercent)
         physicalHeightMm = if (physicalWidthMm == 0) 0 else
             (physicalWidthMm.toDouble() * viewH / viewW).toInt().coerceAtLeast(1)
     }

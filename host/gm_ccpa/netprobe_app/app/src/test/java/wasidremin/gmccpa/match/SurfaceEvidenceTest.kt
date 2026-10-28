@@ -41,8 +41,9 @@ class SurfaceEvidenceTest {
     @Test fun scoresComeFromTheSameSuppliedFrame() {
         val (dash, other) = glyphs()
         val ev = ScreenModel.surfaceDetailed(homeGrid, dash, other)
-        val d = ScreenModel.find(homeGrid, dash, ScreenModel.GLYPH_ROI, 1)
-        val o = ScreenModel.find(homeGrid, other, ScreenModel.GLYPH_ROI, 1)
+        val geo = ScreenModel.geometry(homeGrid)
+        val d = ScreenModel.find(homeGrid, dash, ScreenModel.Kind.GLYPH, geo)
+        val o = ScreenModel.find(homeGrid, other, ScreenModel.Kind.GLYPH, geo)
         assertNotNull(ev.dashboardScore)
         assertNotNull(ev.otherScore)
         assertEquals(d.score, ev.dashboardScore!!, 1e-6f)

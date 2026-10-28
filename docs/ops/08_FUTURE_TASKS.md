@@ -42,7 +42,7 @@ re-validated; this arms on the wired receiver Identify only.
 `0xFFFC`, the phone subscribes, a logged `0xFFFB` carries a real fix, and `accessoryd` accepts the
 Identify (no `0x1D03`).
 
-## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27, box firmware installed 2026-10-28, not yet tested on a drive)
+## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28)
 
 **Why.** The Equinox is electric. Maps will not treat it as one until Identify says so and a status
 update follows.
@@ -92,7 +92,21 @@ logs the rejected param ids (`RX 0x1D03 decoded`). Turn the setting off and reco
 **Needs to reach the car.** Box firmware via `ocbm_install.sh --full` (the Identify and the answer
 both live in `carplayd`), and app build 223 or later (`4.0+ev-maps`, on the internal track 2026-10-28).
 The firmware is installed on the Equinox's adapter: reinstalled and finalized 2026-10-28 from
-commit 78d89cb (carplayd md5 `a978deab…`). What remains is the app update and a drive.
+commit 78d89cb (carplayd md5 `a978deab…`).
+
+**Car result (2026-10-28, versionCode 223, iOS 27.2).** The protocol half works. In all three
+sessions after the setting went on, the box logged
+`Identify carries the app-pushed vehicle identity: engines=[2] connectors=[(1, None), (2, None)]`
+and then `IdentifyAccept` with no `0x1D03`. The phone sent `RX 0xA100 StartVehicleStatusUpdates`
+(range, outside temperature, range warning), and the box answered `TX 0xA101` with 347 km and 18 °C.
+Now-playing and artwork kept working.
+
+One app-side push to `/tmp/vehicle_status` collided with the session-start file pulls
+(`CH_FILE push: no OPEN ack`) and succeeded on its 15 s retry.
+
+Still to see:
+- whether Apple Maps shows the battery and the EV routing on the screen;
+- whether cluster turn-by-turn still works with the setting on (it was off for this drive).
 
 **Done means.** With the setting on, the box log shows `Identify carries the app-pushed vehicle
 identity`, then `RX 0xA100 StartVehicleStatusUpdates` and `TX 0xA101 VehicleStatusUpdate`, with
