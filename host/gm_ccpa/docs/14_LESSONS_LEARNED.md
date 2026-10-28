@@ -44,7 +44,7 @@ On the Linux server the same dongle enumerates as `1314:2d00`, gadget `CONFIGURE
 
 Owned `init_gpio.sh` had the stock power-LED block **commented out**. Stock turns `gpio2` active-low from `init_bluetooth_wifi.sh` after Wi-Fi load. OCBM never runs that dispatcher at boot (radios on demand), so a converted box can be fully up with **no LEDs**. Dark LEDs on the Equinox therefore do not prove the port is unpowered.
 
-The LED path is restored in `ccpa/rootfs/script/init_gpio.sh` and was pushed live (`gpio2` exported, `direction=out`, `value=0`). Linux usbfs nodes for `1314:2d00` are `root:root` unless a udev rule exists; `/etc/udev/rules.d/99-ocbm-ccpa.rules` (`MODE=0660`, `TAG+=uaccess`) was added on the operator’s server so replugs do not require sudo.
+The LED path is restored in `ccpa/rootfs/script/init_gpio.sh` and was pushed live (`gpio2` exported, `direction=out`, `value=0`). Linux usbfs nodes for `1314:2d00` are `root:root` unless a udev rule exists. The rule on the operator’s server is `/etc/udev/rules.d/70-ocbm-ccpa.rules`: `SUBSYSTEM=="usb", ATTR{idVendor}=="1314", ATTR{idProduct}=="2d00", GROUP="plugdev", MODE="0660", TAG+="uaccess"`. The first version was named `99-ocbm-ccpa.rules` and never worked. systemd turns the `uaccess` tag into an ACL in `73-seat-late.rules`, so a tag added by a later file is ignored. The node stayed `root:root` with no ACL, and `ocbm-host` failed with `open: Access denied (insufficient permissions)` (2026-10-28). Keep the file numbered below 73. The `plugdev` group also covers an ssh login, which has no seat for `uaccess` to grant.
 
 ---
 

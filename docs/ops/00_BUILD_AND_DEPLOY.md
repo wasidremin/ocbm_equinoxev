@@ -166,12 +166,18 @@ and the GM host application was **not** part of this installation report.
 
 1. **USB permissions:** Linux created `/dev/bus/usb/...` as `root:root` without a udev rule for
    `1314:2d00`. An unprivileged `ocbm-host` therefore failed with `open: Access denied`; running
-   the host client under `sudo` worked. Add/document a project udev rule or make the permission
-   prerequisite explicit for Linux operators.
+   the host client under `sudo` worked. **Resolved 2026-10-28:** the server's rule is
+   `/etc/udev/rules.d/70-ocbm-ccpa.rules` (`GROUP="plugdev"`, `MODE="0660"`, `TAG+="uaccess"`).
+   The first version was named `99-` and never applied, because systemd acts on `uaccess` in
+   `73-seat-late.rules`. The full rule is in `host/gm_ccpa/docs/14_LESSONS_LEARNED.md`.
 2. **Timeout cleanup:** command-tool timeouts left detached `ocbm-host console` children holding
-   the libusb claim, producing `claim IF0: Resource busy` on the next attempt. The installer and
-   host wrapper should clean up children on timeout, and status instructions should include a
-   stale-client check.
+   the libusb claim, producing `claim IF0: Resource busy` on the next attempt. **Cause, found
+   2026-10-28:** the console bridge never exited on Linux. It treated stdin as finished only on
+   `POLLIN` plus a zero-length read, but Linux reports a drained pipe whose writer has closed as
+   `POLLHUP` alone. So every scripted `( ... ) | ocbm-host console` in the installer outlived its
+   input, and once the box rebooted it spun at full CPU on `NoDevice`. That was the revert step on
+   2026-10-28, killed by hand. The bridge now exits on `POLLHUP`/`POLLERR` and when the device
+   leaves the bus.
 3. **Root-owned report directories:** the original sudo-launched run directory became root-owned,
    so a later `prunelibs` phase failed locally with `Permission denied` before contacting the box.
    Fresh user-owned `--run-dir` paths avoided this; the installer should either normalize ownership

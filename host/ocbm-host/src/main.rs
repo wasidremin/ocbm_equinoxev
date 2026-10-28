@@ -37,6 +37,9 @@ struct Link {
     ep_out: u8,
     seq: u32,
     reasm: p::Reassembler,
+    /// The box left the bus (rebooted or unplugged). A gone device fails every read at once, so a
+    /// caller that only waits for `recv` to time out spins at full CPU instead of noticing.
+    gone: bool,
 }
 
 impl Link {
@@ -64,13 +67,16 @@ impl Link {
                 return None;
             }
             let mut tmp = [0u8; 16384];
-            if let Ok(n) = self
+            match self
                 .h
                 .read_bulk(self.ep_in, &mut tmp, Duration::from_millis(100))
             {
-                if n > 0 {
-                    self.reasm.push(&tmp[..n]);
+                Ok(n) if n > 0 => self.reasm.push(&tmp[..n]),
+                Err(rusb::Error::NoDevice) => {
+                    self.gone = true;
+                    return None;
                 }
+                _ => {}
             }
         }
     }
@@ -151,6 +157,7 @@ fn open(vid: u16, pid: u16) -> Link {
         ep_out,
         seq: 0,
         reasm: p::Reassembler::new(),
+        gone: false,
     }
 }
 
@@ -486,8 +493,8 @@ fn mode_console(link: &mut Link) {
             events: libc::POLLIN,
             revents: 0,
         }];
-        if unsafe { libc::poll(fds.as_mut_ptr(), 1, 5) } > 0 && (fds[0].revents & libc::POLLIN) != 0
-        {
+        let ready = unsafe { libc::poll(fds.as_mut_ptr(), 1, 5) } > 0;
+        if ready && (fds[0].revents & libc::POLLIN) != 0 {
             let mut inb = [0u8; 1024];
             let k = unsafe { libc::read(0, inb.as_mut_ptr() as *mut libc::c_void, inb.len()) };
             if k <= 0 {
@@ -498,6 +505,11 @@ fn mode_console(link: &mut Link) {
                 break 'outer; // Ctrl-]
             }
             link.send(p::CH_CONSOLE, p::F_SOM | p::F_EOM, &inb[..k]);
+        } else if ready && (fds[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL)) != 0 {
+            // Linux reports a drained pipe whose writer has closed as POLLHUP alone, never POLLIN,
+            // so the read-returns-0 test above never fires for scripted input (`(...) | console`)
+            // and the bridge outlived its input forever.
+            break;
         }
         if let Some((ch, _, l)) = link.recv(&mut out, Instant::now() + Duration::from_millis(15)) {
             if ch == p::CH_CONSOLE {
@@ -505,6 +517,10 @@ fn mode_console(link: &mut Link) {
                 let _ = std::io::stdout().write_all(&out[..l]);
                 let _ = std::io::stdout().flush();
             }
+        }
+        if link.gone {
+            eprintln!("\r\n[ocbm-rescue] the box left the bus; console closed");
+            break;
         }
     }
     unsafe { libc::tcsetattr(0, libc::TCSANOW, &orig) };
