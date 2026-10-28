@@ -180,13 +180,23 @@ and the GM host application was **not** part of this installation report.
    the installer’s 512 KiB safety reserve correctly prevented an unsafe placement. The guarded
    library-pruning phase was sufficient, raising free space from 4,152 KiB to 6,548 KiB. After the
    final install the observed free space was approximately 4,124 KiB, so future updates must check
-   space before staging temporary files.
+   space before staging temporary files. **Reinstall fix (2026-10-28):** that check counted the whole
+   manifest even when every file was already on the box, so it would have refused any reinstall
+   here (full manifest about 3,800 KiB, plus the reserve, against 4,124 KiB free). `place` replaces one file at a time
+   (`<path>.new`, then rename), so the preflight now reads the sizes already on the box and requires
+   the peak: growth so far plus the one file in flight, about 2,200 KiB for this unit's reinstall.
+   A fresh install still needs the full manifest.
 5. **Transport choice:** telnet is a useful rescue path, but it is a poor bulk deployment transport.
    The existing NCM `nc` path or OCBM `CH_FILE` path should be preferred for large files, with an
    end-to-end checksum and atomic rename in either case.
 6. **Recovery documentation:** the full NOR image must be described as a read/restore artifact,
    not as a USB bootstrap image. The approved scope remained userspace/rootfs work; U-Boot and the
    encrypted kernel were never modified.
+7. **`reboot` over ssh (2026-10-28, from lvalen91/ocbm PR #2):** dropbear's non-interactive shell
+   has `PATH=/usr/bin:/bin`, so a bare `reboot` is "not found". The installer's reboot phase then
+   timed out silently, and the trial's dead-man (launched over the same session) could not reboot
+   the box back to NCM. Every reboot in `tools/ocbm_install.sh` now spells `/sbin/reboot`. A telnet
+   shell inherits init's PATH, so an install over telnet never showed it.
 
 ### Backup artifact
 

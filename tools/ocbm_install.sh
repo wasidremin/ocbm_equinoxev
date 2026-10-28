@@ -288,8 +288,28 @@ echo "ocbmd present: $([ -e /usr/sbin/ocbmd ] && echo yes || echo no)"
   grep -q "vendor stack: 0" "$RUN_DIR/preflight.txt" || warn "vendor binaries still present; run tools/ncm_base_install.sh first"
 
   local free; free=$(grep -o '[0-9]*K free' "$RUN_DIR/preflight.txt" | tr -dc 0-9)
-  local want; want=$(( $(manifest | cut -d'|' -f1 | xargs wc -c 2>/dev/null | tail -1 | awk '{print $1}') / 1024 ))
-  say "need ~${want}K, have ${free}K free"
+  # Space at the PEAK of `place`, not the manifest total. push_file writes `<path>.new` and renames it
+  # over the old file, one file at a time, so the rootfs holds the growth placed so far plus the one
+  # `.new` in flight. Counting the whole manifest refused every REINSTALL: a unit that took the first
+  # install with little to spare (4,124K free after 2026-09-13) never has the full manifest free again.
+  # A fresh install (nothing on the box) still needs the full manifest, as before. Shrinking files are
+  # not credited, because jffs2 reclaims freed blocks lazily.
+  local remotes; remotes=$(manifest | cut -d'|' -f2 | tr '\n' ' ')
+  local -a old_sizes=()
+  mapfile -t old_sizes < <(box "for f in $remotes; do if [ -f \$f ]; then echo \"SZ \$(wc -c < \$f)\"; else echo 'SZ 0'; fi; done" \
+                           | tr -d '\r' | awk '$1 == "SZ" {print $2}')
+  [ "${#old_sizes[@]}" = "$(manifest | wc -l | tr -d ' ')" ] \
+    || { warn "could not read the sizes already on the box; counting every file as new"; old_sizes=(); }
+  local i=0 grown=0 peak=0 new old
+  while IFS='|' read -r l r m; do
+    new=$(wc -c < "$l" | tr -d ' ')
+    old=${old_sizes[$i]:-0}; [[ $old =~ ^[0-9]+$ ]] || old=0
+    [ $(( grown + new )) -gt "$peak" ] && peak=$(( grown + new ))
+    [ "$new" -gt "$old" ] && grown=$(( grown + new - old ))
+    i=$(( i + 1 ))
+  done < <(manifest)
+  local want=$(( (peak + 1023) / 1024 ))
+  say "need ~${want}K at the peak of placing (net growth $(( (grown + 1023) / 1024 ))K) + 512K reserve, have ${free}K free"
   [ "${free:-0}" -gt $(( want + 512 )) ] || die "not enough free space on the rootfs"
 }
 
