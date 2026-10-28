@@ -9,22 +9,22 @@ Reusable helpers for working on the adapter (not part of the shipped userspace).
 | `uart_beacon.sh` | run on the box: emit a low-churn 1 Hz marker on `/dev/ttymxc0` to find the UART TX pad (watch the counters in `/proc/tty/driver/IMX-uart`). |
 | `cold_start2.sh` | run on the box: phone-side wired-CarPlay cold start — polls for an iPhone replug, issues Apple's standard `0x51` host-role USB control request (`../accessory_init/iap_role_switch.armv7`) so the iPhone enters accessory host mode, presents the `iap2,ncm` gadget, and runs `iap2d` through iAP2 auth + identify. Needs `iap2d` + `iap_role_switch` pushed to `/tmp` first. **Do not run any host CH_MFI/`ocbm-host mfi` traffic during the sign window** (I2C contention drops the iPhone mid-auth). See [`../docs/carplay/07_PHONE_SIDE.md`](../docs/carplay/07_PHONE_SIDE.md) and HANDOFF "RESUME HERE". |
 | `uart_push.sh` | deploy a file to the box over the UART root console when OCBM is unavailable (app closed → accessory de-enumerated): gzip + base64 stream with XON/XOFF flow control, decode + gunzip on the box, md5-verify end-to-end. Slow but reliable. `uart_push.sh LOCAL REMOTE [mode]`. |
-| `va_wired_sweep.sh` | WIRED CarPlay view-area resize matrix (panel + area, both orientations, even-centred origin). No phone log exists in a wired session, so each case is judged Mac-side: control socket (`viewarea arm`/`save`, `viewarea request 1` or `TAP="x y"` on the Dock button, `shot`), app log, and the pixels of the armed rect → ACCEPTED / LOCKOUT / TEARDOWN / REFUSED-LOCALLY / INCONCLUSIVE, PNGs per case under `/tmp/valog/wired/`. Falls back to the `/tmp/carplay_viewarea2` box lever only when the app door answers `ERR`. Run from a plain Terminal (a sandboxed shell's launch kills the app). |
-| `winshot.swift` / `winshot.sh` | capture a macOS window by OWNER PID via `screencapture -o -l<CGWindowID>` (the window's own content, even under another window — never a screen region), plus `stats`/`diff` luminance numbers over a `--rect` in panel coordinates. `winshot.sh list <pid> \| shot <pid> out.png \| stats png --rect WxH@X,Y --src WxH [--top 96]`. Builds into /tmp on first use. |
 
 Deploy pattern for the box binaries: cross-build with **`../build.sh`** (never a bare `cargo
-zigbuild` — Homebrew's `rustc` shadows rustup's and has no armv7-musl std, and carplayd's eld-codec
-needs the `CC`/`AR` zig pair `build.sh` sets) → UPX **3.96** pack in the Lima
-`ccpa-build` VM (host UPX 5.x segfaults the box's 3.14 kernel), `upx -t` verify → push with
-`uart_push.sh` (or OCBM `ocbm-host push` when the app is OPEN) → install to `/usr/sbin` by `mv` over
-the running binary → `reboot`. Revert gadget/boot experiments via `reboot -f` (never
-`echo 0 > enable` with transfers pending — see [`../docs/carplay/00_ARCHITECTURE.md`](../docs/carplay/00_ARCHITECTURE.md)).
+zigbuild` — the box binaries need rustup's nightly toolchain and carplayd's eld-codec needs the
+`CC`/`AR` zig pair `build.sh` sets) → install with `ocbm_install.sh` (or push one binary with
+`ocbm_push.sh` / `uart_push.sh` and `mv` it over the running one) → `reboot`. Optional UPX packing:
+3.96 only, see `../docs/ops/00_BUILD_AND_DEPLOY.md`. Revert gadget/boot experiments via `reboot -f`
+(never `echo 0 > enable` with transfers pending — see
+[`../docs/carplay/00_ARCHITECTURE.md`](../docs/carplay/00_ARCHITECTURE.md)).
 
 ## `i2mspec_dump.py` — Apple's iAP2 message spec, decoded
 
 Decodes `iap2messages-internal.i2mspecarchive` from Xcode's CarPlaySimulator plug-in: 144 messages with
 ids, names, source, and the full parameter tree (ids, types, cardinality, enum values, Apple's notes).
 The authority for TLV parameter ids — `crates/vendor/iap2-core/src/spec.rs` was generated from it.
+**Needs the archive file, which ships only inside Xcode / the CarPlay Simulator (macOS).** This fork
+has no Mac, so the tool cannot run here; `spec.rs` and the docs carry what it produced.
 
     tools/i2mspec_dump.py --message 0x4158 --text     # one message, readable table
     tools/i2mspec_dump.py --message 0x4170            # JSON

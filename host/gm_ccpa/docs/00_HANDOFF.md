@@ -9,10 +9,10 @@ protocol code), then `evidence/session_2026-08-05/WORKING_SESSION.md`
 `11_HARDENING_PLAN.md` (live landed-vs-deferred ledger — more current than this file for the hardening
 queue) and `13_AUDIO_ROUTING.md` (audio design + build status).
 
-Project root: `~/Documents/carlink/ccpa_custom/host/gm_ccpa` (this project was merged into `ccpa_custom`
-on 2026-09-08 — see §9). The `evidence/` archive is NOT under this root: it lives in the standalone
-checkout at `~/Documents/carlink/old/gm_ccpa/evidence/`. Every bare `evidence/...` path in this doc set
-resolves there.
+Project root: `host/gm_ccpa` in this repo (merged in on 2026-09-08 — see §9). The `evidence/` archive
+is NOT in this repo: it lived in upstream's standalone checkout on the upstream owner's Mac
+(`~/Documents/carlink/old/gm_ccpa/evidence/`) and is not available in the Equinox fork. Bare
+`evidence/...` paths in this doc set point there.
 
 
 ## START HERE (2026-09-21): the uDisk composite WORKS on the Equinox EV — USB is solved, pairing is next
@@ -495,6 +495,9 @@ non-issue — coarse-grained, zero-copy `ByteBuffer`s, decode is HW `MediaCodec`
 
 ## 7. Source projects
 
+Upstream's paths, on the upstream owner's Mac — none of them exist in the Equinox fork, and
+`host/MacHost` was removed from this repo on 2026-10-27.
+
 | Path | Role | Key reuse |
 |---|---|---|
 | `~/Documents/carlink/ccpa_custom` | Rust OCBM stack + AirPlay receiver core + macOS host | JNI the `receiver`/`pairing`/`rtsp`/`mfi`/`metadata`/`iap2-core` crates; `crates/ocbm-proto`; `host/MacHost` = Kotlin OCBM-client template |
@@ -506,7 +509,8 @@ shim, a separate HEVC renderer (the salvage app is H.264-only PCM).
 
 ## 8. Hardware / environment state
 
-- **Test truck (`gminfo37`):** ADB over USB when the Mac is plugged in (serial `CJUD4R4f1b5fd0`).
+- **Test truck (`gminfo37`, upstream):** ADB over USB when the Mac is plugged in (serial `CJUD4R4f1b5fd0`).
+  The Equinox fork's car is reached only through the Play internal track and the app's log upload.
 - **`zeno.carlink`** on the unit is a **separate, unrelated app** (stock-Carlinkit-firmware product,
   `carlink_native_personal`). Do not confuse it with this project's `wasidremin.gmccpa`.
 - **`uart_cmd.sh` signature:** `uart_cmd.sh OUTFILE SECONDS 'command'`. Send one or two short commands
@@ -515,7 +519,10 @@ shim, a separate HEVC renderer (the salvage app is H.264-only PCM).
   exists at `ccpa_custom/host/uart_cmd.sh` (`Usage: uart_cmd.sh "shell command" [read_seconds]` —
   command first, seconds optional, no outfile argument); running that one against this doc's examples
   fails confusingly rather than loudly (found 2026-09-09).
-- **Mac build toolchain:** Android SDK `~/Library/Android/sdk` (platforms 35–37), kotlinc 2.3.10.
+- **Build toolchain (Equinox fork, Linux):** Android SDK `~/Android/Sdk`, Gradle 8.9, and
+  `tools/build_aab.sh [--publish]` for the Play bundle; unit tests with
+  `gradle :app:testPlayReleaseUnitTest`. Upstream's Mac toolchain, kept for reference:
+  Android SDK `~/Library/Android/sdk` (platforms 35–37), kotlinc 2.3.10.
   Gradle-free build via `tools/build_apk.sh` (kotlinc→d8→aapt2→zipalign→apksigner; Java 21 fights AGP
   7.4). **Compiles against `android-32`** (the unit's real API level, since `11` R0) — `android-35` let
   API 33+ symbols resolve at build time and `NoSuchMethodError` on the truck. Rust core: NDK

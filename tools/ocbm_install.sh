@@ -264,15 +264,15 @@ phase_preflight() {
   wait_ncm 45 || die "no NCM shell at $BOX — this installs FROM the NCM base"
   [ -x "$OCBM_HOST" ] || {
     warn "host client not built at $OCBM_HOST"
-    say "building it (needs libusb: brew install libusb)…"
-    ( cd "$REPO" && PKG_CONFIG_PATH=/opt/homebrew/opt/libusb/lib/pkgconfig cargo build --release -p ocbm-host ) \
+    say "building it (needs libusb: apt install libusb-1.0-0-dev)…"
+    ( cd "$REPO" && cargo build --release -p ocbm-host ) \
       || die "could not build ocbm-host — the trial phase cannot verify anything without it"
   }
   local need=0
   while IFS='|' read -r l r m; do
     [ -f "$l" ] || { warn "MISSING artifact $l"; need=1; }
   done < <(manifest)
-  [ "$need" = 0 ] || die "build the box binaries first (cargo zigbuild --release --target armv7-unknown-linux-musleabihf)"
+  [ "$need" = 0 ] || die "build the box binaries first (./build.sh)"
 
   box '
 echo "== base state =="

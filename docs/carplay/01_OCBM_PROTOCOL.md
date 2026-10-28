@@ -3,9 +3,10 @@
 > **STATUS:** CURRENT · the OCBM wire specification, kept in step with `crates/ocbm-proto` and
 > `ccpa/ocbmd`
 
-**OCBM is projection-agnostic.** It carries CarPlay and Android Auto over the same envelope — CarPlay
-A/V on its own channels, Android Auto as the phone's own byte stream over `CH_IP` — and the channel
-map below is the whole of what either protocol needs from the transport. It lives under `carplay/`
+**OCBM is projection-agnostic.** It carries CarPlay A/V on its own channels, and until 2026-10-27 it
+also carried Android Auto as the phone's own byte stream over `CH_IP` (Android Auto has since been
+removed from this fork). The channel map below is the whole of what a protocol needs from the
+transport. It lives under `carplay/`
 only because that is where most of its channels are used; nothing in the envelope is CarPlay-specific.
 
 OCBM is the open replacement for riddleBox's `0x55AA55AA` protocol. Like it, OCBM is a **framed
@@ -137,8 +138,8 @@ host → box:  MODE_SELECT { mode }        (only when the host wants a non-defau
   that slot is the host instance nonce (see the note under the CTRL table). A host's capability is
   expressed by which channels and opcodes it actually uses.
 - **Optional host label** (added 2026-08-27). Anything after the nonce in `CT_HELLO` is an optional
-  UTF-8 label naming *what kind* of host this is — the box serves several (a GM head-unit app using it
-  as a BT+MFi bridge, an Android Auto host driving `aa-bridge` over `CH_IP`, bench tooling) and its
+  UTF-8 label naming *what kind* of host this is — the box serves several (the GM head-unit app in its
+  bridge or box-AP role, bench tooling) and its
   behaviour and logs differ between them, yet "what is talking to me" was previously unanswerable. The
   box filters control characters, caps it at 64 chars, logs it, and reports it in `MGMT_INFO` as
   `host_name`. Purely diagnostic — nothing gates on it, and an absent label reads exactly as before.
@@ -477,6 +478,8 @@ concurrent streams sharing the voice sink (telephony + alert) cannot clobber eac
   `:9003` `atype` table above)
 - `SEAM_PKT_PLAIN 0x03` — `[len=13+pcm]["SEAV"][0x03][scid u64 LE][payload]` — an **UNENCRYPTED**
   access unit: no RTP header, no tag, no nonce, and **no `SEAM_KEY` is ever sent for that scid**.
+  **RETIRED 2026-10-27 with Android Auto:** the box producer (`sco_audio.rs`) is gone and nothing
+  sends this marker now; the value stays reserved. The rest of this entry is the record.
   Added 2026-09-03 for the Android Auto **telephony** lane: the call's audio reaches the box over
   Bluetooth HFP/SCO (CVSD, 8 kHz mono S16LE), where there is no AirPlay stream to encrypt it with, so
   the box forwards 320 B (= 160 samples = 20 ms) per frame verbatim on `CH_ALT_AUDIO` after a
@@ -621,7 +624,7 @@ and never writes to them; only source 0 is rotated. Sources:
 | `1` | `carplayd` | `/tmp/carplayd.log` | tail-only |
 | `2` | `carplayd_wl` | `/tmp/carplayd_wl.log` | tail-only |
 | `3` | `iap2d` | `/tmp/iap2d.log` | tail-only |
-| `4` | `aa-bridge` | `/tmp/aa-bridge.log` | tail-only |
+| `4` | `aa-bridge` | `/tmp/aa-bridge.log` | **retired 2026-10-27** (Android Auto removed); id reserved |
 | `5` | `rx-connect` | `/tmp/rx-connect.log` | tail-only |
 | `6` | `bt` | `/tmp/bt.log` | tail-only |
 | `7` | `radio_ap_dhcp` | `/tmp/radio_ap_dhcp.log` | tail-only |

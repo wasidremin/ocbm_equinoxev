@@ -12,7 +12,7 @@ Owner-approved exception to host-present power gating: the supervisor starts
 `radio_hal.sh bt_prewarm` once per boot. It uses the unit-derived attach mapping
 (not the owned path that starts vendor advertising daemons), initializes the kernel
 with DOWN→UP, restores the unit's SCO setup, and leaves scan disabled. No SoftAP,
-`btd`, or AA bridge is started by that boot job. Missing mapping/failed attach retains
+or `btd` is started by that boot job. Missing mapping/failed attach retains
 the existing host-present fallback. The HAL lock and an under-lock host-present
 check prevent a late boot job from resetting a session that already started.
 
@@ -779,7 +779,14 @@ BLE power) — strong evidence it was a cargo-culted leftover rather than intent
    `up`, forcing `hci_dev_do_open` regardless of what the boot scripts did to the controller. This makes
    the daemon self-sufficient rather than dependent on script history.
 
-#### Side effect — REPAIRED 2026-09-03 (this section used to say "accepted")
+#### Side effect — accepted again since 2026-10-27
+
+**Current state:** `restore_sco_setup` and `sco_audio` were removed with Android Auto on
+2026-10-27, so `btd` no longer re-applies the SCO setup after its down/up cycle. That is the original
+"accepted" position: CarPlay carries all audio, telephony included, over the AirPlay/Wi-Fi session.
+(`radio_hal.sh sco_on` and the boot prewarm's SCO restore are still in the radio seam, unused by
+`btd`.) The rest of this section is the 2026-09-03 record.
+
 
 The controller is `hciattach`'d over UART, so it carries `HCI_QUIRK_RESET_ON_CLOSE` — the `down` makes
 the kernel issue a real HCI_Reset on close, and the `up` re-reads `Read_Buffer_Size`. That discards

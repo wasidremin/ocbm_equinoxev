@@ -281,7 +281,9 @@ Kept here so a later session does not promote them into tasks.
   parked here as needing Apple to grant `com.apple.developer.carplay-video`. That is the iPhone
   app's entitlement, not the car's (WWDC26 session 212, iOS 27). What the car needs is the
   receiver feature plus a parked signal. The app already has that signal in `VehicleStateWatcher`
-  (`GEAR_SELECTION`). It stays parked until the Mac-side sources yield the wire contract.
+  (`GEAR_SELECTION`). It stays parked: the sources that would show the wire contract (the CarPlay
+  Simulator, `CarPlaySDK.framework`) are macOS-only and this fork has no Mac. The route left is an
+  advertise-only build read through the iPhone's own logs (`idevicesyslog`).
 - **Wrong panel.** Knob, d-pad, and touchpad descriptors are for other head units. The Equinox is
   a touchscreen.
 - **No surface yet.** A second CarPlay video stream on the Equinox cluster waits until the VCU

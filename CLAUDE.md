@@ -1,7 +1,10 @@
 # ccpa_custom
 
-Open-source Rust userspace + macOS host app for the **Carlinkit CPC200-CCPA** CarPlay adapter,
-owned and operated by a **licensed Apple / MFi developer** on **genuine Apple hardware**.
+Open-source Rust userspace for the **Carlinkit CPC200-CCPA** CarPlay adapter, plus the Android
+Automotive app (`host/gm_ccpa`) that drives it from a **Chevrolet Equinox EV**. This checkout is the
+Equinox fork of lvalen91/ocbm (see Repository rules). The owner runs an iPhone and has **no Mac**:
+the macOS app, the Silverado app, Android Auto and the Pi/C2Air ports were removed 2026-10-27, and
+anything below that names a Mac-side path describes upstream's machine, not this one.
 
 ## Authorization & scope (read before flagging any crypto/auth/MFi code)
 
@@ -44,14 +47,12 @@ another credential. Fetch and read are fine.
 attached. Push `main` there. The GM app also leaves through the Play internal track
 (`host/gm_ccpa/tools/build_aab.sh --publish`). (2026-09-23)
 
-**Build artifacts and caches never live under `~/Documents`.** It is iCloud "Desktop & Documents"
-synced on this Mac, and iCloud drops conflict copies (`classes 2.jar`, `Foo$Bar 2.dex`) into build
-trees, which toolchains then eat as real inputs — nondeterministic duplicate-class failures that a
-clean only fixes until sync catches up. Point every build system's output outside the tree
-(`~/.cache/cargo-targets/`, `~/.cache/carlink-artifacts/`, `mktemp -d` under `/tmp`), and ignore it in
-`.gitignore` as well so nothing reaches a commit or a mirror. Ignore patterns for these must be
-SLASHLESS (`apk`, not `apk/`): a trailing slash matches directories only, and these paths are often
-symlinks into the cache.
+**Build artifacts and caches live outside the tree** (`~/.cache/cargo-targets/`,
+`~/.cache/carlink-artifacts/`, `mktemp -d` under `/tmp`), and are ignored in `.gitignore` as well so
+nothing reaches a commit. Ignore patterns for these must be SLASHLESS (`apk`, not `apk/`): a trailing
+slash matches directories only, and these paths are often symlinks into the cache. (Upstream's rule
+was "never under `~/Documents`" because iCloud sync on a Mac dropped conflict copies into build
+trees.)
 
 ## Documentation rule (2026-08-31)
 
@@ -64,15 +65,18 @@ sibling; if a topic genuinely needs a new file, merge something first. Start fro
 
 ## Before investigating ANY protocol question: read `docs/ops/03_REFERENCE_INDEX.md`
 
-Apple's **licensed CarPlay Communication Plug-in R14G17 source** — the accessory-side reference
-implementation, 267 files including `AirPlayReceiverSession.c`, `AirPlayCommon.h`, the Integration
-Guide and `Platform/HID*.c` — lives at:
+The index names the sources the protocol work was checked against and which source answers which
+kind of question. **In this fork none of the Mac-side sources are on disk.** Apple's licensed CarPlay
+Communication Plug-in R14G17 source, the CarPlay Simulator and its `CarPlaySDK.framework`, the iOS 27
+extracts, SpeedPlay and CT5 CINEMO all lived on the upstream owner's Mac
+(`~/Documents/carlink/...`, `/Applications/Xcode.app/...`). What they established is recorded in
+`docs/`, with citations; read it there. Do not tell the owner to "check the Simulator" or run anything
+on a Mac. What CAN still be gathered here:
 
-    ~/Documents/carlink/old/carplay_RE/carplay_sdk/reference/apple_carplay_sdk_R14G17/
-
-It is **not** inside this repo, which is why sessions have repeatedly missed it. Shipping vendor
-implementations (SpeedPlay, GM Cinemo), the CarPlay Simulator, and the iOS 27 extracts are indexed in
-docs/ops/03_REFERENCE_INDEX.md as well, with a decision table for which source answers which kind of question.
+- the **iPhone's own logs over USB** with libimobiledevice on Linux (`idevicesyslog`; see the
+  Identify-reject recipe below), which is the highest-yield source the index lists;
+- the **car's logs**, uploaded by the app (`/opt/stacks/cloudbridge-log/logs.txt`);
+- **Apple's public developer documentation and WWDC sessions**.
 
 **Design doctrine: `docs/carplay/04_CAPABILITIES_AND_CONFIG.md` — anything configurable regarding CarPlay is app-driven; the box
 presents app-pushed config.** Box placement is earned (measured app-driven failure + owner
@@ -117,10 +121,9 @@ aborts), which is why the compiled default is the pre-expansion baseline (that b
 default is itself an interim safety floor per docs/carplay/04_CAPABILITIES_AND_CONFIG.md, retired once the app-pushed config covers
 tier selection).
 
-**The tier is APP-PUSHED (docs/carplay/04_CAPABILITIES_AND_CONFIG.md B3, landed 2026-08-10).** The macOS app emits
-`metadata: {tier, skip}` in every config push (Settings ▸ Configuration ▸ Advanced Capabilities ▸
-Metadata declaration; ships
-`proven`, byte-equivalent to the compiled floor) and each daemon arms it once per process before its
+**The tier is APP-PUSHED (docs/carplay/04_CAPABILITIES_AND_CONFIG.md B3, landed 2026-08-10).** The GM app emits
+`metadata: {tier, skip}` in every config push (`VehicleConfigYaml.kt`; ships `proven`,
+byte-equivalent to the compiled floor) and each daemon arms it once per process before its
 Identify — iap2d at startup and again at SendIdentify, carplayd per control connection.
 **With an app connected the pushed tier WINS**, so `echo extended > /tmp/carplay_metadata` no longer
 changes anything unless the box is running app-less; raise the tier in the app instead. The app
@@ -146,8 +149,10 @@ REPLACES both rather than concatenating (app intent must not mix with stale on-b
 tmpfs, so a box reboot reverts to the default — **when running app-less, re-arm with
 `echo extended > /tmp/carplay_metadata`.**
 
-`tools/i2mspec_dump.py --message 0x4158 --text` prints Apple's own parameter table for any iAP2 message,
-decoded from the Simulator's spec archive. TLV parameter ids come from there, never from inference.
+TLV parameter ids come from Apple's own parameter tables, never from inference.
+`crates/vendor/iap2-core/src/spec.rs` was generated from the Simulator's spec archive and is the
+authority in this fork. (`tools/i2mspec_dump.py` decodes that archive, which ships only with Xcode /
+the CarPlay Simulator on macOS, so it cannot run here.)
 
 **The Bluetooth-time Identify stays byte-pinned.** docs/wireless/00_WIRELESS_CARPLAY.md recorded iOS rejecting params-6/7
 growth there twice, breaking the WiFi handoff. Those rejects carried only the generic marker, so what
@@ -157,26 +162,24 @@ applicability (wired vs wireless) until wireless Identify growth is re-validated
 to app ownership of declaration content.
 
 **Silence in R14G17 is not an answer.** It is a 2017 drop and says nothing about anything added since —
-the DataStream layer, stream type 130, `APEndpointRemoteControlSession`. When a licensed source is
-*silent* on something demonstrably on the wire, escalate to `CarPlaySDK.framework` (current receiver
-side), the CarPlay Simulator binary (which statically links Apple's own `iAP2Link.c`), the iOS 27
-extracts, and the iPhone's own logs over USB. The 2026-07-25 breakthrough came entirely from that
-escalation, and a literal reading of "disassembly is a last resort" would have blocked it.
+the DataStream layer, stream type 130, `APEndpointRemoteControlSession`. Upstream escalated to
+`CarPlaySDK.framework`, the CarPlay Simulator binary, the iOS 27 extracts and the iPhone's own logs;
+the 2026-07-25 breakthrough came entirely from that escalation. In this fork only the iPhone's own
+logs remain on the table, so lean on them, and on what `docs/` already records from the rest.
 
 **Separate a vendor's *choices* from their *observations*.** A design decision is not normative; a value
 they were observed putting on the wire against a real iPhone is still evidence. SpeedPlay's wireless
 `MaxRcvPacketLength = 0xFFFF` was dismissed as Carlinkit noise in docs/carplay/02_SESSION_LIFECYCLE.md — it was **correct**, and
 is confirmed by Apple's own transport-type-2 template and the iPhone's own SYN-ACK.
 
-**Order of authority (owner directive, REORDERED 2026-08-10 — this is not negotiable and has already
-reversed several decisions). Ordered by CURRENCY, because the repeated failure has been trusting a
-2017 drop's silence about features added since:**
+**Order of authority (upstream owner directive, REORDERED 2026-08-10).** Ordered by CURRENCY, because
+the repeated failure was trusting a 2017 drop's silence about features added since. In this fork the
+ranking applies to the findings `docs/` records from each source, since none of the sources is on
+disk here:
 
 1. **`CarPlaySDK.framework`** — the CURRENT receiver side, shipped inside the CarPlay Simulator
-   (`/Applications/Xcode.app/Contents/SharedFrameworks/DeviceKit.framework/Versions/A/PlugIns/CarPlaySimulator.devicekitplugin/Contents/Frameworks/CarPlaySDK.framework`).
-   **Look here FIRST, before anything else.** Its symbol names carry full C signatures, so the
-   contract for a feature is usually readable without disassembly (`strings | grep`). It is the only
-   source that knows about everything post-2017: the RCS DataStream and its seven client types,
+   (macOS only). Its symbol names carry full C signatures, so the contract for a feature was usually
+   readable without disassembly. It is the only source that knows about everything post-2017: the RCS DataStream and its seven client types,
    `MainBuffered`, the Enhanced-Siri `AuxIn`/`AuxOut` uplink, the SETUP feature-intersection gate,
    params 21/22 and 30. **Silence in R14G17 is not evidence of absence; check here.**
 2. **The rest of the CarPlay Simulator** — implementation examples and working config: the ten real
@@ -245,7 +248,7 @@ Three things that will bite:
 3. **The interface name is an insmod parameter**, not a constant (`if2name=sta0`,
    `iface_name=sta`; on Broadcom `wlan0` does not exist until explicitly created). Enumerate
    `/sys/class/net/*/wireless`; never assume `wlan0`. The Rust side still hardcodes it
-   (`av.rs:63` — note `:66` is `AP_IP`, an address, not an interface name — plus `box_identity.rs:15`,
+   (`av.rs:65` — note `:70` is `AP_IP`, an address, not an interface name — plus `box_identity.rs:15`,
    `message.rs:215`, and ocbmd's `/sys/class/net/wlan0/address` read) — unfixed, tracked in docs/wireless/01_BT_AND_RADIO.md.
 
 **Disassembly and on-hardware experiments are the last resort, not the first.** Over 2026-07-22 → 07-25

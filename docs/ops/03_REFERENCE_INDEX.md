@@ -2,7 +2,15 @@
 
 > **STATUS:** CURRENT · single owner for this topic. Consolidated 2026-08-31 from pre-consolidation docs 42; the originals are in git history and in the 2026-08-31 backup. Correct this file in place — do not add a sibling.
 
-Which external source answers which kind of question, and where each lives on disk.
+Which external source answers which kind of question, and where each lived on disk.
+
+> **In this fork (Equinox EV, no Mac): none of the paths below exist.** They are the upstream
+> owner's Mac — `~/Documents/carlink/...`, `~/Downloads/...`, `/Applications/Xcode.app/...` — and
+> the CarPlay Simulator and `CarPlaySDK.framework` are macOS-only. The index is kept because the
+> docs cite these sources and the consult order still ranks that evidence. What each source
+> established is recorded in the owning doc. Sources that are reachable here: the iPhone's own logs
+> over USB (`idevicesyslog`, libimobiledevice on Linux; see §D), the car's uploaded logs, and
+> Apple's public documentation and WWDC sessions (§E lists the transcripts upstream used).
 
 ## Reference material index
 
