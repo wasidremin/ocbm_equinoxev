@@ -74,6 +74,13 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 
 ### Box daemons — `ocbmd` / `carplayd` / `iap2d` / the supervisor
 
+- **Latent self-deadlock on a post-Identify `0xAA04 AuthenticationFailed` (found 2026-10-27, not
+  fixed).** `iap_tunnel::handle_established` calls `reset()`, which locks `SESSION`, while its caller
+  `handle_inbound` still holds that same `SESSION` guard. `std::sync::Mutex` is not re-entrant, so the
+  DataStream thread would hang there. Only reachable if the phone fails authentication on an already
+  Identified tunnel, which has not been seen. Fix shape: have `handle_established` report the abort
+  and let `handle_inbound` clear the guard, as it already does for the second `0x1D03`.
+
 > **Also see [../ops/04_OPEN_ITEMS.md](../ops/04_OPEN_ITEMS.md) Phase 4**
 > for the ten catalogued code defects (the CT_HELLO `out_console` resync, `custom_init.sh`'s
 > `/script/start_bluetooth_wifi.sh` call, the missing `iap_role_switch` install). They are
@@ -408,7 +415,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
   plus a `#[test]` in `config.rs`; `grep -n "accessory_name" ccpa/iap2d/src/main.rs` → two
   hardcoded call sites, unchanged.
 
-- **C-4 — `features.rs` structurally cannot express vehicle status, which blocks C-5 (param 21).**
+- **C-4 — CLOSED IN CODE 2026-10-27 (T7), not yet accepted by a phone.** The declaration was added in `message.rs`'s AirPlayTunnel arm instead of `features.rs`: 0xA101 in param 6 and 0xA100/0xA102 in param 7, only together with param 21. The original item follows. **`features.rs` structurally cannot express vehicle status, which blocks C-5 (param 21).**
   `0xA101` is accessory-sourced while `0xA100`/`0xA102` are device-sourced, inverted versus every
   existing feature, so a naive `Trigger::Subscription` trips the direction-correctness test. The code
   carries a hard DO-NOT-ENABLE warning, and a `0x1D03` is unrecoverable within a session.

@@ -430,7 +430,12 @@ object VehicleConfigYaml {
         telephony: Boolean = false,
         physicalWidthMm: Int = 0,
         physicalHeightMm: Int = 0,
+        /** The EV identity block from [wasidremin.gmccpa.ev.CarPlayEv.iapConfigYaml]; "" when off. */
+        iapConfig: String = "",
     ): ByteArray {
+        require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
+            "iapConfig must be a whole top-level block ending in a newline"
+        }
         require(passphrase.length >= 8 && passphrase.all { it.isLetterOrDigit() }) {
             "adapter passphrase must be at least 8 letters or digits"
         }
@@ -468,8 +473,8 @@ object VehicleConfigYaml {
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.
         val oemRaw = oemIconYaml(OemIcon.gear(), "Settings")
         val extra = "wifi_ap: true\nwifi_ssid: $ssid\nwifi_pass: $passphrase\nwifi_channel: ${AdapterWifi.CHANNEL}\n"
-        val oem = if ((doc.length + oemRaw.length + extra.length) > 60_000) "" else oemRaw
-        return (doc + oem + extra).toByteArray(Charsets.UTF_8)
+        val oem = if ((doc.length + oemRaw.length + extra.length + iapConfig.length) > 60_000) "" else oemRaw
+        return (doc + oem + iapConfig + extra).toByteArray(Charsets.UTF_8)
     }
 
     private fun oemIconYaml(images: List<OemIcon.Image>, label: String): String {

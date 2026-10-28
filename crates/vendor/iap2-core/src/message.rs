@@ -253,6 +253,15 @@ fn push_group_if(out: &mut Vec<u8>, exclude: &[u16], pid: u16, group: &[u8]) {
     }
 }
 
+/// Top-level params whose appearance in a 0x1D03 retry's exclude list turns vehicle status off for
+/// the retry: the two message lists it grows, and the two vehicle components.
+const VEHICLE_STATUS_RETRY_DROP: &[u16] = &[
+    spec::ident::MESSAGES_SENT_BY_ACCESSORY,
+    spec::ident::MESSAGES_RECEIVED_FROM_DEVICE,
+    spec::ident::VEHICLE_INFORMATION_COMPONENT,
+    spec::ident::VEHICLE_STATUS_COMPONENT,
+];
+
 /// REQUIRED IdentificationInformation params (Apple iAP2 spec): identity (Name…HardwareVersion, 0-5),
 /// the two message-list params (6/7), PowerProvidingCapability (8), MaximumCurrentDrawnFromDevice (9),
 /// CurrentLanguage (12), and SupportedLanguage (13). A 0x1D03 retry must retain these even if iOS
@@ -353,6 +362,21 @@ pub(crate) fn build_ident_info_excluding_with_policy(
     identity: &crate::config::VehicleIdentity,
 ) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
+
+    // Vehicle status (T7): param 21 plus 0xA101 in param 6 and 0xA100/0xA102 in param 7. ONLY on the
+    // AirPlayTunnel arm, because that is the only session that services the subscription
+    // (`receiver::vehicle_status`); the wired arm would declare a feed nothing answers. Decided from
+    // the caller's RAW `exclude`, before the required-param filter below hides 6/7: a 0x1D03 retry
+    // naming any of 6, 7, 20 or 21 drops vehicle status WHOLE, so a rejected first Identify falls back
+    // to the proven declaration instead of re-sending the rejected shape and aborting the session.
+    let vs_caps: Option<&[u16]> = match (&identity.status_caps, transport) {
+        (Some(c), TransportComponent::AirPlayTunnel { .. })
+            if !exclude.iter().any(|id| VEHICLE_STATUS_RETRY_DROP.contains(id)) =>
+        {
+            Some(c.as_slice())
+        }
+        _ => None,
+    };
 
     // A 0x1D03 IdentificationRejected retry must NEVER strip a REQUIRED IdentificationInformation param
     // (#407): dropping e.g. Name / the MessagesSent-or-Received lists / PowerProvidingCapability makes
@@ -526,10 +550,15 @@ pub(crate) fn build_ident_info_excluding_with_policy(
         let p = policy;
         let np = crate::metadata::start_now_playing;
         let rg = crate::metadata::start_route_guidance;
-        (
-            be16_list(&crate::features::sent_ids(&crate::features::active_with_skip(p.sent, np, rg, skip))),
-            be16_list(&crate::features::received_ids(&crate::features::active_with_skip(p.recv, np, rg, skip))),
-        )
+        let mut s = be16_list(&crate::features::sent_ids(&crate::features::active_with_skip(p.sent, np, rg, skip)));
+        let mut r = be16_list(&crate::features::received_ids(&crate::features::active_with_skip(p.recv, np, rg, skip)));
+        if vs_caps.is_some() {
+            // Inverted direction: we SEND the update, the phone sends Start and Stop (see vs_caps).
+            s.extend_from_slice(&spec::MSG_VEHICLE_STATUS_UPDATE.to_be_bytes()); // 0xA101
+            r.extend_from_slice(&spec::MSG_START_VEHICLE_STATUS_UPDATES.to_be_bytes()); // 0xA100
+            r.extend_from_slice(&spec::MSG_STOP_VEHICLE_STATUS_UPDATES.to_be_bytes()); // 0xA102
+        }
+        (s, r)
     } else {
         // The wired-proven floor, unioned with the feature table (docs/carplay/05_METADATA_AND_CONTROLS.md). The floor is kept
         // verbatim so `CARPLAY_METADATA=proven` reproduces the declaration this transport has been
@@ -694,10 +723,10 @@ pub(crate) fn build_ident_info_excluding_with_policy(
         }); // param 20
 
         // Param 21 — VehicleStatusComponent, emitted ONLY when the app pushed a `vehicleStatus:`
-        // block (and never on the byte-pinned wireless arm, which the substitution above already
-        // guarantees by clearing `status_caps`). Identifier 3 keeps it unique against param 20's
-        // 1/2. SESSION-CRITICAL: this grows the Identify, so it is config-gated and off by default.
-        if let Some(caps) = identity.status_caps.as_ref() {
+        // block, and only on the AirPlayTunnel arm alongside its three message ids (`vs_caps`).
+        // Identifier 3 keeps it unique against param 20's 1/2. SESSION-CRITICAL: this grows the
+        // Identify, so it is config-gated and off by default.
+        if let Some(caps) = vs_caps {
             let g21 = vehicle_status_inner(3, name, caps);
             push(exclude, spec::ident::VEHICLE_STATUS_COMPONENT, &|t| {
                 t.bytes(spec::ident::VEHICLE_STATUS_COMPONENT, &g21)
@@ -914,23 +943,17 @@ pub fn build_end_call() -> Vec<u8> {
 // before. Adding a never-wire-verified capability group to the 0x1D01 body has previously broken the
 // ENTIRE session (see the INCIDENT 2026-07-06 note on param 6).
 //
-// UPDATED 2026-08-10 (C-1): param 21 is now reachable, but ONLY through `build_ident_info_with` with
-// an identity whose `status_caps` is `Some` — i.e. only when the app pushes a `vehicleStatus:` block,
-// and only on a non-wireless arm. Param 22 remains unreachable (no caller at all).
+// UPDATED 2026-10-27 (T7): param 21 is reachable ONLY through `build_ident_info_with` with an identity
+// whose `status_caps` is `Some` (the app pushed a `vehicleStatus:` block), and ONLY on the
+// AirPlayTunnel arm, where it is declared TOGETHER with its messages — 0xA101 in param 6, 0xA100 and
+// 0xA102 in param 7 — and serviced by `receiver::vehicle_status`. That closes the C-4 hazard this
+// banner used to warn about (a component declared without its messages). The wired arm emits no
+// param 21. A 0x1D03 retry naming 6, 7, 20 or 21 drops all of it (`VEHICLE_STATUS_RETRY_DROP`).
+// Param 22 remains unreachable (no caller at all).
 //
-// ⚠️ DO NOT ENABLE `vehicleStatus:` ON HARDWARE YET. `features.rs` declares NONE of 0xA100 /
-// 0xA101 / 0xA102 in any tier, so emitting param 21 today advertises a VehicleStatusComponent whose
-// messages params 6/7 never declare. That is the SAME SHAPE AS the
-// `OptionalMsgNotValidWithoutRequiredMsgs` rule (docs/carplay/05_METADATA_AND_CONTROLS.md §5.6 rule 2) — note the analogy: rule 2 is
-// device-proven for params 6/7 INTERNAL consistency (a receive declared without its send), and
-// extending it to "a component declared in param 21 without its messages in 6/7" is well-reasoned
-// inference, NOT a proven rule. It is precisely the "declaring a capability we never service" case
-// this block warns about. The companion declaration is workstream C-4 and MUST land first; plan_C's
-// claim that C-4 and C-5 are order-swappable is retracted (docs/carplay/04_CAPABILITIES_AND_CONFIG.md, C row).
-//
-// Treat emitting either as a SESSION-CRITICAL opt-in: deploy the declaration ALONE, restart, replug,
-// confirm the baseline session still establishes, THEN wire a data path. Names/ids are
-// Apple-authoritative (iap2messages.json, IdentificationInformation 0x1D01).
+// Still SESSION-CRITICAL and opt-in: the app ships it off by default (Settings ▸ Navigation), and it
+// has not yet been accepted by a phone. Names/ids are Apple-authoritative (iap2messages.json,
+// IdentificationInformation 0x1D01).
 
 /// Sub-parameter ids of IdentificationInformation param 21 (`VehicleStatusComponent`), Apple's
 /// authoritative names (iap2messages.json 0x1D01 §21). Not (yet) mirrored in `spec.rs` — see the
@@ -1915,7 +1938,7 @@ mod tests {
     /// the standalone builder (the two share `vehicle_status_inner`, and this proves it).
     #[test]
     fn param21_is_config_gated_and_matches_the_standalone_builder() {
-        let transport = TransportComponent::Usb { cp_iface: 1 };
+        let transport = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
         let mut id = crate::config::VehicleIdentity::baseline();
 
         // status_caps: None -> absent (the historical default; the session-critical guard).
@@ -1941,6 +1964,74 @@ mod tests {
         id.status_caps = Some(Vec::new());
         let empty = build_ident_info_with("CarLink", transport, false, &id);
         assert!(top_level_param_ids(&empty).contains(&spec::ident::VEHICLE_STATUS_COMPONENT));
+    }
+
+    /// The ids a BE16 message-list param (6 or 7) carries.
+    fn msg_list(body: &[u8], pid: u16) -> Vec<u16> {
+        top_level_param_value(body, pid)
+            .expect("message list present")
+            .chunks(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect()
+    }
+
+    /// Param 21 travels WITH its messages, in the inverted direction: we send 0xA101, the phone
+    /// sends 0xA100/0xA102. Declaring the component without them is the C-4 hazard.
+    #[test]
+    fn vehicle_status_declares_its_three_messages_on_the_tunnel() {
+        let tunnel = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
+        let mut id = crate::config::VehicleIdentity::baseline();
+        let off = build_ident_info_with("CarLink", tunnel, false, &id);
+        assert!(!msg_list(&off, spec::ident::MESSAGES_SENT_BY_ACCESSORY).contains(&0xA101));
+        assert!(!msg_list(&off, spec::ident::MESSAGES_RECEIVED_FROM_DEVICE).contains(&0xA100));
+
+        id.status_caps = Some(vec![vehicle_status::RANGE_ELECTRIC]);
+        let on = build_ident_info_with("CarLink", tunnel, false, &id);
+        let sent = msg_list(&on, spec::ident::MESSAGES_SENT_BY_ACCESSORY);
+        let rcvd = msg_list(&on, spec::ident::MESSAGES_RECEIVED_FROM_DEVICE);
+        assert!(sent.contains(&spec::MSG_VEHICLE_STATUS_UPDATE));
+        assert!(!sent.contains(&spec::MSG_START_VEHICLE_STATUS_UPDATES), "0xA100 is device-sourced");
+        assert!(rcvd.contains(&spec::MSG_START_VEHICLE_STATUS_UPDATES));
+        assert!(rcvd.contains(&spec::MSG_STOP_VEHICLE_STATUS_UPDATES));
+        assert!(!rcvd.contains(&spec::MSG_VEHICLE_STATUS_UPDATE), "0xA101 is accessory-sourced");
+        // Everything else in 6/7 is untouched: the additions are a pure append.
+        let base_sent = msg_list(&off, spec::ident::MESSAGES_SENT_BY_ACCESSORY);
+        assert_eq!(sent[..base_sent.len()], base_sent[..]);
+    }
+
+    /// Only the tunnel services the subscription, so the wired and BT-time arms declare none of it,
+    /// whatever the app pushed.
+    #[test]
+    fn vehicle_status_never_reaches_the_wired_or_bt_arms() {
+        let mut id = maximal_ev_identity();
+        id.status_caps = Some(vec![vehicle_status::RANGE_ELECTRIC]);
+        for transport in [
+            TransportComponent::Usb { cp_iface: 1 },
+            TransportComponent::Wireless { bt_mac: [0, 1, 2, 3, 4, 5] },
+        ] {
+            let body = build_ident_info_with("CarLink", transport, false, &id);
+            assert!(!top_level_param_ids(&body).contains(&spec::ident::VEHICLE_STATUS_COMPONENT));
+            assert!(!msg_list(&body, spec::ident::MESSAGES_SENT_BY_ACCESSORY).contains(&0xA101));
+            assert!(!msg_list(&body, spec::ident::MESSAGES_RECEIVED_FROM_DEVICE).contains(&0xA100));
+        }
+    }
+
+    /// A retry that names a required list param (6 or 7) cannot strip it, but it must still shed
+    /// what grew it: vehicle status goes, the lists stay.
+    #[test]
+    fn a_retry_naming_param_6_or_7_drops_vehicle_status() {
+        let tunnel = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
+        let mut id = crate::config::VehicleIdentity::baseline();
+        id.status_caps = Some(vec![vehicle_status::RANGE_ELECTRIC]);
+        for pid in [spec::ident::MESSAGES_SENT_BY_ACCESSORY, spec::ident::MESSAGES_RECEIVED_FROM_DEVICE] {
+            let retry = build_ident_info_excluding_with("CarLink", tunnel, false, &[pid], &id);
+            let ids = top_level_param_ids(&retry);
+            assert!(ids.contains(&spec::ident::MESSAGES_SENT_BY_ACCESSORY));
+            assert!(ids.contains(&spec::ident::MESSAGES_RECEIVED_FROM_DEVICE));
+            assert!(!ids.contains(&spec::ident::VEHICLE_STATUS_COMPONENT));
+            assert!(!msg_list(&retry, spec::ident::MESSAGES_SENT_BY_ACCESSORY).contains(&0xA101));
+            assert_eq!(retry, build_ident_info_with("CarLink", tunnel, false, &crate::config::VehicleIdentity::baseline()));
+        }
     }
 
     /// The byte-pin is ONE arm, not "everything that isn't USB". docs/carplay/04_CAPABILITIES_AND_CONFIG.md scopes the app-pushed
@@ -1990,7 +2081,7 @@ mod tests {
     /// abort the session. `build_ident_info_excluding_with` had no test at all before this one.
     #[test]
     fn a_1d03_retry_can_strip_the_pushed_vehicle_params() {
-        let transport = TransportComponent::Usb { cp_iface: 1 };
+        let transport = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
         let id = maximal_ev_identity();
         let full_ids = top_level_param_ids(&build_ident_info_with("CarLink", transport, false, &id));
         for pid in [
@@ -2015,11 +2106,12 @@ mod tests {
             let retry =
                 build_ident_info_excluding_with("CarLink", transport, false, &exclude, &id);
             let ids = top_level_param_ids(&retry);
-            // Exactly the excluded params vanish; every survivor keeps its place.
+            // The excluded params vanish, and so does param 21 whenever either vehicle param was
+            // named (VEHICLE_STATUS_RETRY_DROP); every survivor keeps its place.
             let expected: Vec<u16> = full_ids
                 .iter()
                 .copied()
-                .filter(|p| !exclude.contains(p))
+                .filter(|p| !exclude.contains(p) && *p != spec::ident::VEHICLE_STATUS_COMPONENT)
                 .collect();
             assert_eq!(ids, expected, "retry with exclude={exclude:?}");
             // And the group is gone WHOLE — no orphaned EV sub-TLV left loose in the body. The

@@ -277,6 +277,7 @@ class LauncherUi(private val act: Activity) {
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
     private lateinit var navRow: EqRow
+    private lateinit var evRow: EqRow
     private lateinit var voiceRow: EqRow
     private lateinit var phonesCard: EqCard
     private lateinit var customTopBarControl: EqSegmented
@@ -598,7 +599,15 @@ class LauncherUi(private val act: Activity) {
                 navRow.setSubtitle(nav.statusText(act))
             },
         )
-        page.addView(EqCard(act).addRow(navRow))
+        val ev = wasidremin.gmccpa.ev.CarPlayEv
+        evRow = EqRow(
+            act, "EV battery for Apple Maps", ev.statusText(act),
+            trailing = EqToggle(act, ev.enabled) { on ->
+                ev.setEnabled(act, on)
+                evRow.setSubtitle(ev.statusText(act))
+            },
+        )
+        page.addView(EqCard(act).addRow(navRow).addRow(evRow))
         page.addView(eqSectionLabel(act, "Voice"))
         val role = wasidremin.gmccpa.voice.AssistantRole
         voiceRow = EqRow(

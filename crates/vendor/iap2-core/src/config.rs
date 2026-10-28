@@ -584,6 +584,46 @@ iapConfig:
         assert!(!id.is_baseline());
     }
 
+    /// The block the GM app emits for the Equinox EV (`EvForCarPlay.iapConfigYaml`), byte for byte —
+    /// its JVM test `EvForCarPlayTest.theEquinoxBlockIsPinned` pins the same string. Every name must
+    /// resolve: an unknown one is skipped silently on the box, which would quietly shrink the Identify.
+    const GM_APP_EV_IAPCONFIG: &str = "\
+iapConfig:
+  vehicleInfo:
+    engineTypes: [electric]
+    chargingConnectors:
+    - type: j1772
+    - type: ccs1
+  vehicleStatus:
+    capabilities: [range, outsideTemperature, rangeWarning, rangeElectric, electricChargeInfo]
+";
+
+    #[test]
+    fn the_gm_apps_ev_block_resolves() {
+        use crate::message::vehicle_status as vs;
+        use crate::spec::ident::vehicle_info as sub;
+        let c: Iap2Config = serde_yaml::from_slice(GM_APP_EV_IAPCONFIG.as_bytes()).unwrap();
+        let id = c.vehicle_identity();
+        assert_eq!(id.engine_types, vec![sub::ENGINE_TYPE_ELECTRIC]);
+        assert_eq!(
+            id.connectors,
+            vec![
+                (sub::SUPPORTED_CHARGING_CONNECTORS_CCS1, None),
+                (sub::SUPPORTED_CHARGING_CONNECTORS_J1772, None),
+            ]
+        );
+        assert_eq!(
+            id.status_caps,
+            Some(vec![
+                vs::RANGE,
+                vs::OUTSIDE_TEMPERATURE,
+                vs::RANGE_WARNING,
+                vs::RANGE_ELECTRIC,
+                vs::ELECTRIC_CHARGE_INFO,
+            ])
+        );
+    }
+
     /// A document with no `iapConfig:` must resolve to the exact pre-C6 emission. This is what makes
     /// the whole workstream absent-off, and it is the config-level rollback path (docs/carplay/04_CAPABILITIES_AND_CONFIG.md): push a
     /// YAML without the block and the next Identify is byte-baseline, with no rebuild.

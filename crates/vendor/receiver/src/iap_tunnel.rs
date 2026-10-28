@@ -291,6 +291,7 @@ pub fn tick() {
 /// Reset on session teardown so a future reconnect starts fresh (called from `events::clear()`).
 pub fn reset() {
     *crate::plock(&SESSION) = None;
+    crate::vehicle_status::reset();
     HANDSHAKE_REBUILDS.store(0, Ordering::Relaxed); // re-arm the budget retry cap for the next session
 }
 
@@ -747,6 +748,21 @@ fn mfi_retry<T>(
     None
 }
 
+/// The vehicle identity the app pushed (Identify params 20/21, docs/ops/08_FUTURE_TASKS.md T7),
+/// read from the same `/tmp/carplay_cfg.yaml` the rest of this session was configured from. The
+/// baseline (EngineType=Gasoline, no param 21) when nothing was pushed, and always on the head-unit
+/// JNI build, which has no such file.
+fn pushed_identity() -> iap2_core::config::VehicleIdentity {
+    let id = iap2_core::config::Iap2Config::load().vehicle_identity();
+    if !id.is_baseline() {
+        log(&format!(
+            "Identify carries the app-pushed vehicle identity: engines={:?} connectors={:?} status_caps={:?}",
+            id.engine_types, id.connectors, id.status_caps
+        ));
+    }
+    id
+}
+
 /// Execute a state-machine action, sending link-framed replies over the tunnel via
 /// `events::send_iap_message`. Mirrors `bt_driver.rs::execute`'s `ExecResult` shape (Commit/NoCommit/
 /// Abort) exactly, rather than collapsing it to a bool — `Abort` now actually clears the session (see
@@ -788,12 +804,14 @@ fn execute(action: Action, link: &mut Link) -> ExecOutcome {
             None => ExecOutcome::NoCommit,
         },
         Action::SendIdentify => {
-            let ib = message::build_ident_info(
+            let identity = pushed_identity();
+            let ib = message::build_ident_info_with(
                 "CarLink",
                 message::TransportComponent::AirPlayTunnel {
                     bt_mac: accessory_bt_mac(),
                 },
                 false,
+                &identity,
             );
             let sent = crate::events::send_iap_message(&link.build_msg(
                 1,
@@ -811,13 +829,14 @@ fn execute(action: Action, link: &mut Link) -> ExecOutcome {
             }
         }
         Action::RetryIdentify(excluded) => {
-            let ib = message::build_ident_info_excluding(
+            let ib = message::build_ident_info_excluding_with(
                 "CarLink",
                 message::TransportComponent::AirPlayTunnel {
                     bt_mac: accessory_bt_mac(),
                 },
                 false,
                 &excluded,
+                &pushed_identity(),
             );
             let sent = crate::events::send_iap_message(&link.build_msg(
                 1,

@@ -388,6 +388,57 @@ pub fn parse_vehicle_status_update(body: &[u8]) -> VehicleStatus {
     v
 }
 
+/// Encode a `VehicleStatusUpdate` (0xA101, accessory-source) body — the inverse of
+/// [`parse_vehicle_status_update`], emitting only the fields that are `Some`, in ascending param-id
+/// order. Covers the scalar and EV fields an accessory can source from a car's own sensors; the
+/// `WiperStatus` group, `Alerts`, `ActiveConnector` and the two JSON EV-routing models are not
+/// emitted (nothing here produces them).
+pub fn encode_vehicle_status_update(v: &VehicleStatus) -> Vec<u8> {
+    fn put(out: &mut Vec<u8>, id: u16, val: &[u8]) {
+        out.extend_from_slice(&((4 + val.len()) as u16).to_be_bytes());
+        out.extend_from_slice(&id.to_be_bytes());
+        out.extend_from_slice(val);
+    }
+    let mut o = Vec::new();
+    if let Some(x) = v.range_km {
+        put(&mut o, pid::RANGE, &x.to_be_bytes());
+    }
+    if let Some(x) = v.outside_temperature_c {
+        put(&mut o, pid::OUTSIDE_TEMPERATURE, &x.to_be_bytes());
+    }
+    if let Some(x) = v.inside_temperature_c {
+        put(&mut o, pid::INSIDE_TEMPERATURE, &x.to_be_bytes());
+    }
+    if let Some(x) = v.range_warning {
+        put(&mut o, pid::RANGE_WARNING, &[x as u8]);
+    }
+    if let Some(x) = v.range_electric_km {
+        put(&mut o, pid::RANGE_ELECTRIC, &x.to_be_bytes());
+    }
+    if let Some(x) = v.range_warning_electric {
+        put(&mut o, pid::RANGE_WARNING_ELECTRIC, &[x as u8]);
+    }
+    if let Some(x) = v.min_battery_charge_wh {
+        put(&mut o, pid::MIN_BATTERY_CHARGE, &x.to_be_bytes());
+    }
+    if let Some(x) = v.current_battery_charge_wh {
+        put(&mut o, pid::CURRENT_BATTERY_CHARGE, &x.to_be_bytes());
+    }
+    if let Some(x) = v.max_battery_charge_wh {
+        put(&mut o, pid::MAX_BATTERY_CHARGE, &x.to_be_bytes());
+    }
+    if let Some(x) = v.displayed_battery_percentage_milli {
+        put(&mut o, pid::DISPLAYED_BATTERY_PERCENTAGE, &x.to_be_bytes());
+    }
+    if let Some(x) = v.is_charging {
+        put(&mut o, pid::IS_CHARGING, &[x as u8]);
+    }
+    if let Some(x) = v.max_range_electric_km {
+        put(&mut o, pid::MAX_RANGE_ELECTRIC, &x.to_be_bytes());
+    }
+    o
+}
+
 /// Parse the nested `WiperStatus` (id 17) sub-group value.
 fn parse_wiper_status(val: &[u8]) -> WiperStatus {
     let mut w = WiperStatus::default();
@@ -535,6 +586,38 @@ mod tests {
         assert_eq!(w.washer_on, Some(true)); // overwritten
         assert_eq!(w.wipe_duration_ms, Some(300)); // preserved through nested merge
         assert_eq!(w.wait_duration_ms, Some(1000));
+    }
+
+    /// The encoder must produce exactly what the parser reads back, field for field.
+    #[test]
+    fn encode_round_trips_through_the_parser() {
+        let v = VehicleStatus {
+            range_km: Some(312),
+            outside_temperature_c: Some(-4),
+            range_warning: Some(false),
+            range_electric_km: Some(312),
+            range_warning_electric: Some(true),
+            current_battery_charge_wh: Some(52_000),
+            max_battery_charge_wh: Some(84_590),
+            displayed_battery_percentage_milli: Some(61_473),
+            is_charging: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(parse_vehicle_status_update(&encode_vehicle_status_update(&v)), v);
+    }
+
+    /// Fields that are `None` are absent from the body, and ids ascend.
+    #[test]
+    fn encode_emits_only_present_fields_in_id_order() {
+        let v = VehicleStatus {
+            displayed_battery_percentage_milli: Some(50_000),
+            range_km: Some(100),
+            ..Default::default()
+        };
+        let body = encode_vehicle_status_update(&v);
+        let ids: Vec<u16> = parse_groups(&body).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec![pid::RANGE, pid::DISPLAYED_BATTERY_PERCENTAGE]);
+        assert!(encode_vehicle_status_update(&VehicleStatus::default()).is_empty());
     }
 
     #[test]

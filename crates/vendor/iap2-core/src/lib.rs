@@ -31,3 +31,6 @@ pub mod session;
 /// files (Xcode 27 CarPlaySimulator.devicekitplugin). The single source of protocol truth.
 pub mod spec;
 pub mod state;
+/// The accessory side of iAP2 vehicle status (0xA100/0xA101/0xA102): the app-pushed status file and
+/// the 0xA101 body built from it.
+pub mod vehicle_status;

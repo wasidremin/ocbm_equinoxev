@@ -118,7 +118,7 @@ un-strippable, so getting this backwards costs an unrecoverable `0x1D03` (§5.6)
 |---|---|---|
 | 0x0D01 RoadObjectDetectionUpdate, Accessory (`spec.rs:580`) | 0x0D00 / 0x0D02, both Device (`spec.rs:579,581`) | no — would also need ident param 33 RoadObjectDetectionComponent |
 | 0xFFFB LocationInformation, Accessory (`spec.rs:712`) | 0xFFFA / 0xFFFC, both Device (`spec.rs:711,713`) | no — would also need ident param 22 LocationInformationComponent. **NOT implemented as a sender** — `crates/vendor/metadata/src/location.rs` has parsers only (`parse_location_information`, `parse_start_location_information`, `merge`); no 0xFFFB builder exists anywhere, and Identify param 22's `build_location_information_component` has zero callers. *(Corrected 2026-08-16 — an earlier version of this row claimed a sender.)* |
-| 0xA101 VehicleStatusUpdate, Accessory (`spec.rs:676`) | 0xA100 / 0xA102, both Device (`spec.rs:675,677`) | no — see the ⚠️ at `message.rs:908` before touching ident param 21 |
+| 0xA101 VehicleStatusUpdate, Accessory (`spec.rs:676`) | 0xA100 / 0xA102, both Device (`spec.rs:675,677`) | **yes, since 2026-10-27** — on the AirPlayTunnel Identify only, with param 21, when the app pushes `vehicleStatus:`; answered by `receiver::vehicle_status` (docs/ops/08_FUTURE_TASKS.md T7). Not yet accepted by a phone |
 | 0xB102 AccessoryBluetoothLowEnergyUpdate, Accessory (`spec.rs:697`) | 0xB100 / 0xB107, both Device (`spec.rs:695,702`) | no |
 
 Two ids listed in §2 are genuinely Device-sourced but have **no accessory-sendable subscribe at all**,

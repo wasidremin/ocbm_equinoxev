@@ -1107,6 +1107,8 @@ class OcbmProbe(context: Context) {
                 telephony = true,
                 physicalWidthMm = VideoFrame.physicalWidthMm,
                 physicalHeightMm = VideoFrame.physicalHeightMm,
+                // Not in defaultAdapterDocument: the structural fallback stays the proven document.
+                iapConfig = wasidremin.gmccpa.ev.CarPlayEv.iapConfigYaml(ctx),
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)

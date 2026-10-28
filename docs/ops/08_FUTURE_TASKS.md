@@ -42,22 +42,47 @@ re-validated; this arms on the wired receiver Identify only.
 `0xFFFC`, the phone subscribes, a logged `0xFFFB` carries a real fix, and `accessoryd` accepts the
 Identify (no `0x1D03`).
 
-## T7. EV vehicle status — range and charge (raised 2026-09-22)
+## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27, not yet on the car)
 
 **Why.** The Equinox is electric. Maps will not treat it as one until Identify says so and a status
-update follows. `spec.rs` already has `EngineType::Electric` and `SupportedChargingConnectors`.
+update follows.
 
-**State.** The compiled baseline is `EngineType=Gasoline` unless a pushed identity overrides it
-(`message.rs`, `VehicleIdentity::baseline()`). Param 21 is reachable only through
-`build_ident_info_with` when the app pushes `vehicleStatus:`, and only on a non-wireless arm.
-`features.rs` declares none of `0xA100` / `0xA101` / `0xA102`, so enabling the component today
-advertises a capability the messages never service. `message.rs` (the param 21/22 block) says to
-leave `vehicleStatus:` off on hardware until that declaration lands. Same direction trap as T6:
-`0xA101` is accessory-sourced.
+**What was built (2026-10-27).** One app setting, Settings ▸ Navigation ▸ "EV battery for Apple
+Maps", off by default.
 
-**Done means.** Pushed identity is Electric, with the connector the car actually has. Param 21 and
-the three message ids are declared together. A `0xA101` VehicleStatusUpdate carries range, and
-charge state when the car provides it, and `accessoryd` accepts the Identify.
+- **App.** `ev/EvForCarPlay.kt` writes the `iapConfig:` block into the adapter subscribe document:
+  `engineTypes: [electric]`, the car's connectors from `INFO_EV_CONNECTOR_TYPE` (J1772 + CCS1 when
+  the car does not say), and the capabilities `range, outsideTemperature, rangeWarning,
+  rangeElectric, electricChargeInfo`. Only the unified `rangeWarning`: Apple's spec forbids it
+  together with a per-engine `rangeWarning*`, and `iap2_core::config` drops the per-engine one. While
+  connected, `ev/CarPlayEv.kt` reads `RANGE_REMAINING`, `EV_BATTERY_LEVEL`,
+  `INFO_EV_BATTERY_CAPACITY`, `EV_CHARGE_STATE` (or port + charge rate), `ENV_OUTSIDE_TEMPERATURE`
+  and `FUEL_LEVEL_LOW` every 15 s and pushes them, when changed, to the adapter's
+  `/tmp/vehicle_status` over `CH_FILE`.
+- **Identify (`iap2_core::message`).** Only on the AirPlayTunnel arm: param 20 carries the pushed
+  identity, and param 21 is declared together with 0xA101 in param 6 and 0xA100/0xA102 in param 7
+  (the inverted direction; C-4 in `04_OPEN_ITEMS.md`). The wired and BT-time arms carry none of it. A
+  `0x1D03` retry naming 6, 7, 20 or 21 drops vehicle status wholesale, so a rejected first Identify
+  falls back to the proven declaration.
+- **Answer (`receiver::vehicle_status`).** On 0xA100 the tunnel records the phone's field
+  selection and starts a sender thread that reads the status file every 2 s and sends 0xA101 when the
+  body changes (and at least once a minute). A field goes out only if it was declared and, for fields
+  3..=20, selected. The body is built by `iap2_core::vehicle_status::build_update`.
+- **Not sent:** `ChargingParameter`/`ConsumptionParameter` (Apple's EV-routing model JSON, schema
+  unknown), `MaxRangeElectric`, `ActiveConnector`, alerts. Whether Apple Maps needs the model JSON
+  for EV routing is unknown, so the expected gain is that Maps treats the car as electric (charger
+  search, low-battery prompts, battery level), not necessarily full EV route planning.
+
+**Failure mode.** If the phone rejects the new Identify, only that session's iAP2 tunnel is lost:
+now-playing, cluster turn-by-turn and call metadata. Video, audio and touch keep running. The box
+logs the rejected param ids (`RX 0x1D03 decoded`). Turn the setting off and reconnect to undo it.
+
+**Needs to reach the car.** Box firmware via `ocbm_install.sh --full` (the Identify and the answer
+both live in `carplayd`), and an app build ≥ 223.
+
+**Done means.** With the setting on, the box log shows `Identify carries the app-pushed vehicle
+identity`, then `RX 0xA100 StartVehicleStatusUpdates` and `TX 0xA101 VehicleStatusUpdate`, with
+no `0x1D03`; and now-playing and cluster turn-by-turn still work.
 
 ## T8. MainBuffered audio, phase B (raised 2026-09-22)
 
