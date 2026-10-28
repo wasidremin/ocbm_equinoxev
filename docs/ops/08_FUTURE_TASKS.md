@@ -68,10 +68,22 @@ Maps", off by default.
   selection and starts a sender thread that reads the status file every 2 s and sends 0xA101 when the
   body changes (and at least once a minute). A field goes out only if it was declared and, for fields
   3..=20, selected. The body is built by `iap2_core::vehicle_status::build_update`.
-- **Not sent:** `ChargingParameter`/`ConsumptionParameter` (Apple's EV-routing model JSON, schema
-  unknown), `MaxRangeElectric`, `ActiveConnector`, alerts. Whether Apple Maps needs the model JSON
-  for EV routing is unknown, so the expected gain is that Maps treats the car as electric (charger
-  search, low-battery prompts, battery level), not necessarily full EV route planning.
+- **Not sent:** `ChargingParameter`/`ConsumptionParameter` (0xA101 ids 26/27, the EV-routing
+  models), `MaxRangeElectric`, `ActiveConnector`, alerts. The expected gain is that Maps treats the
+  car as electric (charger search, low-battery prompts, battery level), not necessarily full EV
+  route planning with charging stops.
+- **Why the two models are not sent (checked 2026-10-27).** Not for lack of data: Insights already
+  has this car's consumption and charging behaviour. The blocker is the format. Apple's only
+  public description is the iPhone-side twin of these fields,
+  `INGetCarPowerLevelStatusIntentResponse.consumptionFormulaArguments` / `chargingFormulaArguments`:
+  a dictionary whose "keys … must match those of the corresponding … model", where "`model_id` is a
+  mandatory key and must be the identifier of the … model the vehicle uses". Apple publishes neither
+  the model ids nor their keys, and a third-party developer's request for them on Apple's forums
+  (thread 772132, Jan 2025) went unanswered. Ford, Porsche and Toyota ship EV routing as Apple
+  partners. A guessed `model_id` would most likely be ignored. The way to learn the real format is
+  to observe it: an iPhone iAP2 trace (`accessoryd` with Apple's CarPlay debug profile, read with
+  `idevicesyslog`) from a car that already does Apple Maps EV routing over CarPlay would show its
+  0xA101 ids 26/27 verbatim. `carplay_metadata::vehicle` already parses both fields.
 
 **Failure mode.** If the phone rejects the new Identify, only that session's iAP2 tunnel is lost:
 now-playing, cluster turn-by-turn and call metadata. Video, audio and touch keep running. The box
