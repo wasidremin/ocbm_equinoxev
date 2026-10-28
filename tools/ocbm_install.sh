@@ -179,7 +179,6 @@ manifest() {
     echo "$ARM/iap2d|/usr/sbin/iap2d|755"
     echo "$ARM/carplayd|/usr/sbin/carplayd|755"
     echo "$ARM/btd|/usr/sbin/btd|755"
-    echo "$ARM/aa-bridge|/usr/sbin/aa-bridge|755"  # Android Auto byte pump: AOAP over USB (arm_aa) AND, with --wireless, the SoftAP TCP endpoint the BT bootstrap advertises (arm_aa_wireless)
     # WIRED CARPLAY CANNOT START WITHOUT THIS. projection_up.sh calls `iap_role_switch` by bare
     # name (PATH), and docs/ops/01_RECOVERY.md puts it in /usr/bin. Absent, the 0x51 host-role switch never runs, so
     # the iPhone stays a USB device, the phone-facing iAP2 gadget never binds to a host, and iap2d
@@ -294,10 +293,16 @@ echo "ocbmd present: $([ -e /usr/sbin/ocbmd ] && echo yes || echo no)"
   [ "${free:-0}" -gt $(( want + 512 )) ] || die "not enough free space on the rootfs"
 }
 
+# Box files earlier installs placed that this tree no longer ships. Removed at place time so a
+# reinstall does not leave a dead binary on the jffs2 rootfs. aa-bridge: Android Auto, removed from
+# this fork 2026-10-27 (the supervisor no longer launches it).
+RETIRED_FILES="/usr/sbin/aa-bridge"
+
 phase_place() {
   say "=== place — pushing files over NCM (nothing about the boot path changes) ==="
   while IFS='|' read -r l r m; do push_file "$l" "$r" "$m"; done < <(manifest)
   say "placed $(manifest | wc -l | tr -d ' ') files"
+  box "rm -f $RETIRED_FILES" >/dev/null 2>&1 || warn "could not remove retired files ($RETIRED_FILES)"
 }
 
 phase_verify() {

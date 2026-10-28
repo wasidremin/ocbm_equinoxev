@@ -20,15 +20,8 @@ carplay-iap2-core = { path = "../iap2-core" }
 # ocbmd forwards are literally the same symbols. Zero transitive deps.
 ocbm-proto = { path = "../../ocbm-proto" }
 # HCI, userspace RFCOMM, the SDP server and the pairing agent — extracted from this crate on
-# 2026-09-01 and now shared with aa-wireless. Same code, same behaviour; see that crate's manifest.
+# 2026-09-01.
 bt-common = { path = "../../bt-common" }
 
-# The single definition of the SoftAP gateway address (`net::AP_IP`). Already in this binary's
-# dependency tree through aa-wireless; named directly so `av.rs` can reference the constant rather
-# than repeat the literal, which is what the wireless-AA handoff depends on being identical.
+# The single definition of the SoftAP gateway address (`net::AP_IP`) and the env-lever helper.
 box-common = { path = "../../box-common" }
-
-# The wireless Android Auto bootstrap. A library, not a daemon: this binary owns the single
-# Bluetooth identity that advertises BOTH projection protocols, so the AA half has to live inside it
-# (docs/androidauto/03_WIRELESS.md §6b). Protocol only — no sockets, no radio, no lifecycle.
-aa-wireless = { path = "../../../ccpa/aa-wireless" }

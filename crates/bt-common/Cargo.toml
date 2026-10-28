@@ -2,12 +2,11 @@
 name = "bt-common"
 version = "0.1.0"
 edition = "2021"
-description = "Protocol-agnostic Bluetooth primitives shared by the CarPlay and Android Auto wireless paths: HCI, userspace RFCOMM, a bluetoothd-less SDP server, and the pairing agent."
+description = "Bluetooth primitives for the wireless CarPlay path: HCI, userspace RFCOMM, a bluetoothd-less SDP server, and the pairing agent."
 
 # Extracted 2026-09-01 from crates/vendor/wireless (btd), which had these as private
-# modules of a binary. Wireless Android Auto needs the same radio machinery -- it advertises an SDP
-# record, accepts an RFCOMM connection and pairs, exactly as the CarPlay arm does -- and the
-# alternative was a second copy that would drift. The files moved VERBATIM; the only edit was
+# modules of a binary, so wireless Android Auto could share the same radio machinery. Android Auto
+# was removed from this fork on 2026-10-27; btd is now the only user. The files moved VERBATIM; the only edit was
 # widening `ssp_agent::state_dir` from pub(crate) to pub, because a caller now crosses a crate
 # boundary to reach it.
 #

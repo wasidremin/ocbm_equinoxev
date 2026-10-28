@@ -1,9 +1,7 @@
-//! bt-common — the Bluetooth primitives both wireless projection paths need.
-//!
-//! CarPlay and Android Auto reach the phone over the same radio and, at this layer, do the same
-//! things: bring the controller up, advertise a service record, accept an RFCOMM connection, and
-//! pair. Only the *content* differs — the record's UUID, and what is said once the channel opens.
-//! Everything in this crate is that shared mechanism; nothing here knows which protocol it serves.
+//! bt-common — the Bluetooth primitives the wireless CarPlay path needs: bring the controller up,
+//! advertise a service record, accept an RFCOMM connection, and pair. Nothing here knows which
+//! protocol it serves. (It was split out so wireless Android Auto could share it; Android Auto was
+//! removed from this fork on 2026-10-27.)
 //!
 //! Extracted from `btd` (see Cargo.toml for what stayed behind and why). These modules
 //! are device-proven in that daemon; treat behaviour changes here as touching a shipping path.
@@ -25,13 +23,9 @@ pub mod ssp_agent;
 /// Read an environment lever by its current name, falling back to the pre-2026-09-08 `CARPLAY_*`
 /// name it was renamed from.
 ///
-/// The renamed levers are the PROTOCOL-NEUTRAL ones: Bluetooth SSP/HFP/HCI/RFCOMM settings that
-/// apply to any peer (a Pixel bonds through the same SSP agent an iPhone does), and box-level
-/// settings like the SoftAP role. Keeping a `CARPLAY_` prefix on them is what let 3,700 lines of
-/// Android Auto code accumulate inside a binary called `carplay-wireless`, and it is why
-/// `CARPLAY_AA_HEADSET_PATH` — a CarPlay-prefixed variable whose entire purpose is Android Auto —
-/// existed. Genuinely Apple levers (`CARPLAY_DEVICE_ID`, `CARPLAY_PI`, `CARPLAY_HEVC`, …) keep
-/// their names: there the prefix is information, not noise.
+/// The renamed levers are the PROTOCOL-NEUTRAL ones: Bluetooth SSP/HCI/RFCOMM settings and box-level
+/// settings like the SoftAP role. Genuinely Apple levers (`CARPLAY_DEVICE_ID`, `CARPLAY_PI`,
+/// `CARPLAY_HEVC`, …) keep their names: there the prefix is information, not noise.
 ///
 /// The fallback exists because a lever that silently reverts to its default is the worst failure
 /// shape here — `CARPLAY_WIFI_AP` was exported by the supervisor and read by NOTHING for as long as

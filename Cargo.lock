@@ -3,22 +3,6 @@
 version = 4
 
 [[package]]
-name = "aa-bridge"
-version = "0.1.0"
-dependencies = [
- "aa-wireless",
- "box-common",
- "libc",
-]
-
-[[package]]
-name = "aa-wireless"
-version = "0.1.0"
-dependencies = [
- "box-common",
-]
-
-[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -76,7 +60,6 @@ dependencies = [
 name = "box-common"
 version = "0.1.0"
 dependencies = [
- "libc",
  "ocbm-proto",
 ]
 
@@ -91,7 +74,6 @@ dependencies = [
 name = "btd"
 version = "0.1.0"
 dependencies = [
- "aa-wireless",
  "box-common",
  "bt-common",
  "carplay-iap2-core",

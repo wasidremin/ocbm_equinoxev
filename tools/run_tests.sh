@@ -39,13 +39,7 @@ run "wireless"   cargo test -p btd --quiet
 # 29 tests used to run under the "wireless" line above; without this one they would silently
 # stop running, which is the failure mode an extraction is most likely to cause.
 run "bt-common"  cargo test -p bt-common --quiet
-run "aa-wireless" cargo test -p aa-wireless --quiet
-# aa-bridge became host-testable on 2026-09-04: its pure parts (the transport-agnostic copy loop and
-# the app-socket broker that arbitrates :5277 between the wired and wireless arms) moved into
-# `pump.rs`/`appport.rs`, and `box_common::usb`'s off-Linux stub was widened so the crate type-checks
-# here. Registered immediately, for the reason the bt-common line above records.
-run "aa-bridge"  cargo test -p aa-bridge --quiet
-# box-common carries the shared flags/config/phone/AP-address definitions all of the above depend on.
+# box-common carries the shared owner flag and AP-address definitions ocbmd and btd depend on.
 run "box-common" cargo test -p box-common --quiet
 run "pairing"    cargo test --manifest-path crates/vendor/pairing/Cargo.toml --quiet
 run "rtsp"       cargo test --manifest-path crates/vendor/rtsp/Cargo.toml --quiet

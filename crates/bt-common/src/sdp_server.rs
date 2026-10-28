@@ -153,8 +153,12 @@ pub fn iap2_service(rfcomm_chan: u8) -> Service {
 
 /// The Android Auto wireless-projection service.
 ///
+/// TEST FIXTURE since 2026-10-27: Android Auto was removed from this fork and `btd` registers only
+/// iAP2. Kept so the multi-record search tests below still have a realistic second record.
+///
 /// Name and channel both match what the stock CCPA's own `bluetoothDaemon` registers, recovered
 /// from its record builders (AAP = channel 4).
+#[cfg(test)]
 pub fn android_auto_service(rfcomm_chan: u8) -> Service {
     const AA: u128 = 0x4de17a00_52cb_11e6_bdf4_0800200c9a66;
     Service {
@@ -177,6 +181,8 @@ pub fn android_auto_service(rfcomm_chan: u8) -> Service {
 
 /// The HFP **Hands-Free** service, on its own RFCOMM channel.
 ///
+/// TEST FIXTURE since 2026-10-27, like [`android_auto_service`].
+///
 /// Advertised so gearhead's wireless-setup gate can be satisfied: it requires
 /// `BluetoothProfile.HEADSET.getConnectedDevices()` to contain the head unit, i.e. an HFP SLC with
 /// the phone as audio gateway and us as hands-free (`docs/androidauto/03_WIRELESS.md` §6b). The
@@ -186,6 +192,7 @@ pub fn android_auto_service(rfcomm_chan: u8) -> Service {
 ///
 /// `uuid128` is the base-expanded `0x111E`, so a UUID16 search for Handsfree selects exactly this
 /// record; `extra_class_uuid16` makes the second class (`0x1203 GenericAudio`) equally searchable.
+#[cfg(test)]
 pub fn hfp_hf_service(rfcomm_chan: u8) -> Service {
     let record = crate::sdp_record::HandsFreeRecord {
         handle: SVC_RECORD_HANDLE_BASE + 2,
@@ -206,10 +213,13 @@ pub fn hfp_hf_service(rfcomm_chan: u8) -> Service {
 
 /// The HSP **Headset** service, on its own RFCOMM channel.
 ///
+/// TEST FIXTURE since 2026-10-27, like [`android_auto_service`].
+///
 /// Advertised ALONGSIDE [`hfp_hf_service`], not instead of it, because the two reach gearhead's
 /// `BluetoothProfile.HEADSET` gate by different routes in AOSP and only the HFP one needs an AT
 /// dialogue (`bta_ag_act.cc:533-540`; see `sdp_record::HeadsetRecord`). A phone whose `PhonePolicy`
 /// auto-connects to a bonded headset-class device then finds a record either way.
+#[cfg(test)]
 pub fn hsp_hs_service(rfcomm_chan: u8) -> Service {
     let record = crate::sdp_record::HeadsetRecord {
         handle: SVC_RECORD_HANDLE_BASE + 3,

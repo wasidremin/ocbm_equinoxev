@@ -1,7 +1,7 @@
 //! OCBM v1 wire codec — the Open CCPA Bulk Multiplexer envelope.
 //!
-//! Projection-agnostic: the same envelope carries CarPlay and Android Auto. Nothing here is specific
-//! to either.
+//! Projection-agnostic: nothing in the envelope is specific to CarPlay (it also carried Android Auto
+//! until that was removed from this fork on 2026-10-27).
 //!
 //! 16-byte little-endian header + payload, carried over the `/dev/usb_accessory` bulk pipe:
 //! ```text
@@ -184,12 +184,8 @@ pub const CT_RADIO: u8 = 0x16; // host->box [CT_RADIO][0=radios off now | 1=radi
                                // implied by SUBSCRIBE + config push, and app loss powers radios off)
 pub const CT_PROJ_MODE: u8 = 0x19; // box->host [CT_PROJ_MODE][PM_*] -> WHICH projection transport owns the
                                    // box right now. Mirrors the box's single-owner arbitration flag
-                                   // `/tmp/projection_owner` (docs/androidauto/02_ARBITRATION.md), which session_supervisor and
-                                   // aa-bridge claim first-come-wins. Without it the app cannot know
-                                   // whether the box armed CarPlay or Android Auto, and had to be told by
-                                   // hand (the `AA_OCBM` env stand-in). On PM_WIRED_AA the app runs its own
-                                   // AA head-unit engine over CH_IP to the box's aa-bridge instead of the
-                                   // CarPlay decode path. Emitted on change and re-emitted to every fresh
+                                   // `/tmp/projection_owner`, which session_supervisor claims
+                                   // first-come-wins. Emitted on change and re-emitted to every fresh
                                    // SUBSCRIBE, same discipline as CT_BT_PHASE. Advisory: an unknown value
                                    // means "some transport owns the box" — never gate on ordering.
 pub const CT_BOX_HEALTH: u8 = 0x1A; // box->host [CT_BOX_HEALTH][flags u8] -> the box's own readiness, as
@@ -253,7 +249,8 @@ pub const LOG_SRC_BOX: u8 = 0;
 pub const LOG_SRC_AIRPLAYD: u8 = 1; // /tmp/carplayd.log (wired session)
 pub const LOG_SRC_AIRPLAYD_WL: u8 = 2; // /tmp/carplayd_wl.log (wireless session — a DIFFERENT file)
 pub const LOG_SRC_IAP2D: u8 = 3; // /tmp/iap2d.log
-pub const LOG_SRC_AA_BRIDGE: u8 = 4; // /tmp/aa-bridge.log
+pub const LOG_SRC_AA_BRIDGE: u8 = 4; // RETIRED 2026-10-27 — Android Auto (aa-bridge) removed from this fork.
+                                     // The id stays reserved: wire ids are never reused.
 pub const LOG_SRC_RX_CONNECT: u8 = 5; // RETIRED 2026-09-08 — rx-connect merged into carplayd
                                       // (its output is now /tmp/carplayd.log, LOG_SRC_AIRPLAYD).
                                       // The id stays reserved: wire ids are never reused.
@@ -314,11 +311,12 @@ pub const LOG_CAP_DEFAULT_KB: u16 = 256;
 /// Fixed header size of one CH_LOG entry: source, flags, seq, unix_ms, len.
 pub const LOG_ENTRY_HDR: usize = 14;
 
-pub const PM_NONE: u8 = 0x00; // idle — no projection session; either phone kind may claim the box
+pub const PM_NONE: u8 = 0x00; // idle — no projection session; a phone may claim the box
 pub const PM_WIRED_CP: u8 = 0x01; // wired CarPlay (projection_up -> iap2d + carplayd)
 pub const PM_WIRELESS_CP: u8 = 0x02; // wireless CarPlay (btd: BT + WiFi AP)
-pub const PM_WIRED_AA: u8 = 0x03; // wired Android Auto (aa-bridge AOAP pump; app drives AA over CH_IP)
-pub const PM_WIRELESS_AA: u8 = 0x04; // reserved — wireless Android Auto (docs/androidauto/03_WIRELESS.md, Phase 3, unbuilt)
+// RETIRED 2026-10-27 with Android Auto; the box never sends them. Reserved: wire ids are never reused.
+pub const PM_WIRED_AA: u8 = 0x03; // was wired Android Auto
+pub const PM_WIRELESS_AA: u8 = 0x04; // was wireless Android Auto
 
 pub const SEV_HOST_PRESENT: u8 = 0x01; // subscribed + heartbeat-alive
 pub const SEV_HOST_GONE: u8 = 0x02; // STOP, or heartbeat watchdog expired

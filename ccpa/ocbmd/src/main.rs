@@ -582,8 +582,8 @@ struct Daemon {
     /// Who the host says it is: an optional UTF-8 label carried after the nonce in CT_HELLO.
     ///
     /// The nonce distinguishes host PROCESSES; it says nothing about what KIND of host they are. The
-    /// box serves several — a GM head-unit app that owns Wi-Fi and uses the box as a BT+MFi bridge,
-    /// an Android Auto host driving `aa-bridge` over CH_IP, bench tooling — and its behaviour and its
+    /// box serves several — the GM head-unit app (bridge or box-AP role), bench tooling — and its
+    /// behaviour and its
     /// logs both differ between them, yet until now "what is talking to me" was unanswerable. Purely
     /// diagnostic: nothing gates on it, and an absent label reads exactly as it always did.
     host_name: Option<String>,
@@ -706,7 +706,6 @@ const LOG_SOURCES: &[(u8, &str)] = &[
     (p::LOG_SRC_AIRPLAYD, "/tmp/carplayd.log"),
     (p::LOG_SRC_AIRPLAYD_WL, "/tmp/carplayd_wl.log"),
     (p::LOG_SRC_IAP2D, "/tmp/iap2d.log"),
-    (p::LOG_SRC_AA_BRIDGE, "/tmp/aa-bridge.log"),
     (p::LOG_SRC_BT, "/tmp/bt.log"),
     (p::LOG_SRC_RADIO_AP_DHCP, "/tmp/radio_ap_dhcp.log"),
     (p::LOG_SRC_RADIO_BT_ATTACH, "/tmp/radio_bt_attach.log"),
@@ -762,7 +761,7 @@ struct LogSource {
     /// Lines of THIS source lost to [`LOG_QUEUE_CAP`] since its last `LOG_F_DROPPED` report.
     dropped: u32,
     /// Latched so a failing source reports ONCE per failure run, not once per tick. Per source, not
-    /// global: several of these files legitimately never exist (aa-bridge on a CarPlay-only box), and
+    /// global: several of these files legitimately never exist (iap2d's on a wireless-only drive), and
     /// a shared latch that any other source's successful read cleared would print on every tick — into
     /// `box.log`, which is itself being tailed, so the error would feed itself lines to fail on.
     err_logged: bool,
@@ -1800,12 +1799,10 @@ impl Daemon {
                     eprintln!("[ocbmd] out_lo cap hit ({OUT_QUEUE_CAP} B) — cleared + resyncing (host stalled)");
                     self.lo_capped = true;
                 }
-                // CH_IP carries the Android Auto TLS stream, where a gap is unrecoverable: the host's
-                // decrypt fails, or worse the phone silently stops receiving decryptable data and
-                // answers by RESETTING ITS OWN USB GADGET (gearhead's "no data received" reset-repair
-                // ladder), dropping out of accessory mode with no protocol teardown. Truncating those
-                // frames and carrying on is therefore not survivable for AA — close every relayed
-                // stream instead, which both ends already handle as a clean session end.
+                // CH_IP relays byte streams, where a gap is unrecoverable (this was Android Auto's
+                // TLS stream until 2026-10-27). Truncating those frames and carrying on corrupts the
+                // stream — close every relayed stream instead, which both ends already handle as a
+                // clean session end.
                 self.close_ip_conns_after_gap();
             }
         }
@@ -2739,21 +2736,12 @@ impl Daemon {
         }
     }
 
-    /// Mirror the box's single-owner arbitration flag (`/tmp/projection_owner`, docs/androidauto/02_ARBITRATION.md) to the
-    /// host as `CT_PROJ_MODE` on each change.
-    ///
-    /// This is the box telling the app WHICH projection transport it armed — the app cannot see the
-    /// USB bus, the AOAP switch or `arm_aa`, so without it "the box is now doing Android Auto"
-    /// reached the app only via the hand-set `AA_OCBM` env stand-in. On `PM_WIRED_AA` — and, since
-    /// 2026-09-04, `PM_WIRELESS_AA` — the app runs its own AA head-unit engine over CH_IP to
-    /// `aa-bridge` instead of the CarPlay decode path. Nothing here distinguishes the two: this tick
-    /// is `owner().wire_code()` and `handle_ip` connects to whatever target the host names, so the
-    /// wireless transport needed no ocbmd change at all. Both AA transports are served by the same
-    /// `aa-bridge` process on the same `127.0.0.1:5277`.
+    /// Mirror the box's single-owner arbitration flag (`/tmp/projection_owner`) to the host as
+    /// `CT_PROJ_MODE` on each change — the box telling the app WHICH projection transport it armed.
     ///
     /// Reads through [`box_common::flags::owner`], so the legacy CarPlay-only `carplay_transport`
-    /// fallback and the token spellings stay defined in ONE place shared with aa-bridge and the
-    /// shell supervisor. Same discipline as [`Self::bt_phase_tick`]: changes only, throttled once
+    /// fallback and the token spellings stay defined in ONE place shared with the shell
+    /// supervisor. Same discipline as [`Self::bt_phase_tick`]: changes only, throttled once
     /// latched (the flag changes on arm/teardown, not during A/V).
     fn proj_mode_tick(&mut self, now_t: std::time::Instant) {
         if !self.subscribed {
@@ -3046,11 +3034,9 @@ impl Daemon {
     /// OCBM_CH_IP stream mux: OPEN (connect to target), DATA (relay), CLOSE.
     /// Tear down every relayed CH_IP stream after the reliable queue dropped frames.
     ///
-    /// Called from the `out_lo` cap-clear. Those queues carry the Android Auto TLS stream box->host;
-    /// once bytes are gone the stream cannot resynchronise, so continuing to relay is worse than
-    /// stopping — the host would decrypt garbage and the phone would see its data dry up. Dropping the
-    /// sockets makes both ends observe a normal end-of-stream: the host's AA session ends, aa-bridge
-    /// sees EOF, the owner flag clears, and the next mode event rebuilds a clean session.
+    /// Called from the `out_lo` cap-clear. Those queues carry relayed byte streams box->host; once
+    /// bytes are gone a stream cannot resynchronise, so continuing to relay is worse than stopping.
+    /// Dropping the sockets makes both ends observe a normal end-of-stream.
     fn close_ip_conns_after_gap(&mut self) {
         if self.conns.is_empty() {
             return;
@@ -3734,8 +3720,8 @@ impl Daemon {
                     // queues but not `conns`, and the conns map is otherwise cleared only on CT_STOP,
                     // go_idle, or an out_lo gap. A host that died without CT_STOP and relaunched
                     // inside the heartbeat grace therefore left its corpse's socket being pumped,
-                    // while the new host's IP_OPEN sat unaccepted in aa-bridge's backlog (the bridge
-                    // serves ONE client per prepared accessory) — Android Auto retried forever.
+                    // while the new host's IP_OPEN sat unaccepted in a one-client relay target's
+                    // backlog (found with Android Auto's aa-bridge, removed 2026-10-27).
                     // Conn ids are per-ATTEMPT on the host side (0x00AA + gen&0x3F), so a stale
                     // socket can never be adopted by the new host and there is nothing to preserve.
                     // On a CarPlay session `conns` is empty and this is a literal no-op.
@@ -5195,10 +5181,10 @@ mod tests {
         // The reaped-and-recreated case. Our open fd keeps the OLD inode alive, so without the
         // identity check the source reads EOF forever against a live new file — a daemon whose log
         // was rotated away would go permanently silent to the host with no error anywhere.
-        let (mut d, path) = td_log(p::LOG_SRC_AA_BRIDGE, "reap");
-        append(&path, "[aa] first\n");
+        let (mut d, path) = td_log(p::LOG_SRC_BT, "reap");
+        append(&path, "[bt] first\n");
         log_tick_now(&mut d);
-        assert_eq!(log_lines(&log_sent(&mut d)), ["[aa] first"]);
+        assert_eq!(log_lines(&log_sent(&mut d)), ["[bt] first"]);
 
         std::fs::remove_file(&path).unwrap();
         log_tick_now(&mut d);
@@ -5207,13 +5193,13 @@ mod tests {
         assert!(notes(&v).iter().any(|n| n.contains("replaced or reaped")));
         assert!(d.log.srcs[0].fd.is_none(), "the stale inode must be let go");
 
-        append(&path, "[aa] second\n"); // reappears as a NEW inode
+        append(&path, "[bt] second\n"); // reappears as a NEW inode
         log_tick_now(&mut d);
-        assert_eq!(log_lines(&log_sent(&mut d)), ["[aa] second"]);
+        assert_eq!(log_lines(&log_sent(&mut d)), ["[bt] second"]);
         // And it keeps following the new file, rather than one-shotting it.
-        append(&path, "[aa] third\n");
+        append(&path, "[bt] third\n");
         log_tick_now(&mut d);
-        assert_eq!(log_lines(&log_sent(&mut d)), ["[aa] third"]);
+        assert_eq!(log_lines(&log_sent(&mut d)), ["[bt] third"]);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -6193,7 +6179,7 @@ mod tests {
         assert!(proc_name_matches("carplayd", "carplayd", "carplayd"));
 
         // A multicall image invoked through /usr/sbin/<name>: comm is the symlink basename.
-        assert!(proc_name_matches("aa-bridge", "aa-bridge", "aa-bridge"));
+        assert!(proc_name_matches("btd", "btd", "btd"));
 
         // Negative cases: a different daemon, and the wrapper script that merely mentions the name.
         assert!(!proc_name_matches("ocbmd", "ocbmd", "carplayd"));
