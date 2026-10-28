@@ -90,7 +90,7 @@ now-playing, cluster turn-by-turn and call metadata. Video, audio and touch keep
 logs the rejected param ids (`RX 0x1D03 decoded`). Turn the setting off and reconnect to undo it.
 
 **Needs to reach the car.** Box firmware via `ocbm_install.sh --full` (the Identify and the answer
-both live in `carplayd`), and an app build ≥ 223.
+both live in `carplayd`), and app build 223 or later (`4.0+ev-maps`, on the internal track 2026-10-28).
 
 **Done means.** With the setting on, the box log shows `Identify carries the app-pushed vehicle
 identity`, then `RX 0xA100 StartVehicleStatusUpdates` and `TX 0xA101 VehicleStatusUpdate`, with
