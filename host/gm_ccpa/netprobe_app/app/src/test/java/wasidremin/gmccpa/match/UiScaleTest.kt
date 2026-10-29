@@ -16,8 +16,11 @@ import kotlin.math.hypot
  * 2470x960 picture (the old slider's 83%), which CarPlay drew 1.276x larger — strip icons 111 px
  * instead of 87, spacing 143 instead of 112. Every top-bar launch that evening was NOT_FOUND.
  * `cap4_strip_2342_default.png` is the strip of 2026-10-23 with no physical size reported.
- * Both are the left 216 px of the coded frame only (the rest of a capture can show where the car
- * is), padded back to the coded width here.
+ * `cap6_strip_2470_ui85.png` is the strip of 2026-10-29 at dawn, 360x139 mm reported (the new
+ * slider's 85%), so drawn 0.851x: Spotify and Phone matched from the strip that morning, but
+ * strip.maps scored 0.839 at the rounded 15 px template and Maps went the slow way, through Home.
+ * All three are the left 216 px (cap6: 144) of the coded frame only (the rest of a capture can
+ * show where the car is), padded back to the coded width here.
  */
 class UiScaleTest {
     companion object {
@@ -31,6 +34,7 @@ class UiScaleTest {
 
         val default2342 by lazy { strip("cap4_strip_2342_default.png", 2342) }
         val large2470 by lazy { strip("cap5_strip_2470_ui83.png", 2470) }
+        val small2470 by lazy { strip("cap6_strip_2470_ui85.png", 2470) }
 
         private val builtIns: Map<String, IconMatcher.IconTemplate> by lazy {
             File("src/main/assets/" + IconTemplateStore.BUILTIN_ASSET_DIR).listFiles()!!
@@ -49,6 +53,10 @@ class UiScaleTest {
         private const val LARGE_STRIP_X = 102
         private const val LARGE_TOGGLE_X = 102
         private const val LARGE_TOGGLE_Y = 860
+
+        // Where the car found them on 2026-10-29 (full-res px of the coded frame).
+        private val SMALL_STRIP_Y = mapOf("maps" to 338, "spotify" to 430, "phone" to 526)
+        private const val SMALL_STRIP_X = 69
     }
 
     @Test fun fixedScaleTemplatesMissTheLargerUi() {
@@ -98,6 +106,39 @@ class UiScaleTest {
             assertEquals("strip.$role y", y.toFloat(), hit.ny * 960, 10f)
             assertEquals("strip.$role x", LARGE_STRIP_X.toFloat(), hit.nx * 2470, 10f)
         }
+    }
+
+    @Test fun stripIconsFoundAtTheSmallerUi() {
+        val ui = ScreenModel.expectedUi(2470, ScreenModel.physicalWidthMmFor(2470, 85))
+        assertEquals(0.851f, ui, 0.002f)
+        val geo = ScreenModel.geometry(small2470, ui)
+        for ((role, y) in SMALL_STRIP_Y) {
+            val hit = ScreenModel.find(small2470, builtIns.getValue("strip.$role"), ScreenModel.Kind.STRIP, geo)
+            assertTrue("strip.$role scored ${hit.score}", hit.passed)
+            assertEquals("strip.$role y", y.toFloat(), hit.ny * 960, 10f)
+            assertEquals("strip.$role x", SMALL_STRIP_X.toFloat(), hit.nx * 2470, 10f)
+        }
+        // The rounded side alone is what missed Maps on the car.
+        val one = ScreenModel.find(small2470, ScreenModel.atScale(builtIns.getValue("strip.maps"), ui), geo.stripRoi, 1)
+        assertFalse("strip.maps at one size scored ${one.score}", one.passed)
+    }
+
+    @Test fun nightGlyphAtTheSmallerUi() {
+        val geo = ScreenModel.geometry(small2470, ScreenModel.expectedUi(2470, 360))
+        val ev = ScreenModel.surfaceDetailed(small2470, builtIns[ScreenModel.GLYPH_DASHBOARD], builtIns[ScreenModel.GLYPH_OTHER], geo)
+        assertEquals(ev.toString(), ScreenModel.Surface.DASHBOARD, ev.surface)
+    }
+
+    @Test fun glyphCornerLogsAsHex() {
+        val geo = ScreenModel.geometry(small2470, ScreenModel.expectedUi(2470, 360))
+        val hex = ScreenModel.regionHex(small2470, geo.glyphRoi)
+        val (dims, rows) = hex.split(' ')
+        val (w, h) = dims.split('x').map { it.toInt() }
+        val lines = rows.split('/')
+        assertEquals(h, lines.size)
+        assertTrue(lines.all { it.length == w && it.all { c -> c in "0123456789abcdef" } })
+        // White dots on a dark button: both ends of the scale are there.
+        assertTrue(rows.any { it in "0123" } && rows.any { it in "def" })
     }
 
     @Test fun toggleTapLandsOnTheToggle() {

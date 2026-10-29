@@ -186,12 +186,12 @@ object ScreenModel {
     }
 
     /** [t], stored at the default scale, resized for a UI drawn [ui] times larger. */
-    fun atScale(t: IconMatcher.IconTemplate, ui: Float): IconMatcher.IconTemplate {
-        val w = max(MIN_SIDE, (t.width * ui).roundToInt())
-        val h = max(MIN_SIDE, (t.height * ui).roundToInt())
-        if (w == t.width && h == t.height) return t
-        return t.copy(width = w, height = h, pixels = resize(t.pixels, t.width, t.height, w, h))
-    }
+    fun atScale(t: IconMatcher.IconTemplate, ui: Float): IconMatcher.IconTemplate =
+        sized(t, max(MIN_SIDE, (t.width * ui).roundToInt()), max(MIN_SIDE, (t.height * ui).roundToInt()))
+
+    private fun sized(t: IconMatcher.IconTemplate, w: Int, h: Int): IconMatcher.IconTemplate =
+        if (w == t.width && h == t.height) t
+        else t.copy(width = w, height = h, pixels = resize(t.pixels, t.width, t.height, w, h))
 
     /**
      * Bilinear resize with pixel CENTRES aligned, so content scales by exactly dst/src. (The
@@ -281,9 +281,25 @@ object ScreenModel {
         return Hit(t.name, score, (bx + t.width / 2f) / g.width, (by + t.height / 2f) / g.height, passed)
     }
 
-    /** [t] (stored at the default scale) searched for in its kind's region of [geo]. */
-    fun find(g: Gray, t: IconMatcher.IconTemplate, kind: Kind, geo: Geometry): Hit =
-        search(g, atScale(t, geo.ui), kind, geo.roi(kind), kind.stride)
+    /**
+     * [t] (stored at the default scale) searched for in its kind's region of [geo]. A strip icon
+     * is 15–23 px at 1/[SCALE] and a glyph 13–19, so rounding the side to a whole pixel moves the
+     * template's scale by up to 3%, and an icon's best side is not always the rounded one: on the
+     * 0.851x frame of 2026-10-29 strip.maps scored 0.84 at 15 px and 0.90 at 16 px while
+     * strip.phone peaked at 15. So strip and glyph templates are also tried a pixel smaller and
+     * larger. Grid icons (32–48 px) are left at one size.
+     */
+    fun find(g: Gray, t: IconMatcher.IconTemplate, kind: Kind, geo: Geometry): Hit {
+        val at = atScale(t, geo.ui)
+        var best = search(g, at, kind, geo.roi(kind), kind.stride)
+        if (kind == Kind.GRID) return best
+        for (d in intArrayOf(-1, 1)) {
+            if (at.width + d < MIN_SIDE || at.height + d < MIN_SIDE) continue
+            val hit = search(g, sized(t, at.width + d, at.height + d), kind, geo.roi(kind), kind.stride)
+            if (best.score.isNaN() || hit.score > best.score) best = hit
+        }
+        return best
+    }
 
     /**
      * The toggle glyph is a monochrome symbol drawn dark-on-light in light mode and light-on-dark
@@ -400,6 +416,25 @@ object ScreenModel {
         other: IconMatcher.IconTemplate?,
         geo: Geometry = geometry(g),
     ): Surface = surfaceDetailed(g, dashboard, other, geo).surface
+
+    /**
+     * Region [r] of [g] as 16 grey levels, one hex digit per 1/[SCALE] px, rows joined by '/'.
+     * Logged when a launch verifies as the Dashboard, so the toggle button's real look reaches the
+     * log without a screenshot: the strip's bottom corner shows nothing of the map.
+     */
+    fun regionHex(g: Gray, r: NRect): String {
+        val reg = searchRegion(g, r)
+        val sb = StringBuilder("${reg.width}x${reg.height} ")
+        for (y in reg.y until reg.y + reg.height) {
+            if (y > reg.y) sb.append('/')
+            for (x in reg.x until reg.x + reg.width) {
+                sb.append(HEX[(g.px[y * g.width + x] * 15f).roundToInt().coerceIn(0, 15)])
+            }
+        }
+        return sb.toString()
+    }
+
+    private const val HEX = "0123456789abcdef"
 
     /** Mean absolute difference of two same-size frames (0..1). Screen-to-screen is ~0.15. */
     fun changed(a: Gray, b: Gray): Float {

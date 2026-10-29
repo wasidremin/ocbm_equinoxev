@@ -291,6 +291,7 @@ object VisionLauncher {
                 r.verifyOtherScore = ev.otherScore
                 r.mark("verify")
                 val ok = ev.surface != ScreenModel.Surface.DASHBOARD
+                noteGlyph(r, graced.gray, ev)
                 r.step("verify", "screen changed; surface=${ev.surface}", passed = ok)
                 return if (ok) CarPlayLauncher.Outcome.SUCCESS else CarPlayLauncher.Outcome.VERIFY_FAILED
             }
@@ -404,8 +405,20 @@ object VisionLauncher {
         r.verifyOtherScore = ev.otherScore
         r.mark("verify")
         val ok = !still.passed && ev.surface != ScreenModel.Surface.DASHBOARD
+        noteGlyph(r, graced.gray, ev)
         r.step("verify", "grid icon gone=${!still.passed}; surface=${ev.surface}", still.score, ok)
         return if (ok) CarPlayLauncher.Outcome.SUCCESS else CarPlayLauncher.Outcome.VERIFY_FAILED
+    }
+
+    /**
+     * An app tap that still reads as the Dashboard: log the toggle button itself. At dawn on
+     * 2026-10-29 the Maps and Phone taps both changed the screen and both verified as Dashboard,
+     * and no frame was kept to say why.
+     */
+    private fun noteGlyph(r: Run, g: ScreenModel.Gray, ev: ScreenModel.SurfaceEvidence) {
+        if (ev.surface != ScreenModel.Surface.DASHBOARD) return
+        r.step("glyph", "dashboard=%.3f other=%.3f %s".format(Locale.US, ev.dashboardScore ?: Float.NaN,
+            ev.otherScore ?: Float.NaN, ScreenModel.regionHex(g, r.geo.glyphRoi)))
     }
 
     private fun checkBudget(r: Run) {
