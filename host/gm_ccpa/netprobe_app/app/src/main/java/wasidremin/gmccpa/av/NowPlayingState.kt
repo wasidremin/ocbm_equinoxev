@@ -564,6 +564,15 @@ internal fun publishedPosition(
 }
 
 /**
+ * True when publishing [next] would take the picture off the car's card while one may still be on
+ * its way: a new title ahead of its JPEG, or the same title whose art id moved before the new JPEG
+ * landed. A title the card already shows without a picture is never held again, so a track that
+ * really has no art waits once, not on every update.
+ */
+internal fun holdForArt(shownTitle: String?, shownHasArt: Boolean, next: NowPlayingState.Snapshot): Boolean =
+    next.hasContent && next.artwork == null && (next.title != shownTitle || shownHasArt)
+
+/**
  * True when an unchanged-metadata record actually moved [nextElapsed] relative to [prevElapsed].
  * Records that neither change displayed metadata nor advance elapsed time (e.g. duplicate ticks
  * or unsubscribed shuffle/repeat frames) do not fire the tick listener.

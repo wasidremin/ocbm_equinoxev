@@ -259,7 +259,25 @@ left by the morning route, which the 11:40 update cut off before `navigationEnde
 now, since a playlist change would not clear it. One lead, unproven: each track change publishes
 twice. A first `art=none` publish goes out under the new `queueId`, then the art follows 20–80 ms
 later. A consumer that latches the first publish for a queue item would miss the art until the next
-track. If it recurs, note which track it starts on.
+track.
+
+**Recurred 2026-10-29 morning (versionCode 225): "the cluster image isn't always showing up".**
+Again the session's last card for every track had a 300×300 bitmap. Each of 12 track changes went
+out as `art=none` twice and then the art, 25–115 ms after the title. Three Spotify tracks were worse
+("the cure" 11:36:13, "Choosin' Texas" 11:41:11, "So Easy" 11:45:04): an identical 18,307 B stand-in
+cover came first, then a new art id about 540 ms later and the real cover 20–70 ms after that. So
+those cards went picture, none, picture within 0.6 s. The owner restarted the session from the app
+20 s after the third of these (11:45:24). The cluster's own process is still not in the capture, so
+which publish it missed is unproven.
+*Change (next build):* `CarPlayMediaBrowserService` holds a card with no picture for up to 500 ms
+while one may be coming (`holdForArt`): a new title ahead of its JPEG, or the same title whose art id
+moved. A track change now reaches the car as one card with its picture. The stand-in case becomes
+stand-in, then real cover, never a blank in between. A track with no art waits once, then logs
+`card: no picture 500 ms after "<title>"`. Playback state is never held.
+*If it still happens:* note the track and whether it is the stand-in kind. The original Carlink app
+also publishes the art as a granted `content://` URI, because upstream found GM's RHMI cluster
+service (`com.gm.rhmi`) reads art through its own provider. This app sends only the bitmap; that
+path is the next thing to try.
 
 **Later (adapter firmware, `tools/ocbm_install.sh`).**
 - Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.

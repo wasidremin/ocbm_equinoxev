@@ -16,6 +16,8 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.service.media.MediaBrowserService
 import android.view.KeyEvent
@@ -84,6 +86,13 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     @Volatile private var artBitmap: Bitmap? = null
     @Volatile private var artFor: ByteArray? = null
     @Volatile private var foreground = false
+    /** Title and picture of the last card published, for [holdForArt]. Guarded by `this`. */
+    private var shownTitle: String? = null
+    private var shownHasArt = false
+    /** A card waiting for its picture; [flushHeld] publishes it if the picture does not come. */
+    private var held: NowPlayingState.Snapshot? = null
+    private var holdGeneration = 0
+    private val main = Handler(Looper.getMainLooper())
 
     /**
      * Transport sends block on the native event-channel lock, and callbacks arrive on a binder thread.
@@ -130,6 +139,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
          * this head unit.
          */
         private const val ART_MAX_PX = 512
+
+        /**
+         * How long a card waits for its picture. The JPEG lands 20–120 ms after the title
+         * (14_LESSONS_LEARNED §14.2; 2026-10-29: 25–115 ms).
+         */
+        private const val ART_WAIT_MS = 500L
 
         private const val ACTIONS = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
             PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
@@ -476,6 +491,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         session?.let { it.isActive = false; it.release() }
         session = null
         artBitmap = null; artFor = null
+        main.removeCallbacksAndMessages(null)
         tx.shutdownNow()
         SessionTrace.Board.down(BOARD, "unbound by AAOS — not in the source switcher until it re-binds")
         super.onDestroy()
@@ -510,10 +526,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
      * media frame. That is the arbitration weight CarMediaService uses to select the app.
      * A real Now Playing status replaces it. Bluetooth leaves the card stopped.
      */
+    @Synchronized
     private fun publishPreparing() {
         val sess = session ?: return
         if (wasidremin.gmccpa.AudioRoute.bluetooth) return
         if (last?.playbackStatus != null || last?.hasContent == true || seenContent) return
+        forgetCard()
         sess.setMetadata(
             MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, "CarPlay")
@@ -528,9 +546,11 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         log.i("playback STATE_BUFFERING rate=1 t=${SystemClock.elapsedRealtime()} — selecting this source before another one locks")
     }
 
+    @Synchronized
     private fun publishIdle() {
         val sess = session ?: return
         artBitmap = null; artFor = null
+        forgetCard()
         sess.setMetadata(
             MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, "CarPlay").build()
         )
@@ -544,11 +564,49 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
 
     fun resetCardLog() { cardLogLine = null }
 
+    /**
+     * A card without a picture is held while one may be on its way ([holdForArt]), for up to
+     * [ART_WAIT_MS]. Unheld, every track change reached the car as two picture-less cards and then
+     * the art, and a Spotify track whose stand-in cover was replaced 0.5 s later went picture, none,
+     * picture. On 2026-10-27 and 2026-10-29 the owner saw the cluster with title and artist but no
+     * art at times, while the session's last card for that track had it. Playback state is never held.
+     */
+    @Synchronized
     private fun publishNow(s: NowPlayingState.Snapshot) {
-        val sess = session ?: return
+        session ?: return
         // Metadata waits for a title. Playback state does not: a status-only update (paused
         // before any title) must leave BUFFERING, or the card keeps claiming the source.
         if (s.hasContent) {
+            if (!holdForArt(shownTitle, shownHasArt, s)) publishCard(s)
+            else {
+                if (held == null) {
+                    val gen = ++holdGeneration
+                    main.postDelayed({ flushHeld(gen) }, ART_WAIT_MS)
+                }
+                held = s
+            }
+        }
+        publishState(s, "status")
+    }
+
+    /** The held card's picture did not come in time: publish it without one. */
+    @Synchronized
+    private fun flushHeld(gen: Int) {
+        if (gen != holdGeneration) return
+        val s = held ?: return
+        log.i("card: no picture ${ART_WAIT_MS} ms after \"${s.title.orEmpty()}\" — publishing without one")
+        publishCard(s)
+    }
+
+    /** Placeholder metadata replaced the card: drop a held one, and the next title starts fresh. */
+    private fun forgetCard() {
+        held = null; holdGeneration++
+        shownTitle = null; shownHasArt = false
+    }
+
+    private fun publishCard(s: NowPlayingState.Snapshot) {
+        val sess = session ?: return
+        held = null; holdGeneration++
         val b = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, s.title.orEmpty())
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, s.title.orEmpty())
@@ -583,8 +641,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             log.i(cardLine)
         }
         runCatching { sess.setMetadata(b.build()) }.onFailure { log.e("setMetadata failed: ${it.message}") }
-        }
-        publishState(s, "status")
+        shownTitle = s.title; shownHasArt = art != null
     }
 
     /**

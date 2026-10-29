@@ -67,6 +67,43 @@ class NowPlayingLogTest {
         assertEquals(a.hashCode(), b.hashCode())
     }
 
+    /**
+     * 2026-10-29 11:36:13, "the cure": title, art id 131, an 18307 B stand-in cover, art id 132 at
+     * +536 ms, the real cover at +576 ms. Five cards went out, three without a picture. Held, only
+     * the two with a picture reach the car.
+     */
+    @Test fun cardWaitsWhileItsPictureIsComing() {
+        val standIn = byteArrayOf(1)
+        val cover = byteArrayOf(2)
+        val title = NowPlayingState.Snapshot(title = "the cure", artist = "a", durationMs = 297090L)
+        val steps = listOf(
+            title,
+            title.copy(artworkId = 131),
+            title.copy(artworkId = 131, artwork = standIn),
+            title.copy(artworkId = 132),
+            title.copy(artworkId = 132, artwork = cover),
+        )
+        var shownTitle: String? = "Housewife"
+        var shownHasArt = true
+        val published = mutableListOf<NowPlayingState.Snapshot>()
+        for (s in steps) {
+            if (holdForArt(shownTitle, shownHasArt, s)) continue
+            published += s
+            shownTitle = s.title
+            shownHasArt = s.artwork != null
+        }
+        assertEquals(listOf(steps[2], steps[4]), published)
+    }
+
+    @Test fun trackWithNoPictureWaitsOnce() {
+        val s = NowPlayingState.Snapshot(title = "Episode", artist = "a")
+        assertTrue(holdForArt("Previous", true, s))
+        // Once it has gone out without a picture, later updates to it go straight out.
+        assertFalse(holdForArt("Episode", false, s.copy(durationMs = 1000L)))
+        // Nothing to show, nothing to hold.
+        assertFalse(holdForArt(null, false, NowPlayingState.Snapshot()))
+    }
+
     @Test fun shouldFireTickOnlyWhenElapsedMoves() {
         org.junit.Assert.assertTrue(shouldFireTick(1000L, 1500L))
         org.junit.Assert.assertFalse(shouldFireTick(1500L, 1500L))
