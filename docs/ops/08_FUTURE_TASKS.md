@@ -269,7 +269,14 @@ cover came first, then a new art id about 540 ms later and the real cover 20–7
 those cards went picture, none, picture within 0.6 s. The owner restarted the session from the app
 20 s after the third of these (11:45:24). The cluster's own process is still not in the capture, so
 which publish it missed is unproven.
-*Change (next build):* `CarPlayMediaBrowserService` holds a card with no picture for up to 500 ms
+**Again 2026-10-30 morning, still versionCode 225** (the change below had not shipped). Every title
+change went out as `art=none` twice, then the art 25–124 ms after the title. Two were the stand-in
+kind: "Choosin' Texas" took the 18,307 B cover at 11:01:45, 0.5 s before "Angel Of My Dreams"
+replaced it, and "I Just Might" (11:05:39) showed the stand-in for 1.5 s before its real cover. The
+owner restarted the session from the app twice (11:03:18, 11:04:45). Neither restart could help: each
+replayed "Angel Of My Dreams" as none, none, picture within 56 ms. So the missing art is not stale
+cluster state that a restart clears; it follows each title that reaches the car without its picture.
+*Change (versionCode 226, 2026-10-30):* `CarPlayMediaBrowserService` holds a card with no picture for up to 500 ms
 while one may be coming (`holdForArt`): a new title ahead of its JPEG, or the same title whose art id
 moved. A track change now reaches the car as one card with its picture. The stand-in case becomes
 stand-in, then real cover, never a blank in between. A track with no art waits once, then logs
