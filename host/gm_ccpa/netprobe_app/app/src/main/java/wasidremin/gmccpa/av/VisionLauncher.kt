@@ -455,9 +455,21 @@ object VisionLauncher {
         }
         return when (val res = CarPlayFrameGrabber.captureStableFrameBlocking(timeoutMs = 1500L, surfaceView = surface)) {
             is CarPlayFrameGrabber.CaptureResult.Success -> Frame(toGray(res.bitmap), null)
-            is CarPlayFrameGrabber.CaptureResult.Failure -> throw Abort("${res.reason}: ${res.detail}")
+            is CarPlayFrameGrabber.CaptureResult.Failure ->
+                if (readUnsettled(res.reason, Thread.currentThread().isInterrupted)) {
+                    r.step("unsettled", "${res.detail}; reading the current frame")
+                    current(surface)
+                } else throw Abort("${res.reason}: ${res.detail}")
         }
     }
+
+    /** The frame as it is now, for a screen that never holds still ([readUnsettled]). */
+    private fun current(surface: SurfaceView): Frame =
+        when (val res = CarPlayFrameGrabber.captureBlocking(surface, owned = saveScreenshots)) {
+            is CarPlayFrameGrabber.CaptureResult.Success ->
+                Frame(toGray(res.bitmap), if (saveScreenshots) res.bitmap else null)
+            is CarPlayFrameGrabber.CaptureResult.Failure -> throw Abort("${res.reason}: ${res.detail}")
+        }
 
     /**
      * Post-tap wait: first a screen change vs [before], then a quiet window — at least
@@ -476,8 +488,9 @@ object VisionLauncher {
             val now = SystemClock.elapsedRealtime()
             if (changedAt < 0 && now - tapAt > CHANGE_WAIT_MS) return null
             if (changedAt >= 0 && now - tapAt > SETTLE_CAP_MS) {
+                // Not another stable-frame wait: a moving map never passes it ([readUnsettled]).
                 r.step("settle", "not quiet by +${now - tapAt}ms ($samples samples); using current frame")
-                break
+                return current(surface)
             }
             val g = when (val res = CarPlayFrameGrabber.captureBlocking(surface)) {
                 is CarPlayFrameGrabber.CaptureResult.Success -> toGray(res.bitmap)

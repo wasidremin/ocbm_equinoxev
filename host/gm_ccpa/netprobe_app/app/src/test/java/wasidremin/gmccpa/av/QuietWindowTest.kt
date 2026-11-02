@@ -34,4 +34,12 @@ class QuietWindowTest {
         assertFalse(q.offer(700, Float.NaN))
         assertFalse(q.offer(800, 0.0f))
     }
+
+    /** 2026-11-02 12:50 and 13:06: the tap worked, then a map moving under a route aborted the launch. */
+    @Test fun aMovingScreenIsReadNotAborted() {
+        assertTrue(readUnsettled(CarPlayFrameGrabber.FailureReason.TIMEOUT_UNSTABLE, interrupted = false))
+        assertFalse(readUnsettled(CarPlayFrameGrabber.FailureReason.TIMEOUT_UNSTABLE, interrupted = true))
+        assertFalse(readUnsettled(CarPlayFrameGrabber.FailureReason.SESSION_DOWN, interrupted = false))
+        assertFalse(readUnsettled(CarPlayFrameGrabber.FailureReason.SURFACE_NOT_READY, interrupted = false))
+    }
 }

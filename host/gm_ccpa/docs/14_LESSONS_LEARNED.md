@@ -218,6 +218,15 @@ Three findings from the day's bundle (`gmccpa-20261015.log` + three 2754x966 cap
    - **First drive with it (2026-10-29, versionCode 224, slider 85% → 360x139 mm, dawn).** The predicted 0.851 was confirmed on the first frame (strip.phone 0.949), with no sweep. Spotify and Phone matched from the strip (0.912, 0.949). strip.maps scored 0.839 and Maps went the slow way: toggle, toggle, grid, 7.3 s. At this size a strip icon is about 15 px at 1/4 resolution, so rounding the template side to a whole pixel moves its scale by about 3%. Maps scores 0.84 at 15 px and 0.90 at 16, while Phone peaks at 15. So `ScreenModel.find` now also tries strip and glyph templates one pixel smaller and larger. Grid icons stay at one size.
    - **Still open: the square glyph.** iOS 27's square glyph (shown on Home and in apps) scores 0.81 against the iOS 26 `glyph.other`, day or night. Wherever the square is showing, the surface check reads UNKNOWN. The launcher treats UNKNOWN as "not Dashboard" and carries on, so only verification is weaker: the Home button logs UNVERIFIED. Re-cut the template from an iOS 27 capture in Calibration.
    - **Still open: Dashboard after an app tap, at dawn.** On 2026-10-29 the Maps (grid) and Phone (strip) taps both changed the screen, and the owner saw both apps open. Both then read as Dashboard through the 1.5 s grace and logged VERIFY_FAILED, so the reading, not the launch, was wrong. The outcome is only logged, so nothing else acts on it. The same reading appeared on 2026-10-15 and 10-17, but the cause is unknown: no launch frame was kept (evidence is off), and a light iOS 27 in-app strip, inverted, reads UNKNOWN, not Dashboard. Every Dashboard reading after an app tap now logs a `[glyph]` step: both scores, plus the glyph corner as hex grey levels (`ScreenModel.regionHex`), which shows the button and no map.
+   - **A moving map is not a failed launch (2026-11-02, versionCode 226).** With an Apple Maps route
+     running, Maps from the strip (12:50 UTC) and Home (13:06) both tapped correctly, then aborted
+     `TIMEOUT_UNSTABLE`: the map moved in every frame, so no frame ever settled. The settle step logged
+     "using current frame" at its 2.5 s cap but then waited for a stable frame anyway. Now the cap
+     reads the current frame, and any stable-frame wait that times out reads the frame as it is
+     (`readUnsettled`, pinned by `QuietWindowTest.aMovingScreenIsReadNotAborted`). That includes the
+     first frame, so a launch started over a moving map still taps. The strip and its toggle glyph,
+     all the launcher reads, do not move with the map. Launches before the route started (12:32,
+     12:33, 12:37) verified SUCCESS.
    - **Tests.** Pinned by `UiScaleTest` on strip-only crops (`cap4_strip_2342_default.png`, `cap5_strip_2470_ui83.png`, `cap6_strip_2470_ui85.png`). Only the left 216 px (cap6: 144, with the last 8 greyed) are kept, because the rest of a capture can show where the car is.
 
 ---
@@ -617,6 +626,13 @@ trigger in this window. What it did show, and what changed (v211):
 - **Left alone:** the phone paused itself 6 s after a driver play (`partial TEARDOWN`, 21:09:55.7) — not
   explained by the log; `CH_FILE pull /tmp/wlan_off.log` / `supervisor.log` `OPEN_FAILED` (files absent
   on the box); 214 `requestLayout() improperly called during layout` warnings (cosmetic).
+  **Corrected 2026-11-02: not cosmetic.** They are a layout loop on the CarPlay screen. The root's
+  layout listener (`measureAndLayout` → `placeTopBar` → `syncChrome`) assigned the rail fresh
+  `LayoutParams` on every pass, and each assignment requests the next pass. Usually it ran in short
+  bursts. On the 2026-11-02 drive (226, UI 95%) it ran at 60 Hz for the whole CarPlay session:
+  exactly 180 warnings a second, 374,000 lines, 96% of that upload. `syncChrome` now assigns only
+  changed params, and `placeTopBar` sets the bar's visibility once per pass instead of VISIBLE then
+  GONE.
 
 ### 14.10 The 2026-10-23 drive (v214, pid 18774) — §14.5 again, and the latch is not the whole story
 

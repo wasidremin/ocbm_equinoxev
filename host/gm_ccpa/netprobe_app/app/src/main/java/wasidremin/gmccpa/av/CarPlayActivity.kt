@@ -240,13 +240,14 @@ class CarPlayActivity : Activity() {
                 val lp = bar.layoutParams as android.widget.FrameLayout.LayoutParams
                 val barH = (strip * windowFitScale).roundToInt().coerceAtLeast(1)
                 if (lp.height != barH) { lp.height = barH; bar.layoutParams = lp }
-                bar.visibility = View.VISIBLE
             }
             if (bar.rightInsetPx != rightInset.coerceAtLeast(0)) bar.rightInsetPx = rightInset
             if (bar.slopeM != slopeM.coerceAtLeast(0f)) bar.slopeM = slopeM.coerceAtLeast(0f)
             val decor = window.decorView
             bar.outline = wasidremin.gmccpa.DisplayPrefs.glassOutline(
                 this, decor.width.toFloat(), decor.height.toFloat())
+            // One assignment per layout. Setting VISIBLE first and then GONE flipped it twice on
+            // every pass while the status bar showed, and each flip requests another layout.
             bar.visibility = if (window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.statusBars()) == true)
                 View.GONE else View.VISIBLE
         } else {
@@ -678,7 +679,14 @@ class CarPlayActivity : Activity() {
         // (driven by the top-bar toggle) no longer matches what it was built for.
         val railStale = rail && chromeTopBarOn != DisplayPrefs.customTopBar(this)
         if (chromeIsRail == rail && chrome != null && !railStale) {
-            chrome!!.layoutParams = chromeParams(rail)
+            // This runs on every root layout (measureAndLayout). Assigning params, even equal ones,
+            // requests another layout, which ran it again: 180 `requestLayout() improperly called`
+            // warnings a second for a whole drive (2026-11-02).
+            val want = chromeParams(rail)
+            val have = chrome!!.layoutParams as? android.widget.FrameLayout.LayoutParams
+            if (have == null || have.width != want.width || have.height != want.height ||
+                have.gravity != want.gravity || have.topMargin != want.topMargin ||
+                have.marginStart != want.marginStart) chrome!!.layoutParams = want
             return
         }
         chromeIsRail = rail

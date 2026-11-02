@@ -281,6 +281,11 @@ while one may be coming (`holdForArt`): a new title ahead of its JPEG, or the sa
 moved. A track change now reaches the car as one card with its picture. The stand-in case becomes
 stand-in, then real cover, never a blank in between. A track with no art waits once, then logs
 `card: no picture 500 ms after "<title>"`. Playback state is never held.
+**First drive on 226 (2026-11-02, 12:32–13:06 UTC).** No `art=none` card at all. Each of the four
+title changes went out as one card with its picture, 86–102 ms after the title. The stand-in case
+(12:32:59) put the 18,307 B cover on the outgoing "Sinister" card, and "Mountain With A View" then
+went out once with its real cover. No `card: no picture` line, so no track waited the full 500 ms.
+What the cluster showed is the owner's to confirm.
 *If it still happens:* note the track and whether it is the stand-in kind. The original Carlink app
 also publishes the art as a granted `content://` URI, because upstream found GM's RHMI cluster
 service (`com.gm.rhmi`) reads art through its own provider. This app sends only the bitmap; that

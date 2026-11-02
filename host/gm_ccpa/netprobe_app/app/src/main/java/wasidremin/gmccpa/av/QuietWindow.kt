@@ -22,3 +22,12 @@ class QuietWindow(
         return nowMs - tapAtMs >= minAfterTapMs && nowMs - quietSinceMs >= quietMs
     }
 }
+
+/**
+ * True when a frame that never settled should be read as it is rather than end the launch. Under
+ * an Apple Maps route the map moves in every frame, so waiting for a still one aborted launches
+ * whose tap had already gone through (2026-11-02: Maps and Home, `TIMEOUT_UNSTABLE`). The strip
+ * and its toggle glyph, all the launcher reads, do not move with the map. An interrupt still stops.
+ */
+internal fun readUnsettled(reason: CarPlayFrameGrabber.FailureReason, interrupted: Boolean): Boolean =
+    reason == CarPlayFrameGrabber.FailureReason.TIMEOUT_UNSTABLE && !interrupted

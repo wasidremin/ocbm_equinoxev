@@ -60,14 +60,20 @@ high-water mark: versionCode 226 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
   replayed the same sequence. 226 (`4.0+art-hold`, published 2026-10-30) holds a card up to 500 ms
-  for its picture. No drive log on 226 yet. Next step if it recurs: a granted `content://` art URI
-  for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md` T13 "Recurred 2026-10-29".
+  for its picture. On its first drive (2026-11-02) every title went out once, with its picture; what
+  the cluster showed is the owner's to confirm. Next step if it recurs: a granted `content://` art
+  URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md` T13 "Recurred 2026-10-29".
 - **Vision launcher: two misreads, both logging-only.** iOS 27's square glyph reads UNKNOWN, so
   the Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). And twice at dawn
-  an app tap that worked read as Dashboard and logged VERIFY_FAILED. Every launch since 225 shipped
-  verified SUCCESS (seven on 2026-10-29, including Home; one on 10-30), so neither misread has
-  recurred and the `[glyph]` line that would explain the second has not been logged yet. Owner:
-  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
+  an app tap that worked read as Dashboard and logged VERIFY_FAILED. Neither has recurred since 225
+  (seven launches on 2026-10-29, one on 10-30, three on 11-02), so the `[glyph]` line that would
+  explain the second has not been logged yet. A third failure was a bug, fixed for the next build:
+  under an Apple Maps route the moving map never settled, so two good taps on 2026-11-02 ended
+  `TIMEOUT_UNSTABLE` (`readUnsettled`). Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
+- **CarPlay-screen layout loop — fixed for the next build.** `syncChrome` re-assigned the rail's
+  `LayoutParams` on every root layout, which requested the next one. On 2026-11-02 that ran at 60 Hz
+  all session: 180 `requestLayout() improperly called` warnings a second, 96% of the upload. Owner:
+  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.9 (correction).
 - **EV status for Apple Maps (T7): the screen check is the owner's.** The phone accepted the EV
   Identify and the status on 2026-10-28. Not yet seen: whether Maps shows the battery or EV routing,
   and whether cluster turn-by-turn works with the setting on. Also one status push collided with
@@ -75,8 +81,10 @@ high-water mark: versionCode 226 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   Owner: `08_FUTURE_TASKS.md` T7.
 - **HEVC render stalls — mitigated, cause unknown.** `HevcRenderer` releases the codec's output
   buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
-  `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s) and 10-23 (47.8 s, 9.3 s), and
-  not on the 10-27 to 10-30 drives. No root cause; the recovery is the watchdog.
+  `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s) and
+  11-02 (10.3 s, 12:35:14, two seconds before an Apple Maps route loaded), and not on the 10-27 to
+  10-30 drives. No root cause; the recovery is the watchdog. The 11-02 freeze happened during the
+  layout loop above, which may or may not matter.
 - **MFi first read returns 40113 instead of 945.** The settle-and-reread mitigation is
   bench-measured (`mfi-i2c-local` `LEN_SETTLE_US`); the cause is unproven
   (`docs/wireless/01_BT_AND_RADIO.md`). Keep mitigation distinct from diagnosis.
