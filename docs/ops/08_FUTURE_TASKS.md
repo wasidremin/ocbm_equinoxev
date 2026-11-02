@@ -247,7 +247,25 @@ The beat line now reads `nav=N`.
 log, the toggle went on with a route already running (11:03:09). The bootstrap launched
 `CarAppActivity`, the host bound a session 0.5 s later, and `navigationStarted` and `updateTrip #1`
 followed. MainActivity was back in front at +1.1 s. `updateTrip` then ran at about 1 Hz through two
-reroutes. One open check remains: whether the cluster clears when a route ends at the destination.
+reroutes. The owner confirms (2026-11-02) that the cluster clears when a route ends: the album art
+comes back immediately, and it shows whenever no route is running.
+
+**Idea (raised 2026-11-02, not started): turns in the cluster only while Apple Maps is not on the
+centre screen.** The owner suggests that while full-screen Maps is in front, the cluster show the
+album art instead of the turns, and the reverse. The Dashboard counts as "not Maps" (it already shows
+both), so turns stay in the cluster there. The cluster half is a small change: `ClusterNavSession`
+calls `navigationEnded()` while Maps is in front and `navigationStarted()` plus `updateTrip` again
+when it leaves, since route records keep arriving either way, and the route-end result above says
+the art returns on `navigationEnded()`. Knowing that Maps is in front is the work. No CarPlay message
+is known to say which app is on screen (T9's UI context is unbuilt, and doc 03 §9 lists
+`changeUIContext` as accessory→iPhone only). So the plan is the screen: while a route is running,
+grab a frame every 2–3 s and recognise full-screen Maps, switching only after a few seconds of
+agreement so a quick app switch does not make the cluster flicker. A top-bar launch from this app
+can switch at once. The existing grab plus classify costs about 50 ms of one background thread
+(17:13:14 and 17:20:39 on 2026-11-02, a 617×240 grey frame at 1/4), so one check every 2–3 s is
+a few percent of one core, and nothing when no route is running. Needs: route-running captures of
+full-screen Maps, day and night, to build the recogniser from (local only, never committed, since
+they show the car's position).
 
 **Watch (2026-10-27 evening, versionCode 221): the cluster went without album art for a while.**
 The owner reports that title and artist showed the whole time, with only the artwork missing.
