@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 226 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -67,10 +67,10 @@ high-water mark: versionCode 226 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   the Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). And twice at dawn
   an app tap that worked read as Dashboard and logged VERIFY_FAILED. Neither has recurred since 225
   (seven launches on 2026-10-29, one on 10-30, three on 11-02), so the `[glyph]` line that would
-  explain the second has not been logged yet. A third failure was a bug, fixed for the next build:
+  explain the second has not been logged yet. A third failure was a bug, fixed in 227 (2026-11-02):
   under an Apple Maps route the moving map never settled, so two good taps on 2026-11-02 ended
   `TIMEOUT_UNSTABLE` (`readUnsettled`). Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
-- **CarPlay-screen layout loop — fixed for the next build.** `syncChrome` re-assigned the rail's
+- **CarPlay-screen layout loop — fixed in 227 (2026-11-02), not yet seen on the car.** `syncChrome` re-assigned the rail's
   `LayoutParams` on every root layout, which requested the next one. On 2026-11-02 that ran at 60 Hz
   all session: 180 `requestLayout() improperly called` warnings a second, 96% of the upload. Owner:
   `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.9 (correction).
