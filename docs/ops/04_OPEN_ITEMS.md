@@ -60,8 +60,8 @@ high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
   replayed the same sequence. 226 (`4.0+art-hold`, published 2026-10-30) holds a card up to 500 ms
-  for its picture. On its first drive (2026-11-02) every title went out once, with its picture; what
-  the cluster showed is the owner's to confirm. A second cause was found that afternoon, still on
+  for its picture. On its first drive (2026-11-02 morning) every title went out once, with its
+  picture, and the owner confirms the cluster showed the art. A second cause was found that afternoon, still on
   226. The phone re-titled a playing item `<title> • <artist>` and back, without an art id. The app
   read each change as a new track and dropped the picture, which iOS never resends. The 10-27 11:06
   capture has the same shape. Fixed for the next build (`isBylineVariant`), not yet on Play. Next
@@ -110,13 +110,9 @@ high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Calls while the app holds the assistant role:** no echo reported, not confirmed either way
   (`08_FUTURE_TASKS.md` T14, `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). The 2026-11-02 call
   (6 min 50 s, placed through Siri) peaked at -1 dBFS on the mic, against -8 to -17 dBFS before.
-  That is one peak, not a level trace, so it does not tell echo from a loud voice.
-- **Call audio underruns.** The 2026-11-02 call's sink stayed up for the whole call (the 222 fix
-  holding), and logged 37 track underruns over 13,632 AUs. The 10-27 calls showed 17 in 6,936 and
-  5 in 3,575, so the rate (about five a minute) is not new. The phone delivered 409.0 s of audio in
-  about 410.5 s of wall time, so the 400 ms pre-fill drains and every later delivery gap
-  underruns. Whether the owner hears it is not known. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md`
-  §4.
+  That is one peak, not a level trace, so it does not tell echo from a loud voice. The same call
+  logged 37 track underruns (about five a minute, as on 10-27), which the owner did not hear
+  ("not choppy"), so they are recorded in doc 13 §4 and not worked.
 - **Music muted for about 3 s after a call.** iOS restarted media 0.2 s after hang-up
   (2026-11-02 17:20:58.7). The call sink held media's focus until its 3 s idle release
   (17:21:01.59), so the first 117 frames played at gain 0.

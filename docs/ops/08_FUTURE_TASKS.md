@@ -285,7 +285,7 @@ stand-in, then real cover, never a blank in between. A track with no art waits o
 title changes went out as one card with its picture, 86–102 ms after the title. The stand-in case
 (12:32:59) put the 18,307 B cover on the outgoing "Sinister" card, and "Mountain With A View" then
 went out once with its real cover. No `card: no picture` line, so no track waited the full 500 ms.
-What the cluster showed is the owner's to confirm.
+The owner confirms the cluster showed the art on that drive.
 **A second mechanism, 2026-11-02 afternoon (17:13 UTC, still versionCode 226, minutes before Play
 replaced it with 227).** At session start "Landslide" went out with its picture (17:13:12.060). One
 second later the phone re-titled the same item "Landslide • The Chicks" with no artworkId, and 0.6 s

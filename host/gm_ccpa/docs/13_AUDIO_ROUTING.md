@@ -524,14 +524,16 @@ an activity-based gate would clip the onset.
   `phone=0` the loud clock applies again. The check was that no `call: idle 3s — released` line
   appears before hang-up. On 2026-11-02 a call placed through Siri ran 17:14:07–17:20:58 UTC
   (`phone=1` to `phone=0`) on one sink, released once at 17:21:01.587 with 13,632 AUs.
-- **Call audio underruns (2026-11-02, open).** That one sink logged 37 track underruns, against a
+- **Call audio underruns (2026-11-02, not audible).** That one sink logged 37 track underruns, against a
   tolerance of one. The 10-27 calls, measured per rebuilt sink, showed 17 in 6,936 AUs and 5 in
   3,575, so about five a minute both times. At 480 samples per AU the phone delivered 409.0 s of
   telephony audio between the first AU (17:14:08.07) and the last (about 17:20:58.6), which is
   1.5 s short of wall time. The receiver counted the same 13,632 frames with `0 drops`, so the AUs
   were not lost between the box and the app. A realtime source cannot refill the 400 ms pre-fill
-  once it has drained, so after that each delivery gap is an underrun. Not measured yet: when the
-  underruns fell (the sink logs only a total), and whether they are audible.
+  once it has drained, so after that each delivery gap is an underrun. The owner did not hear
+  them: the call was "not choppy". So nothing is changed for them. The sink logs only a total,
+  so when they fell is not known; per-underrun logging is the first step if a call ever sounds
+  broken up.
 - **Hang-up mutes the first 3 s of resumed music (2026-11-02).** iOS tore the telephony stream
   down at 17:20:58.59 and set media up again at 17:20:58.71. The call sink still held its focus
   until its idle release at 17:21:01.59, so media's track ran at gain 0 for 117 frames (about
