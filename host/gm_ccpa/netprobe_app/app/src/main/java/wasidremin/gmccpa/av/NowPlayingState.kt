@@ -287,15 +287,19 @@ class NowPlayingState {
         // absent from elapsed-only frames, so it would read as a change to -1 on every single tick.
         val incomingTitle = json.optStringOrNull("title")
         val recordArtworkId = json.optIntOrNull("artworkId")
-        val trackChanged = incomingTitle != null && incomingTitle != prev.title
+        val titleChanged = incomingTitle != null && incomingTitle != prev.title
+        // The same item re-titled with or without its byline is not a new track ([isBylineVariant]).
+        val trackChanged = titleChanged && !isBylineVariant(prev.title, incomingTitle)
         tally.records++
         sessionRecords++
-        if (trackChanged) tally.titles++
+        if (titleChanged) tally.titles++
         if (firstRecordAtMs == 0L) {
             firstRecordAtMs = System.currentTimeMillis()
             log.i("np: sync first nowPlaying record ${(firstRecordAtMs - sessionStartMs) / 1000L}s after the seam opened")
         }
-        if (trackChanged) {
+        if (titleChanged && !trackChanged) {
+            log.i("np: track \"$incomingTitle\" is the same item with or without its byline — art and duration kept")
+        } else if (trackChanged) {
             log.i(trackSummaryLine(
                 incomingTitle,
                 json.optStringOrNull("artist") != null,
@@ -523,6 +527,20 @@ enum class CallPhase { NONE, RINGING, ACTIVE }
 internal fun trackSummaryLine(title: String?, artistPresent: Boolean, status: Int?, artworkId: Int?): String =
     "np: track \"${title ?: "?"}\" artist=${if (artistPresent) "yes" else "no"}" +
         " status=${status ?: "?"} artworkId=${artworkId ?: "?"}"
+
+/**
+ * True when one title is the other plus ` • <byline>`, the same item re-titled. Twice, on 2026-10-27
+ * and 2026-11-02, iOS sent a playing item's title, then `<title> • <artist or show>` with no
+ * artworkId, then the title again. Read as two track changes, that cleared the picture, and iOS does
+ * not resend a JPEG whose id did not change, so the cluster card stayed without art for the rest of
+ * the item. Either direction counts; the remainder after the shorter title must start with `•`.
+ * Pure for unit tests.
+ */
+internal fun isBylineVariant(prev: String?, next: String?): Boolean {
+    if (prev.isNullOrEmpty() || next.isNullOrEmpty() || prev == next) return false
+    val (short, long) = if (prev.length < next.length) prev to next else next to prev
+    return long.startsWith(short) && long.substring(short.length).trimStart().startsWith("• ")
+}
 
 /**
  * Returns [recordArtworkId] when this record should emit the title-less diagnostic: the record

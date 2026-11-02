@@ -20,6 +20,18 @@ class NowPlayingLogTest {
         assertEquals(130, titlelessRecordEvent(null, 130, 129))
     }
 
+    /** 2026-11-02 17:13:13 and 2026-10-27 11:06:58: the same item, with and without its byline. */
+    @Test fun aBylineVariantIsTheSameItem() {
+        assertTrue(isBylineVariant("Landslide", "Landslide • The Chicks"))
+        assertTrue(isBylineVariant("Landslide • The Chicks", "Landslide"))
+        assertTrue(isBylineVariant("233. Election ", "233. Election  • The Rest Is Politics: US"))
+        assertFalse(isBylineVariant("Landslide", "Landslide (Live)"))
+        assertFalse(isBylineVariant("Landslide", "Dreams • Fleetwood Mac"))
+        assertFalse(isBylineVariant("Landslide", "Landslide"))
+        assertFalse(isBylineVariant(null, "Landslide • The Chicks"))
+        assertFalse(isBylineVariant("", "• The Chicks"))
+    }
+
     @Test fun titledRecordsNeverReport() {
         assertNull(titlelessRecordEvent("Drop Dead", 129, -2))
         assertNull(titlelessRecordEvent("", null, -2))

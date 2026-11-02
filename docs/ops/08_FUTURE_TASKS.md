@@ -286,6 +286,20 @@ title changes went out as one card with its picture, 86–102 ms after the title
 (12:32:59) put the 18,307 B cover on the outgoing "Sinister" card, and "Mountain With A View" then
 went out once with its real cover. No `card: no picture` line, so no track waited the full 500 ms.
 What the cluster showed is the owner's to confirm.
+**A second mechanism, 2026-11-02 afternoon (17:13 UTC, still versionCode 226, minutes before Play
+replaced it with 227).** At session start "Landslide" went out with its picture (17:13:12.060). One
+second later the phone re-titled the same item "Landslide • The Chicks" with no artworkId, and 0.6 s
+after that back to "Landslide", again with no id. `ArtworkKeeper` read each as a new track and
+cleared the art (`np: art dropped on title change (id 129 -> -1)`). iOS never resent the JPEG, since
+for the phone the item and its art had not changed. The hold waited 500 ms twice and then published
+`art=none` (`card: no picture 500 ms after "Landslide"`). Duration went to 0 as well, because a track
+change merges onto a blank record. The art came back only with the fresh iAP2 session that 227's
+process start brought. The 2026-10-27 11:06:58 capture has the same shape (a podcast episode title,
+then the title plus ` • ` and the show name, then the title, and `art=none` from there on), so at
+least one of the 10-27 sightings was this and not the double publish.
+*Change (next build):* `NowPlayingState` treats a title that is the previous one plus ` • <byline>`,
+or the reverse, as the same item (`isBylineVariant`). Picture and duration are kept, the title still
+updates, and the log reads `np: track "…" is the same item with or without its byline`.
 *If it still happens:* note the track and whether it is the stand-in kind. The original Carlink app
 also publishes the art as a granted `content://` URI, because upstream found GM's RHMI cluster
 service (`com.gm.rhmi`) reads art through its own provider. This app sends only the bitmap; that

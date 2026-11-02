@@ -61,18 +61,26 @@ high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
   replayed the same sequence. 226 (`4.0+art-hold`, published 2026-10-30) holds a card up to 500 ms
   for its picture. On its first drive (2026-11-02) every title went out once, with its picture; what
-  the cluster showed is the owner's to confirm. Next step if it recurs: a granted `content://` art
-  URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md` T13 "Recurred 2026-10-29".
+  the cluster showed is the owner's to confirm. A second cause was found that afternoon, still on
+  226. The phone re-titled a playing item `<title> • <artist>` and back, without an art id. The app
+  read each change as a new track and dropped the picture, which iOS never resends. The 10-27 11:06
+  capture has the same shape. Fixed for the next build (`isBylineVariant`), not yet on Play. Next
+  step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md`
+  T13 "A second mechanism".
 - **Vision launcher: two misreads, both logging-only.** iOS 27's square glyph reads UNKNOWN, so
   the Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). And twice at dawn
   an app tap that worked read as Dashboard and logged VERIFY_FAILED. Neither has recurred since 225
   (seven launches on 2026-10-29, one on 10-30, three on 11-02), so the `[glyph]` line that would
   explain the second has not been logged yet. A third failure was a bug, fixed in 227 (2026-11-02):
   under an Apple Maps route the moving map never settled, so two good taps on 2026-11-02 ended
-  `TIMEOUT_UNSTABLE` (`readUnsettled`). Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
-- **CarPlay-screen layout loop — fixed in 227 (2026-11-02), not yet seen on the car.** `syncChrome` re-assigned the rail's
-  `LayoutParams` on every root layout, which requested the next one. On 2026-11-02 that ran at 60 Hz
-  all session: 180 `requestLayout() improperly called` warnings a second, 96% of the upload. Owner:
+  `TIMEOUT_UNSTABLE` (`readUnsettled`). 227's first launch (Maps, 2026-11-02 17:20:39) succeeded, but
+  no route was running yet, so the fix itself is still unexercised on the car. Owner:
+  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
+- **CarPlay-screen layout loop — fixed in 227, confirmed on the car 2026-11-02.** `syncChrome`
+  re-assigned the rail's `LayoutParams` on every root layout, which requested the next one. That
+  morning it ran at 60 Hz all session: 180 `requestLayout() improperly called` warnings a second,
+  96% of the upload. On 227 that afternoon there were five in 7.7 minutes of CarPlay, all while the
+  activity and its surface were first laid out (17:13:36–17:13:48). Owner:
   `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.9 (correction).
 - **EV status for Apple Maps (T7): the screen check is the owner's.** The phone accepted the EV
   Identify and the status on 2026-10-28. Not yet seen: whether Maps shows the battery or EV routing,
@@ -100,7 +108,18 @@ high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   10-minute claim abort (`14_LESSONS_LEARNED.md` §7 item 2, landed 2026-10-15) and the storage-only
   USB announce (§8).
 - **Calls while the app holds the assistant role:** no echo reported, not confirmed either way
-  (`08_FUTURE_TASKS.md` T14, `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4).
+  (`08_FUTURE_TASKS.md` T14, `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). The 2026-11-02 call
+  (6 min 50 s, placed through Siri) peaked at -1 dBFS on the mic, against -8 to -17 dBFS before.
+  That is one peak, not a level trace, so it does not tell echo from a loud voice.
+- **Call audio underruns.** The 2026-11-02 call's sink stayed up for the whole call (the 222 fix
+  holding), and logged 37 track underruns over 13,632 AUs. The 10-27 calls showed 17 in 6,936 and
+  5 in 3,575, so the rate (about five a minute) is not new. The phone delivered 409.0 s of audio in
+  about 410.5 s of wall time, so the 400 ms pre-fill drains and every later delivery gap
+  underruns. Whether the owner hears it is not known. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md`
+  §4.
+- **Music muted for about 3 s after a call.** iOS restarted media 0.2 s after hang-up
+  (2026-11-02 17:20:58.7). The call sink held media's focus until its 3 s idle release
+  (17:21:01.59), so the first 117 frames played at gain 0.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO
   after a driver restart; a USB claim that stayed after the adapter was unplugged; Calibration runs
   `ScreenModel.measureUi` on the UI thread (0.3–1 s of jank).
