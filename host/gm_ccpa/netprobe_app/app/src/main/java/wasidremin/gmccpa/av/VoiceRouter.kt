@@ -243,6 +243,12 @@ class VoiceRouter(
          * nothing else changes.
          */
         const val CTRL_END_GRACE_MS = 750L
+        /**
+         * After `phone=0`, how long the telephony stream must have stopped delivering before CALL is
+         * released ([callStreamEnded]). The track's pre-fill plus two sweep ticks, so what is
+         * already in the buffer plays out before `release()` stops the track.
+         */
+        const val CALL_END_DRAIN_MS = TRACK_BUFFER_MIN_MS + 2 * KEEPALIVE_TICK_MS
         /** [SessionTrace.Board] entry for the router itself (the sweeper thread) and the per-sink prefix. */
         const val BOARD_ROUTER = "voice-router"
         const val BOARD_SINK_PREFIX = "voice-sink/"
@@ -458,11 +464,13 @@ class VoiceRouter(
      * Control-plane PhoneCall state: `modesChanged`'s phone entity is non-zero. Car-verified
      * 2026-10-27 on both calls of that drive: it went 1 at the ring or the answer and 0 after
      * hang-up, and iOS's telephony stream (type 100, `audioType=telephony`) was set up inside it
-     * and torn down no later than 0.2 s after it fell. Read only by
-     * [quietFor], to move CALL's idle window onto the AU clock. Never sent: stays false, and CALL
-     * idles on the loud clock exactly as before.
+     * and torn down no later than 0.2 s after it fell. Read by [quietFor], to move CALL's idle
+     * window onto the AU clock, and by [callEnded], to release CALL as soon as the stream stops
+     * after hang-up. Never sent: stays false, and CALL idles on the loud clock exactly as before.
      */
     @Volatile private var ctrlPhone = false
+    /** `elapsedRealtime` of the last `phone` 1 → 0 edge; 0 until a call has ended this process. */
+    @Volatile private var ctrlPhoneEndAt = 0L
     /** Last logged tuple, so the `modes:` line prints per change rather than per frame (iOS sends
      *  3-5 identical frames per transition). `cp-meta` only. */
     private var lastModesLogged = Long.MIN_VALUE
@@ -490,7 +498,13 @@ class VoiceRouter(
             log.i("modes: speech mode=$speechMode entity=$speechEntity phone=$phoneEntity turns=$turnsEntity ($size B)")
         }
         ctrlSeen = true
-        ctrlPhone = phoneEntity != 0L
+        val phone = phoneEntity != 0L
+        if (ctrlPhone && !phone) {
+            // Stamp before flag, as for the speech edge below.
+            ctrlPhoneEndAt = android.os.SystemClock.elapsedRealtime()
+            lastSweep = 0L
+        }
+        ctrlPhone = phone
         if (active != ctrlSpeech) {
             // Stamp BEFORE flag. Both readers ([assistantTick], [ctrlEnded]) read the volatile flag
             // first and the stamp second, so this order guarantees a reader that sees the new flag
@@ -513,6 +527,29 @@ class VoiceRouter(
     private fun ctrlEnded(now: Long, s: Sink?): Boolean =
         ctrlSeen && !ctrlSpeech && now - ctrlSpeechAt > CTRL_END_GRACE_MS &&
             (s == null || ctrlSpeechAt >= s.lastAudioAt)
+
+    /**
+     * iOS has said the call is over and the telephony stream has stopped. Until 2026-11-02 the CALL
+     * sink waited out its 3 s window after the last loud frame instead, holding focus while iOS had
+     * already moved media back: `phone=0` 17:20:58.514, stream torn down 58.591, media set up
+     * 58.712 and then muted until the release at 17:21:01.587. See [callStreamEnded].
+     */
+    private fun callEnded(now: Long, s: Sink): Boolean =
+        callStreamEnded(now, ctrlSeen, ctrlPhone, ctrlPhoneEndAt, s.lastAuAt)
+
+    /** An END edge from iOS that releases [p] ahead of its idle window. Call under `sinks`. */
+    private fun endedByIos(p: Purpose, now: Long, s: Sink): Boolean = when (p) {
+        Purpose.ASSISTANT -> ctrlEnded(now, s)
+        Purpose.CALL -> callEnded(now, s)
+        else -> false
+    }
+
+    /**
+     * A call ended within CALL's idle window: [sweepIdle] skips its 1 Hz throttle, so the release
+     * lands one tick after [CALL_END_DRAIN_MS] instead of up to a second later. Volatiles only.
+     */
+    private fun callEndPending(now: Long): Boolean =
+        ctrlSeen && !ctrlPhone && ctrlPhoneEndAt > 0L && now - ctrlPhoneEndAt <= Purpose.CALL.idleMs
 
     /**
      * Signal Siri's speaking window on its own cadence, independent of [sweepIdle]'s 1 Hz throttle.
@@ -573,7 +610,7 @@ class VoiceRouter(
      */
     private fun sweepIdle() {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastSweep < 1000) return
+        if (now - lastSweep < 1000 && !callEndPending(now)) return
         lastSweep = now
         var anyLoud = false
         val dead = ArrayList<Purpose>()
@@ -585,8 +622,9 @@ class VoiceRouter(
                 val quiet = now - s.lastAudioAt
                 // A11: an END edge from iOS past its grace ends ASSISTANT's duck hold AND its idle
                 // window at once — same pass, same order as the timer path, so the un-duck below
-                // still lands before the release (A7). Other purposes have no control-plane edge.
-                val ended = p == Purpose.ASSISTANT && ctrlEnded(now, s)
+                // still lands before the release (A7). CALL's edge is `phone=0` once the stream has
+                // stopped ([callEnded]); NAV and ALERT have no control-plane edge.
+                val ended = endedByIos(p, now, s)
                 // Per-purpose hold folded into ONE boolean — the duck is shared, so a sink inside its
                 // hold keeps media ducked for everyone; see [Purpose.duckHoldMs].
                 if (quiet < p.duckHoldMs && !ended) anyLoud = true
@@ -603,10 +641,15 @@ class VoiceRouter(
         synchronized(sinks) {
             for (p in dead) {
                 val s = sinks[p] ?: continue
-                val ended = p == Purpose.ASSISTANT && ctrlEnded(now, s)
+                val ended = endedByIos(p, now, s)
                 if (quietFor(p, now, s) <= p.idleMs && !ended) continue   // went loud between the two blocks
                 sinks.remove(p)
-                val why = if (ended) "iOS says Siri ended ${now - ctrlSpeechAt}ms ago" else "idle ${p.idleMs / 1000}s"
+                val why = when {
+                    !ended -> "idle ${p.idleMs / 1000}s"
+                    p == Purpose.CALL -> "iOS says the call ended ${now - ctrlPhoneEndAt}ms ago, " +
+                        "last AU ${now - s.lastAuAt}ms ago"
+                    else -> "iOS says Siri ended ${now - ctrlSpeechAt}ms ago"
+                }
                 s.release(why)
                 val level = when {
                     s.ausDroppedFull > 0 -> 2
@@ -1185,3 +1228,13 @@ class VoiceRouter(
         return true
     }
 }
+
+/**
+ * CALL's early release: iOS has sent `phone=0` ([phoneEndAt] > 0 and [phone] false) and no AU has
+ * arrived for [VoiceRouter.CALL_END_DRAIN_MS]. iOS streams a call continuously, silence included
+ * (13632 AUs in 409 s on 2026-11-02), so a gap that long means the telephony stream is gone. A
+ * stream left up after the call keeps delivering and falls back to the 3 s window. A stale edge
+ * from an earlier call cannot end a later one, because that call's own AUs keep the gap short.
+ */
+internal fun callStreamEnded(now: Long, seen: Boolean, phone: Boolean, phoneEndAt: Long, lastAuAt: Long): Boolean =
+    seen && !phone && phoneEndAt > 0L && now - lastAuAt > VoiceRouter.CALL_END_DRAIN_MS

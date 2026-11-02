@@ -17,8 +17,8 @@ import java.util.Date
 /**
  * The custom top bar, drawn in code. Framework-only.
  *
- * Left: nine CarPlay-style app tiles ([BarTarget]) in two families — our app first (CarPlay
- * home / maps / Spotify / phone, then this app's settings and EV insights), then a divider, then
+ * Left: ten CarPlay-style app tiles ([BarTarget]) in two families — our app first (CarPlay
+ * home / maps / Spotify / Now Playing / phone, then this app's settings and EV insights), then a divider, then
  * the car's own apps (home, charging, settings), each flagged with a small corner car badge.
  * Sized by [DisplayGeometry.topBarTiles] to nearly the full bar height, with an extra gap
  * ([GROUP_GAP_FRAC]) holding the divider between the families. Left-justified.

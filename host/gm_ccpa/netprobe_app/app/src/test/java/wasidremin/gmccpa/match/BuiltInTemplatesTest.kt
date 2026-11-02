@@ -23,6 +23,8 @@ class BuiltInTemplatesTest {
         Spec("cap2_home_grid.png", ScreenModel.Kind.GRID, "music", 0.351f, 0.232f),
         Spec("cap2_home_grid.png", ScreenModel.Kind.GRID, "maps", 0.517f, 0.232f),
         Spec("cap2_home_grid.png", ScreenModel.Kind.GRID, "spotify", 0.848f, 0.232f),
+        // Second row, under Phone: the icon's tile spans y 525–705 at x 424–604.
+        Spec("cap2_home_grid.png", ScreenModel.Kind.GRID, ScreenModel.ROLE_NOW_PLAYING, 0.186f, 0.636f),
         Spec("cap2_home_grid.png", ScreenModel.Kind.GLYPH, "other", 0.029f, 0.915f),
         Spec("cap3_dashboard.png", ScreenModel.Kind.GLYPH, "dashboard", 0.029f, 0.915f),
     )
@@ -44,7 +46,7 @@ class BuiltInTemplatesTest {
             assetDir.mkdirs()
             gen.forEach { (name, json) -> File(assetDir, "$name.json").writeText(json + "\n") }
         }
-        assertEquals(9, gen.size)
+        assertEquals(10, gen.size)
         for ((name, json) in gen) {
             val f = File(assetDir, "$name.json")
             assertTrue("missing asset ${f.path} — run with REGEN_VISION=1", f.isFile)
@@ -65,5 +67,19 @@ class BuiltInTemplatesTest {
             ScreenModel.surface(dash, t["glyph.dashboard"], t["glyph.other"]))
         assertEquals(ScreenModel.Surface.NOT_DASHBOARD,
             ScreenModel.surface(home, t["glyph.dashboard"], t["glyph.other"]))
+    }
+
+    /** The Now Playing tile finds its own icon on the Home grid and nothing on the other screens. */
+    @Test fun nowPlayingFindsOnlyItsIcon() {
+        val np = generated().getValue("grid.nowplaying").let { IconMatcher.IconTemplate.fromJson(JSONObject(it)) }
+        val home = ScreenModelTest.loadForTest("cap2_home_grid.png")
+        val hit = ScreenModel.find(home, np, ScreenModel.Kind.GRID, ScreenModel.REFERENCE)
+        assertTrue("grid.nowplaying on home ${hit.score}", hit.passed)
+        assertEquals(0.186f, hit.nx, 0.01f)
+        assertEquals(0.636f, hit.ny, 0.01f)
+        for (cap in listOf("cap1_in_app.png", "cap3_dashboard.png")) {
+            val miss = ScreenModel.find(ScreenModelTest.loadForTest(cap), np, ScreenModel.Kind.GRID, ScreenModel.REFERENCE)
+            assertTrue("grid.nowplaying on $cap ${miss.score}", !miss.passed)
+        }
     }
 }

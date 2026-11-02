@@ -229,7 +229,7 @@ class CalibrationUi(
             val roles: List<Pair<String, String>> = if (kind == ScreenModel.Kind.GLYPH) {
                 listOf("Dashboard glyph" to "dashboard", "Home/app glyph" to "other")
             } else {
-                ScreenModel.ROLES.map { r -> r.replaceFirstChar { c -> c.uppercase() } to r }
+                ScreenModel.ROLES.map { r -> ScreenModel.roleLabel(r) to r }
             }
             roles.forEachIndexed { i, (label, role) ->
                 roleRow.addView(
@@ -300,7 +300,7 @@ class CalibrationUi(
         ScreenModel.ROLES.forEachIndexed { i, role ->
             val ready = VisionLauncher.isCalibrated(act, role)
             row.addView(
-                eqButton(act, role.replaceFirstChar { it.uppercase() }, if (ready) EqButtonStyle.PRIMARY else EqButtonStyle.SECONDARY) {
+                eqButton(act, ScreenModel.roleLabel(role), if (ready) EqButtonStyle.PRIMARY else EqButtonStyle.SECONDARY) {
                     if (!VisionLauncher.isCalibrated(act, role)) {
                         setDetail("Error: $role has no strip or grid template")
                         return@eqButton

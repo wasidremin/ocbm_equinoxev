@@ -62,7 +62,14 @@ object ScreenModel {
     const val GLYPH_DASHBOARD = "glyph.dashboard"
     const val GLYPH_OTHER = "glyph.other"
 
-    val ROLES = listOf("maps", "music", "spotify", "phone")
+    /** CarPlay's Now Playing app. Grid only: it is not in the recent-apps strip. */
+    const val ROLE_NOW_PLAYING = "nowplaying"
+
+    val ROLES = listOf("maps", "music", "spotify", ROLE_NOW_PLAYING, "phone")
+
+    /** How a role is named on a button. */
+    fun roleLabel(role: String): String =
+        if (role == ROLE_NOW_PLAYING) "Now Playing" else role.replaceFirstChar { it.uppercase() }
 
     /** Template edge in FULL-RES px at the default scale. Icons measure ~88 px (strip), ~180 px (grid). */
     enum class Kind(val prefix: String, val sizeFullPx: Int, val threshold: Float, val stride: Int) {

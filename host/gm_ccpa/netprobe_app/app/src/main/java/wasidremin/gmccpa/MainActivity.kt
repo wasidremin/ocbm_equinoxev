@@ -1544,7 +1544,8 @@ class MainActivity : Activity() {
             BarTarget.AAOS_SETTINGS -> wasidremin.gmccpa.av.VehicleLaunch.settings(this)
             BarTarget.APP_SETTINGS -> ui.openTabFromScript(0)
             BarTarget.INSIGHTS -> ui.openTabFromScript(3)
-            BarTarget.CP_HOME, BarTarget.CP_MAPS, BarTarget.CP_SPOTIFY, BarTarget.CP_PHONE -> {
+            BarTarget.CP_HOME, BarTarget.CP_MAPS, BarTarget.CP_SPOTIFY, BarTarget.CP_NOW_PLAYING,
+            BarTarget.CP_PHONE -> {
                 val live = sessionUp && (cpRx?.sessionLive == true ||
                     wasidremin.gmccpa.ocbm.AdapterSession.sessionUp)
                 if (!live) {

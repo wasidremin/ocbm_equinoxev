@@ -96,6 +96,10 @@ class CarPlayActivity : Activity() {
             wasidremin.gmccpa.BarTarget.CP_SPOTIFY -> launchOrFallback("spotify") {
                 log.i("topbar: spotify templates missing — nothing sent")
             }
+            // CarPlay's own Now Playing app opens whichever app is playing, so no per-app logic here.
+            wasidremin.gmccpa.BarTarget.CP_NOW_PLAYING -> launchOrFallback(wasidremin.gmccpa.match.ScreenModel.ROLE_NOW_PLAYING) {
+                log.i("topbar: now playing templates missing — nothing sent")
+            }
             wasidremin.gmccpa.BarTarget.CP_PHONE -> {
                 val action = nowPlaying.phoneAction()
                 if (action != null) {

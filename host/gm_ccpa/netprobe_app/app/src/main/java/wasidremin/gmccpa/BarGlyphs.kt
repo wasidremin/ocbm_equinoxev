@@ -31,12 +31,14 @@ enum class BarGroup { OURS, CAR }
  * CarPlay UI this app projects, APP_SETTINGS / INSIGHTS are this app's own pages (both [OURS]),
  * and AAOS_* / CHARGING leave for the car's own apps ([CAR]). Owner's order (2026-10-23): our
  * app's tiles first — CarPlay home/maps/Spotify/phone, then this app's settings and insights —
- * then the car's own home, charging and settings.
+ * then the car's own home, charging and settings. CarPlay's Now Playing joined after Spotify at
+ * the owner's request (2026-11-02).
  */
 enum class BarTarget(val description: String, val group: BarGroup) {
     CP_HOME("CarPlay home", BarGroup.OURS),
     CP_MAPS("CarPlay Maps", BarGroup.OURS),
     CP_SPOTIFY("CarPlay Spotify", BarGroup.OURS),
+    CP_NOW_PLAYING("CarPlay Now Playing", BarGroup.OURS),
     CP_PHONE("CarPlay Phone", BarGroup.OURS),
     APP_SETTINGS("App settings", BarGroup.OURS),
     INSIGHTS("EV insights", BarGroup.OURS),
@@ -71,6 +73,7 @@ internal class BarGlyphs {
         BarTarget.CP_HOME -> Look(0xFF48484A.toInt(), 0xFF1C1C1E.toInt())
         BarTarget.CP_MAPS -> Look(0xFFFAFAFC.toInt(), 0xFFD7D9E0.toInt())
         BarTarget.CP_SPOTIFY -> Look(0xFF262626.toInt(), 0xFF0B0B0B.toInt())
+        BarTarget.CP_NOW_PLAYING -> Look(0xFFFFFFFF.toInt(), 0xFFE6E6EB.toInt())
         BarTarget.AAOS_SETTINGS -> Look(0xFFA0A0A8.toInt(), 0xFF6E6E76.toInt())
         BarTarget.CP_PHONE -> Look(0xFF3FD35E.toInt(), 0xFF22963F.toInt())
         BarTarget.APP_SETTINGS -> Look(0xFF7A78F2.toInt(), 0xFF433FB8.toInt())
@@ -155,6 +158,7 @@ internal class BarGlyphs {
             BarTarget.CP_HOME -> grid(c)
             BarTarget.CP_MAPS -> maps(c)
             BarTarget.CP_SPOTIFY -> spotify(c)
+            BarTarget.CP_NOW_PLAYING -> nowPlaying(c)
             BarTarget.AAOS_SETTINGS -> {
                 solid(c, GEAR, WHITE)
             }
@@ -211,6 +215,23 @@ internal class BarGlyphs {
         c.drawPath(SPOT2, stroke)
         stroke.strokeWidth = 1.2f
         c.drawPath(SPOT3, stroke)
+    }
+
+    /**
+     * CarPlay's Now Playing icon: four falling bars and a dot, orange at the top to pink at the
+     * bottom, on its white tile. Proportions measured from the icon on the 2026-10-15 home grid.
+     */
+    private fun nowPlaying(c: Canvas) {
+        stroke.shader = LinearGradient(0f, 4.7f, 0f, 19.3f, 0xFFFF6B3D.toInt(), 0xFFE8368F.toInt(), Shader.TileMode.CLAMP)
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeWidth = 1.5f
+        c.drawLine(6.0f, 4.7f, 6.0f, 19.3f, stroke)
+        c.drawLine(9.3f, 6.0f, 9.3f, 17.8f, stroke)
+        c.drawLine(12.7f, 8.0f, 12.7f, 15.6f, stroke)
+        c.drawLine(16.1f, 9.6f, 16.1f, 14.0f, stroke)
+        stroke.shader = null
+        fill.color = 0xFFEE4470.toInt()
+        c.drawCircle(19.4f, 11.8f, 0.85f, fill)
     }
 
     /** Three tuning sliders. */

@@ -113,9 +113,14 @@ high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   That is one peak, not a level trace, so it does not tell echo from a loud voice. The same call
   logged 37 track underruns (about five a minute, as on 10-27), which the owner did not hear
   ("not choppy"), so they are recorded in doc 13 §4 and not worked.
-- **Music muted for about 3 s after a call.** iOS restarted media 0.2 s after hang-up
-  (2026-11-02 17:20:58.7). The call sink held media's focus until its 3 s idle release
-  (17:21:01.59), so the first 117 frames played at gain 0.
+- **Music muted for about 3 s after a call: fixed for the next build, not on Play.** iOS restarted
+  media 0.2 s after hang-up (2026-11-02 17:20:58.7). The call sink held media's focus until its 3 s
+  idle release (17:21:01.59), so the first 117 frames played at gain 0. CALL is now released about
+  0.6 s after the telephony stream stops once `phone=0` has arrived. Unverified on the car. Owner:
+  `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
+- **Top-bar Now Playing tile: next build, not on Play, unverified on the car.** It opens CarPlay's
+  Now Playing app from the Home grid. Its template is from an iOS 26 capture and the phone runs
+  iOS 27.2. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO
   after a driver restart; a USB claim that stayed after the adapter was unplugged; Calibration runs
   `ScreenModel.measureUi` on the UI thread (0.3–1 s of jank).

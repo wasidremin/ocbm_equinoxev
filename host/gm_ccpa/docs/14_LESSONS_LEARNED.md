@@ -703,10 +703,11 @@ session up and waits up to 8 s more for the phone's first playback status. It do
 phone is already playing, if the user has pressed play or pause, or on the Bluetooth route. If the
 launcher fails or is busy it sends PLAY anyway, and HID failures are retried until 20 s.
 
-## 15. The top bar: nine CarPlay-style tiles (v211, regrouped 2026-10-23)
+## 15. The top bar: ten CarPlay-style tiles (v211, regrouped 2026-10-23, Now Playing 2026-11-02)
 
 The seven thin outline icons (car, apps, controls, music, nav, phone, energy) are replaced by nine
-CarPlay-style app tiles — rounded square, soft gradient, solid glyph. **Regrouped 2026-10-23 into two
+CarPlay-style app tiles — rounded square, soft gradient, solid glyph. A tenth, CarPlay Now Playing,
+joined after Spotify on 2026-11-02 at the owner's request. **Regrouped 2026-10-23 into two
 families (`BarTarget.group`): our app first, then the car's own apps**, separated by a divider, with
 each car-app tile flagged by a small corner **car badge** so "this leaves for the car" reads at a glance.
 
@@ -715,13 +716,23 @@ each car-app tile flagged by a small corner **car badge** so "this leaves for th
 | 1 | ours | `CP_HOME` | CarPlay home | vision launcher role `home` (strip Home toggle, surface-verified) |
 | 2 | ours | `CP_MAPS` | CarPlay Maps | vision launcher `maps` (template match) |
 | 3 | ours | `CP_SPOTIFY` | CarPlay Spotify | vision launcher `spotify` |
-| 4 | ours | `CP_PHONE` | CarPlay Phone | telephony action while a call exists, else vision launcher `phone` |
-| 5 | ours | `APP_SETTINGS` | this app's settings | `MainActivity`, tab 0 |
-| 6 | ours | `INSIGHTS` | this app's EV insights | `MainActivity`, tab 3 |
+| 4 | ours | `CP_NOW_PLAYING` | CarPlay's Now Playing app, which opens whatever app is playing | vision launcher `nowplaying`, Home grid only (built-in `grid.nowplaying`) |
+| 5 | ours | `CP_PHONE` | CarPlay Phone | telephony action while a call exists, else vision launcher `phone` |
+| 6 | ours | `APP_SETTINGS` | this app's settings | `MainActivity`, tab 0 |
+| 7 | ours | `INSIGHTS` | this app's EV insights | `MainActivity`, tab 3 |
 | — | | *divider* | — | car-vs-ours boundary, drawn in the group gap |
-| 7 | car | `AAOS_HOME` | the car's home screen | `CATEGORY_HOME` (GM's launcher) — badged |
-| 8 | car | `CHARGING` | GM Charging | resolved: `com.gm.hmi.energy/…MainLauncherActivity` — badged |
-| 9 | car | `AAOS_SETTINGS` | car settings | resolved: `com.android.car.settings/…Settings_Launcher_Homepage` — badged |
+| 8 | car | `AAOS_HOME` | the car's home screen | `CATEGORY_HOME` (GM's launcher) — badged |
+| 9 | car | `CHARGING` | GM Charging | resolved: `com.gm.hmi.energy/…MainLauncherActivity` — badged |
+| 10 | car | `AAOS_SETTINGS` | car settings | resolved: `com.android.car.settings/…Settings_Launcher_Homepage` — badged |
+
+**Now Playing (2026-11-02, unverified on the car).** CarPlay's Now Playing icon is never in the
+recent-apps strip, so the launch is the strip's Home toggle, then the grid. It only finds the
+icon when the Home page CarPlay returns to shows it: on 2026-10-15 it sat under Phone, on the same
+page as Maps and Spotify. `grid.nowplaying` is cut from that iOS 26.6.2 capture
+(`cap2_home_grid.png`, 0.186, 0.636), and the phone now runs iOS 27.2. If the icon changed, the
+tile logs `NOT_FOUND`; cut a new template in Calibration (the role is listed as "Now Playing").
+A ten-tile row on an untraced bar takes one ×0.94 size step (`BarTilesTest`); on the owner's traced
+bar the tiles are already ~107 px with ~600 px spare, so nothing moves.
 
 Rationale for the order: **"our app" is everything this app draws and keeps you inside** — the CarPlay
 surfaces it projects (home/maps/Spotify/phone) and its own pages (settings/insights); **"car app" is the

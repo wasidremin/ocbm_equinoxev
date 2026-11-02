@@ -5,7 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The nine top-bar tiles: their order (the owner's, 2026-10-22) and that the whole level row is
+ * The top-bar tiles: their order (the owner's, 2026-10-22) and that the whole level row is
  * on visible glass on the Equinox's sloped panel. Vehicle constants as in [TopBarFitTest].
  */
 class BarTilesTest {
@@ -17,8 +17,8 @@ class BarTilesTest {
     @Test fun tilesAreInTheRequestedOrder() {
         assertEquals(
             // Owner's order (2026-10-23): our app first (CarPlay surfaces, then app pages),
-            // then the car's own apps.
-            listOf("CP_HOME", "CP_MAPS", "CP_SPOTIFY", "CP_PHONE", "APP_SETTINGS", "INSIGHTS",
+            // then the car's own apps. Now Playing added after Spotify 2026-11-02.
+            listOf("CP_HOME", "CP_MAPS", "CP_SPOTIFY", "CP_NOW_PLAYING", "CP_PHONE", "APP_SETTINGS", "INSIGHTS",
                 "AAOS_HOME", "CHARGING", "AAOS_SETTINGS"),
             BarTarget.values().map { it.name },
         )
@@ -86,25 +86,29 @@ class BarTilesTest {
     private val carContentH = carBarH * 0.24f
     private val carNatural = carBarH * 3.6f   // generous estimate of the cluster's natural width
     private fun viewRow(barH: Float) = DisplayGeometry.topBarTiles(
-        barH, 0f, 9, barH * 0.36f, barH * 0.03f,
-        gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = 6, groupGapFrac = GmTopBarView.GROUP_GAP_FRAC,
+        barH, 0f, BarTarget.values().size, barH * 0.36f, barH * 0.03f,
+        gapFrac = 0.18f, maxFrac = 0.90f, breakAfter = BarTarget.values().indexOfFirst { it.group == BarGroup.CAR },
+        groupGapFrac = GmTopBarView.GROUP_GAP_FRAC,
         rightClusterRoom = { end -> carLayout(end).rightScale })
     private fun carLayout(end: Float) = DisplayGeometry.topBarLayout(
         w, carBarH, carInset, 0f, carContentH, carBarH * 0.05f, end, carNatural,
         endIndent = carBarH * GmTopBarView.CLUSTER_END_INDENT_FRAC)
 
+    // Untraced, ten full-height tiles would crush the generous cluster estimate below 80%, so the row
+    // takes one ×0.94 step (2026-11-02, Now Playing). On the owner's traced bar the tiles are already
+    // ~107 px with ~600 px to spare before the cluster (capture 20261102-120702), so nothing moves there.
     @Test fun tilesFillNearlyTheWholeBarOnTheVehicle() {
         val row = viewRow(carBarH)
-        assertEquals(carBarH * 0.90f, row.size, 0.5f)
+        assertEquals(carBarH * 0.90f * 0.94f, row.size, 0.5f)
         assertTrue(row.top >= 0f && row.top + row.size <= carBarH)
     }
 
-    @Test fun clusterIsFlushRightAtFullSizeOnTheVehicle() {
+    @Test fun clusterIsFlushRightOnTheVehicle() {
         val row = viewRow(carBarH)
         val layout = carLayout(row.end)
         // Ends just inside the picture's right edge (w - inset), not back near x 1600.
         assertEquals(w - carInset - carBarH * 0.1f, layout.rightEdge, 0.5f)
-        assertEquals(1f, layout.rightScale, 0.001f)
+        assertTrue("cluster scale ${layout.rightScale}", layout.rightScale >= 0.8f)
         assertTrue("cluster starts ${layout.rightStart} right of tiles ${row.end}",
             layout.rightStart - row.end >= carBarH * 0.8f - 0.01f)
     }
