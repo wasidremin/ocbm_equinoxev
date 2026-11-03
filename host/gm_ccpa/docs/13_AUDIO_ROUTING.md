@@ -538,7 +538,7 @@ an activity-based gate would clip the onset.
   down at 17:20:58.59 and set media up again at 17:20:58.71. The call sink still held its focus
   until its idle release at 17:21:01.59, so media's track ran at gain 0 for 117 frames (about
   2.5 s of the song). `phone=0` and the stream teardown together already mark the call's end.
-  *Change (next build, unverified on the car):* after `phone=0`, CALL is released once no AU has
+  *Change (228, 2026-11-02, unverified on the car):* after `phone=0`, CALL is released once no AU has
   arrived for `CALL_END_DRAIN_MS` (600 ms, the 400 ms pre-fill plus two sweep ticks), and the sweep
   runs every 100 ms instead of 1 Hz until CALL's 3 s window has passed (`VoiceRouter.callEnded`,
   `callStreamEnded`, `CallEndTest`). On the 17:20:58 timeline that is about 17:20:59.2, so media

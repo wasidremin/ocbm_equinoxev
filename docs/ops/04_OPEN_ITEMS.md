@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -64,7 +64,7 @@ high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   picture, and the owner confirms the cluster showed the art. A second cause was found that afternoon, still on
   226. The phone re-titled a playing item `<title> • <artist>` and back, without an art id. The app
   read each change as a new track and dropped the picture, which iOS never resends. The 10-27 11:06
-  capture has the same shape. Fixed for the next build (`isBylineVariant`), not yet on Play. Next
+  capture has the same shape. Fixed in 228 (2026-11-02, `isBylineVariant`), not yet seen on the car. Next
   step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md`
   T13 "A second mechanism".
 - **Vision launcher: two misreads, both logging-only.** iOS 27's square glyph reads UNKNOWN, so
@@ -113,12 +113,12 @@ high-water mark: versionCode 227 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   That is one peak, not a level trace, so it does not tell echo from a loud voice. The same call
   logged 37 track underruns (about five a minute, as on 10-27), which the owner did not hear
   ("not choppy"), so they are recorded in doc 13 §4 and not worked.
-- **Music muted for about 3 s after a call: fixed for the next build, not on Play.** iOS restarted
+- **Music muted for about 3 s after a call: fixed in 228 (2026-11-02).** iOS restarted
   media 0.2 s after hang-up (2026-11-02 17:20:58.7). The call sink held media's focus until its 3 s
   idle release (17:21:01.59), so the first 117 frames played at gain 0. CALL is now released about
   0.6 s after the telephony stream stops once `phone=0` has arrived. Unverified on the car. Owner:
   `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-- **Top-bar Now Playing tile: next build, not on Play, unverified on the car.** It opens CarPlay's
+- **Top-bar Now Playing tile: in 228 (2026-11-02), unverified on the car.** It opens CarPlay's
   Now Playing app from the Home grid and shows the current album art. Its template is from an
   iOS 26 capture and the phone runs iOS 27.2. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO

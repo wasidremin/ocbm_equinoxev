@@ -315,7 +315,7 @@ change merges onto a blank record. The art came back only with the fresh iAP2 se
 process start brought. The 2026-10-27 11:06:58 capture has the same shape (a podcast episode title,
 then the title plus ` • ` and the show name, then the title, and `art=none` from there on), so at
 least one of the 10-27 sightings was this and not the double publish.
-*Change (next build):* `NowPlayingState` treats a title that is the previous one plus ` • <byline>`,
+*Change (228, 2026-11-02):* `NowPlayingState` treats a title that is the previous one plus ` • <byline>`,
 or the reverse, as the same item (`isBylineVariant`). Picture and duration are kept, the title still
 updates, and the log reads `np: track "…" is the same item with or without its byline`.
 *If it still happens:* note the track and whether it is the stand-in kind. The original Carlink app
