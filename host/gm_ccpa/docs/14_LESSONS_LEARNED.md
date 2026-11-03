@@ -731,6 +731,10 @@ icon when the Home page CarPlay returns to shows it: on 2026-10-15 it sat under 
 page as Maps and Spotify. `grid.nowplaying` is cut from that iOS 26.6.2 capture
 (`cap2_home_grid.png`, 0.186, 0.636), and the phone now runs iOS 27.2. If the icon changed, the
 tile logs `NOT_FOUND`; cut a new template in Calibration (the role is listed as "Now Playing").
+The tile shows the current album art, cropped to its centred square, and its own glyph when there
+is none (`BarArtwork`, fed from `onMetadataChanged`, decoded once per JPEG off the seam thread).
+Because a new title reaches the seam 25–124 ms before its picture, the old art stays for up to
+500 ms on a track change instead of blinking to the glyph.
 A ten-tile row on an untraced bar takes one ×0.94 size step (`BarTilesTest`); on the owner's traced
 bar the tiles are already ~107 px with ~600 px spare, so nothing moves.
 

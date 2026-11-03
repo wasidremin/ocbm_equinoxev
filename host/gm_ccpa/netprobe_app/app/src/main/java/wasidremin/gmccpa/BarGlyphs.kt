@@ -1,9 +1,11 @@
 package wasidremin.gmccpa
 
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import kotlin.math.cos
@@ -64,6 +66,8 @@ internal class BarGlyphs {
     }
     private val rect = RectF()
     private val work = Path()
+    private val src = Rect()
+    private val artPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     private class Look(val top: Int, val bottom: Int)
 
@@ -83,15 +87,28 @@ internal class BarGlyphs {
     /**
      * Draws [t]'s tile with its top-left at ([x], [y]) and edge [s]. [selected] adds a ring;
      * [badge] stamps the small car mark in the top-right corner that flags a tile as leaving for
-     * the car's own app (the caller passes `t.group == BarGroup.CAR`).
+     * the car's own app (the caller passes `t.group == BarGroup.CAR`). [art], when given, fills the
+     * tile in place of its gradient and glyph (the Now Playing tile's album art).
      */
-    fun drawTile(c: Canvas, t: BarTarget, x: Float, y: Float, s: Float, selected: Boolean = false, badge: Boolean = false) {
+    fun drawTile(c: Canvas, t: BarTarget, x: Float, y: Float, s: Float, selected: Boolean = false, badge: Boolean = false,
+                 art: Bitmap? = null) {
         val l = look(t)
         val rad = s * 0.225f
         rect.set(x, y, x + s, y + s)
-        fill.shader = LinearGradient(0f, y, 0f, y + s, l.top, l.bottom, Shader.TileMode.CLAMP)
-        c.drawRoundRect(rect, rad, rad, fill)
-        fill.shader = null
+        if (art != null) {
+            val sq = centreSquare(art.width, art.height)
+            src.set(sq[0], sq[1], sq[2], sq[3])
+            work.reset()
+            work.addRoundRect(rect, rad, rad, Path.Direction.CW)
+            c.save()
+            c.clipPath(work)
+            c.drawBitmap(art, src, rect, artPaint)
+            c.restore()
+        } else {
+            fill.shader = LinearGradient(0f, y, 0f, y + s, l.top, l.bottom, Shader.TileMode.CLAMP)
+            c.drawRoundRect(rect, rad, rad, fill)
+            fill.shader = null
+        }
         // Hairline highlight, like the glass edge on CarPlay's own tiles.
         stroke.strokeWidth = (s * 0.012f).coerceAtLeast(1f)
         stroke.color = 0x33FFFFFF
@@ -103,7 +120,7 @@ internal class BarGlyphs {
             rect.set(x - s * 0.04f, y - s * 0.04f, x + s + s * 0.04f, y + s + s * 0.04f)
             c.drawRoundRect(rect, rad * 1.15f, rad * 1.15f, stroke)
         }
-        glyph(c, t, x, y, s)
+        if (art == null) glyph(c, t, x, y, s)
         if (badge) carBadge(c, x + s, y, s)
     }
 

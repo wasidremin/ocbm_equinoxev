@@ -368,6 +368,7 @@ class CarPlayActivity : Activity() {
         val nowPlaying = NowPlayingState().apply {
             onMetadataChanged = { snapshot ->
                 CarPlayMediaBrowserService.publish(snapshot)
+                wasidremin.gmccpa.BarArtwork.onArtwork(snapshot.artwork)
                 live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
             }
             // The rail icon follows ticks too: status arrives in its own sparse frames, so

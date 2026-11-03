@@ -56,6 +56,10 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     /** Which tile to ring, or null. */
     var selected: BarTarget? = null
         set(v) { field = v; invalidate() }
+
+    /** The current album art for the Now Playing tile ([BarArtwork]); null draws the glyph. */
+    var nowPlayingArt: android.graphics.Bitmap? = null
+        set(v) { if (field !== v) { field = v; invalidate() } }
     /**
      * Window pixels of display cutout hiding the bar's right end (live
      * `displayCutout.safeInsetRight`; 285 on the Equinox EV). The bar background still spans
@@ -104,8 +108,8 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         override fun run() { invalidate(); postDelayed(this, 15_000) }
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
-    override fun onDetachedFromWindow() { removeCallbacks(tick); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick); BarArtwork.attach(this) }
+    override fun onDetachedFromWindow() { removeCallbacks(tick); BarArtwork.detach(this); super.onDetachedFromWindow() }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         bg.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), bgTop, bgBottom, Shader.TileMode.CLAMP)
@@ -178,7 +182,8 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         for ((i, t) in targets.withIndex()) {
             val tx = row.tileLeft(i)
             hitRects[i].set(tx - (row.pitch - row.size) / 2f, 0f, tx + row.size + (row.pitch - row.size) / 2f, h)
-            glyphs.drawTile(c, t, tx, row.top, row.size, selected = t == selected, badge = t.group == BarGroup.CAR)
+            glyphs.drawTile(c, t, tx, row.top, row.size, selected = t == selected, badge = t.group == BarGroup.CAR,
+                art = if (t == BarTarget.CP_NOW_PLAYING) nowPlayingArt else null)
         }
         // Car-vs-ours divider, in the extra gap between the two tile families.
         if (row.dividerX > 0f) {
