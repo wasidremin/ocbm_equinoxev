@@ -37,6 +37,9 @@ import java.util.concurrent.atomic.AtomicReference
  * 3. **Updates are coalesced** to one per [COALESCE_MS], keeping carlink's 200 ms, but never dropped:
  *    the last snapshot always lands.
  *
+ * While full-screen Apple Maps is on the centre screen ([ClusterNav.mapsInFront]) navigation is
+ * ended, so the cluster shows the album art, and started again when Maps leaves.
+ *
  * NavigationManager is main-thread only (it checks); snapshots arrive on the seam thread.
  */
 internal class ClusterNavSession : Session(), ClusterNav.Sink {
@@ -123,6 +126,11 @@ internal class ClusterNavSession : Session(), ClusterNav.Sink {
             // its own grace.
             disarmArrival()
             arrivalEnded = false
+        }
+        // Full-screen Maps already shows the turns: the cluster goes back to the album art.
+        if (ClusterNav.mapsInFront) {
+            if (navigating) end("full-screen Apple Maps is in front")
+            return
         }
         // Loading / rerouting with no turn yet: leave the cluster on what it last showed.
         if (stoppedByHost || arrivalEnded || !s.showable) return

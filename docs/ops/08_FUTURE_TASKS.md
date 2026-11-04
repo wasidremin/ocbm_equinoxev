@@ -279,34 +279,43 @@ followed. MainActivity was back in front at +1.1 s. `updateTrip` then ran at abo
 reroutes. The owner confirms (2026-11-02) that the cluster clears when a route ends: the album art
 comes back immediately, and it shows whenever no route is running.
 
-**Idea (raised 2026-11-02, not started): turns in the cluster only while Apple Maps is not on the
-centre screen.** The owner suggests that while full-screen Maps is in front, the cluster show the
-album art instead of the turns, and the reverse. The Dashboard counts as "not Maps" (it already shows
-both), so turns stay in the cluster there. The cluster half is a small change: `ClusterNavSession`
-calls `navigationEnded()` while Maps is in front and `navigationStarted()` plus `updateTrip` again
-when it leaves, since route records keep arriving either way, and the route-end result above says
-the art returns on `navigationEnded()`. Knowing that Maps is in front is the work. No CarPlay message
-is known to say which app is on screen (T9's UI context is unbuilt, and doc 03 §9 lists
-`changeUIContext` as accessory→iPhone only). So the plan is the screen: while a route is running,
-grab a frame every 2–3 s and recognise full-screen Maps, switching only after a few seconds of
-agreement so a quick app switch does not make the cluster flicker. A top-bar launch from this app
-can switch at once. The existing grab plus classify costs about 50 ms of one background thread
-(17:13:14 and 17:20:39 on 2026-11-02, a 617×240 grey frame at 1/4), so one check every 2–3 s is
-a few percent of one core, and nothing when no route is running. Needs: route-running captures of
-full-screen Maps, day and night, to build the recogniser from (local only, never committed, since
-they show the car's position). Dusk captures exist from 2026-11-03 22:46–22:48 UTC (dark map style;
-`captures/20261103-*` on the log server): full-screen Maps twice, once with the route card open,
-and the Dashboard once. In full-screen Maps the left strip's toggle shows the square and the
-maneuver card sits top-left over the map; the Dashboard splits the map left, with maneuver and
-Now Playing cards on the right. Daytime captures exist from 2026-11-04 12:19 UTC (light map style):
-full-screen Maps once and the Dashboard once. That Dashboard had a third card (calendar) under
-Now Playing, so its layout is not fixed.
-A cheaper signal may exist (found 2026-11-04). `RouteGuidanceUpdate` (0x5201) has
-param 15 `RouteGuidanceVisibleInApp` (bool, `spec::route_guidance_update`).
-`iap2_core::metadata::route_guidance` drops it, so whether iOS sends it, and what it says on the
-Dashboard, is unknown. Decoding it is a box change, which means reflashing the adapter on the
-bench (`ocbm_install.sh --full`). If iOS sends it, the cluster could follow it with no screen
-reading at all.
+**Album art in the cluster while full-screen Maps is in front (owner's idea 2026-11-02; built
+2026-11-04 for the next build, unverified on the car).** While full-screen Maps is in front, the
+cluster shows the album art instead of the turns, and the turns come back when Maps leaves. The
+Dashboard counts as "not Maps" (it shows a turn card of its own), so turns stay in the cluster
+there. Settings ▸ Navigation ▸ "Album art while Maps is on screen" is on by default.
+- **Cluster half.** `ClusterNavSession.render` ends navigation while `ClusterNav.mapsInFront`. The
+  cluster clears at once on `navigationEnded()` (owner-confirmed 2026-11-02). When Maps leaves,
+  the next render calls `navigationStarted()` and `updateTrip`, since route records keep arriving
+  either way.
+- **Knowing Maps is in front.** No CarPlay message the app reads says which app is on screen (T9's
+  UI context is unbuilt, and doc 03 §9 lists `changeUIContext` as accessory→iPhone only). So
+  `av/MapsWatch` reads the screen every 2.5 s, only while a route is up, a cluster session is bound
+  and CarPlay is on screen. It skips a read while the vision launcher is busy, since both use the
+  same frame buffer. Each read grabs one frame and runs `ScreenModel.mapsCard`, which looks for
+  Maps' turn card: a flat dark panel top left, right of the strip, with clear left, right and top
+  edges. A read costs about 50 ms of one background thread, like a launcher frame (2026-11-02). The
+  card check itself takes under 1 ms. The cluster switches only after two reads in a row agree (`MapsAgreement`), so
+  a glance at another app does not make it flicker. A successful top-bar launch switches at once.
+  The log reads `nav: full-screen Apple Maps is in front …` or `… not in front …`, with the card
+  evidence.
+- **The rule was set on local captures** (never committed, since they show where the car was).
+  Dusk: 2026-11-03 22:46–22:48 UTC, full-screen Maps twice (once with the route panel open) and the
+  Dashboard once. Daylight: 2026-11-04 12:19 UTC, full-screen Maps and the Dashboard, which had a
+  third card (calendar), so its layout is not fixed. The card sat at x 152–788, y 16–231 of the
+  2470x960 frame at 0.951x. Its background was 0.10 at dusk and 0.24 in daylight. On the nine
+  iOS 27.2 frames at that size, the three full-screen guidance frames passed and the six others
+  (Dashboards, Spotify, Maps with no route) failed. That held for scales 0.92–0.98, with the right
+  edge searched ±5 px. No other screen scored above 0.35 on that edge; passing needs 0.7.
+  `MapsCardTest` pins the rule on synthetic frames.
+- **Not covered.** Maps with a panel over the turn card reads as "not Maps", which keeps the
+  turns: the safe side. So would a light turn card, if iOS ever drew one.
+- **A cheaper signal may exist (found 2026-11-04).** `RouteGuidanceUpdate` (0x5201) has param 15
+  `RouteGuidanceVisibleInApp` (bool). Box firmware built after 2026-11-04 forwards it
+  (`metadata::route_guidance`), and the app logs it as `nav: iOS says route guidance visible in
+  app=N`, with the screen reading next to it. It reaches the car only after the adapter is
+  reflashed on the bench (`ocbm_install.sh --full`). If iOS sends it and it agrees with the screen
+  reading, it can replace the screen reading.
 
 **Watch (2026-10-27 evening, versionCode 221): the cluster went without album art for a while.**
 The owner reports that title and artist showed the whole time, with only the artwork missing.

@@ -599,6 +599,12 @@ class LauncherUi(private val act: Activity) {
                 navRow.setSubtitle(nav.statusText(act))
             },
         )
+        val mapsArtRow = EqRow(
+            act, "Album art while Maps is on screen",
+            "During a route, the cluster shows the album art while full-screen Apple Maps is on the " +
+                "centre screen, and the turns everywhere else. Reads the screen every 2.5 s.",
+            trailing = EqToggle(act, nav.artWhileMaps) { on -> nav.setArtWhileMaps(act, on) },
+        )
         val ev = wasidremin.gmccpa.ev.CarPlayEv
         evRow = EqRow(
             act, "EV battery for Apple Maps", ev.statusText(act),
@@ -607,7 +613,7 @@ class LauncherUi(private val act: Activity) {
                 evRow.setSubtitle(ev.statusText(act))
             },
         )
-        page.addView(EqCard(act).addRow(navRow).addRow(evRow))
+        page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow).addRow(evRow))
         page.addView(eqSectionLabel(act, "Voice"))
         val role = wasidremin.gmccpa.voice.AssistantRole
         voiceRow = EqRow(

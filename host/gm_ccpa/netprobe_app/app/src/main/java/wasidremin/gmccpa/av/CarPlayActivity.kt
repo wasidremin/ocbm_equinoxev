@@ -126,6 +126,7 @@ class CarPlayActivity : Activity() {
         }
         val started = wasidremin.gmccpa.av.VisionLauncher.launchAsync(this, role, "top-bar") { rec ->
             log.i("topbar: launch $role -> ${rec.outcome}" + (rec.error?.let { " ($it)" } ?: ""))
+            if (rec.outcome == CarPlayLauncher.Outcome.SUCCESS) MapsWatch.hint(role)
         }
         log.i("topbar: launch $role ${if (started) "started" else "ignored (busy/debounce)"}")
     }
@@ -1829,6 +1830,7 @@ class CarPlayActivity : Activity() {
     override fun onResume() {
         super.onResume()
         applySystemUi()
+        MapsWatch.start(this)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

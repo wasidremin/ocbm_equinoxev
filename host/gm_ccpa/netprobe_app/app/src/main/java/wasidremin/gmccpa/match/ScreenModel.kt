@@ -42,6 +42,15 @@ object ScreenModel {
     private const val GRID_TOP_PX = 0.08f * REF_H
     private const val GRID_BOTTOM_FROM_BOTTOM_PX = 0.14f * REF_H
     private const val GRID_RIGHT_MARGIN_PX = 0.015f * REF_W
+    /**
+     * Apple Maps' turn card in full-screen Maps (iOS 27.2, 2026-11-03/04): x 152–788 and y 16–231 of
+     * a 2470x960 frame at 0.951x, so 160–829 and from 17 down at the default scale. Its height
+     * follows the instruction, so only rows down to [MAPS_CARD_PROBE_BOTTOM_PX] are read.
+     */
+    private const val MAPS_CARD_LEFT_PX = 160f
+    private const val MAPS_CARD_RIGHT_PX = 829f
+    private const val MAPS_CARD_TOP_PX = 17f
+    private const val MAPS_CARD_PROBE_BOTTOM_PX = 130f
 
     /** The smallest template side matching is attempted with (1/[SCALE] px). */
     private const val MIN_SIDE = 4
@@ -108,6 +117,9 @@ object ScreenModel {
             fromBottom(GRID_BOTTOM_FROM_BOTTOM_PX))
         /** Bottom button of the strip: 3x3-grid glyph on Dashboard, square glyph elsewhere. */
         val glyphRoi = NRect(0f, glyphMinNy, stripMaxNx, fromBottom(GLYPH_BOTTOM_MARGIN_PX))
+        /** The upper part of full-screen Maps' turn card, right of the strip ([mapsCard]). */
+        val mapsCardRoi = NRect(fromLeft(MAPS_CARD_LEFT_PX), fromTop(MAPS_CARD_TOP_PX),
+            fromLeft(MAPS_CARD_RIGHT_PX), fromTop(MAPS_CARD_PROBE_BOTTOM_PX))
 
         fun roi(kind: Kind): NRect = when (kind) {
             Kind.STRIP -> stripRoi
@@ -423,6 +435,63 @@ object ScreenModel {
         other: IconMatcher.IconTemplate?,
         geo: Geometry = geometry(g),
     ): Surface = surfaceDetailed(g, dashboard, other, geo).surface
+
+    /**
+     * What [mapsCard] read: the card's background [tone] (0..1), the share of its pixels within
+     * [CARD_SAME] of that tone, and the share of each edge where the tone steps to something else.
+     */
+    data class CardEvidence(val tone: Float, val flat: Float, val left: Float, val right: Float, val top: Float) {
+        val present: Boolean
+            get() = tone <= CARD_MAX_TONE && flat >= CARD_MIN_FLAT && minOf(left, right, top) >= CARD_MIN_EDGE
+
+        override fun toString(): String = "tone=%.2f flat=%.2f edges l/r/t=%.2f/%.2f/%.2f"
+            .format(java.util.Locale.US, tone, flat, left, right, top)
+    }
+
+    private const val CARD_SAME = 6f / 255f
+    private const val CARD_STEP = 12f / 255f
+    private const val CARD_MAX_TONE = 0.5f
+    private const val CARD_MIN_FLAT = 0.5f
+    private const val CARD_MIN_EDGE = 0.7f
+    private const val CARD_RIGHT_SLACK = 5
+
+    /**
+     * Apple Maps' turn card: the dark panel full-screen Maps shows top left while it guides. Its
+     * background is one flat tone (0.10 at dusk, 0.24 in daylight), and its left, right and top
+     * edges step to whatever is around it. The Dashboard has only map here (its turn card is on the
+     * right), and other apps are either light here or dark all the way across. On the nine
+     * iOS 27.2 frames of 2026-11-03/04, the three full-screen guidance frames scored 1.00 on every
+     * edge and the rest at most 0.19 on the right one. That held with the card moved 2 px either
+     * way (worst 0.86).
+     */
+    fun mapsCard(g: Gray, geo: Geometry): CardEvidence {
+        val r = searchRegion(g, geo.mapsCardRoi)
+        val l = r.x
+        val t = r.y
+        val rt = r.x + r.width
+        val pb = r.y + r.height
+        val none = CardEvidence(1f, 0f, 0f, 0f, 0f)
+        if (r.width < 24 || r.height < 12 || l < 3 || rt + 3 >= g.width) return none
+        fun at(x: Int, y: Int) = g.px[y * g.width + x]
+        val inner = FloatArray((r.width - 8) * (r.height - 3))
+        var n = 0
+        for (y in t + 3 until pb) for (x in l + 4 until rt - 4) inner[n++] = at(x, y)
+        val sorted = inner.copyOf(n).also { it.sort() }
+        val tone = sorted[n / 2]
+        fun same(v: Float) = abs(v - tone) <= CARD_SAME
+        fun step(v: Float) = abs(v - tone) > CARD_STEP
+        val flat = sorted.count { same(it) }.toFloat() / n
+        val rows = t + 6 until pb
+        val left = rows.count { same(at(l + 5, it)) && step(at(l - 3, it)) }.toFloat() / rows.count()
+        // The right edge is 160 px from the strip at 1/4: a scale 2 % off moves it 4 px, the other two 1.
+        val right = (-CARD_RIGHT_SLACK..CARD_RIGHT_SLACK).filter { rt + it + 3 < g.width }.maxOfOrNull { d ->
+            rows.count { same(at(rt + d - 6, it)) && step(at(rt + d + 3, it)) }.toFloat() / rows.count()
+        } ?: 0f
+        val cols = l + 12 until rt - 12
+        val above = max(0, t - 3)
+        val top = cols.count { same(at(it, t + 3)) && step(at(it, above)) }.toFloat() / cols.count()
+        return CardEvidence(tone, flat, left, right, top)
+    }
 
     /**
      * Region [r] of [g] as 16 grey levels, one hex digit per 1/[SCALE] px, rows joined by '/'.

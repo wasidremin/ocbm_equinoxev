@@ -50,6 +50,7 @@ object ClusterNav {
 
     private const val PREFS = "cluster_nav"
     private const val KEY_ENABLED = "enabled"
+    private const val KEY_ART_WHILE_MAPS = "art_while_maps"
 
     /** carlink's figure for how long the CarAppActivity must stay in front for the host handshake. */
     private const val BRING_BACK_MS = 1_000L
@@ -69,6 +70,12 @@ object ClusterNav {
     enum class Support { OK, NOT_IN_BUILD, OLD_ANDROID, NO_TEMPLATES_HOST }
 
     @Volatile var enabled: Boolean = false
+        private set
+    /** Settings ▸ Navigation: give the cluster to the album art while full-screen Maps shows the turns. */
+    @Volatile var artWhileMaps: Boolean = true
+        private set
+    /** Full-screen Apple Maps is on the centre screen ([wasidremin.gmccpa.av.MapsWatch]): the session stands down. */
+    @Volatile var mapsInFront: Boolean = false
         private set
     @Volatile private var loaded = false
 
@@ -91,6 +98,7 @@ object ClusterNav {
             if (loaded) return
             val app = ctx.applicationContext
             enabled = prefs(app).getBoolean(KEY_ENABLED, false)
+            artWhileMaps = prefs(app).getBoolean(KEY_ART_WHILE_MAPS, true)
             (app as? Application)?.registerActivityLifecycleCallbacks(FrontTracker)
             loaded = true
         }
@@ -111,6 +119,28 @@ object ClusterNav {
             lastBootstrapAt = 0L
             if (route.snapshot.showable) requestBootstrap("enabled with a route up")
         }
+    }
+
+    fun setArtWhileMaps(ctx: Context, on: Boolean) {
+        load(ctx)
+        artWhileMaps = on
+        prefs(ctx).edit().putBoolean(KEY_ART_WHILE_MAPS, on).apply()
+        log.i("nav: album art while Maps is in front ${if (on) "ON" else "off"} (Settings)")
+        if (!on) setMapsInFront(false, "turned off in Settings")
+    }
+
+    /**
+     * Any thread. While [on], a bound session ends navigation so the cluster shows the album art
+     * (the cluster clears at once when navigation ends, owner-confirmed 2026-11-02); when it goes
+     * back off, the next render starts navigation and sends the trip again.
+     */
+    fun setMapsInFront(on: Boolean, why: String) {
+        if (mapsInFront == on) return
+        mapsInFront = on
+        val ios = lastVisibleInApp?.let { "; iOS visible in app=$it" } ?: ""
+        log.i(if (on) "nav: full-screen Apple Maps is in front — the cluster shows the album art ($why$ios)"
+            else "nav: Apple Maps is not in front — turns back in the cluster ($why$ios)")
+        sink.get()?.onRoute(route.snapshot)
     }
 
     fun support(ctx: Context): Support {
@@ -158,6 +188,7 @@ object ClusterNav {
 
     /** A `routeGuidance` or `maneuver` record. Runs on the `cp-meta` thread: cheap work only. */
     fun onRecord(kind: String, json: JSONObject) {
+        logVisibleInApp(json)
         val before = route.snapshot
         val s = route.onRecord(kind, json) ?: return
         logTransition(before, s)
@@ -191,6 +222,22 @@ object ClusterNav {
             log.i("nav: turn #${cb.index}/${b.maneuverCount ?: "?"} type=${cb.type ?: "?"} side=${cb.drivingSide ?: "?"}" +
                 " next=${b.next?.type ?: "-"} bound=${bound} enabled=$enabled")
         }
+    }
+
+    /** Last RouteGuidanceVisibleInApp seen; written on `cp-meta`, also logged by [setMapsInFront]. */
+    @Volatile private var lastVisibleInApp: Int? = null
+
+    /**
+     * RouteGuidanceVisibleInApp, forwarded by adapter firmware built after 2026-11-04. Logged next to
+     * what the screen reading says, so one drive shows whether iOS sends it and whether it could
+     * replace [wasidremin.gmccpa.av.MapsWatch].
+     */
+    private fun logVisibleInApp(json: JSONObject) {
+        if (!json.has("visibleInApp")) return
+        val v = json.optInt("visibleInApp")
+        if (v == lastVisibleInApp) return
+        lastVisibleInApp = v
+        log.i("nav: iOS says route guidance visible in app=$v (screen reading: Maps in front=$mapsInFront)")
     }
 
     internal fun stateName(s: Int?): String = when (s) {

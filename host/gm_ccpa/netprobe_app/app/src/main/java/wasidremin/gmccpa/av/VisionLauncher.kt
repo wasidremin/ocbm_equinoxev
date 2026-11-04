@@ -627,6 +627,11 @@ object VisionLauncher {
         return ScreenModel.geometry(g, fit.ui)
     }
 
+    /** The scale last measured for this display config, else the predicted one; for readers that never tap. */
+    fun knownUi(ctx: Context): Float =
+        prefs(ctx).getFloat(scaleKey(), 0f).takeIf { it > 0f }
+            ?: ScreenModel.expectedUi(VideoFrame.width, VideoFrame.physicalWidthMm)
+
     /** The scale a saved capture was drawn at, measured from its strip and toggle; the default when nothing matches. */
     fun geometryOf(ctx: Context, g: ScreenModel.Gray): ScreenModel.Geometry {
         val fit = ScreenModel.measureUi(g, anchors(ctx))

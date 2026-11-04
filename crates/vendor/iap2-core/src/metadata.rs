@@ -486,6 +486,14 @@ pub fn route_guidance(body: &[u8]) -> String {
                 j.n("maneuverTotalCount", n)
             }
         }
+        // id 15 = RouteGuidanceVisibleInApp (bool). Forwarded to find out whether iOS sends it
+        // and what it says on the Dashboard: it could tell the cluster that full-screen Maps is
+        // in front without reading the screen (docs/ops/08_FUTURE_TASKS.md T13).
+        15 => {
+            if let Some(n) = u8v(v) {
+                j.n("visibleInApp", n)
+            }
+        }
         // id 21 = DestinationTimeZoneOffsetMinutes (int16, SIGNED — e.g. UTC-8 = -480). Apple's catalog.
         21 => {
             if v.len() >= 2 {
@@ -1450,6 +1458,16 @@ mod tests {
         let body = group(0x0000, &[tlv(1, b"He said \"hi\"")]);
         let j = now_playing(&body);
         assert!(j.contains("\\\"hi\\\""), "{j}");
+    }
+
+    /// RouteGuidanceVisibleInApp (15) goes to the host as 0/1, so a log can show what iOS sends.
+    #[test]
+    fn route_guidance_forwards_visible_in_app() {
+        let mut body = tlv(1, &[1]); // RouteGuidanceState = route set
+        body.extend(tlv(15, &[1]));
+        let j = route_guidance(&body);
+        assert!(j.contains("\"visibleInApp\":1"), "{j}");
+        assert!(!route_guidance(&tlv(1, &[1])).contains("visibleInApp"));
     }
 
     #[test]

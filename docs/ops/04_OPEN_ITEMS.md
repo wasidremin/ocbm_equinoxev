@@ -121,6 +121,11 @@ high-water mark: versionCode 229 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Music muted for about 4 s after an unanswered ring: fixed in 229 (2026-11-04).**
   2026-11-03 22:52:03: the ringtone (ALERT) sink waited out its 3 s idle after `phone=0`. It now
   takes CALL's release. Unverified on the car. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
+- **Album art in the cluster while full-screen Maps is in front: next build, not on Play,
+  unverified on the car.** The app reads the screen every 2.5 s during a route. It ends the
+  cluster's navigation while Maps' turn card is showing and restarts it when Maps leaves. Set on
+  local captures only. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag, which
+  needs a reflash. Owner: `08_FUTURE_TASKS.md` T13.
 - **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The
   iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
   Maps it took two toggles and about 3 s, which the owner flagged. 229 (2026-11-04) ends each
