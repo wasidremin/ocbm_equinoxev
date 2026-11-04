@@ -67,15 +67,13 @@ high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   capture has the same shape. Fixed in 228 (2026-11-02, `isBylineVariant`), not yet seen on the car. Next
   step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md`
   T13 "A second mechanism".
-- **Vision launcher: two misreads, both logging-only.** iOS 27's square glyph reads UNKNOWN, so
-  the Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). And twice at dawn
-  an app tap that worked read as Dashboard and logged VERIFY_FAILED. Neither has recurred since 225
-  (seven launches on 2026-10-29, one on 10-30, three on 11-02), so the `[glyph]` line that would
-  explain the second has not been logged yet. A third failure was a bug, fixed in 227 (2026-11-02):
-  under an Apple Maps route the moving map never settled, so two good taps on 2026-11-02 ended
-  `TIMEOUT_UNSTABLE` (`readUnsettled`). 227's first launch (Maps, 2026-11-02 17:20:39) succeeded, but
-  no route was running yet, so the fix itself is still unexercised on the car. Owner:
-  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
+- **Vision launcher: misreads, logging-only.** iOS 27's square glyph can read UNKNOWN, so the
+  Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). The VERIFY_FAILED on
+  app taps that worked is explained (2026-11-03): on iOS 27 the glyph shows where the toggle leads,
+  so an app opened from Home reads as the Dashboard. Grid taps stop using the glyph in the next
+  build; a strip tap from such an app can still log VERIFY_FAILED. The moving-map fix from 227 is
+  now exercised: under a route on 2026-11-03 22:47:21, Maps from the strip read "using current
+  frame" and verified SUCCESS. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
 - **CarPlay-screen layout loop — fixed in 227, confirmed on the car 2026-11-02.** `syncChrome`
   re-assigned the rail's `LayoutParams` on every root layout, which requested the next one. That
   morning it ran at 60 Hz all session: 180 `requestLayout() improperly called` warnings a second,
@@ -113,14 +111,20 @@ high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   That is one peak, not a level trace, so it does not tell echo from a loud voice. The same call
   logged 37 track underruns (about five a minute, as on 10-27), which the owner did not hear
   ("not choppy"), so they are recorded in doc 13 §4 and not worked.
-- **Music muted for about 3 s after a call: fixed in 228 (2026-11-02).** iOS restarted
-  media 0.2 s after hang-up (2026-11-02 17:20:58.7). The call sink held media's focus until its 3 s
-  idle release (17:21:01.59), so the first 117 frames played at gain 0. CALL is now released about
-  0.6 s after the telephony stream stops once `phone=0` has arrived. Unverified on the car. Owner:
+- **Music muted for about 3 s after a call: fixed in 228 (2026-11-02), car-verified 2026-11-03.**
+  iOS restarted media 0.2 s after hang-up (2026-11-02 17:20:58.7). The call sink held media's
+  focus until its 3 s idle release (17:21:01.59), so the first 117 frames played at gain 0. CALL is
+  now released about 0.6 s after the telephony stream stops once `phone=0` has arrived. On
+  2026-11-03 all three calls released 0.46–0.57 s after `phone=0`. Owner:
   `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-- **Top-bar Now Playing tile: in 228 (2026-11-02), unverified on the car.** It opens CarPlay's
-  Now Playing app from the Home grid and shows the current album art. Its template is from an
-  iOS 26 capture and the phone runs iOS 27.2. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15.
+- **Music muted for about 4 s after an unanswered ring: fixed for the next build, not on Play.**
+  2026-11-03 22:52:03: the ringtone (ALERT) sink waited out its 3 s idle after `phone=0`. It now
+  takes CALL's release. Unverified on the car. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
+- **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The
+  iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
+  Maps it took two toggles and about 3 s, which the owner flagged. The next build ends each
+  toggle's wait once it has landed (expect about 1.5 s to the icon tap); unverified on the car.
+  Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15 and §9 item 4.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO
   after a driver restart; a USB claim that stayed after the adapter was unplugged; Calibration runs
   `ScreenModel.measureUi` on the UI thread (0.3–1 s of jank).

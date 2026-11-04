@@ -541,6 +541,7 @@ class VoiceRouter(
     private fun endedByIos(p: Purpose, now: Long, s: Sink): Boolean = when (p) {
         Purpose.ASSISTANT -> ctrlEnded(now, s)
         Purpose.CALL -> callEnded(now, s)
+        Purpose.ALERT -> ringStreamEnded(now, ctrlSeen, ctrlPhone, ctrlPhoneEndAt, s.lastAuAt)
         else -> false
     }
 
@@ -623,7 +624,8 @@ class VoiceRouter(
                 // A11: an END edge from iOS past its grace ends ASSISTANT's duck hold AND its idle
                 // window at once — same pass, same order as the timer path, so the un-duck below
                 // still lands before the release (A7). CALL's edge is `phone=0` once the stream has
-                // stopped ([callEnded]); NAV and ALERT have no control-plane edge.
+                // stopped ([callEnded]), and ALERT's the same edge for a ring nobody answered
+                // ([ringStreamEnded]); NAV has no control-plane edge.
                 val ended = endedByIos(p, now, s)
                 // Per-purpose hold folded into ONE boolean — the duck is shared, so a sink inside its
                 // hold keeps media ducked for everyone; see [Purpose.duckHoldMs].
@@ -646,7 +648,7 @@ class VoiceRouter(
                 sinks.remove(p)
                 val why = when {
                     !ended -> "idle ${p.idleMs / 1000}s"
-                    p == Purpose.CALL -> "iOS says the call ended ${now - ctrlPhoneEndAt}ms ago, " +
+                    p == Purpose.CALL || p == Purpose.ALERT -> "iOS says the call ended ${now - ctrlPhoneEndAt}ms ago, " +
                         "last AU ${now - s.lastAuAt}ms ago"
                     else -> "iOS says Siri ended ${now - ctrlSpeechAt}ms ago"
                 }
@@ -1238,3 +1240,14 @@ class VoiceRouter(
  */
 internal fun callStreamEnded(now: Long, seen: Boolean, phone: Boolean, phoneEndAt: Long, lastAuAt: Long): Boolean =
     seen && !phone && phoneEndAt > 0L && now - lastAuAt > VoiceRouter.CALL_END_DRAIN_MS
+
+/**
+ * ALERT's early release, for the ringtone of a call nobody answered: [callStreamEnded], within
+ * CALL's window after the `phone=0` edge. 2026-11-03: `phone=0` 22:52:03.725, the alert stream torn
+ * down 03.818 and media set up in the same breath, but the ALERT sink waited out its 3 s and media
+ * played muted until 07.709. The window keeps an alert that plays long after a call on its own
+ * idle rule.
+ */
+internal fun ringStreamEnded(now: Long, seen: Boolean, phone: Boolean, phoneEndAt: Long, lastAuAt: Long): Boolean =
+    callStreamEnded(now, seen, phone, phoneEndAt, lastAuAt) &&
+        now - phoneEndAt <= VoiceRouter.Purpose.CALL.idleMs

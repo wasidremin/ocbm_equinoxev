@@ -265,7 +265,11 @@ can switch at once. The existing grab plus classify costs about 50 ms of one bac
 (17:13:14 and 17:20:39 on 2026-11-02, a 617×240 grey frame at 1/4), so one check every 2–3 s is
 a few percent of one core, and nothing when no route is running. Needs: route-running captures of
 full-screen Maps, day and night, to build the recogniser from (local only, never committed, since
-they show the car's position).
+they show the car's position). Dusk captures exist from 2026-11-03 22:46–22:48 UTC (dark map style;
+`captures/20261103-*` on the log server): full-screen Maps twice, once with the route card open,
+and the Dashboard once. In full-screen Maps the left strip's toggle shows the square and the
+maneuver card sits top-left over the map; the Dashboard splits the map left, with maneuver and
+Now Playing cards on the right. Daytime captures are still missing.
 
 **Watch (2026-10-27 evening, versionCode 221): the cluster went without album art for a while.**
 The owner reports that title and artist showed the whole time, with only the artwork missing.

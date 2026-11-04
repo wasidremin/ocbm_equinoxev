@@ -30,7 +30,9 @@ import java.util.concurrent.Executors
  * AC Home is NOT used: the box drops it while dPadSupport=false
  * ("nav 0x06 dropped — D-Pad not advertised", 2026-10-15 log).
  * After every tap we wait for the screen to CHANGE before waiting for it to settle, otherwise the
- * stable-frame gate can return the pre-tap frame before the iPhone has reacted.
+ * stable-frame gate can return the pre-tap frame before the iPhone has reacted. After a toggle tap
+ * the wait also ends as soon as the tap has visibly landed ([toggleLanding]). Waiting for the whole
+ * screen to go quiet put Now Playing's icon tap, two toggles from an app, at +2.8 s on 2026-11-03.
  *
  * Every search and tap uses the UI scale CarPlay drew the frame at ([resolveUi]): the scale this
  * display config was last measured at, else the one its physical size predicts, checked against
@@ -52,6 +54,12 @@ object VisionLauncher {
     const val SURFACE_WAIT_MS = 2500L
     const val MIN_AFTER_TAP_MS = 600L
     const val QUIET_MS = 400L
+    /**
+     * Earliest a toggle landing is accepted, from the tap. On 2026-11-03 the screen began to change
+     * 0.18 s after each toggle tap and was still by about 0.53 s, so a second tap any sooner could
+     * meet the screen mid-transition.
+     */
+    const val LANDED_MIN_MS = 450L
     const val SETTLE_CAP_MS = 2500L
     const val VERIFY_GRACE_MS = 1500L
 
@@ -268,8 +276,8 @@ object VisionLauncher {
         r.beforeOwned = frame.owned
         r.mark("capture")
         r.geo = resolveUi(r, frame.gray)
-        r.step("frame0", "stable ${frame.gray.width}x${frame.gray.height} at 1/${ScreenModel.SCALE}; " +
-            "surface=${ScreenModel.surface(frame.gray, glyphDash, glyphOther, r.geo)}")
+        var surf = ScreenModel.surface(frame.gray, glyphDash, glyphOther, r.geo)
+        r.step("frame0", "stable ${frame.gray.width}x${frame.gray.height} at 1/${ScreenModel.SCALE}; surface=$surf")
 
         // 1. Recent-apps strip: one tap, no Home.
         if (strip != null) {
@@ -306,11 +314,15 @@ object VisionLauncher {
         for (i in 1..MAX_TOGGLES) {
             checkBudget(r)
             tap(r, r.geo.toggleNx, r.geo.toggleNy, "toggle", isTarget = false)
-            val settled = afterChange(r, surface, frame.gray) ?: stable(r, surface)
+            val from = surf
+            val settled = afterChange(r, surface, frame.gray) { g ->
+                toggleLanding(from, ScreenModel.surface(g, glyphDash, glyphOther, r.geo),
+                    grid?.let { t -> { ScreenModel.find(g, t, ScreenModel.Kind.GRID, r.geo) } }, g.width, g.height)
+            } ?: stable(r, surface)
             // Intermediate toggle frames are not evidence: only before + verification are kept.
             settled.owned?.recycle()
             frame = Frame(settled.gray, null)
-            val surf = ScreenModel.surface(frame.gray, glyphDash, glyphOther, r.geo)
+            surf = ScreenModel.surface(frame.gray, glyphDash, glyphOther, r.geo)
             r.step("toggle$i", "surface=$surf")
             if (surf == ScreenModel.Surface.DASHBOARD) continue
             if (grid != null) {
@@ -396,24 +408,25 @@ object VisionLauncher {
             r.step("verify", "no screen change after grid tap", passed = false)
             return CarPlayLauncher.Outcome.VERIFY_FAILED
         }
-        val graced = graceUntilNotDashboard(r, surface, post, glyphDash, glyphOther)
-        if (graced !== post) post.owned?.recycle()
-        r.verifyOwned = graced.owned
-        val still = ScreenModel.find(graced.gray, grid, ScreenModel.Kind.GRID, r.geo)
-        val ev = ScreenModel.surfaceDetailed(graced.gray, glyphDash, glyphOther, r.geo)
+        r.verifyOwned = post.owned
+        val still = ScreenModel.find(post.gray, grid, ScreenModel.Kind.GRID, r.geo)
+        val ev = ScreenModel.surfaceDetailed(post.gray, glyphDash, glyphOther, r.geo)
         r.verifyDashScore = ev.dashboardScore
         r.verifyOtherScore = ev.otherScore
         r.mark("verify")
-        val ok = !still.passed && ev.surface != ScreenModel.Surface.DASHBOARD
-        noteGlyph(r, graced.gray, ev)
+        // The glyph is no evidence here. An app opened from Home leads back to Home, so on iOS 27
+        // it shows the grid glyph the Dashboard shows (Now Playing 2026-11-03, dashboard=0.933),
+        // and a grid tap cannot reach the Dashboard. The icon gone from Home is the evidence.
+        val ok = !still.passed
         r.step("verify", "grid icon gone=${!still.passed}; surface=${ev.surface}", still.score, ok)
         return if (ok) CarPlayLauncher.Outcome.SUCCESS else CarPlayLauncher.Outcome.VERIFY_FAILED
     }
 
     /**
-     * An app tap that still reads as the Dashboard: log the toggle button itself. At dawn on
-     * 2026-10-29 the Maps and Phone taps both changed the screen and both verified as Dashboard,
-     * and no frame was kept to say why.
+     * A strip tap that still reads as the Dashboard: log the toggle button itself. On iOS 27 the
+     * glyph shows where the toggle leads, not the screen, so an app opened from Home reads as the
+     * Dashboard too; that is what the 2026-10-29 dawn Phone tap was (it started in Maps, opened
+     * from Home a minute earlier).
      */
     private fun noteGlyph(r: Run, g: ScreenModel.Gray, ev: ScreenModel.SurfaceEvidence) {
         if (ev.surface != ScreenModel.Surface.DASHBOARD) return
@@ -476,12 +489,22 @@ object VisionLauncher {
      * [MIN_AFTER_TAP_MS] since the tap AND [QUIET_MS] of consecutive quiet samples — so a
      * pause mid-transition (the stream only sends frames on change) is not read as settled.
      * Null = never changed. Thresholds and outcome rules are unchanged.
+     *
+     * With [landed], the wait also ends at the first of two samples running, at least
+     * [LANDED_MIN_MS] after the tap, that report the same [Landing]; that sample is returned as it
+     * is. The quiet window still ends it when no landing is ever seen, so it is never slower.
      */
-    private fun afterChange(r: Run, surface: SurfaceView, before: ScreenModel.Gray): Frame? {
+    private fun afterChange(
+        r: Run,
+        surface: SurfaceView,
+        before: ScreenModel.Gray,
+        landed: ((ScreenModel.Gray) -> Landing?)? = null,
+    ): Frame? {
         val tapAt = SystemClock.elapsedRealtime()
         val quiet = QuietWindow(tapAt, MIN_AFTER_TAP_MS, QUIET_MS,
             CarPlayFrameGrabber.DEFAULT_SETTLE_THRESHOLD)
         var prev: ScreenModel.Gray? = null
+        var prevLanding: Landing? = null
         var changedAt = -1L
         var samples = 0
         while (true) {
@@ -502,7 +525,18 @@ object VisionLauncher {
             if (changedAt >= 0) {
                 val p = prev
                 val mad = if (p != null && p.width == g.width && p.height == g.height) ScreenModel.changed(p, g) else 1f
-                if (quiet.offer(now, mad)) {
+                val still = quiet.offer(now, mad)
+                if (landed != null && now - tapAt >= LANDED_MIN_MS) {
+                    val l = landed(g)
+                    val last = prevLanding
+                    if (l != null && last != null && sameLanding(last, l)) {
+                        r.step("settle", "landed (${l.surface}) at +${now - tapAt}ms, " +
+                            "change at +${changedAt - tapAt}ms, $samples samples")
+                        return Frame(g, null)
+                    }
+                    prevLanding = l
+                }
+                if (still) {
                     r.step("settle", "change at +${changedAt - tapAt}ms, quiet at +${now - tapAt}ms, $samples samples")
                     break
                 }

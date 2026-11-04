@@ -533,18 +533,26 @@ an activity-based gate would clip the onset.
   once it has drained, so after that each delivery gap is an underrun. The owner did not hear
   them: the call was "not choppy". So nothing is changed for them. The sink logs only a total,
   so when they fell is not known; per-underrun logging is the first step if a call ever sounds
-  broken up.
+  broken up. On 2026-11-03 (228) the rate varied by call: 18 in 10,889 AUs (22:40–22:45 UTC) and
+  173 in 12,632 (22:53–23:00), about 27 a minute. The owner reported no problem with either call.
 - **Hang-up mutes the first 3 s of resumed music (2026-11-02).** iOS tore the telephony stream
   down at 17:20:58.59 and set media up again at 17:20:58.71. The call sink still held its focus
   until its idle release at 17:21:01.59, so media's track ran at gain 0 for 117 frames (about
   2.5 s of the song). `phone=0` and the stream teardown together already mark the call's end.
-  *Change (228, 2026-11-02, unverified on the car):* after `phone=0`, CALL is released once no AU has
+  *Change (228, 2026-11-02, car-verified 2026-11-03):* after `phone=0`, CALL is released once no AU has
   arrived for `CALL_END_DRAIN_MS` (600 ms, the 400 ms pre-fill plus two sweep ticks), and the sweep
   runs every 100 ms instead of 1 Hz until CALL's 3 s window has passed (`VoiceRouter.callEnded`,
-  `callStreamEnded`, `CallEndTest`). On the 17:20:58 timeline that is about 17:20:59.2, so media
-  should come back roughly 2.4 s sooner. The log reads `call: iOS says the call ended Nms ago, last AU
+  `callStreamEnded`, `CallEndTest`). The log reads `call: iOS says the call ended Nms ago, last AU
   Nms ago — released`. A telephony stream that keeps delivering after `phone=0` still waits out the
-  3 s window, as before.
+  3 s window, as before. On 2026-11-03 all three calls released 456–565 ms after `phone=0`, and
+  media lost 11 and 18 frames at gain 0 (about 0.2–0.4 s) instead of 117.
+- **An unanswered ring muted the next 4 s of music (2026-11-03, 228).** A call rang from 22:51:33
+  and was never answered. `phone=0` came at 22:52:03.725, iOS tore the alert stream down at 03.818
+  and set media up again. The ALERT sink waited out its 3 s idle and held focus until 07.709, so
+  media ran at gain 0 for about 3.6 s (171 frames). *Change (next build, unverified on the car):*
+  ALERT takes the same release as CALL when it falls within CALL's 3 s window after `phone=0`
+  (`ringStreamEnded`, `CallEndTest`), and logs `alert: iOS says the call ended …`. An alert that
+  plays long after a call keeps its 3 s idle.
 - **Manifest**: `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE`. A Play install asks for the mic at
   first launch; `-g` is the sideload equivalent.
 - **A refused or dying recorder is retried (since 2026-10-26).** Until then this bullet said "recreate
