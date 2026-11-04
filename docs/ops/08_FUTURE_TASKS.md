@@ -51,7 +51,8 @@ update follows.
 Maps", off by default.
 
 - **App.** `ev/EvForCarPlay.kt` writes the `iapConfig:` block into the adapter subscribe document:
-  `engineTypes: [electric]`, the car's connectors from `INFO_EV_CONNECTOR_TYPE` (J1772 + CCS1 when
+  `engineTypes: [electric]`, the car's connectors from `INFO_EV_CONNECTOR_TYPE` (see "Connector
+  bug" below; J1772 + CCS1 when
   the car does not say), and the capabilities `range, outsideTemperature, rangeWarning,
   rangeElectric, electricChargeInfo`. Only the unified `rangeWarning`: Apple's spec forbids it
   together with a per-engine `rangeWarning*`, and `iap2_core::config` drops the per-engine one. While
@@ -104,9 +105,23 @@ Now-playing and artwork kept working.
 One app-side push to `/tmp/vehicle_status` collided with the session-start file pulls
 (`CH_FILE push: no OPEN ack`) and succeeded on its 15 s retry.
 
+**Car result (2026-11-03, versionCode 228).** Cluster turn-by-turn ran the whole route with the
+setting on. The phone again accepted the Identify and asked for range, outside temperature, range
+warning and electric range. The box sent 121 `TX 0xA101` updates, each also carrying battery energy
+(61,680 of 85,900 Wh), the displayed 71.8 % and `is_charging`. The owner sees nothing about the
+battery in Apple Maps (reported 2026-11-04). The likely reason, unconfirmed: Maps shows charge only
+inside EV routing (charge on arrival, charging stops), which needs the two models above. The
+iPhone's own log would settle what Maps does with the update. That needs a Linux laptop on USB in
+the car running `idevicesyslog` while wireless CarPlay is up.
+
+**Connector bug (found 2026-11-04, fixed for the next build).** The phone was told J1772 + CCS2.
+CarPropertyManager returns `EvChargingConnectorType` numbers, where 5 is IEC_TYPE_1_CCS_DC (CCS1).
+`EvForCarPlay.connectorNames` read them as the VHAL's `EvConnectorType`, where 5 is CCS2. The car
+reports `[1, 5]`, J1772 + CCS1, in the probe of 2026-10-14. Maps' charger choices would have been
+wrong because of it. It does not explain the missing battery reading.
+
 Still to see:
-- whether Apple Maps shows the battery and the EV routing on the screen;
-- whether cluster turn-by-turn still works with the setting on (it was off for this drive).
+- whether Apple Maps shows the battery or EV routing anywhere (nothing on 2026-11-03).
 
 **Done means.** With the setting on, the box log shows `Identify carries the app-pushed vehicle
 identity`, then `RX 0xA100 StartVehicleStatusUpdates` and `TX 0xA101 VehicleStatusUpdate`, with

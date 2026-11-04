@@ -80,11 +80,12 @@ high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   96% of the upload. On 227 that afternoon there were five in 7.7 minutes of CarPlay, all while the
   activity and its surface were first laid out (17:13:36–17:13:48). Owner:
   `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.9 (correction).
-- **EV status for Apple Maps (T7): the screen check is the owner's.** The phone accepted the EV
-  Identify and the status on 2026-10-28. Not yet seen: whether Maps shows the battery or EV routing,
-  and whether cluster turn-by-turn works with the setting on. Also one status push collided with
-  the session-start file pulls (`CH_FILE push: no OPEN ack`) and went through on its 15 s retry.
-  Owner: `08_FUTURE_TASKS.md` T7.
+- **EV status for Apple Maps (T7): Maps shows no battery.** The phone accepts the EV Identify
+  and the status (2026-10-28, 11-03), and cluster turn-by-turn works with the setting on (11-03).
+  The battery percentage reaches the phone, but the owner sees nothing about it in Maps
+  (2026-11-04). The likely reason is that Maps shows charge only in EV routing, whose models Apple
+  does not publish; unconfirmed without an iPhone log. The phone was also told CCS2 instead of
+  the car's CCS1 (fixed for the next build). Owner: `08_FUTURE_TASKS.md` T7.
 - **HEVC render stalls — mitigated, cause unknown.** `HevcRenderer` releases the codec's output
   buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
   `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s) and

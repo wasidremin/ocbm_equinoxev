@@ -35,8 +35,10 @@ class EvForCarPlayTest {
     }
 
     @Test fun connectorTypesMapToApplesNames() {
-        assertEquals(listOf("j1772", "ccs1"), EvForCarPlay.connectorNames(intArrayOf(1, 4)))
-        assertEquals(listOf("nacsdc", "nacsac"), EvForCarPlay.connectorNames(intArrayOf(8, 7, 8)))
+        // What the Equinox EV reports (probe 2026-10-14): J1772 + CCS1 in EvChargingConnectorType numbers.
+        assertEquals(listOf("j1772", "ccs1"), EvForCarPlay.connectorNames(intArrayOf(1, 5)))
+        assertEquals(listOf("chademo", "ccs2"), EvForCarPlay.connectorNames(intArrayOf(4, 6, 3)))
+        assertEquals(listOf("nacsdc", "nacsac"), EvForCarPlay.connectorNames(intArrayOf(9, 8, 7, 9)))
         // Unknown or unreported types fall back to the Equinox EV's own ports, never to nothing.
         assertEquals(EvForCarPlay.FALLBACK_CONNECTORS, EvForCarPlay.connectorNames(intArrayOf(101)))
         assertEquals(EvForCarPlay.FALLBACK_CONNECTORS, EvForCarPlay.connectorNames(null))

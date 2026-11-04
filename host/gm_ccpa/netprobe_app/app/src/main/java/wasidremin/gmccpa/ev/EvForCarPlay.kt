@@ -27,22 +27,25 @@ object EvForCarPlay {
     val FALLBACK_CONNECTORS = listOf("j1772", "ccs1")
 
     /**
-     * AAOS `EvConnectorType` values (INFO_EV_CONNECTOR_TYPE) to Apple's connector names, as
-     * `iap2_core::config::connector_enum` spells them. Types Apple has no name for are dropped.
+     * INFO_EV_CONNECTOR_TYPE values to Apple's connector names, as `iap2_core::config::connector_enum`
+     * spells them. Types Apple has no name for are dropped. CarPropertyManager returns
+     * `android.car.hardware.property.EvChargingConnectorType`, not the VHAL's `EvConnectorType`:
+     * the Java list has IEC_TYPE_3_AC at 3, so from there on it is one higher. Read with the VHAL
+     * numbers, the Equinox's `[1, 5]` (J1772 + CCS1) went to the phone as J1772 + CCS2 (2026-11-03).
      */
-    fun connectorNames(vhal: IntArray?): List<String> {
-        val names = (vhal ?: IntArray(0)).toList().mapNotNull {
+    fun connectorNames(types: IntArray?): List<String> {
+        val names = (types ?: IntArray(0)).toList().mapNotNull {
             when (it) {
-                1 -> "j1772"        // IEC_TYPE_1_AC (J1772)
+                1 -> "j1772"        // IEC_TYPE_1_AC
                 2 -> "mennekes"     // IEC_TYPE_2_AC
-                3 -> "chademo"
-                4 -> "ccs1"         // IEC_TYPE_1_CCS_DC
-                5 -> "ccs2"         // IEC_TYPE_2_CCS_DC
-                7 -> "nacsac"       // TESLA_HPWC
-                8 -> "nacsdc"       // TESLA_SUPERCHARGER
-                9 -> "gbtac"        // GBT_AC
-                10 -> "gbtdc"       // GBT_DC
-                else -> null
+                4 -> "chademo"      // IEC_TYPE_4_DC
+                5 -> "ccs1"         // IEC_TYPE_1_CCS_DC
+                6 -> "ccs2"         // IEC_TYPE_2_CCS_DC
+                8 -> "nacsac"       // TESLA_HPWC
+                9 -> "nacsdc"       // TESLA_SUPERCHARGER
+                10 -> "gbtac"       // GBT_AC
+                11 -> "gbtdc"       // GBT_DC
+                else -> null        // 3 IEC_TYPE_3_AC, 7 TESLA_ROADSTER, 101 OTHER
             }
         }.distinct()
         return names.ifEmpty { FALLBACK_CONNECTORS }
