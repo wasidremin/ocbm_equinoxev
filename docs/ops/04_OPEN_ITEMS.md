@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 229 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -70,8 +70,8 @@ high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Vision launcher: misreads, logging-only.** iOS 27's square glyph can read UNKNOWN, so the
   Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). The VERIFY_FAILED on
   app taps that worked is explained (2026-11-03): on iOS 27 the glyph shows where the toggle leads,
-  so an app opened from Home reads as the Dashboard. Grid taps stop using the glyph in the next
-  build; a strip tap from such an app can still log VERIFY_FAILED. The moving-map fix from 227 is
+  so an app opened from Home reads as the Dashboard. Grid taps stop using the glyph in 229
+  (2026-11-04); a strip tap from such an app can still log VERIFY_FAILED. The moving-map fix from 227 is
   now exercised: under a route on 2026-11-03 22:47:21, Maps from the strip read "using current
   frame" and verified SUCCESS. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
 - **CarPlay-screen layout loop — fixed in 227, confirmed on the car 2026-11-02.** `syncChrome`
@@ -85,7 +85,7 @@ high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   The battery percentage reaches the phone, but the owner sees nothing about it in Maps
   (2026-11-04). The likely reason is that Maps shows charge only in EV routing, whose models Apple
   does not publish; unconfirmed without an iPhone log. The phone was also told CCS2 instead of
-  the car's CCS1 (fixed for the next build). Owner: `08_FUTURE_TASKS.md` T7.
+  the car's CCS1 (fixed in 229, 2026-11-04). Owner: `08_FUTURE_TASKS.md` T7.
 - **HEVC render stalls — mitigated, cause unknown.** `HevcRenderer` releases the codec's output
   buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
   `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s) and
@@ -118,12 +118,12 @@ high-water mark: versionCode 228 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   now released about 0.6 s after the telephony stream stops once `phone=0` has arrived. On
   2026-11-03 all three calls released 0.46–0.57 s after `phone=0`. Owner:
   `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-- **Music muted for about 4 s after an unanswered ring: fixed for the next build, not on Play.**
+- **Music muted for about 4 s after an unanswered ring: fixed in 229 (2026-11-04).**
   2026-11-03 22:52:03: the ringtone (ALERT) sink waited out its 3 s idle after `phone=0`. It now
   takes CALL's release. Unverified on the car. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
 - **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The
   iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
-  Maps it took two toggles and about 3 s, which the owner flagged. The next build ends each
+  Maps it took two toggles and about 3 s, which the owner flagged. 229 (2026-11-04) ends each
   toggle's wait once it has landed (expect about 1.5 s to the icon tap); unverified on the car.
   Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15 and §9 item 4.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO

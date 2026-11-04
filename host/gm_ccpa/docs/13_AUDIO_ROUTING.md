@@ -549,7 +549,7 @@ an activity-based gate would clip the onset.
 - **An unanswered ring muted the next 4 s of music (2026-11-03, 228).** A call rang from 22:51:33
   and was never answered. `phone=0` came at 22:52:03.725, iOS tore the alert stream down at 03.818
   and set media up again. The ALERT sink waited out its 3 s idle and held focus until 07.709, so
-  media ran at gain 0 for about 3.6 s (171 frames). *Change (next build, unverified on the car):*
+  media ran at gain 0 for about 3.6 s (171 frames). *Change (229, 2026-11-04, unverified on the car):*
   ALERT takes the same release as CALL when it falls within CALL's 3 s window after `phone=0`
   (`ringStreamEnded`, `CallEndTest`), and logs `alert: iOS says the call ended …`. An alert that
   plays long after a call keeps its 3 s idle.

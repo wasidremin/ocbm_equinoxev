@@ -114,7 +114,7 @@ inside EV routing (charge on arrival, charging stops), which needs the two model
 iPhone's own log would settle what Maps does with the update. That needs a Linux laptop on USB in
 the car running `idevicesyslog` while wireless CarPlay is up.
 
-**Connector bug (found 2026-11-04, fixed for the next build).** The phone was told J1772 + CCS2.
+**Connector bug (found 2026-11-04, fixed in 229).** The phone was told J1772 + CCS2.
 CarPropertyManager returns `EvChargingConnectorType` numbers, where 5 is IEC_TYPE_1_CCS_DC (CCS1).
 `EvForCarPlay.connectorNames` read them as the VHAL's `EvConnectorType`, where 5 is CCS2. The car
 reports `[1, 5]`, J1772 + CCS1, in the probe of 2026-10-14. Maps' charger choices would have been
