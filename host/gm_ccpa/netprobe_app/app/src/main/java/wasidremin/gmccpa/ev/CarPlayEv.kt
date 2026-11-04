@@ -88,7 +88,9 @@ object CarPlayEv {
     }
 
     private fun tick(ctx: Context) {
-        val client = AdapterSession.client ?: return
+        // The client outlives a dead link: on 2026-11-04 the 228 process, its link aborted the night
+        // before, logged 115 failed pushes in 29 min.
+        val client = AdapterSession.client?.takeIf { it.subscribed } ?: return
         val text = EvForCarPlay.statusText(sample(ctx))
         if (text.isEmpty()) return
         if (client === pushedTo && text == pushedText) return

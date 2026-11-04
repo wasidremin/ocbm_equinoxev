@@ -132,7 +132,7 @@ work. Everything public points to Apple enabling EV routing per partner automake
 CarPropertyManager returns `EvChargingConnectorType` numbers, where 5 is IEC_TYPE_1_CCS_DC (CCS1).
 `EvForCarPlay.connectorNames` read them as the VHAL's `EvConnectorType`, where 5 is CCS2. The car
 reports `[1, 5]`, J1772 + CCS1, in the probe of 2026-10-14. Maps' charger choices would have been
-wrong because of it. It does not explain the missing battery reading.
+wrong because of it. It does not explain the missing battery reading. Confirmed on the car 2026-11-04 on 229: the Identify carried `connectors=[(0, None), (2, None)]`, which is CCS1 + J1772.
 
 Still to see:
 - whether Apple Maps shows the battery or EV routing anywhere (nothing on 2026-11-03).
@@ -298,7 +298,15 @@ they show the car's position). Dusk captures exist from 2026-11-03 22:46–22:48
 `captures/20261103-*` on the log server): full-screen Maps twice, once with the route card open,
 and the Dashboard once. In full-screen Maps the left strip's toggle shows the square and the
 maneuver card sits top-left over the map; the Dashboard splits the map left, with maneuver and
-Now Playing cards on the right. Daytime captures are still missing.
+Now Playing cards on the right. Daytime captures exist from 2026-11-04 12:19 UTC (light map style):
+full-screen Maps once and the Dashboard once. That Dashboard had a third card (calendar) under
+Now Playing, so its layout is not fixed.
+A cheaper signal may exist (found 2026-11-04). `RouteGuidanceUpdate` (0x5201) has
+param 15 `RouteGuidanceVisibleInApp` (bool, `spec::route_guidance_update`).
+`iap2_core::metadata::route_guidance` drops it, so whether iOS sends it, and what it says on the
+Dashboard, is unknown. Decoding it is a box change, which means reflashing the adapter on the
+bench (`ocbm_install.sh --full`). If iOS sends it, the cluster could follow it with no screen
+reading at all.
 
 **Watch (2026-10-27 evening, versionCode 221): the cluster went without album art for a while.**
 The owner reports that title and artist showed the whole time, with only the artwork missing.

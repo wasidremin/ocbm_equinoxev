@@ -126,6 +126,13 @@ high-water mark: versionCode 229 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   Maps it took two toggles and about 3 s, which the owner flagged. 229 (2026-11-04) ends each
   toggle's wait once it has landed (expect about 1.5 s to the icon tap); unverified on the car.
   Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15 and §9 item 4.
+- **4½ min without CarPlay at the 2026-11-04 start (asked the owner).** The 228 process, alive since
+  the night before, raised the USB permission dialog at 11:58:53, 11:59:24 and 11:59:54 UTC. All
+  three came back `granted=false` (2.4 s, 3 s, and 3 s after parking at 12:02:12). The Play update
+  to 229 restarted the app at 12:03:02. Its dialog was granted in 1.7 s, and CarPlay was live at
+  12:03:33. Whether the owner dismissed the dialogs or the car refused them is not known. The same
+  log showed the EV status pusher retrying every 15 s against the dead link (115 lines in
+  29 min). Since the next build it pushes only while subscribed.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO
   after a driver restart; a USB claim that stayed after the adapter was unplugged; Calibration runs
   `ScreenModel.measureUi` on the UI thread (0.3–1 s of jank).
