@@ -114,6 +114,20 @@ inside EV routing (charge on arrival, charging stops), which needs the two model
 iPhone's own log would settle what Maps does with the update. That needs a Linux laptop on USB in
 the car running `idevicesyslog` while wireless CarPlay is up.
 
+**Public prior art (searched 2026-11-04).** Nobody has published the model ids or keys. DiPlay
+(CarPlay for BYD head units, github.com/shihabal3amri/DiPlay, PR #38) sends what T7 sends, with no
+ids 26/27. Maps showed no battery there either. Its only reaction was offering to find a charger
+when the range warning was set (tested with the threshold at 30 %). DiPlay issue #1098 (closed
+2026-10-23) went further. It replayed a real Mustang Mach-E's params 20/21, captured from a SYNC 4
+unit, under DiPlay's own MFi identity, and sent 75 % every 30 s. Maps still showed no arrival
+percentage, while the real Mach-E showed one at once. Maps' vehicle enrolment listed only the real
+car. Suspected there, not proven: Maps checks the accessory's maker or certificate against the
+declared car, or needs the automaker's app and VIN. That replay did not include the Mach-E's
+0xA101 ids 26/27, so it does not show that the models alone would fail. On the iPhone side, apps
+implementing the SiriKit car intents never got Maps to call them. Apple DTS called that a bug in
+2020 (FB8760513, developer forums thread 653328), and reports through 2024 say it still did not
+work. Everything public points to Apple enabling EV routing per partner automaker.
+
 **Connector bug (found 2026-11-04, fixed in 229).** The phone was told J1772 + CCS2.
 CarPropertyManager returns `EvChargingConnectorType` numbers, where 5 is IEC_TYPE_1_CCS_DC (CCS1).
 `EvForCarPlay.connectorNames` read them as the VHAL's `EvConnectorType`, where 5 is CCS2. The car
