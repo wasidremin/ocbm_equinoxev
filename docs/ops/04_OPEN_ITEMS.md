@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 229 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -121,7 +121,7 @@ high-water mark: versionCode 229 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Music muted for about 4 s after an unanswered ring: fixed in 229 (2026-11-04).**
   2026-11-03 22:52:03: the ringtone (ALERT) sink waited out its 3 s idle after `phone=0`. It now
   takes CALL's release. Unverified on the car. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-- **Album art in the cluster while full-screen Maps is in front: next build, not on Play,
+- **Album art in the cluster while full-screen Maps is in front: in 230 (2026-11-05),
   unverified on the car.** The app reads the screen every 2.5 s during a route. It ends the
   cluster's navigation while Maps' turn card is showing and restarts it when Maps leaves. Set on
   local captures only. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag, which
@@ -137,7 +137,7 @@ high-water mark: versionCode 229 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   to 229 restarted the app at 12:03:02. Its dialog was granted in 1.7 s, and CarPlay was live at
   12:03:33. Whether the owner dismissed the dialogs or the car refused them is not known. The same
   log showed the EV status pusher retrying every 15 s against the dead link (115 lines in
-  29 min). Since the next build it pushes only while subscribed.
+  29 min). Since 230 (2026-11-05) it pushes only while subscribed.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO
   after a driver restart; a USB claim that stayed after the adapter was unplugged; Calibration runs
   `ScreenModel.measureUi` on the UI thread (0.3–1 s of jank).

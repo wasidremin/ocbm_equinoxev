@@ -280,7 +280,7 @@ reroutes. The owner confirms (2026-11-02) that the cluster clears when a route e
 comes back immediately, and it shows whenever no route is running.
 
 **Album art in the cluster while full-screen Maps is in front (owner's idea 2026-11-02; built
-2026-11-04 for the next build, unverified on the car).** While full-screen Maps is in front, the
+2026-11-04, published in 230 on 2026-11-05, unverified on the car).** While full-screen Maps is in front, the
 cluster shows the album art instead of the turns, and the turns come back when Maps leaves. The
 Dashboard counts as "not Maps" (it shows a turn card of its own), so turns stay in the cluster
 there. Settings ▸ Navigation ▸ "Album art while Maps is on screen" is on by default.
