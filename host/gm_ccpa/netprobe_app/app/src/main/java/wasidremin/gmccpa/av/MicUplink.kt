@@ -106,7 +106,13 @@ class MicUplink(
     /** Adapter-Wi-Fi gate. `on` opens capture at [rate] Hz / [channels]; off closes it. */
     fun onGate(on: Boolean, rate: Int, channels: Int) {
         if (!running.get()) return
-        if (on) startCapture(rate, channels) else stopCapture("CT_UPLINK off")
+        if (on) startCapture(rate, channels)
+        else {
+            stopCapture("CT_UPLINK off")
+            // Without this the board kept "gate OPEN — capturing" after the capture had stopped:
+            // on 2026-11-05 it said so from 11:36 to 11:58 with the adapter link down and no mic open.
+            SessionTrace.Board.up(BOARD, "mic gate is CT_UPLINK — gate CLOSED")
+        }
     }
 
     fun start() {

@@ -280,7 +280,8 @@ reroutes. The owner confirms (2026-11-02) that the cluster clears when a route e
 comes back immediately, and it shows whenever no route is running.
 
 **Album art in the cluster while full-screen Maps is in front (owner's idea 2026-11-02; built
-2026-11-04, published in 230 on 2026-11-05, unverified on the car).** While full-screen Maps is in front, the
+2026-11-04, published in 230 on 2026-11-05, works on the car 2026-11-05 with misreads, fixed for
+the next build).** While full-screen Maps is in front, the
 cluster shows the album art instead of the turns, and the turns come back when Maps leaves. The
 Dashboard counts as "not Maps" (it shows a turn card of its own), so turns stay in the cluster
 there. Settings ▸ Navigation ▸ "Album art while Maps is on screen" is on by default.
@@ -308,6 +309,24 @@ there. Settings ▸ Navigation ▸ "Album art while Maps is on screen" is on by 
   (Dashboards, Spotify, Maps with no route) failed. That held for scales 0.92–0.98, with the right
   edge searched ±5 px. No other screen scored above 0.35 on that edge; passing needs 0.7.
   `MapsCardTest` pins the rule on synthetic frames.
+- **On the car (230, 2026-11-05 morning, daylight).** The first read (12:19:18) was the Dashboard
+  and found no card. A top-bar launch of Maps switched the cluster to the art at 12:19:26, and a
+  top-bar launch of Spotify switched it back at 12:29:12. In between, the cluster went back to the
+  turns three times while Maps stayed in front: 12:21:27–12:21:42, 12:27:14–12:27:19 and
+  12:27:24–12:27:31. Nothing could have changed the app. The adapter numbers every touch it sends
+  the phone, and the count went from #2 (the Maps launch, 12:19:24) to #3 (the Spotify launch,
+  12:29:11). Each losing read still saw the card's tone (0.25), a flat interior (0.76–0.83 against
+  0.85–0.91 when found) and its top edge. It missed one side edge: right 0.50 at 12:21:27, then left
+  0.35 and 0.00. Why that side failed is not known yet. A moved card, something drawn on the edge,
+  or a neighbour in the card's tone would each do it.
+- **Fix for the next build.** Only input sent to the phone changes the app it shows. Every touch,
+  telephony key, command (Siri) and nav key now stamps `MapsWatch.noteInput` in `AdapterSession`.
+  While Maps is in front and nothing was sent since the card was last seen (or up to 3 s before),
+  a lost card needs 8 reads (20 s) instead of 2 (`readsToAgree`). "Hey Siri" can still change the app
+  without input and waits out the 20 s. Each read that loses the card while Maps is in front is
+  logged with `ScreenModel.mapsCardEdges`. For each side, that shows how much of the inside is off
+  the card's tone, how much of the outside is on it, and the best score within ±5 px with its
+  offset. The next misread will show which of the three it is.
 - **Not covered.** Maps with a panel over the turn card reads as "not Maps", which keeps the
   turns: the safe side. So would a light turn card, if iOS ever drew one.
 - **A cheaper signal may exist (found 2026-11-04).** `RouteGuidanceUpdate` (0x5201) has param 15

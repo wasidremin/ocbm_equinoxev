@@ -1,5 +1,6 @@
 package wasidremin.gmccpa.match
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -72,5 +73,15 @@ class MapsCardTest {
         assertTrue(read(map(0.28f, 0.15f).also { card(it, 0.10f, dx = 2, dy = -2) }).present)
         assertTrue(read(map(0.28f, 0.15f).also { card(it, 0.10f) }, ui = 0.93f).present)
         assertTrue(read(map(0.85f, 0.10f).also { card(it, 0.24f, ui = 1.276f) }, ui = 1.276f).present)
+    }
+
+    @Test fun theEdgeReportSaysWhereAMovedCardIs() {
+        val g = ScreenModel.Gray(w, h, map(0.85f, 0.10f).also { card(it, 0.24f, dx = -4) })
+        val geo = ScreenModel.geometry(g, 0.951f)
+        assertEquals(0f, ScreenModel.mapsCard(g, geo).left)
+        val report = ScreenModel.mapsCardEdges(g, geo)
+        // Inside is still the card; outside is the card too, and the edge is whole a few px left.
+        assertTrue(report, report.startsWith("left inside off 0.00 outside on 1.00 best 1.00 at -"))
+        assertTrue(report, report.contains("; right inside off 0.00"))
     }
 }

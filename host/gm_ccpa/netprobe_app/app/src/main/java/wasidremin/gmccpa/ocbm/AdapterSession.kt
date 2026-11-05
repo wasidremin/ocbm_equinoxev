@@ -8,6 +8,7 @@ import wasidremin.gmccpa.av.BPlist
 import wasidremin.gmccpa.av.CarPlayActivity
 import wasidremin.gmccpa.av.CarPlayMediaBrowserService
 import wasidremin.gmccpa.av.HevcRenderer
+import wasidremin.gmccpa.av.MapsWatch
 import wasidremin.gmccpa.av.MetadataSeam
 import wasidremin.gmccpa.av.MicUplink
 import wasidremin.gmccpa.av.VoiceRouter
@@ -101,22 +102,33 @@ object AdapterSession {
         mic = uplink
     }
 
-    fun sendTouch(phase: Byte, nx: Float, ny: Float): Boolean =
-        client?.sendTouch(phase, nx, ny) == true
+    // Touches, telephony, commands (Siri) and nav keys can change the app iOS shows, so each tells
+    // MapsWatch, which otherwise treats a lost Maps card as a misread. Media keys and night mode cannot.
+    fun sendTouch(phase: Byte, nx: Float, ny: Float): Boolean {
+        if (phase == Ocbm.TOUCH_DOWN) MapsWatch.noteInput()
+        return client?.sendTouch(phase, nx, ny) == true
+    }
 
-    fun sendTelephony(index: Byte): Boolean = client?.sendTelephony(index) == true
+    fun sendTelephony(index: Byte): Boolean {
+        MapsWatch.noteInput()
+        return client?.sendTelephony(index) == true
+    }
 
     fun sendMediaButton(index: Byte): Boolean =
         client?.sendMediaButton(index) == true
 
-    fun sendCommand(cmd: Byte): Boolean =
-        client?.sendCommand(cmd) == true
+    fun sendCommand(cmd: Byte): Boolean {
+        MapsWatch.noteInput()
+        return client?.sendCommand(cmd) == true
+    }
 
     fun sendNightMode(night: Boolean): Boolean =
         client?.sendNightMode(night) == true
 
-    fun sendNav(nav: Byte): Boolean =
-        client?.sendNav(nav) == true
+    fun sendNav(nav: Byte): Boolean {
+        MapsWatch.noteInput()
+        return client?.sendNav(nav) == true
+    }
 
     fun requestKeyframe(): Boolean = client?.requestKeyframe() == true
 

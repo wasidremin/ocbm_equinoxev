@@ -465,32 +465,63 @@ object ScreenModel {
      * way (worst 0.86).
      */
     fun mapsCard(g: Gray, geo: Geometry): CardEvidence {
+        val c = cardFrame(g, geo) ?: return CardEvidence(1f, 0f, 0f, 0f, 0f)
+        val left = c.edge(c.l + 5, c.l - 3)
+        // The right edge is 160 px from the strip at 1/4: a scale 2 % off moves it 4 px, the other two 1.
+        val right = (-CARD_RIGHT_SLACK..CARD_RIGHT_SLACK).filter { c.rt + it + 3 < g.width }.maxOfOrNull { d ->
+            c.edge(c.rt + d - 6, c.rt + d + 3)
+        } ?: 0f
+        val cols = c.l + 12 until c.rt - 12
+        val above = max(0, c.t - 3)
+        val top = cols.count { c.same(c.at(it, c.t + 3)) && c.step(c.at(it, above)) }.toFloat() / cols.count()
+        return CardEvidence(c.tone, c.flat, left, right, top)
+    }
+
+    /**
+     * Why [mapsCard]'s side edges scored what they did, for the log. For each side: the share of rows
+     * whose inside probe is off the card's tone, the share whose outside probe is on it, and the best
+     * score within ±[CARD_RIGHT_SLACK] (1/[SCALE] px) with its offset. A moved card scores well at an
+     * offset; something drawn on the edge shows inside; a neighbour in the card's tone shows outside.
+     * The 2026-11-05 drive lost the card three times with nothing touched, on one side at a time.
+     */
+    fun mapsCardEdges(g: Gray, geo: Geometry): String {
+        val c = cardFrame(g, geo) ?: return "no card region"
+        fun side(name: String, inner: (Int) -> Int, outer: (Int) -> Int): String {
+            val rows = c.rows
+            val inside = rows.count { !c.same(c.at(inner(0), it)) }.toFloat() / rows.count()
+            val outside = rows.count { !c.step(c.at(outer(0), it)) }.toFloat() / rows.count()
+            val fits = (-CARD_RIGHT_SLACK..CARD_RIGHT_SLACK).filter { minOf(inner(it), outer(it)) >= 0 && maxOf(inner(it), outer(it)) < g.width }
+            val best = fits.maxByOrNull { c.edge(inner(it), outer(it)) } ?: 0
+            return "%s inside off %.2f outside on %.2f best %.2f at %+d".format(java.util.Locale.US,
+                name, inside, outside, c.edge(inner(best), outer(best)), best)
+        }
+        return side("left", { c.l + it + 5 }, { c.l + it - 3 }) + "; " + side("right", { c.rt + it - 6 }, { c.rt + it + 3 })
+    }
+
+    /** The card region of a frame and the tone [mapsCard] judges it by. */
+    private class CardFrame(val g: Gray, val l: Int, val t: Int, val rt: Int, val pb: Int, val tone: Float, val flat: Float) {
+        val rows = t + 6 until pb
+        fun at(x: Int, y: Int) = g.px[y * g.width + x]
+        fun same(v: Float) = abs(v - tone) <= CARD_SAME
+        fun step(v: Float) = abs(v - tone) > CARD_STEP
+        /** Share of [rows] in the card's tone at column [inner] and off it at column [outer]. */
+        fun edge(inner: Int, outer: Int) = rows.count { same(at(inner, it)) && step(at(outer, it)) }.toFloat() / rows.count()
+    }
+
+    private fun cardFrame(g: Gray, geo: Geometry): CardFrame? {
         val r = searchRegion(g, geo.mapsCardRoi)
         val l = r.x
         val t = r.y
         val rt = r.x + r.width
         val pb = r.y + r.height
-        val none = CardEvidence(1f, 0f, 0f, 0f, 0f)
-        if (r.width < 24 || r.height < 12 || l < 3 || rt + 3 >= g.width) return none
-        fun at(x: Int, y: Int) = g.px[y * g.width + x]
+        if (r.width < 24 || r.height < 12 || l < 3 || rt + 3 >= g.width) return null
         val inner = FloatArray((r.width - 8) * (r.height - 3))
         var n = 0
-        for (y in t + 3 until pb) for (x in l + 4 until rt - 4) inner[n++] = at(x, y)
+        for (y in t + 3 until pb) for (x in l + 4 until rt - 4) inner[n++] = g.px[y * g.width + x]
         val sorted = inner.copyOf(n).also { it.sort() }
         val tone = sorted[n / 2]
-        fun same(v: Float) = abs(v - tone) <= CARD_SAME
-        fun step(v: Float) = abs(v - tone) > CARD_STEP
-        val flat = sorted.count { same(it) }.toFloat() / n
-        val rows = t + 6 until pb
-        val left = rows.count { same(at(l + 5, it)) && step(at(l - 3, it)) }.toFloat() / rows.count()
-        // The right edge is 160 px from the strip at 1/4: a scale 2 % off moves it 4 px, the other two 1.
-        val right = (-CARD_RIGHT_SLACK..CARD_RIGHT_SLACK).filter { rt + it + 3 < g.width }.maxOfOrNull { d ->
-            rows.count { same(at(rt + d - 6, it)) && step(at(rt + d + 3, it)) }.toFloat() / rows.count()
-        } ?: 0f
-        val cols = l + 12 until rt - 12
-        val above = max(0, t - 3)
-        val top = cols.count { same(at(it, t + 3)) && step(at(it, above)) }.toFloat() / cols.count()
-        return CardEvidence(tone, flat, left, right, top)
+        val flat = sorted.count { abs(it - tone) <= CARD_SAME }.toFloat() / n
+        return CardFrame(g, l, t, rt, pb, tone, flat)
     }
 
     /**

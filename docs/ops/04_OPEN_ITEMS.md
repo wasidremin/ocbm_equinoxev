@@ -88,9 +88,10 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   the car's CCS1 (fixed in 229, 2026-11-04). Owner: `08_FUTURE_TASKS.md` T7.
 - **HEVC render stalls — mitigated, cause unknown.** `HevcRenderer` releases the codec's output
   buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
-  `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s) and
-  11-02 (10.3 s, 12:35:14, two seconds before an Apple Maps route loaded), and not on the 10-27 to
-  10-30 drives. No root cause; the recovery is the watchdog. The 11-02 freeze happened during the
+  `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s),
+  11-02 (10.3 s, 12:35:14, two seconds before an Apple Maps route loaded) and 11-05 on 229 (4.0 s
+  at 12:14:02 and 3.3 s at 12:16:18, while driving, with no route), and not on the 10-27 to 10-30
+  drives. No root cause; the recovery is the watchdog. The 11-02 freeze happened during the
   layout loop above, which may or may not matter.
 - **MFi first read returns 40113 instead of 945.** The settle-and-reread mitigation is
   bench-measured (`mfi-i2c-local` `LEN_SETTLE_US`); the cause is unproven
@@ -103,9 +104,9 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Re-arm dip (~2.3 s):** deferred until btd survives a host change
   (`docs/carplay/02_SESSION_LIFECYCLE.md`). CLEAN bring-up is the present correctness path, not
   evidence that restart latency is closed.
-- **Recovery and admission paths not yet proven on the car.** The warm-start relink after the
-  10-minute claim abort (`14_LESSONS_LEARNED.md` §7 item 2, landed 2026-10-15) and the storage-only
-  USB announce (§8).
+- **Admission path not yet proven on the car:** the storage-only USB announce
+  (`14_LESSONS_LEARNED.md` §8). The warm-start relink after the 10-minute claim abort (§7 item 2)
+  worked on 2026-11-05.
 - **Calls while the app holds the assistant role:** no echo reported, not confirmed either way
   (`08_FUTURE_TASKS.md` T14, `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). The 2026-11-02 call
   (6 min 50 s, placed through Siri) peaked at -1 dBFS on the mic, against -8 to -17 dBFS before.
@@ -121,11 +122,14 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Music muted for about 4 s after an unanswered ring: fixed in 229 (2026-11-04).**
   2026-11-03 22:52:03: the ringtone (ALERT) sink waited out its 3 s idle after `phone=0`. It now
   takes CALL's release. Unverified on the car. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-- **Album art in the cluster while full-screen Maps is in front: in 230 (2026-11-05),
-  unverified on the car.** The app reads the screen every 2.5 s during a route. It ends the
-  cluster's navigation while Maps' turn card is showing and restarts it when Maps leaves. Set on
-  local captures only. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag, which
-  needs a reflash. Owner: `08_FUTURE_TASKS.md` T13.
+- **Album art in the cluster while full-screen Maps is in front: works on the car (230,
+  2026-11-05), misreads fixed for the next build.** The app reads the screen every 2.5 s during a
+  route. It ends the cluster's navigation while Maps' turn card is showing and restarts it when Maps
+  leaves. On the first drive both top-bar launches switched the cluster at once. Three times the
+  card was lost for 5–15 s with Maps still in front and nothing touched. A lost card now needs 20 s
+  unless something was sent to the phone. Why the card's side edge failed is still open; the next
+  misread logs it. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag, which needs a
+  reflash. Owner: `08_FUTURE_TASKS.md` T13.
 - **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The
   iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
   Maps it took two toggles and about 3 s, which the owner flagged. 229 (2026-11-04) ends each
@@ -137,7 +141,10 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   to 229 restarted the app at 12:03:02. Its dialog was granted in 1.7 s, and CarPlay was live at
   12:03:33. Whether the owner dismissed the dialogs or the car refused them is not known. The same
   log showed the EV status pusher retrying every 15 s against the dead link (115 lines in
-  29 min). Since 230 (2026-11-05) it pushes only while subscribed.
+  29 min). Since 230 (2026-11-05) it pushes only while subscribed. 229 did it again on the morning
+  of 11-05 (every 15 s from 11:35 to 11:58); 230 had no failed push in its first 16 minutes. The
+  11-05 start was quick: the screen came on at 11:58:22, the dialog was granted 3.4 s after the
+  relink asked, and CarPlay was live at 11:58:40.
 - **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO
   after a driver restart; a USB claim that stayed after the adapter was unplugged; Calibration runs
   `ScreenModel.measureUi` on the UI thread (0.3–1 s of jank).
