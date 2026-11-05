@@ -280,8 +280,8 @@ reroutes. The owner confirms (2026-11-02) that the cluster clears when a route e
 comes back immediately, and it shows whenever no route is running.
 
 **Album art in the cluster while full-screen Maps is in front (owner's idea 2026-11-02; built
-2026-11-04, published in 230 on 2026-11-05, works on the car 2026-11-05 with misreads, fixed for
-the next build).** While full-screen Maps is in front, the
+2026-11-04, published in 230 on 2026-11-05, works on the car 2026-11-05 with misreads, fixed in
+231 the same day).** While full-screen Maps is in front, the
 cluster shows the album art instead of the turns, and the turns come back when Maps leaves. The
 Dashboard counts as "not Maps" (it shows a turn card of its own), so turns stay in the cluster
 there. Settings ▸ Navigation ▸ "Album art while Maps is on screen" is on by default.
@@ -319,7 +319,7 @@ there. Settings ▸ Navigation ▸ "Album art while Maps is on screen" is on by 
   0.85–0.91 when found) and its top edge. It missed one side edge: right 0.50 at 12:21:27, then left
   0.35 and 0.00. Why that side failed is not known yet. A moved card, something drawn on the edge,
   or a neighbour in the card's tone would each do it.
-- **Fix for the next build.** Only input sent to the phone changes the app it shows. Every touch,
+- **Fix (231, 2026-11-05, unverified on the car).** Only input sent to the phone changes the app it shows. Every touch,
   telephony key, command (Siri) and nav key now stamps `MapsWatch.noteInput` in `AdapterSession`.
   While Maps is in front and nothing was sent since the card was last seen (or up to 3 s before),
   a lost card needs 8 reads (20 s) instead of 2 (`readsToAgree`). "Hey Siri" can still change the app
@@ -400,7 +400,7 @@ remaining six minutes. In every other title change on record (45 since 10-18) th
 new id 1–18 ms after the title. The likely reason it did not here: iOS sends only what changed, and
 the next episode of the same show has the same cover. The same 127,032 B cover came with that show's
 episode that morning (12:29:37).
-*Change (next build, not on Play):* when no id or picture follows a new title within 250 ms
+*Change (231, 2026-11-05, unverified on the car):* when no id or picture follows a new title within 250 ms
 (`ArtworkKeeper.CARRY_MS`, under the card's 500 ms wait), the previous picture is kept, logged as
 `np: no artwork id 250 ms after the title change — same cover, keeping id N`. A new id that comes
 later still replaces it. The cost: if a new item has a different cover the phone never names, the

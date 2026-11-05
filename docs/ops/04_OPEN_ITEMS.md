@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 231 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -67,7 +67,7 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   capture has the same shape. Fixed in 228 (2026-11-02, `isBylineVariant`), not yet seen on the car. A
   third cause on 230 (2026-11-05 evening): the next episode of a Spotify podcast came as a title
   with no picture at all, because the cover had not changed. The card stayed blank for six minutes.
-  For the next build, the previous picture is kept when no new one is named within 250 ms. Next
+  From 231, the previous picture is kept when no new one is named within 250 ms. Next
   step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md`
   T13 "A second mechanism" and "A third mechanism".
 - **Vision launcher: misreads, logging-only.** iOS 27's square glyph can read UNKNOWN, so the
@@ -127,7 +127,7 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   2026-11-03 22:52:03: the ringtone (ALERT) sink waited out its 3 s idle after `phone=0`. It now
   takes CALL's release. Unverified on the car. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
 - **Album art in the cluster while full-screen Maps is in front: works on the car (230,
-  2026-11-05), misreads fixed for the next build.** The app reads the screen every 2.5 s during a
+  2026-11-05), misreads fixed in 231.** The app reads the screen every 2.5 s during a
   route. It ends the cluster's navigation while Maps' turn card is showing and restarts it when Maps
   leaves. On the first drive both top-bar launches switched the cluster at once. Three times the
   card was lost for 5–15 s with Maps still in front and nothing touched. A lost card now needs 20 s
