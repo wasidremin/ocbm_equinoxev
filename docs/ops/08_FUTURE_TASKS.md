@@ -391,6 +391,20 @@ updates, and the log reads `np: track "…" is the same item with or without its
 also publishes the art as a granted `content://` URI, because upstream found GM's RHMI cluster
 service (`com.gm.rhmi`) reads art through its own provider. This app sends only the bitmap; that
 path is the next thing to try.
+**A third mechanism, 2026-11-05 evening (230, 22:18–22:25 UTC, no route).** The owner reported
+"cluster artwork isn't working". Spotify's first podcast episode went out with its 127,032 B cover.
+When it ended (22:19:17) the next episode arrived as a title alone: no artworkId in any later
+record, and no transfer or size-0 probe at the adapter. `ArtworkKeeper` cleared the art on the title
+change as usual. Every follow-up it waits for never came, so the card read `art=none` for the
+remaining six minutes. In every other title change on record (45 since 10-18) the phone named the
+new id 1–18 ms after the title. The likely reason it did not here: iOS sends only what changed, and
+the next episode of the same show has the same cover. The same 127,032 B cover came with that show's
+episode that morning (12:29:37).
+*Change (next build, not on Play):* when no id or picture follows a new title within 250 ms
+(`ArtworkKeeper.CARRY_MS`, under the card's 500 ms wait), the previous picture is kept, logged as
+`np: no artwork id 250 ms after the title change — same cover, keeping id N`. A new id that comes
+later still replaces it. The cost: if a new item has a different cover the phone never names, the
+card shows the old one instead of none.
 
 **Later (adapter firmware, `tools/ocbm_install.sh`).**
 - Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.

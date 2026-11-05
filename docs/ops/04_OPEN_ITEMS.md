@@ -64,9 +64,12 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   picture, and the owner confirms the cluster showed the art. A second cause was found that afternoon, still on
   226. The phone re-titled a playing item `<title> • <artist>` and back, without an art id. The app
   read each change as a new track and dropped the picture, which iOS never resends. The 10-27 11:06
-  capture has the same shape. Fixed in 228 (2026-11-02, `isBylineVariant`), not yet seen on the car. Next
+  capture has the same shape. Fixed in 228 (2026-11-02, `isBylineVariant`), not yet seen on the car. A
+  third cause on 230 (2026-11-05 evening): the next episode of a Spotify podcast came as a title
+  with no picture at all, because the cover had not changed. The card stayed blank for six minutes.
+  For the next build, the previous picture is kept when no new one is named within 250 ms. Next
   step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md`
-  T13 "A second mechanism".
+  T13 "A second mechanism" and "A third mechanism".
 - **Vision launcher: misreads, logging-only.** iOS 27's square glyph can read UNKNOWN, so the
   Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). The VERIFY_FAILED on
   app taps that worked is explained (2026-11-03): on iOS 27 the glyph shows where the toggle leads,
@@ -90,8 +93,9 @@ high-water mark: versionCode 230 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
   `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s),
   11-02 (10.3 s, 12:35:14, two seconds before an Apple Maps route loaded) and 11-05 on 229 (4.0 s
-  at 12:14:02 and 3.3 s at 12:16:18, while driving, with no route), and not on the 10-27 to 10-30
-  drives. No root cause; the recovery is the watchdog. The 11-02 freeze happened during the
+  at 12:14:02 and 3.3 s at 12:16:18, while driving, with no route). It fired again on 230 that
+  evening (14.5 s, reset at 22:20:12, Spotify in front, no route). It did not fire on the 10-27 to
+  10-30 drives. No root cause; the recovery is the watchdog. The 11-02 freeze happened during the
   layout loop above, which may or may not matter.
 - **MFi first read returns 40113 instead of 945.** The settle-and-reread mitigation is
   bench-measured (`mfi-i2c-local` `LEN_SETTLE_US`); the cause is unproven

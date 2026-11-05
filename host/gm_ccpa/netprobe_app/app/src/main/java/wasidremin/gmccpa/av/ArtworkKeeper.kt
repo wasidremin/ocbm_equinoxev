@@ -8,7 +8,7 @@ package wasidremin.gmccpa.av
  * timer is scheduled through [afterMs] so the callback never runs under the caller's monitor.
  *
  * iOS sends one JPEG per session and does not resend it when a chapter keeps the same id. A title
- * change therefore keeps the previous JPEG unless the new record names a different id.
+ * change therefore keeps the previous JPEG unless the phone names a different id within [CARRY_MS].
  */
 class ArtworkKeeper(
     private val log: (String) -> Unit,
@@ -45,7 +45,8 @@ class ArtworkKeeper(
         // full record across frames (title first, artworkId in a title-less follow-up, observed
         // 2026-10-18), so keeping prevId pastes the previous track's cover onto the new title
         // for ~100 ms. Clearing to unknown is a brief blank instead of a wrong picture; the
-        // follow-up id frame (or the adopt path in onTransfer) restores it. A title frame that
+        // follow-up id frame (or the adopt path in onTransfer) restores it, and when neither
+        // comes the previous picture is the new item's too ([tryCarry]). A title frame that
         // DOES name the previous id keeps the bytes: same cover, no flash either way.
         val newId = when {
             trackChanged && recordArtworkId != null -> recordArtworkId
@@ -68,6 +69,10 @@ class ArtworkKeeper(
             generation++
             val gen = generation
             afterMs(MISMATCH_MS) { tryMismatch(gen) }
+        }
+        if (trackChanged && newId < 0 && prevArt != null) {
+            val gen = generation
+            afterMs(CARRY_MS) { tryCarry(gen, prevId, prevArt) }
         }
     }
 
@@ -129,6 +134,21 @@ class ArtworkKeeper(
         return true
     }
 
+    /**
+     * A new title whose picture the phone never named. Its updates carry only what changed, so no id
+     * means the same cover: on 2026-11-05 22:19:17 Spotify moved to the next episode of a podcast and
+     * sent the title alone, and the card went without art for the rest of the drive. In the 45 title
+     * changes on record that did name a new id, it came 1–18 ms after the title.
+     */
+    private fun tryCarry(gen: Int, id: Int, jpeg: ByteArray): Boolean {
+        if (gen != generation || artworkId >= 0 || artwork != null) return false
+        artworkId = id
+        artwork = jpeg
+        generation++
+        log("np: no artwork id ${CARRY_MS} ms after the title change — same cover, keeping id $id")
+        return true
+    }
+
     private fun store(id: Int, jpeg: ByteArray) {
         cacheBytes[id] = jpeg
         cacheIds.remove(id)
@@ -141,5 +161,7 @@ class ArtworkKeeper(
     private companion object {
         const val CACHE_MAX = 4
         const val MISMATCH_MS = 2_000L
+        /** Under the card's 500 ms wait for a picture, so the kept cover goes out with the title. */
+        const val CARRY_MS = 250L
     }
 }

@@ -2,7 +2,9 @@ package wasidremin.gmccpa.av
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -66,5 +68,42 @@ class ArtworkKeeperTest {
         k.onRecord(false, null)
         assertEquals(131, k.artworkId)
         assertArrayEquals(jpeg1, k.artwork)
+    }
+
+    @Test fun aTitleThePhoneNeverNamesAPictureForKeepsTheOldOne() {
+        // 2026-11-05 22:19:17: the next podcast episode came as a title alone, then only ticks.
+        val k = withArt()
+        k.onRecord(true, null)
+        k.onRecord(false, null)
+        assertNull(k.artwork)
+        assertTrue(fires.last()())
+        assertEquals(131, k.artworkId)
+        assertArrayEquals(jpeg1, k.artwork)
+    }
+
+    @Test fun aNewIdOrPictureInTimeIsNotOverwritten() {
+        val named = withArt()
+        named.onRecord(true, null)
+        val carry = fires.last()
+        named.onRecord(false, 132)
+        assertFalse(carry())
+        assertEquals(132, named.artworkId)
+
+        fires.clear()
+        val adopted = withArt()
+        adopted.onRecord(true, null)
+        val carry2 = fires.last()
+        adopted.onTransfer(140, jpeg2, true)
+        assertFalse(carry2())
+        assertArrayEquals(jpeg2, adopted.artwork)
+    }
+
+    @Test fun anotherTitleChangeCancelsTheCarry() {
+        val k = withArt()
+        k.onRecord(true, null)
+        val first = fires.last()
+        k.onRecord(true, 133)
+        assertFalse(first())
+        assertEquals(133, k.artworkId)
     }
 }
