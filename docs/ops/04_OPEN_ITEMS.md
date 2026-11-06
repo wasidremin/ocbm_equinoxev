@@ -143,7 +143,9 @@ high-water mark: versionCode 231 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
   the Equinox lets Files install an app (the AAOS 14 emulator does not: its unknown-sources screen is a
-  "not supported" stub), and whether the adapter attaches while the driver's user is in front. The app
+  "not supported" stub, and other Equinox EV owners report installs refused as "unknown sources
+  blocked" on current software, searched 2026-11-06), and whether the adapter attaches while the
+  driver's user is in front. The app
   side (Settings ▸ Advanced ▸ USB bridge, Open Files, the bridge transport) needs a Play release. Owner:
   `08_FUTURE_TASKS.md` T15; `docs/host/01_ANDROID_AND_AAOS.md` "The USB bridge".
 - **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The

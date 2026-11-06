@@ -506,7 +506,10 @@ logs `claimed … through the USB bridge … no dialog` with no Allow tap.
 **Open.**
 
 1. Whether the Equinox lets Files install an app. The AAOS 14 emulator does not: its
-   `ACTION_MANAGE_UNKNOWN_APP_SOURCES` answer is a "not supported" stub. The USB bridge row says which
+   `ACTION_MANAGE_UNKNOWN_APP_SOURCES` answer is a "not supported" stub. Other Equinox EV owners
+   report APK installs refused as "unknown sources blocked" on current software, and no working
+   route since GM's 2026 Play Store update (searched 2026-11-06; sources in
+   `docs/host/01_ANDROID_AND_AAOS.md` "The USB bridge"). Expect no. The USB bridge row says which
    screen the car has before anyone carries a USB drive out.
 2. Whether the adapter attaches while user 12 is in front. An attach under another user gets no grant
    for the bridge, and the app falls back to its own dialog.

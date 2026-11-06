@@ -547,6 +547,30 @@ libusb.
   which screen answers `ACTION_MANAGE_UNKNOWN_APP_SOURCES` and any install-blocking user restriction,
   in the USB bridge row and in the log (`usb bridge: …`). enigy's install steps were proven on Android
   12, not 14.
+- **Other owners report no working install on current Equinox EV software (searched 2026-11-06).**
+  - JTech Forums, "Sideloading apps on the Chevy Equinox EV" (2026-05-17), on an Equinox EV after
+    GM's update put YouTube and Chrome in the Play Store. An APK on a USB drive, opened from Chrome's
+    file picker, was refused as "unknown sources blocked", and the 2025 route "doesn't work
+    anymore". That route was a Silverado EV Forum guide, which says it also worked on the Equinox
+    EV: Amaze File Manager, published through a personal Play account, opened the built-in file
+    manager. One later post (2026-10-19) says "they now have something for the Chevy", with no
+    detail, and was questioned at once.
+  - The 2025 guide's author found no "install unknown apps" switch on the car. Equinox EV Forum
+    threads from 2025 are titled for running apps "without SQBR6 update". They say GM "buttoned down
+    the hatches on side loading APKs" and left out the Files app. Only search excerpts were read; the
+    forum blocks automated reading.
+  - adb is closed. XDA's "General Motors Google Built-In – Tinkering" thread reports adb restricted
+    to GM's own secured client. A JTech member's Android 14 GM car switched USB debugging back off at
+    once.
+  - OpenAutoLink is a wireless Android Auto app for AAOS, developed on a Blazer EV. The droidfeats
+    writeup of it (2026-09-13) says "GM production head units do not allow ADB installation or APK
+    sideloading", so it ships only through Play. It also hits the USB permission prompt on every
+    connection, even with Always allow ticked, which is the floor in "VERDICT (2026-10-23)" above.
+  - The JTech refusal had Chrome as the installing app, not Files, so the Files route itself is
+    unreported on the Equinox. It needs the same unknown-sources consent, so it stops at the same
+    place unless Settings has the switch or GM already granted it to Files. The USB bridge row
+    reads which applies on the car.
+  - Expect the install to be refused, and one Allow tap per drive to stay the floor.
 - **Verified so far (emulator, 2026-11-06),** with the debug build `android.car.usb.handler.debug`,
   which installs beside the emulator's own handler: binding, the caller check, the status line, Open
   Files, and the installer's refusal above. The USB relay itself is untested, because the emulator has
