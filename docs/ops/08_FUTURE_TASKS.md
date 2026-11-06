@@ -259,7 +259,8 @@ on the other one moves CarPlay to it. Both survive an adapter reboot.
 - *Open.* A phone that dials the box itself (the accept path) can still win the race against the
   queued one. On the car the box has always connected out (`[reconnect] RFCOMM connected OUT`), so
   this is expected to be rare. Only one phone has been paired so far, so neither half is car-tested.
-  Reaching the car needs `tools/ocbm_install.sh --full` (ocbmd and btd) plus an app release.
+  Reaching the car needs `tools/ocbm_install.sh --full` (ocbmd and btd); the app side is in 232
+  (published 2026-11-06).
 
 ## T13. GM app: CarPlay turn-by-turn in the instrument cluster (raised 2026-10-26; WORKS on the car 2026-10-27)
 
@@ -497,8 +498,9 @@ is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on t
 that GM's fixed USB handler config grants every attached device with no dialog. It claims the
 adapter's OCBM interface and relays it to GM CCPA over a binder service and a socket. GM CCPA uses it
 whenever it holds the grant and the app does not, and otherwise claims the adapter itself as before.
-Settings ▸ Advanced ▸ USB bridge shows its state and opens the hidden Files app. Design, evidence and
-limits: `docs/host/01_ANDROID_AND_AAOS.md` "The USB bridge (2026-11-06)".
+Settings ▸ Advanced ▸ USB bridge shows its state and opens the hidden Files app. The app side is in
+232 (published 2026-11-06). Design, evidence and limits: `docs/host/01_ANDROID_AND_AAOS.md` "The USB
+bridge (2026-11-06)".
 
 **Done when.** On the Equinox, the bridge installs from a USB drive through Files, and a drive start
 logs `claimed … through the USB bridge … no dialog` with no Allow tap.

@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 231 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 232 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -137,8 +137,8 @@ high-water mark: versionCode 231 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **Which iPhone connects (T12): built 2026-11-05, not on the car.** Settings ▸ Phones gets ↑/↓
   for the connect order and Connect to move CarPlay to another paired phone (a wireless restart with
   that phone first). Both need adapter firmware with `MGMT_SET_ORDER`/`MGMT_CONNECT_DEVICE`
-  (`tools/ocbm_install.sh --full`); until then the app shows a note instead. Untested with two
-  phones. Owner: `08_FUTURE_TASKS.md` T12.
+  (`tools/ocbm_install.sh --full`); until then the app shows a note instead. The app side is in 232
+  (published 2026-11-06). Untested with two phones. Owner: `08_FUTURE_TASKS.md` T12.
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
@@ -146,7 +146,8 @@ high-water mark: versionCode 231 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   "not supported" stub, and other Equinox EV owners report installs refused as "unknown sources
   blocked" on current software, searched 2026-11-06), and whether the adapter attaches while the
   driver's user is in front. The app
-  side (Settings ▸ Advanced ▸ USB bridge, Open Files, the bridge transport) needs a Play release. Owner:
+  side (Settings ▸ Advanced ▸ USB bridge, Open Files, the bridge transport) is in 232 (published
+  2026-11-06). Owner:
   `08_FUTURE_TASKS.md` T15; `docs/host/01_ANDROID_AND_AAOS.md` "The USB bridge".
 - **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The
   iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
