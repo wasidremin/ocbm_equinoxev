@@ -13,6 +13,11 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
+import java.io.FileInputStream
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import wasidremin.gmccpa.logging.SessionTrace
 
@@ -23,6 +28,10 @@ import wasidremin.gmccpa.logging.SessionTrace
  * IN 0x81 / OUT 0x01 at 512-byte max packet (hardware-verified 2026-08-12; older docs said
  * 0x83/0x02 — the code is immune either way because it walks the interface). It is a RAW BYTE PIPE: there is no AOA control
  * handshake (51/52/53) to perform — claim interface 0 and start moving bytes. All framing is OCBM's.
+ *
+ * When the sideloaded USB bridge ([UsbBridge]) holds the grant and this app does not, the claim goes
+ * through the bridge instead: [open] asks it to claim the same interface, [readLoop] reads its
+ * socket, [writeBulk] writes through it. Everything above this class is the same either way.
  *
  * ## Standing state on the [SessionTrace.Board]
  *
@@ -179,6 +188,18 @@ class UsbBulkTransport(
                 log.w("usb: all-handlers query failed: ${it.javaClass.simpleName}: ${it.message}")
             }
             runCatching {
+                val res = android.content.res.Resources.getSystem()
+                @android.annotation.SuppressLint("DiscouragedApi")
+                val id = res.getIdentifier("config_UsbDeviceConnectionHandling_component", "string", "android")
+                log.i("usb: config_UsbDeviceConnectionHandling_component = " +
+                    if (id == 0) "<no such resource>" else res.getString(id).ifEmpty { "<empty>" })
+            }.onFailure {
+                log.w("usb: handler config read failed: ${it.javaClass.simpleName}: ${it.message}")
+            }
+            log.i("usb: bridge ${UsbBridge.installedPackage(app) ?: "not installed"}" +
+                (UsbBridge.sideloadBlocked(app)?.let { ", this user has $it" } ?: "") +
+                ", unknown-sources screen ${UsbBridge.unknownSourcesScreen(app) ?: "none"}")
+            runCatching {
                 val s = app.packageManager.getApplicationEnabledSetting("android.car.usb.handler")
                 val name = when (s) {
                     PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> "DEFAULT"
@@ -211,11 +232,13 @@ class UsbBulkTransport(
         /**
          * Whether the platform's own USB handler exists. The 8 s system-dispatch wait only makes
          * sense when it does — on this build the package is absent ("Unknown package"), so the
-         * wait always times out and is skipped.
+         * wait always times out and is skipped. Our own bridge under that name does not count: it
+         * gets its grant at attach, before the adapter reaches the device list, so there is nothing
+         * left to wait for.
          */
         fun isSystemUsbHandlerPresent(ctx: Context): Boolean = runCatching {
             ctx.packageManager.getApplicationInfo("android.car.usb.handler", 0)
-        }.isSuccess
+        }.isSuccess && UsbBridge.installedPackage(ctx) != wasidremin.gmccpa.bridgeapi.BridgeProtocol.PACKAGE
 
         /** No permission dialog while the head-unit display is off (parked car). Fail-open. */
         fun isDisplayOn(ctx: Context): Boolean = runCatching {
@@ -251,7 +274,7 @@ class UsbBulkTransport(
             val handlerPresent = isSystemUsbHandlerPresent(app)
             if (handlerPresent) logSystemDispatchWait()
             else wasidremin.gmccpa.ProbeLog.sub("usb").i(
-                "usb: android.car.usb.handler absent — skipping ${SYSTEM_DISPATCH_WAIT_MS / 1000}s system-dispatch wait, requesting permission now",
+                "usb: no system USB handler — skipping ${SYSTEM_DISPATCH_WAIT_MS / 1000}s system-dispatch wait, requesting permission now",
             )
             Thread({
                 val mgr = app.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -263,8 +286,9 @@ class UsbBulkTransport(
                         if (awaitPermissionSignal(250)) { granted = true; break }
                     }
                 } else {
-                    // No wait, but a grant may already be held (remembered "always open").
-                    granted = mgr.hasPermission(dev)
+                    // No wait, but a grant may already be held (remembered "always open", or the
+                    // bridge's from the attach).
+                    granted = mgr.hasPermission(dev) || UsbBridge.hasPermission(app, dev.deviceName)
                 }
                 synchronized(permLock) { deferInProgressUntil = 0L }
                 if (granted) return@Thread
@@ -387,6 +411,12 @@ class UsbBulkTransport(
     private val running = AtomicBoolean(false)
     @Volatile private var handler: ((ByteArray, Int) -> Unit)? = null
     private val writeLock = Object()
+    /** The bridge's bulk IN stream while the adapter is claimed through it; null on a direct claim. */
+    @Volatile private var bridgeStream: ParcelFileDescriptor? = null
+
+    /** Who held the grant the last [hasPermission] found: "app", "bridge", or null. */
+    @Volatile var permissionHolder: String? = null
+        private set
 
     @Volatile
     var lastError: String? = null
@@ -443,8 +473,18 @@ class UsbBulkTransport(
     fun inventoryFingerprint(): String =
         inventory().joinToString(",") { "0x%04x:0x%04x".format(it.vendorId, it.productId) }
 
-    /** Cheap, authoritative check. The grant lives in system_server keyed by (device, uid). */
-    fun hasPermission(dev: UsbDevice): Boolean = usb.hasPermission(dev)
+    /**
+     * Cheap, authoritative check. The grant lives in system_server keyed by (device, uid): ours, or
+     * the bridge's, which [open] then claims through.
+     */
+    fun hasPermission(dev: UsbDevice): Boolean {
+        permissionHolder = when {
+            usb.hasPermission(dev) -> "app"
+            UsbBridge.hasPermission(appCtx, dev.deviceName) -> "bridge"
+            else -> null
+        }
+        return permissionHolder != null
+    }
 
     /**
      * Fire the permission request WITHOUT blocking on a broadcast.
@@ -461,6 +501,8 @@ class UsbBulkTransport(
      * the interface that actually carries a bulk IN + bulk OUT pair — some units differ.
      */
     fun open(dev: UsbDevice): Boolean {
+        if (!usb.hasPermission(dev) && UsbBridge.hasPermission(appCtx, dev.deviceName)) return openThroughBridge(dev)
+        UsbBridge.lastClaim = "app"
         val c = usb.openDevice(dev)
         if (c == null) {
             // A fault, not a degradation: the caller only gets here with the device present and
@@ -517,6 +559,22 @@ class UsbBulkTransport(
         return false
     }
 
+    private fun openThroughBridge(dev: UsbDevice): Boolean {
+        val stream = UsbBridge.open(appCtx, dev.deviceName)
+        if (stream == null) {
+            lastError = UsbBridge.lastFailure
+            log.e("claim FAILED through the USB bridge: $lastError")
+            SessionTrace.Board.failed(OcbmBoard.USB_CLAIM, "${dev.deviceName}: $lastError")
+            return false
+        }
+        bridgeStream = stream
+        UsbBridge.lastClaim = "bridge"
+        log.i("claimed ${dev.deviceName} through the USB bridge: it held the grant from the attach, no dialog")
+        log.i("usb bridge: ${UsbBridge.status(appCtx)}")
+        SessionTrace.Board.up(OcbmBoard.USB_CLAIM, "${dev.deviceName} through the USB bridge")
+        return true
+    }
+
     /** One identity line per successful claim. The serial is not readable before the grant. */
     private fun noteClaimedIdentity(dev: UsbDevice) {
         runCatching {
@@ -553,10 +611,15 @@ class UsbBulkTransport(
         t.isDaemon = true
         readThread = t
         t.start()
-        SessionTrace.Board.up(OcbmBoard.USB_READ, "ocbm-read thread, ${READ_BUF}B reads, ${READ_TIMEOUT_MS}ms timeout")
+        SessionTrace.Board.up(
+            OcbmBoard.USB_READ,
+            if (bridgeStream != null) "ocbm-read thread, reading the USB bridge's stream"
+            else "ocbm-read thread, ${READ_BUF}B reads, ${READ_TIMEOUT_MS}ms timeout",
+        )
     }
 
     private fun readLoop() {
+        bridgeStream?.let { readBridge(it); return }
         val buf = ByteArray(READ_BUF)
         while (running.get()) {
             // Any throw here would otherwise propagate out of the thread and Android's default
@@ -604,6 +667,35 @@ class UsbBulkTransport(
         onTransportDead?.let { if (running.get()) it() }
     }
 
+    /** [readLoop] over the bridge's socket. EOF is the bridge closing the link: adapter gone, or the bridge stopped. */
+    private fun readBridge(stream: ParcelFileDescriptor) {
+        val input = FileInputStream(stream.fileDescriptor)
+        val buf = ByteArray(READ_BUF)
+        try {
+            while (running.get()) {
+                val n = input.read(buf)
+                if (n < 0) {
+                    if (running.get()) {
+                        log.e("read: the USB bridge closed the stream — ${UsbBridge.status(appCtx) ?: UsbBridge.lastFailure}")
+                        SessionTrace.Board.failed(OcbmBoard.USB_READ, "the USB bridge closed the stream: adapter gone or the bridge stopped")
+                    }
+                    break
+                }
+                if (n > 0) handler?.invoke(buf, n)
+            }
+        } catch (e: IOException) {
+            if (running.get()) {
+                log.e("read: USB bridge stream failed: ${e.message}")
+                SessionTrace.Board.failed(OcbmBoard.USB_READ, "USB bridge stream failed: ${e.message}")
+            }
+        } catch (t: Throwable) {
+            log.e("read: bridge read loop error: ${t.javaClass.simpleName}: ${t.message}")
+            SessionTrace.Board.failed(OcbmBoard.USB_READ, "bridge read loop error: ${t.javaClass.simpleName}")
+        }
+        log.i("read loop ended")
+        onTransportDead?.let { if (running.get()) it() }
+    }
+
     private var readFailures = 0
     private var rapidMinusOne = 0
 
@@ -612,6 +704,7 @@ class UsbBulkTransport(
     var onTransportDead: (() -> Unit)? = null
 
     override fun writeBulk(data: ByteArray): Boolean {
+        if (bridgeStream != null) return writeThroughBridge(data)
         val c = conn ?: return false
         val ep = epOut ?: return false
         synchronized(writeLock) {
@@ -635,7 +728,22 @@ class UsbBulkTransport(
         return true
     }
 
+    private fun writeThroughBridge(data: ByteArray): Boolean {
+        synchronized(writeLock) {
+            if (!running.get()) return false
+            if (!UsbBridge.write(appCtx, data)) {
+                writeFailures++
+                lastError = "write through the USB bridge failed: ${UsbBridge.lastFailure}"
+                log.w("write FAILED: $lastError (consecutive=$writeFailures)")
+                return false
+            }
+        }
+        writeFailures = 0
+        return true
+    }
+
     override fun stop() {
+        bridgeStream?.let { stopBridge(it); return }
         // Deliberately NOT gated on the running CAS: if open() succeeded but start() was never
         // reached, the interface would otherwise stay claimed for the life of the process — a
         // claimed-but-unusable device that nothing can recover.
@@ -667,6 +775,24 @@ class UsbBulkTransport(
             conn = null; iface = null; epIn = null; epOut = null
         }
         log.i("usb transport closed")
+    }
+
+    private fun stopBridge(stream: ParcelFileDescriptor) {
+        running.set(false)
+        // Wakes a read blocked on the socket; the bridge then releases the interface itself, after
+        // its own read has left the transfer.
+        runCatching { Os.shutdown(stream.fileDescriptor, OsConstants.SHUT_RDWR) }
+        val rt = readThread
+        try { rt?.join(1500) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        readThread = null
+        synchronized(writeLock) {
+            UsbBridge.close(appCtx)
+            runCatching { stream.close() }
+            bridgeStream = null
+        }
+        SessionTrace.Board.down(OcbmBoard.USB_CLAIM, "released (USB bridge)")
+        if (rt != null) SessionTrace.Board.down(OcbmBoard.USB_READ, "stopped")
+        log.i("usb transport closed (USB bridge)")
     }
 
 }

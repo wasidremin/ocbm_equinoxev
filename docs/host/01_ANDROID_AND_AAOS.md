@@ -444,10 +444,18 @@ a USB device grant by exactly two mechanisms, and VCUUM-274.4 has broken both:
 
 1. **"Always" → default-handler map.** The implicit-grant path (`UsbHostManager.usbDeviceAdded` →
    `deviceAttached()` → `grantDevicePermission`) only runs when
-   `config_UsbDeviceConnectionHandling_component` resolves. On the Equinox the pointed-to package
-   `android.car.usb.handler` is **absent** (log: `Unknown package: android.car.usb.handler`), so the
-   branch that reads the "Always" choice is never reached. There is nothing for an "Always" checkbox
-   to write to.
+   `config_UsbDeviceConnectionHandling_component` is empty; when it names a component, the
+   fixed-handler branch runs instead and the "Always" choice is never read. On the Equinox the
+   package `android.car.usb.handler` is **absent**. (Corrected 2026-11-06: the log line
+   `Unknown package: android.car.usb.handler` this used to cite is GM CCPA's own
+   `getApplicationEnabledSetting` probe failing, not the platform's. It shows the package is missing,
+   not what the config names.) That the config names it is inferred from the attaches: from
+   2026-09-30 to 11-02 the car delivered about 600 `USB_DEVICE_ATTACHED` broadcasts for the adapter
+   and never once started `UsbAttachActivity`, whose device filter matches it. That is the
+   fixed-handler branch with its package missing (broadcast, failed lookup, return), not the resolver.
+   From the USB bridge build on, the app logs the value
+   (`usb: config_UsbDeviceConnectionHandling_component = …`). There is nothing for an "Always"
+   checkbox to write to.
 2. **`setDevicePersistentPermission` → `usb_permissions.xml`.** That store has **zero callers
    image-wide**, and a `/data` app writing it directly is a SELinux `neverallow`
    (`plat_sepolicy.cil:6707`).
@@ -457,15 +465,19 @@ device's `/dev/bus/usb/BBB/DDD` node, which is re-assigned on every enumeration 
 → fresh prompt each boot, by construction.
 
 **Closed, do not retry (all device- or decompile-confirmed):**
-- Package-name squat as `android.car.usb.handler` — gives a silent grant on the *Silverado*, but is
-  dead on the EV (handler component absent) and is not Play-shippable (reserved `android.*` id).
+- Package-name squat as `android.car.usb.handler` *in the Play app* — not Play-shippable (reserved
+  `android.*` id). This line used to add "dead on the EV (handler component absent)"; that was wrong
+  (2026-11-06): an absent package is the gap the squat fills. As a separate sideloaded app it is
+  open, and built: "The USB bridge (2026-11-06)" below.
 - Pre-seeding / writing `usb_permissions.xml` from the app — SELinux `neverallow`.
 - `pm grant … MANAGE_USB` over adb — `MANAGE_USB` is `signature|privileged` with no `development`
   flag; `pm grant` returns "not a changeable permission type". No `appops` or `cmd usb` grant verb
   exists either.
 
-**The only path to a true zero-tap grant** is to stop being a `/data` app: a `/system/priv-app`
-install holding `MANAGE_USB`, or a platform-signed app. Both require writing the system partition,
+**The only path to a true zero-tap grant for the Play app alone** is to stop being a `/data` app: a
+`/system/priv-app` install holding `MANAGE_USB`, or a platform-signed app. (The other path is a
+sideloaded app under the handler's name, which needs the car to let an app be installed: "The USB
+bridge (2026-11-06)".) Both require writing the system partition,
 which the locked VCU does not permit without an unlocked unit / root route that has not been shown to
 exist on this vehicle. Short of that privilege level, **one Allow tap per drive is the floor on a
 stock car.**
@@ -500,6 +512,45 @@ failures for GM/Google components (`com.gm.permissionproxy/.PlatformPermissionSe
 not the same ungated grant primitive. A rigorous per-`config_*`-pointer exploitability sweep (present vs
 absent × consumer signature-gate) is in progress to confirm the USB handler is the sole EXPLOITABLE
 instance; update this line with its verdict.
+
+### The USB bridge (2026-11-06): the squat as a separate sideloaded app
+
+Adapted from enigy's Carlink bridge ([enigy/carlink](https://github.com/enigy/carlink) `bridge/`,
+Unlicense), which serves their Play app `com.enigy.carlink3` on 2024+ Silverado/Sierra (GM Info 3.7).
+It is integration (B) of the pending task below, except that the bridge relays the bulk stream
+instead of handing over the usbfs fd, so the app keeps its Java USB path's framing and needs no
+libusb.
+
+- **What it is.** `host/gm_ccpa/netprobe_app/bridge` builds `android.car.usb.handler` with no
+  activity and an exported `BridgeService`, signed with the upload key
+  (`gradle :bridge:assembleRelease`). It never goes to Play. It serves only `wasidremin.gmccpa`
+  signed by the Play app-signing or upload certificate, or installed by Play (`CallerCheck`). The
+  binder contract is `netprobe_app/bridgeapi/.../BridgeProtocol.kt`, which both builds compile;
+  it is hand-written because `tools/build_apk.sh` is kotlinc-only.
+- **How the app uses it.** `ocbm/UsbBridge.kt` binds it; `UsbBulkTransport` asks it whenever the
+  app's own UID lacks the grant. When the bridge holds it, the claim goes through the bridge: bulk IN
+  arrives on a socket, writes are binder calls, and the transfer sizes and timeouts are a direct
+  claim's. When the bridge holds none, the app claims directly with its own dialog, as before. That
+  happens when the adapter attaches while another Android user is in front: enigy's truck log
+  2026-10-09 shows an attach during boot, under the headless system user, never granted to the
+  driver's copy.
+- **Why it may cover most starts here (unverified).** The head unit sleeps rather than reboots
+  between drives (2026-09-21: the app process was up from 17:24 to 01:02 across a drive), so user 12
+  is in front when the adapter enumerates, about 30 s after power.
+- **The install is the open risk.** The car has no adb. The route is a USB drive and the hidden Files
+  app (Settings ▸ Advanced ▸ USB bridge ▸ Open Files). On the AAOS 14 emulator, Files
+  (`com.android.car.documentsui`, opened with `ACTION_VIEW_DOWNLOADS`) hands the APK to the installer,
+  which stops at "not allowed to install unknown apps from this source". Its Settings button lands on
+  `com.android.car.frameworkpackagestubs/.Stubs$ManageExternalSourcesActivityStub`, which only toasts
+  "Manage Unknown App Sources is not supported on this device". If the Equinox resolves the same stub,
+  the bridge cannot be installed without adb, unless the car already allows Files. The app reports
+  which screen answers `ACTION_MANAGE_UNKNOWN_APP_SOURCES` and any install-blocking user restriction,
+  in the USB bridge row and in the log (`usb bridge: …`). enigy's install steps were proven on Android
+  12, not 14.
+- **Verified so far (emulator, 2026-11-06),** with the debug build `android.car.usb.handler.debug`,
+  which installs beside the emulator's own handler: binding, the caller check, the status line, Open
+  Files, and the installer's refusal above. The USB relay itself is untested, because the emulator has
+  no adapter.
 
 ### The workaround — "package-name squat" (CONFIRMED by decompile, NOT device-tested)
 

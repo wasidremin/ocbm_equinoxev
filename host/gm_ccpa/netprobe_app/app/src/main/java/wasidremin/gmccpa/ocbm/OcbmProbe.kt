@@ -741,6 +741,7 @@ class OcbmProbe(context: Context) {
         lastClaimState = "not started"
         val usbHost = ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST)
         sink("USB host feature=$usbHost uid=${Process.myUid()} user=${Process.myUid() / 100_000}")
+        sink("usb bridge: ${UsbBridge.describe(ctx)}")
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
             if (claimAbort || Thread.currentThread().isInterrupted) {
                 sink("giving up the wait for the adapter (stop requested)")
@@ -788,7 +789,12 @@ class OcbmProbe(context: Context) {
                 }
             }
             if (dev != null && state == "claimable") {
-                val via = if (UsbBulkTransport.consumeGrantViaBroadcast()) "broadcast" else "poll"
+                val viaBroadcast = UsbBulkTransport.consumeGrantViaBroadcast()
+                val via = when {
+                    t.permissionHolder == "bridge" -> "the USB bridge's grant at attach, no dialog"
+                    viaBroadcast -> "broadcast"
+                    else -> "poll"
+                }
                 sink("usb permission granted +${StartupClock.elapsedMs()}ms after attach (via $via)")
                 StartupClock.note("permission")
                 if (polls > 0) sink("  (claimable after ${polls * POLL_MS / 1000}s of waiting)")
@@ -817,7 +823,7 @@ class OcbmProbe(context: Context) {
                         if (handlerPresent) {
                             sink("  no grant held — waiting up to 8s for the system attach dispatch before raising the dialog")
                         } else {
-                            sink("  no grant held — android.car.usb.handler absent, requesting permission immediately (no 8s wait)")
+                            sink("  no grant held — no system USB handler to wait for, requesting permission immediately (no 8s wait)")
                         }
                         SessionTrace.expect(OcbmExpect.USB_PERMISSION, REQUEST_INTERVAL_MS + UsbBulkTransport.SYSTEM_DISPATCH_WAIT_MS,
                             "adapter 0x1314:0x2d00 is on the bus with no grant held; the app raises the permission dialog" +

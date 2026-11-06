@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "GM CCPA"
 include ':app'
+// The sideloaded USB bridge (android.car.usb.handler). Never published: build_aab.sh builds :app alone.
+include ':bridge'

@@ -52,6 +52,8 @@ PROJ="$GM_ROOT/netprobe_app"
 # header. Kept as a source-root compile rather than a package glob so a new subpackage never has to
 # be added here to get built.
 SRCDIR="$PROJ/app/src/main/java"
+# The binder contract with the sideloaded USB bridge; netprobe_app/bridge compiles the same file.
+BRIDGE_API="$PROJ/bridgeapi"
 MAN="$PROJ/app/src/main/AndroidManifest.xml"
 
 WORK="$(mktemp -d -t gmccpa_build.XXXXXX)"
@@ -63,7 +65,7 @@ echo "[1/6] kotlinc compile"
 # APK built from whatever classes survived, which looks like a successful build of stale code.
 # pipefail is already on from `set -euo pipefail`; do NOT disable it (a failed kotlinc piped to sed
 # would otherwise look like success), so it stays on for every pipeline below too.
-"${KOTLINC_CMD[@]}" -jvm-target 1.8 -classpath "$ANDJAR:$CARJAR" -d "$WORK/classes" "$SRCDIR" 2>&1 | sed 's/^/    /'
+"${KOTLINC_CMD[@]}" -jvm-target 1.8 -classpath "$ANDJAR:$CARJAR" -d "$WORK/classes" "$SRCDIR" "$BRIDGE_API" 2>&1 | sed 's/^/    /'
 # jar the compiled classes
 ( cd "$WORK/classes" && jar cf "$WORK/app-classes.jar" . )
 

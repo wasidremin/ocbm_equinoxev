@@ -356,6 +356,40 @@ class MainActivity : Activity() {
     @Volatile private var connectedPhoneMac: String? = null
 
     /** Settings ▸ Phones: the adapter's bonds, named from [PhoneBook]. Blocking; never on ocbm-read. */
+    /**
+     * The USB bridge row. Its own thread, not [runAsync]: the command executor can sit in the claim
+     * wait for minutes, and asking the bridge may bind it.
+     */
+    private fun refreshBridge() {
+        Thread({
+            val b = wasidremin.gmccpa.ocbm.UsbBridge
+            val text = if (b.installedPackage(this) == null) {
+                val blocked = b.sideloadBlocked(this)
+                val how = "Parked: copy gmccpa-usb-bridge.apk to a USB drive, tap Open Files, open the drive and tap the file."
+                emit("usb bridge: ${b.describe(this)}")
+                when {
+                    blocked != null ->
+                        "Not installed. This car blocks installing apps from files for your profile ($blocked), so Files cannot install it."
+                    b.unknownSourcesStubbed(this) ->
+                        "Not installed. This car's Settings has no switch to let Files install apps, so the install will probably " +
+                            "stop at \"not allowed\". You can still try. $how"
+                    else -> "Not installed. With it, the adapter needs no Allow tap. $how"
+                }
+            } else {
+                val status = b.status(this)
+                val version = b.versionName(this)
+                when {
+                    status == null -> "Installed ($version) but not answering: ${b.lastFailure}."
+                    b.lastClaim == "bridge" -> "Installed ($version). The adapter connected through it, with no Allow tap."
+                    b.lastClaim == "app" -> "Installed ($version). The adapter connected without it: the bridge had no permission " +
+                        "for it, so GM CCPA asked for its own."
+                    else -> "Installed ($version). The adapter has not connected since."
+                }.also { emit("usb bridge: $status") }
+            }
+            ui.setBridge(text)
+        }, "bridge-status").start()
+    }
+
     private fun refreshPhones() {
         val probe = ocbmProbe
         if (probe == null || probe.client?.helloAcked != true) {
@@ -775,7 +809,15 @@ class MainActivity : Activity() {
             onPhoneOrder = { order -> runAsync { setPhoneOrder(order) } }
             onUsbAnnounce = { index -> runAsync { applyUsbAnnounce(index) } }
             onUsbAnnounceRetries = { index -> runAsync { applyUsbAnnounceRetries(index) } }
-            onAdvancedOpened = { runAsync { refreshUsbAnnounce() } }
+            onAdvancedOpened = {
+                runAsync { refreshUsbAnnounce() }
+                refreshBridge()
+            }
+            onOpenFiles = {
+                if (wasidremin.gmccpa.FilesApp.open(this@MainActivity) == null) {
+                    ui.setBridge("This head unit has no Files app GM CCPA can open.")
+                }
+            }
             onReturnToCarPlay = {
                 DisplayPrefs.holdLauncher = false
                 ui.setReturnToCarPlay(false)
@@ -1683,7 +1725,11 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (::ui.isInitialized) ui.onActivityResume()
+        if (::ui.isInitialized) {
+            ui.onActivityResume()
+            // Back from Files after installing the bridge.
+            refreshBridge()
+        }
         // Play does not grant RECORD_AUDIO. The session service stays up without it; the mic does not.
         // Ask while this screen is in front, before CarPlayActivity covers it.
         if (!micAsked &&

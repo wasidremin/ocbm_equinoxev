@@ -16,6 +16,11 @@
 
   Reverted 2026-09-08. Impersonating a platform component is a large thing to carry for a benefit
   that never materialised.
+
+  2026-11-06: the name now lives in a separate sideloaded app, the USB bridge (netprobe_app/bridge,
+  ocbm/UsbBridge.kt), and this app stays wasidremin.gmccpa on Play. The September try predates the
+  uDisk composite (2026-09-20); before it GM never put the adapter in the Equinox's device list, so it
+  could not show whether the fixed-handler grant lands there (docs/host/01_ANDROID_AND_AAOS.md).
   The ordinary attach resolver is the route in — UsbAttachActivity's intent-filter plus
   res/xml/device_filter.xml — so the standard USB permission dialog can appear once per device.
   "Always open" retires that dialog only when the system actually dispatches USB_DEVICE_ATTACHED
@@ -50,6 +55,17 @@
         <intent>
             <action android:name="android.settings.MANAGE_DEFAULT_APPS_SETTINGS" />
         </intent>
+        <!-- Whether this car can let Files install an app (UsbBridge.unknownSourcesScreen). -->
+        <intent>
+            <action android:name="android.settings.MANAGE_UNKNOWN_APP_SOURCES" />
+        </intent>
+        <!-- The sideloaded USB bridge (ocbm/UsbBridge.kt); .debug is its emulator build. -->
+        <package android:name="android.car.usb.handler" />
+        <package android:name="android.car.usb.handler.debug" />
+        <!-- The hidden Files app the bridge is installed from (FilesApp.kt). -->
+        <package android:name="com.android.documentsui" />
+        <package android:name="com.google.android.documentsui" />
+        <package android:name="com.android.car.documentsui" />
     </queries>
 
     <!-- Network + discovery. All are normal/dangerous perms an ordinary app UID can hold;

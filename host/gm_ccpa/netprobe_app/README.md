@@ -49,6 +49,11 @@ gradle wrapper --gradle-version 7.6   # if no wrapper is checked in
 # -> app/build/outputs/apk/debug/app-debug.apk
 ```
 
+The sideloaded USB bridge (`bridge/`, package `android.car.usb.handler`) is a Gradle module of its
+own and never goes to Play. `gradle :bridge:assembleRelease` signs it with the upload key; the debug
+build installs as `android.car.usb.handler.debug` beside an emulator's own handler. Why it exists:
+`docs/host/01_ANDROID_AND_AAOS.md` "The USB bridge (2026-11-06)".
+
 ## Install (Play-attributed, distraction-optimized)
 
 Attribute the install to the Play Store so the distraction-optimized activity is eligible in motion,

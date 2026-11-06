@@ -27,7 +27,8 @@ android {
     }
 
     sourceSets {
-        main.java.srcDirs = ["src/main/java"]
+        // ../bridgeapi is the binder contract with the sideloaded USB bridge, which :bridge compiles too.
+        main.java.srcDirs = ["src/main/java", "../bridgeapi"]
         main.jniLibs.srcDirs = [System.getenv('GM_JNI_DIR') ?: "${rootProject.buildDir}/jniLibs"]
         main.assets.srcDirs = [System.getenv('GM_ASSETS_DIR') ?: 'src/main/assets']
         // Cluster turn-by-turn (Car App Library -> Templates Host -> GM cluster). Kept out of src/main

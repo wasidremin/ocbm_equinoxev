@@ -202,6 +202,8 @@ class LauncherUi(private val act: Activity) {
     var onUsbAnnounce: (Int) -> Unit = {}
     var onUsbAnnounceRetries: (Int) -> Unit = {}
     var onAdvancedOpened: () -> Unit = {}
+    /** The USB bridge row's Open Files button. */
+    var onOpenFiles: () -> Unit = {}
     var onLogAction: (LogAction) -> Unit = {}
     /** The Logs page's upload range was changed; [MainActivity] persists it. */
     var onUploadWindow: (UploadWindow) -> Unit = {}
@@ -252,6 +254,7 @@ class LauncherUi(private val act: Activity) {
     private lateinit var hotspotRow: EqRow
     private lateinit var hotspotValue: TextView
     private lateinit var infoRow: EqRow
+    private lateinit var bridgeRow: EqRow
     private lateinit var announceRow: EqRow
     private lateinit var announceControl: EqSegmented
     private var announceIndex = 1
@@ -643,6 +646,11 @@ class LauncherUi(private val act: Activity) {
      * place of the list (adapter not connected, or it did not answer). [canChoose] is false on
      * adapter firmware without Connect and the connect order.
      */
+    /** The USB bridge row's subtitle; from any thread. */
+    fun setBridge(text: String) = act.runOnUiThread {
+        if (::bridgeRow.isInitialized) bridgeRow.setSubtitle(text)
+    }
+
     fun setPhones(phones: List<PhoneBook.Phone>?, note: String? = null, canChoose: Boolean = false) = act.runOnUiThread {
         uiLog.i("phones: ${phones?.let { l -> "${l.size} paired, connected=${l.count { it.connected }}, choose=$canChoose" } ?: note}")
         shownPhones = phones
@@ -1051,6 +1059,10 @@ class LauncherUi(private val act: Activity) {
         announceControl.isEnabled = false
         announceControl.alpha = 0.4f
         announceRow = EqRow(act, "USB announce", "Adapter not connected", trailing = announceControl)
+        bridgeRow = EqRow(
+            act, "USB bridge", "Checking…",
+            trailing = eqButton(act, "Open Files", EqButtonStyle.SECONDARY) { onOpenFiles() },
+        )
         announceRetriesControl = EqSegmented(act, listOf("0", "1", "2"), announceRetriesIndex) { i ->
             onUsbAnnounceRetries(i)
         }
@@ -1062,6 +1074,7 @@ class LauncherUi(private val act: Activity) {
             .addRow(EqRow(act, "Adapter Wi-Fi", "The iPhone joins the adapter.", trailing = wifiToggle))
             .addRow(hotspotRow)
             .addRow(infoRow)
+            .addRow(bridgeRow)
             .addRow(announceRow)
             .addRow(announceRetriesRow)
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))

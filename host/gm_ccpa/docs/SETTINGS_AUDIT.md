@@ -89,6 +89,7 @@ overrides — built-ins are the default.
 | Adapter Wi-Fi | `buildAdvanced` toggle | `adapter_wifi/on` (restarts connection) | iPhone joins adapter vs car hotspot | Advanced | keep | Radio topology; reconnect-required, keep confirm |
 | Vehicle hotspot | `hotspotRow` + dialog | `hotspot_credentials/ssid,pass,chan` | Pushed at SUBSCRIBE; blank-by-design forces entry | Advanced | keep | Needed for vehicle hotspot; keep dialog |
 | Adapter info | `infoRow` | action only | `BoxAction.INFO` | Advanced | keep | Probe |
+| USB bridge (2026-11-06) | `bridgeRow`, `MainActivity.refreshBridge()`, `FilesApp` | action only | Whether the sideloaded USB bridge is installed and whether the last link went through it; when absent, whether this car can let Files install an app. Open Files starts the hidden Files app | Advanced | keep | `docs/ops/08_FUTURE_TASKS.md` T15; unverified on the car |
 | USB announce / Announce retries | `announceRow(s)` | box-side `/script/ocbm.conf` (display only) | Shown on `onAdvancedOpened`; disabled until linked | Advanced | keep | Probe display |
 | Restart adapter Wi-Fi | `buildAdvanced`, `confirmRestartWifi()` | action only | Radio cycle, drops live session | Advanced | keep | Keep confirm |
 | Reboot adapter | `buildAdvanced`, `confirmReboot()` | action only | Box reboot, drops session | Advanced | keep | Keep confirm |

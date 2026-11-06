@@ -487,6 +487,31 @@ request: `capture #N heard: VOICE_RECOGNITION …` shows a real peak, with no al
 was met on 2026-10-27. One question remains open: whether calls echo for the far end while the role
 is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on that drive.
 
+## T15. GM app: no Allow tap for the adapter, through a sideloaded USB bridge (raised 2026-11-06; BUILT, not on the car)
+
+**The ask.** The driver taps Allow for the adapter on every drive. The owner found the XDA post
+(enigy's Carlink thread, page 28) saying a sideloaded bridge removes it for a Play app.
+
+**What was built (2026-11-06).** `host/gm_ccpa/netprobe_app/bridge`, adapted from
+[enigy/carlink](https://github.com/enigy/carlink) `bridge/`: an app named `android.car.usb.handler`
+that GM's fixed USB handler config grants every attached device with no dialog. It claims the
+adapter's OCBM interface and relays it to GM CCPA over a binder service and a socket. GM CCPA uses it
+whenever it holds the grant and the app does not, and otherwise claims the adapter itself as before.
+Settings ▸ Advanced ▸ USB bridge shows its state and opens the hidden Files app. Design, evidence and
+limits: `docs/host/01_ANDROID_AND_AAOS.md` "The USB bridge (2026-11-06)".
+
+**Done when.** On the Equinox, the bridge installs from a USB drive through Files, and a drive start
+logs `claimed … through the USB bridge … no dialog` with no Allow tap.
+
+**Open.**
+
+1. Whether the Equinox lets Files install an app. The AAOS 14 emulator does not: its
+   `ACTION_MANAGE_UNKNOWN_APP_SOURCES` answer is a "not supported" stub. The USB bridge row says which
+   screen the car has before anyone carries a USB drive out.
+2. Whether the adapter attaches while user 12 is in front. An attach under another user gets no grant
+   for the bridge, and the app falls back to its own dialog.
+3. The relay has not carried a session. The emulator has no adapter.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.

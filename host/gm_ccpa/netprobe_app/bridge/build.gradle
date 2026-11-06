@@ -1,0 +1,74 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// GM CCPA's sideloaded USB bridge (docs/host/01_ANDROID_AND_AAOS.md, "The USB bridge").
+// Its applicationId is the AAOS fixed USB handler's package, which Play refuses, so it never goes
+// to Play: build_aab.sh builds and publishes :app alone. Build: gradle :bridge:assembleRelease.
+
+// SHA-256 of the GM CCPA signing certificates the bridge serves. Fingerprints are public.
+def releaseCallerCerts = [
+    // Play app signing key: what Play installs on the car (androidpublisher generatedApks, 2026-11-06).
+    "33:1E:1E:89:DB:DF:78:E4:C1:71:47:D2:D9:49:38:E1:2A:B4:83:31:32:31:02:C3:1F:34:4F:C0:7A:EE:2E:2B",
+    // Upload key (~/CodeSigning/wasidremin-gmccpa/upload-certificate.pem): a locally signed release.
+    "5F:09:1B:69:EA:A6:E0:E2:1B:0D:B4:1D:16:C4:C1:3C:E6:5D:ED:A8:97:DD:0B:33:0A:DB:20:92:11:23:23:CA",
+].join(",")
+// ~/.android/debug.keystore on this machine. Only a debug bridge takes it.
+def debugCallerCert = "7F:B5:EB:48:30:C8:7D:21:DE:6D:51:69:CD:4F:AD:E5:E9:87:79:08:92:BA:F6:F3:49:56:F2:1A:02:43:DF:96"
+
+android {
+    namespace "wasidremin.gmccpa.usbbridge"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "android.car.usb.handler"
+        // hasSigningCertificate(uid, …) and Binder(String) are API 29.
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+        buildConfigField "String", "CALLER_CERTS", "\"${releaseCallerCerts}\""
+    }
+
+    sourceSets {
+        main.java.srcDirs += '../bridgeapi'
+    }
+
+    signingConfigs {
+        release {
+            def keyDir = System.getenv("PLAY_KEY_DIR") ?: "${System.getProperty('user.home')}/CodeSigning/wasidremin-gmccpa"
+            def passwordFile = file(System.getenv("PLAY_KEY_PASSWORD_FILE") ?: "${keyDir}/keystore-password.txt")
+            def password = passwordFile.text.trim()
+            storeFile file(System.getenv("PLAY_KEYSTORE") ?: "${keyDir}/upload-key.jks")
+            storePassword password
+            keyAlias System.getenv("PLAY_KEY_ALIAS") ?: "upload"
+            keyPassword password
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Installs beside the emulator's own android.car.usb.handler, which a different key holds.
+            // It is not the fixed handler, so it never gets a grant: it is for testing the binding.
+            applicationIdSuffix ".debug"
+            buildConfigField "String", "CALLER_CERTS", "\"${releaseCallerCerts},${debugCallerCert}\""
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures { buildConfig true }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions { jvmTarget = '1.8' }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  GM CCPA USB bridge. Installed as android.car.usb.handler, the package GM's
+  config_UsbDeviceConnectionHandling_component names: on each USB attach the platform grants this
+  package's UID permission for the device, then tries to start
+  android.car.usb.handler.UsbHostManagementActivity.
+
+  No activity, on purpose. The grant happens before the start; the missing activity only makes the
+  start fail, which the platform catches and logs. Declaring one would put this app on screen at
+  every attach, and GM covers a non-driving-optimised app with its blocking screen while moving.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
+
+    <!-- CallerCheck reads GM CCPA's installer. -->
+    <queries>
+        <package android:name="wasidremin.gmccpa"/>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="GM CCPA USB bridge">
+
+        <!-- Bound by GM CCPA only; BridgeService refuses every other caller. -->
+        <service
+            android:name="wasidremin.gmccpa.usbbridge.BridgeService"
+            android:exported="true"/>
+    </application>
+</manifest>
