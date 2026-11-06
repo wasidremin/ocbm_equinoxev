@@ -339,6 +339,13 @@ pub const MGMT_RESTART_WIRELESS: u8 = 0x05; // [MGMT_RESTART_WIRELESS] -> bounce
 /// OCBM). Sticky by design: whoever asked for NCM works on the box over ssh and returns it with
 /// `rm /script/ncm_only; reboot` — exactly what `tools/ocbm_install.sh revert` typed over the console.
 pub const MGMT_ENTER_NCM: u8 = 0x06;
+/// [MGMT_CONNECT_DEVICE][ascii MAC "AA:BB:.."] -> CarPlay moves to that bonded phone. The box leaves
+/// the address for the next btd (`/tmp/bt_connect_next`) and restarts wireless, so a live session
+/// with another phone ends. Status 1 for a malformed or unbonded address.
+pub const MGMT_CONNECT_DEVICE: u8 = 0x07;
+/// [MGMT_SET_ORDER][ascii MACs joined by ","] -> which bonded phone btd tries first; kept on flash.
+/// Empty clears it (bond order). Status 1 if an address is malformed or btd did not take it.
+pub const MGMT_SET_ORDER: u8 = 0x08;
                                             //   Box->host:
 pub const MGMT_INFO: u8 = 0x81; // [MGMT_INFO][utf8 JSON] — identity + health + bonded-device snapshot
 pub const MGMT_ACK: u8 = 0x82; // [MGMT_ACK][verb u8][status u8] — 0 ok / 1 error, echoing the request verb

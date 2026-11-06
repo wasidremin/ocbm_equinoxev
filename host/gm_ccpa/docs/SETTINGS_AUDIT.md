@@ -24,7 +24,7 @@ Conventions: "action only" = no persisted key. Preference files:
 | Stop CarPlay | `buildConnection` stop row | action only | `onStop()` | Troubleshooting | move | Support action |
 | Start | `startRow`, shown only when IDLE/STOPPED | action only | `onStart()` | Troubleshooting | move | Support action |
 | Forget all iPhones (was "Forget pairing") | `buildAdvanced`, `confirmForget()` | action only (clears every box bond + app Ed25519 store) | Destructive, confirmed | Advanced | keep | Destructive radio/pairing op; keep confirm |
-| Phones (2026-10-25) | `buildSettings`, `setPhones()`, `PhoneBook` | `phone_book/<MAC>` (name, model from `CT_PHONE_IDENT`) | Lists the adapter's bonds from `MGMT_GET_INFO`, marks the live one; Forget per phone sends `MGMT_FORGET_DEVICE` (box restarts wireless). App peer store untouched | Settings | keep | Carlink parity, step 1; connect/priority is `docs/ops/08_FUTURE_TASKS.md` T12 |
+| Phones (2026-10-25) | `buildSettings`, `setPhones()`, `PhoneBook` | `phone_book/<MAC>` (name, model from `CT_PHONE_IDENT`) | Lists the adapter's bonds from `MGMT_GET_INFO` in its connect order, marks the live one; Forget per phone sends `MGMT_FORGET_DEVICE` (box restarts wireless). App peer store untouched. With adapter firmware that reports `phone_order` (2026-11-05): ↑/↓ send `MGMT_SET_ORDER` (kept on the box's flash), Connect sends `MGMT_CONNECT_DEVICE` after a confirm; older firmware shows a note instead | Settings | keep | `docs/ops/08_FUTURE_TASKS.md` T12; built 2026-11-05, unverified on the car |
 
 ## Display page (`Ui.kt buildDisplay`)
 

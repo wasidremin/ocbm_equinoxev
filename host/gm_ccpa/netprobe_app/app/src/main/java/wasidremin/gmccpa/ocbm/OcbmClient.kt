@@ -1337,7 +1337,8 @@ class OcbmClient(
     private fun reArmAfterMgmt(verb: Byte) {
         val restarts = verb == Ocbm.MGMT_RESTART_WIRELESS ||
             verb == Ocbm.MGMT_FORGET_ALL ||
-            verb == Ocbm.MGMT_FORGET_DEVICE
+            verb == Ocbm.MGMT_FORGET_DEVICE ||
+            verb == Ocbm.MGMT_CONNECT_DEVICE
         if (!restarts) return
         if (radioInhibited) radio(false)
         if (logStreamWanted) {

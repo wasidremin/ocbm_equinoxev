@@ -35,4 +35,14 @@ class PhoneBookTest {
         assertEquals(1, rows.size)
         assertFalse(rows[0].connected)
     }
+
+    @Test fun theArrowsMoveOnePhoneOnePlace() {
+        val order = listOf("A", "B", "C")
+        assertEquals(listOf("A", "C", "B"), PhoneBook.moved(order, "C", -1))
+        assertEquals(listOf("B", "A", "C"), PhoneBook.moved(order, "A", 1))
+        // Past either end, or a phone no longer listed, changes nothing.
+        assertEquals(order, PhoneBook.moved(order, "A", -1))
+        assertEquals(order, PhoneBook.moved(order, "C", 1))
+        assertEquals(order, PhoneBook.moved(order, "Z", -1))
+    }
 }

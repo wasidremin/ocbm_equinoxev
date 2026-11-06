@@ -1317,8 +1317,20 @@ class OcbmProbe(context: Context) {
     fun bondedDevices(): List<String> = bondedDevicesOrNull() ?: emptyList()
 
     /** The bonded list, or null when there is no link or the adapter did not answer. */
-    fun bondedDevicesOrNull(timeoutMs: Long = 1500): List<String>? {
+    fun bondedDevicesOrNull(timeoutMs: Long = 1500): List<String>? = bondsOrNull(timeoutMs)?.devices
+
+    /**
+     * The adapter's bonds in the order it tries them, and whether it takes `MGMT_CONNECT_DEVICE`
+     * and `MGMT_SET_ORDER` (firmware from 2026-11-05 says `"phone_order":true`).
+     */
+    data class Bonds(val devices: List<String>, val canChoose: Boolean)
+
+    fun bondsOrNull(timeoutMs: Long = 1500): Bonds? {
         val json = client?.mgmtGetInfo(timeoutMs) ?: return null
+        return Bonds(infoDevices(json), json.contains("\"phone_order\":true"))
+    }
+
+    private fun infoDevices(json: String): List<String> {
         val i = json.indexOf("\"devices\"")
         if (i < 0) return emptyList()
         val open = json.indexOf('[', i)
@@ -1393,6 +1405,32 @@ class OcbmProbe(context: Context) {
             else -> { log.w("   ack status=$st (error)"); false }
         }
     }
+
+    /**
+     * Move CarPlay to one bonded phone (`MGMT_CONNECT_DEVICE`). The box restarts its wireless with
+     * that phone first, so a session with another phone ends; if it is not in range the box goes
+     * back to its usual order.
+     */
+    fun connectPhone(mac: String): Boolean = ops.submit<Boolean> {
+        val c = client ?: run { log.w("no OCBM link — cannot connect $mac"); return@submit false }
+        log.i(">> MGMT_CONNECT_DEVICE $mac")
+        when (val st = c.mgmtAction(Ocbm.MGMT_CONNECT_DEVICE, mac.toByteArray(Charsets.US_ASCII))) {
+            0 -> { log.i("   ack ok — wireless restarting with $mac first"); true }
+            null -> { log.w("   no MGMT_ACK"); false }
+            else -> { log.w("   ack status=$st (not a bonded address?)"); false }
+        }
+    }.get()
+
+    /** Which phone the box tries first (`MGMT_SET_ORDER`), kept on its flash. */
+    fun setPhoneOrder(macs: List<String>): Boolean = ops.submit<Boolean> {
+        val c = client ?: run { log.w("no OCBM link — cannot set the phone order"); return@submit false }
+        log.i(">> MGMT_SET_ORDER ${macs.size} phone(s)")
+        when (val st = c.mgmtAction(Ocbm.MGMT_SET_ORDER, macs.joinToString(",").toByteArray(Charsets.US_ASCII))) {
+            0 -> true
+            null -> { log.w("   no MGMT_ACK"); false }
+            else -> { log.w("   ack status=$st (Bluetooth restarting?)"); false }
+        }
+    }.get()
 
     /** Report the current session so a run can start from a known state. */
     fun sessionState() { ops.submit { sessionStateLocked() }.get() }

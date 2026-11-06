@@ -212,7 +212,7 @@ Split, when this is picked up:
 **Done means.** With the toggle on, a wake word on the car mic starts Siri, the reply plays on
 AuxOut, and media keeps running. With the toggle off, button Siri is unchanged.
 
-## T12. GM app: pick which iPhone connects, and in what order (raised 2026-10-25)
+## T12. GM app: pick which iPhone connects, and in what order (raised 2026-10-25; BUILT 2026-11-05, needs an adapter reflash)
 
 **Why.** The Carlink app let the driver choose among paired phones (targeted
 `AutoConnect_By_BtAddress`) and set who connects first. With two iPhones in the car, the GM app
@@ -234,6 +234,32 @@ needs an adapter firmware update (`tools/ocbm_install.sh`), not only a Play rele
 
 **Done means.** With two paired iPhones in range, the one at the top of the list connects. Connect
 on the other one moves CarPlay to it. Both survive an adapter reboot.
+
+**Built 2026-11-05 (adapter firmware and app, neither on the car yet).**
+- *Order.* `MGMT_SET_ORDER [MACs joined by ","]`. `ocbmd` checks each address and forwards
+  `{"cmd":"policy","order":[…]}` to btd's control port. It leaves out `autoConnect`, so btd keeps its
+  own setting. It reads the answer back, bounded at 250 ms to connect and 500 ms to read, and acks
+  0 only on `"ok":true`. btd stores the policy in `/etc/carplay/projection_policy.json` (flash), which
+  survives a reboot. `MGMT_INFO` now lists `devices` in the order btd tries them (`ordered_bonds`,
+  the same rule as `control::order_bonds`) and says `"phone_order":true`.
+- *Connect.* btd cannot end one session (no cancellation hook in `bt_driver::run`, and the BT iAP2
+  session stays up for the whole drive), so `MGMT_CONNECT_DEVICE [MAC]` reuses the proven restart
+  path instead. `ocbmd` refuses an address that is not bonded. It writes the address to
+  `/tmp/bt_connect_next` and raises `/tmp/wireless_restart`, so the supervisor runs
+  `wireless_down`, waits 4 s and runs `wireless_up`. The new btd takes the file at start
+  (`control::take_connect_next`, ignored after 60 s) and queues it as an explicit request. The
+  reconnect loop then tries that phone alone in its first round. If the phone is out of reach, the
+  usual order resumes about 10 s later, so the previous phone comes back.
+- *Answer to "does Connect end the other session":* yes. The dialog says so, names the phone that
+  drops and says it reconnects if the new one is out of range. Connect is one-shot. The list order
+  decides the next drive.
+- *App.* Settings ▸ Phones shows ↑/↓ and Connect only when `MGMT_INFO` has `phone_order`. On older
+  firmware it shows a note that choosing needs the adapter update. The top phone reads "connects
+  first". Connect goes through the supervisor's restart guard, as Forget does.
+- *Open.* A phone that dials the box itself (the accept path) can still win the race against the
+  queued one. On the car the box has always connected out (`[reconnect] RFCOMM connected OUT`), so
+  this is expected to be rare. Only one phone has been paired so far, so neither half is car-tested.
+  Reaching the car needs `tools/ocbm_install.sh --full` (ocbmd and btd) plus an app release.
 
 ## T13. GM app: CarPlay turn-by-turn in the instrument cluster (raised 2026-10-26; WORKS on the car 2026-10-27)
 

@@ -362,10 +362,40 @@ class MainActivity : Activity() {
             if (uiAlive()) ui.setPhones(null, "Adapter not connected. Paired iPhones show here once it is.")
             return
         }
-        val bonded = probe.bondedDevicesOrNull()
+        val bonds = probe.bondsOrNull()
         if (!uiAlive()) return
-        if (bonded == null) ui.setPhones(null, "The adapter did not answer. Open Settings again to retry.")
-        else ui.setPhones(PhoneBook.list(applicationContext, bonded, connectedPhoneMac))
+        if (bonds == null) ui.setPhones(null, "The adapter did not answer. Open Settings again to retry.")
+        else ui.setPhones(PhoneBook.list(applicationContext, bonds.devices, connectedPhoneMac), canChoose = bonds.canChoose)
+    }
+
+    /**
+     * Move CarPlay to [p] (`MGMT_CONNECT_DEVICE`, docs/ops/08_FUTURE_TASKS.md T12). The box ends any
+     * live session with a wireless restart, so the supervisor is told first, as for Restart Wi-Fi.
+     */
+    private fun connectOnePhone(p: PhoneBook.Phone) {
+        if (supervisor.blocksWirelessRestart()) {
+            ui.setDetail("Bluetooth was just restarted — try connecting ${p.label} again in a minute")
+            return
+        }
+        ui.setDetail("connecting ${p.label}…")
+        supervisor.onManualWirelessRestart()
+        val ok = ocbmProbe?.connectPhone(p.mac) == true
+        emit("connect one: ${p.mac} ${if (ok) "requested" else "NOT requested"}")
+        // The live phone drops with the restart; CT_PHONE_IDENT names whichever phone comes back.
+        if (ok) connectedPhoneMac = null
+        ui.setDetail(
+            if (ok) "${p.label}: the adapter is restarting Bluetooth and calling it first"
+            else "could not connect ${p.label} — see the log"
+        )
+        refreshPhones()
+    }
+
+    /** Settings ▸ Phones' arrows: the box keeps the order and tries the phones in it from now on. */
+    private fun setPhoneOrder(order: List<String>) {
+        val ok = ocbmProbe?.setPhoneOrder(order) == true
+        emit("phone order: ${order.size} phone(s) ${if (ok) "set" else "NOT set"}")
+        if (!ok) ui.setDetail("the adapter did not take the new order — try again in a moment")
+        refreshPhones()
     }
 
     /**
@@ -741,6 +771,8 @@ class MainActivity : Activity() {
             onBoxAction = { a -> runAsync { boxAction(a) } }
             onPhonesWanted = { runAsync { refreshPhones() } }
             onForgetOnePhone = { p -> runAsync { forgetOnePhone(p) } }
+            onConnectPhone = { p -> runAsync { connectOnePhone(p) } }
+            onPhoneOrder = { order -> runAsync { setPhoneOrder(order) } }
             onUsbAnnounce = { index -> runAsync { applyUsbAnnounce(index) } }
             onUsbAnnounceRetries = { index -> runAsync { applyUsbAnnounceRetries(index) } }
             onAdvancedOpened = { runAsync { refreshUsbAnnounce() } }
@@ -1393,7 +1425,7 @@ class MainActivity : Activity() {
                         ui.setPhones(listOf(
                             PhoneBook.Phone("AA:BB:CC:DD:EE:01", "Preview iPhone", "iPhone17,1", connected = true),
                             PhoneBook.Phone("AA:BB:CC:DD:EE:02", null, null, connected = false),
-                        ))
+                        ), canChoose = i.getBooleanExtra("choose", true))
                     }
                 }, 4_000L)
             }

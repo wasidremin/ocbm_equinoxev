@@ -35,7 +35,7 @@ object PhoneBook {
         prefs(ctx).edit().remove(normalize(mac)).apply()
     }
 
-    /** The adapter's bonds in its own order, each with the name this app last saw for it. */
+    /** The adapter's bonds in the order it connects them, each with the name this app last saw for it. */
     fun list(ctx: Context, bonded: List<String>, connectedMac: String?): List<Phone> {
         val p = prefs(ctx)
         return rows(bonded, connectedMac) { mac -> p.getString(mac, null) }
@@ -53,6 +53,14 @@ object PhoneBook {
                 connected = mac == live,
             )
         }
+    }
+
+    /** [order] with [mac] moved [by] places (negative is up, toward connecting first), kept in range. */
+    internal fun moved(order: List<String>, mac: String, by: Int): List<String> {
+        val from = order.indexOf(mac)
+        if (from < 0) return order
+        val to = (from + by).coerceIn(0, order.lastIndex)
+        return order.toMutableList().apply { add(to, removeAt(from)) }
     }
 
     private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

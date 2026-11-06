@@ -1476,6 +1476,91 @@ fn request_wireless_restart() {
     let _ = std::fs::write(WIRELESS_RESTART_FLAG, "1");
 }
 
+/// btd's connection policy, beside the bond store (`wireless::control::policy_path`).
+const BT_POLICY_FILE: &str = "/etc/carplay/projection_policy.json";
+/// The app's Connect on one phone (`MGMT_CONNECT_DEVICE`), left for the btd that the wireless
+/// restart starts next (`wireless::control::take_connect_next`). tmpfs; btd ignores it after a minute.
+#[cfg(not(test))]
+const CONNECT_NEXT_FILE: &str = "/tmp/bt_connect_next";
+#[cfg(test)]
+const CONNECT_NEXT_FILE: &str = "/tmp/ocbmd_selftest_connect_next";
+
+/// `AA:BB:CC:DD:EE:FF` in uppercase hex, the form [`bonded_macs`] and btd's policy file both use.
+fn is_display_mac(s: &str) -> bool {
+    s.len() == 17
+        && s.bytes().enumerate().all(|(i, b)| {
+            if i % 3 == 2 {
+                b == b':'
+            } else {
+                b.is_ascii_digit() || (b'A'..=b'F').contains(&b)
+            }
+        })
+}
+
+/// `MGMT_SET_ORDER`'s argument, addresses joined by ",". None if any is malformed; repeats dropped.
+fn parse_order_arg(arg: &[u8]) -> Option<Vec<String>> {
+    let s = std::str::from_utf8(arg).ok()?;
+    let mut out: Vec<String> = Vec::new();
+    for m in s.split(',').map(|m| m.trim().to_ascii_uppercase()).filter(|m| !m.is_empty()) {
+        if !is_display_mac(&m) {
+            return None;
+        }
+        if !out.contains(&m) {
+            out.push(m);
+        }
+    }
+    Some(out)
+}
+
+/// The `order` array of btd's policy file. Hand-scanned, like the rest of this file's JSON.
+fn policy_order(json: &str) -> Vec<String> {
+    let Some(rest) = json.find("\"order\"").map(|i| &json[i..]) else {
+        return Vec::new();
+    };
+    match (rest.find('['), rest.find(']')) {
+        (Some(open), Some(close)) if open < close => rest[open + 1..close]
+            .split(',')
+            .map(|m| m.trim().trim_matches('"').to_ascii_uppercase())
+            .filter(|m| is_display_mac(m))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Bonds in the order btd tries them: listed ones first, the rest after (`control::order_bonds`),
+/// so Settings ▸ Phones shows the phones in the order they connect.
+fn ordered_bonds(bonds: Vec<String>, order: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = order.iter().filter(|m| bonds.contains(m)).cloned().collect();
+    for b in bonds {
+        if !out.contains(&b) {
+            out.push(b);
+        }
+    }
+    out
+}
+
+/// A `policy` request that sets only the order, so btd keeps its stored `autoConnect`.
+fn set_order_request(order: &[String]) -> String {
+    let list: Vec<String> = order.iter().map(|m| format!("\"{m}\"")).collect();
+    format!("{{\"cmd\":\"policy\",\"order\":[{}]}}\n", list.join(","))
+}
+
+/// One request to btd's control port, with its answer. Unlike [`Daemon::send_pair_answer`] this
+/// reads the reply, because the app shows whether the order took; bounded at 250 ms to connect and
+/// write and 500 ms to read, and reached only from a tap in Settings ▸ Phones. None when btd is
+/// unreachable (mid-restart, say) or slow.
+fn wireless_control(line: &str) -> Option<String> {
+    let s = connect_seam(WIRELESS_CONTROL_ADDR, Duration::from_millis(250))?;
+    s.set_nonblocking(false).ok()?;
+    s.set_write_timeout(Some(Duration::from_millis(250))).ok()?;
+    s.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
+    (&s).write_all(line.as_bytes()).ok()?;
+    let mut r = std::io::BufReader::new((&s).take(1024));
+    let mut resp = String::new();
+    std::io::BufRead::read_line(&mut r, &mut resp).ok()?;
+    Some(resp.trim().to_string())
+}
+
 /// Minimal JSON string escaping — used for the two free-form file-sourced values (serial, transport) so
 /// a stray `"`/`\`/control char can never malform the info snapshot. The other string fields (MACs,
 /// derived name) are provably hex-only. Cheap: returns the input unchanged in the common case.
@@ -3551,6 +3636,33 @@ impl Daemon {
                 request_wireless_restart();
                 self.mgmt_ack(verb, 0);
             }
+            // btd cannot end one session (no cancellation hook in bt_driver), so moving CarPlay to
+            // another phone is a wireless restart with that phone queued first. Bonded phones only:
+            // btd would ignore any other, and the restart would drop a live session for nothing.
+            p::MGMT_CONNECT_DEVICE => {
+                let mac = std::str::from_utf8(&pl[1..]).unwrap_or("").trim().to_ascii_uppercase();
+                let ok = is_display_mac(&mac)
+                    && bonded_macs().contains(&mac)
+                    && std::fs::write(CONNECT_NEXT_FILE, &mac).is_ok();
+                if ok {
+                    eprintln!("[ocbmd] mgmt: connect {mac} requested by host — restarting wireless with it first");
+                    request_wireless_restart();
+                } else {
+                    eprintln!("[ocbmd] mgmt: connect refused — {mac:?} is not a bonded address");
+                }
+                self.mgmt_ack(verb, u8::from(!ok));
+            }
+            p::MGMT_SET_ORDER => {
+                let resp = parse_order_arg(&pl[1..]).and_then(|order| {
+                    eprintln!("[ocbmd] mgmt: phone order from host: {} address(es)", order.len());
+                    wireless_control(&set_order_request(&order))
+                });
+                let ok = resp.as_deref().is_some_and(|r| r.contains("\"ok\":true"));
+                if !ok {
+                    eprintln!("[ocbmd] mgmt: phone order NOT set — btd answered {resp:?}");
+                }
+                self.mgmt_ack(verb, u8::from(!ok));
+            }
             _ => {}
         }
     }
@@ -3595,7 +3707,9 @@ impl Daemon {
         // MGMT_GET_INFO can arrive with no SUBSCRIBE behind it (the app's CCPA tab polls it), so ask
         // for the SSP sample here too; the answer lands on the probe thread's next pass.
         self.bt.request_ssp();
-        let devs = bonded_macs()
+        // In btd's connect order. `phone_order` tells the app this box takes MGMT_CONNECT_DEVICE
+        // and MGMT_SET_ORDER; an older box leaves it out and the app hides those controls.
+        let devs = ordered_bonds(bonded_macs(), &policy_order(&read_trim(BT_POLICY_FILE)))
             .iter()
             .map(|m| format!("\"{m}\""))
             .collect::<Vec<_>>()
@@ -3606,7 +3720,7 @@ impl Daemon {
              \"rootfs_free_kb\":{rt_free},\"ssp\":{ssp},\"hci_up\":{hci_up},\"wlan_ap\":{ap},\
              \"transport\":\"{transport}\",\"host_present\":{host},\"phone_present\":{phone},\
              \"daemons\":{{\"ocbmd\":{d0},\"iap2d\":{d1},\"airplayd\":{d2},\"carplay_wireless\":{d3}}},\
-             \"host_name\":\"{host_name}\",\"devices\":[{devs}]}}",
+             \"host_name\":\"{host_name}\",\"phone_order\":true,\"devices\":[{devs}]}}",
             ser = json_escape(&serial),
             host_name = json_escape(self.host_name.as_deref().unwrap_or("")),
             ap = procs[4],
@@ -5315,6 +5429,83 @@ mod tests {
         // able to complete a bond no human confirmed.
         d.handle(p::CH_CTRL, p::F_SOM | p::F_EOM, &[p::CT_PAIR_CONFIRM]);
         assert_eq!(line(&l), "{\"cmd\":\"pair_answer\",\"accept\":false}\n");
+    }
+
+    /// CH_MGMT rides the bulk queue, not [`sent`]'s priority one.
+    fn sent_mgmt(d: &mut Daemon) -> Vec<Vec<u8>> {
+        let mut r = p::Reassembler::new();
+        r.push(&d.out_lo.buf[d.out_lo.cursor..]);
+        d.out_lo.clear();
+        let mut out = vec![0u8; p::MAX_PAYLOAD];
+        let mut v = Vec::new();
+        while let Some((ch, _, n)) = r.next(&mut out) {
+            if ch == p::CH_MGMT {
+                v.push(out[..n].to_vec());
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn mgmt_set_order_sends_btd_the_order_and_acks_its_answer() {
+        let _flag = presence_flag_lock(); // the test control port is shared with the pair-confirm test
+        let l = std::net::TcpListener::bind(WIRELESS_CONTROL_ADDR).expect("test control port");
+        let btd = std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut r = std::io::BufReader::new(s.try_clone().unwrap());
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut r, &mut line).unwrap();
+            (&s).write_all(b"{\"ok\":true}\n").unwrap();
+            line
+        });
+        let mut d = td();
+        let mut pl = vec![p::MGMT_SET_ORDER];
+        pl.extend_from_slice(b"aa:bb:cc:dd:ee:02, AA:BB:CC:DD:EE:01,aa:bb:cc:dd:ee:02");
+        d.handle(p::CH_MGMT, p::F_SOM | p::F_EOM, &pl);
+        assert_eq!(
+            btd.join().unwrap(),
+            "{\"cmd\":\"policy\",\"order\":[\"AA:BB:CC:DD:EE:02\",\"AA:BB:CC:DD:EE:01\"]}\n",
+            "uppercase, repeats dropped, and no autoConnect so btd keeps its own"
+        );
+        assert_eq!(sent_mgmt(&mut d), vec![vec![p::MGMT_ACK, p::MGMT_SET_ORDER, 0]]);
+    }
+
+    #[test]
+    fn mgmt_set_order_refuses_a_malformed_address_without_asking_btd() {
+        let mut d = td();
+        let mut pl = vec![p::MGMT_SET_ORDER];
+        pl.extend_from_slice(b"AA:BB:CC:DD:EE:01,not-a-mac");
+        d.handle(p::CH_MGMT, p::F_SOM | p::F_EOM, &pl);
+        assert_eq!(sent_mgmt(&mut d), vec![vec![p::MGMT_ACK, p::MGMT_SET_ORDER, 1]]);
+    }
+
+    #[test]
+    fn mgmt_connect_refuses_an_unbonded_phone_and_restarts_nothing() {
+        // No bond store on a test machine, so every address is unbonded.
+        let _ = std::fs::remove_file(CONNECT_NEXT_FILE);
+        let mut d = td();
+        let mut pl = vec![p::MGMT_CONNECT_DEVICE];
+        pl.extend_from_slice(b"AA:BB:CC:DD:EE:01");
+        d.handle(p::CH_MGMT, p::F_SOM | p::F_EOM, &pl);
+        assert_eq!(sent_mgmt(&mut d), vec![vec![p::MGMT_ACK, p::MGMT_CONNECT_DEVICE, 1]]);
+        assert!(!std::path::Path::new(CONNECT_NEXT_FILE).exists());
+    }
+
+    #[test]
+    fn the_phone_list_follows_btds_order_and_keeps_unlisted_bonds() {
+        let policy = r#"{"autoConnect":true,"order":["AA:BB:CC:DD:EE:03","AA:BB:CC:DD:EE:09"]}"#;
+        let order = policy_order(policy);
+        assert_eq!(order, vec!["AA:BB:CC:DD:EE:03", "AA:BB:CC:DD:EE:09"]);
+        let bonds = ["AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02", "AA:BB:CC:DD:EE:03"]
+            .map(String::from)
+            .to_vec();
+        // 03 first; 09 is not bonded; 01 and 02 follow in bond order, as btd tries them.
+        assert_eq!(
+            ordered_bonds(bonds.clone(), &order),
+            vec!["AA:BB:CC:DD:EE:03", "AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"]
+        );
+        assert_eq!(ordered_bonds(bonds.clone(), &policy_order("")), bonds);
+        assert_eq!(policy_order(r#"{"order":"#), Vec::<String>::new());
     }
 
     #[test]

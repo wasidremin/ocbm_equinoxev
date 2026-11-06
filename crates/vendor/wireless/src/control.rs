@@ -53,7 +53,8 @@
 //! `disconnect` returns an error rather than a lie. Tearing down a live session needs a cancellation
 //! hook inside `bt_driver::run`, which does not exist; bolting one on blind would risk the proven
 //! session path for a convenience command. The app surfaces the failure rather than showing a button
-//! that silently does nothing.
+//! that silently does nothing. The GM app's Connect on another phone goes round it: `ocbmd` writes
+//! [`CONNECT_NEXT_FILE`] and restarts wireless, and the new process queues that phone at start.
 //!
 //! Device *names* are not available here. The phone's name arrives in the iAP2 Identify, which
 //! `carplayd` sees and this process does not, so `name` is always empty and the app falls back to the
@@ -456,6 +457,36 @@ fn save_policy(p: &Policy) {
     let _ = std::fs::write(&path, &body);
 }
 
+// ---- one-shot connect target ----------------------------------------------------------------
+
+/// The app's Connect on one phone, left by `ocbmd` (`MGMT_CONNECT_DEVICE`) for the btd that the
+/// wireless restart starts next. A restart is the only way to end the other phone's session (see
+/// `disconnect` below), and a `connect` sent to this port would die with the process.
+pub const CONNECT_NEXT_FILE: &str = "/tmp/bt_connect_next";
+
+/// Older than this, the file is from an earlier tap that never reached a btd start, not this one.
+const CONNECT_NEXT_MAX_AGE: Duration = Duration::from_secs(60);
+
+/// Take the one-shot target, deleting the file either way.
+pub fn take_connect_next() -> Option<[u8; 6]> {
+    let body = std::fs::read_to_string(CONNECT_NEXT_FILE).ok()?;
+    // A modified time in the future (the clock set back since) reads as fresh.
+    let age = std::fs::metadata(CONNECT_NEXT_FILE)
+        .and_then(|m| m.modified())
+        .map(|t| t.elapsed().unwrap_or(Duration::ZERO))
+        .unwrap_or(Duration::ZERO);
+    let _ = std::fs::remove_file(CONNECT_NEXT_FILE);
+    connect_next_from(&body, age)
+}
+
+fn connect_next_from(body: &str, age: Duration) -> Option<[u8; 6]> {
+    if age > CONNECT_NEXT_MAX_AGE {
+        log(&format!("ignoring a connect request {} s old", age.as_secs()));
+        return None;
+    }
+    parse_addr(body.trim())
+}
+
 // ---- request handling -----------------------------------------------------------------------
 
 /// Build a response for one request line. Pure, so it is fully testable without a socket.
@@ -846,6 +877,14 @@ mod tests {
         }
         assert!(!flag.load(Ordering::Acquire), "claim not released");
         assert_eq!(c.session_peer(), None, "peer not cleared — the screen would name a dead session");
+    }
+
+    #[test]
+    fn a_connect_target_is_taken_only_while_fresh() {
+        let fresh = connect_next_from("66:55:44:33:22:11\n", Duration::from_secs(6));
+        assert_eq!(fresh, Some([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]));
+        assert_eq!(connect_next_from("66:55:44:33:22:11", Duration::from_secs(61)), None);
+        assert_eq!(connect_next_from("junk", Duration::ZERO), None);
     }
 
     #[test]

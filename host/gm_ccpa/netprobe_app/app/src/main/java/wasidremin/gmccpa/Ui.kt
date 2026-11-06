@@ -194,6 +194,10 @@ class LauncherUi(private val act: Activity) {
     var onPhonesWanted: () -> Unit = {}
     /** Forget one phone, already confirmed. */
     var onForgetOnePhone: (PhoneBook.Phone) -> Unit = {}
+    /** Move CarPlay to one phone, already confirmed. */
+    var onConnectPhone: (PhoneBook.Phone) -> Unit = {}
+    /** The new connect order, every bonded address, first to connect first. */
+    var onPhoneOrder: (List<String>) -> Unit = {}
     /** Advanced-page USB announce segment. Index 0 Off, 1 Image, 2 No medium. */
     var onUsbAnnounce: (Int) -> Unit = {}
     var onUsbAnnounceRetries: (Int) -> Unit = {}
@@ -627,41 +631,94 @@ class LauncherUi(private val act: Activity) {
         phonesCard = EqCard(act)
         page.addView(phonesCard)
         // The pages are rebuilt when the settings width settles; keep what was last shown.
-        fillPhones(shownPhones, shownPhonesNote)
+        fillPhones(shownPhones, shownPhonesNote, shownCanChoose)
     }
 
     private var shownPhones: List<PhoneBook.Phone>? = null
     private var shownPhonesNote: String? = "Adapter not connected. Paired iPhones show here once it is."
+    private var shownCanChoose = false
 
     /**
-     * The adapter's paired iPhones. Null [phones] shows [note] in place of the list (adapter not
-     * connected, or it did not answer).
+     * The adapter's paired iPhones, in the order it connects them. Null [phones] shows [note] in
+     * place of the list (adapter not connected, or it did not answer). [canChoose] is false on
+     * adapter firmware without Connect and the connect order.
      */
-    fun setPhones(phones: List<PhoneBook.Phone>?, note: String? = null) = act.runOnUiThread {
-        uiLog.i("phones: ${phones?.let { l -> "${l.size} paired, connected=${l.count { it.connected }}" } ?: note}")
+    fun setPhones(phones: List<PhoneBook.Phone>?, note: String? = null, canChoose: Boolean = false) = act.runOnUiThread {
+        uiLog.i("phones: ${phones?.let { l -> "${l.size} paired, connected=${l.count { it.connected }}, choose=$canChoose" } ?: note}")
         shownPhones = phones
         shownPhonesNote = note
+        shownCanChoose = canChoose
         if (act.isFinishing || !::phonesCard.isInitialized) return@runOnUiThread
-        fillPhones(phones, note)
+        fillPhones(phones, note, canChoose)
     }
 
-    private fun fillPhones(phones: List<PhoneBook.Phone>?, note: String?) {
+    private fun fillPhones(phones: List<PhoneBook.Phone>?, note: String?, canChoose: Boolean) {
         phonesCard.removeAllViews()
         if (phones == null) {
             phonesCard.addRow(EqRow(act, "Paired iPhones", note))
             return
         }
-        for (p in phones) {
-            val status = listOfNotNull(if (p.connected) "Connected" else "Paired", p.model).joinToString(" · ")
+        val ordered = canChoose && phones.size > 1
+        val macs = phones.map { it.mac }
+        for ((i, p) in phones.withIndex()) {
+            val status = listOfNotNull(
+                if (p.connected) "Connected" else "Paired",
+                p.model,
+                if (ordered && i == 0) "connects first" else null,
+            ).joinToString(" · ")
+            val buttons = LinearLayout(act).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            fun add(v: View) = buttons.addView(v, LinearLayout.LayoutParams(-2, -2).apply {
+                if (buttons.childCount > 0) marginStart = EqTheme.px(16f)
+            })
+            // Every row has the same slots, and an unused one is invisible rather than gone, so the
+            // buttons line up down the list.
+            if (ordered) {
+                add(arrowButton("↑", "Connect ${p.label} earlier", i > 0) { onPhoneOrder(PhoneBook.moved(macs, p.mac, -1)) })
+                add(arrowButton("↓", "Connect ${p.label} later", i < phones.lastIndex) { onPhoneOrder(PhoneBook.moved(macs, p.mac, 1)) })
+            }
+            if (canChoose) {
+                add(eqButton(act, "Connect", EqButtonStyle.SECONDARY) { confirmConnect(p, phones.firstOrNull { it.connected }) }
+                    .apply { visibility = if (p.connected) View.INVISIBLE else View.VISIBLE })
+            }
+            add(eqButton(act, "Forget", EqButtonStyle.DANGER) { confirmForgetOne(p) })
+            phonesCard.addRow(EqRow(act, p.label, status, trailing = buttons))
+        }
+        if (phones.size > 1 && !canChoose) {
             phonesCard.addRow(EqRow(
-                act, p.label, status,
-                trailing = eqButton(act, "Forget", EqButtonStyle.DANGER) { confirmForgetOne(p) },
+                act, "Which iPhone connects",
+                "The adapter takes whichever phone reaches it first. Choosing needs adapter firmware " +
+                    "from 2026-11-05 or later.",
             ))
         }
         phonesCard.addRow(EqRow(
             act, if (phones.isEmpty()) "No iPhones paired" else "Add an iPhone",
             "On the iPhone: Settings ▸ General ▸ CarPlay ▸ Available Cars, then pick this car.",
         ))
+    }
+
+    private fun arrowButton(label: String, description: String, enabled: Boolean, onClick: () -> Unit) =
+        eqButton(act, label, EqButtonStyle.SECONDARY, onClick).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(28f))
+            minWidth = EqTheme.px(88f)
+            setPadding(EqTheme.px(20f), 0, EqTheme.px(20f), 0)
+            contentDescription = description
+            visibility = if (enabled) View.VISIBLE else View.INVISIBLE
+        }
+
+    private fun confirmConnect(p: PhoneBook.Phone, live: PhoneBook.Phone?) {
+        val ends = live?.let { "CarPlay on ${it.label} ends now. " } ?: ""
+        val fallback = live?.let { "If ${p.label} is out of range or its Bluetooth is off, ${it.label} reconnects instead." }
+            ?: "If ${p.label} is out of range or its Bluetooth is off, the adapter goes back to its usual order."
+        EqDialog.confirm(
+            act, "Connect ${p.label}",
+            ends + "The adapter restarts Bluetooth and Wi-Fi and calls ${p.label} first. CarPlay should " +
+                "be back in about 20 seconds.\n\n$fallback\n\nThis is for now. The order in the list " +
+                "decides which iPhone connects on the next drive.",
+            "Connect", false,
+        ) { onConnectPhone(p) }
     }
 
     private fun confirmForgetOne(p: PhoneBook.Phone) {

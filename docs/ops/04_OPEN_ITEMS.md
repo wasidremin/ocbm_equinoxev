@@ -134,6 +134,11 @@ high-water mark: versionCode 231 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   unless something was sent to the phone. Why the card's side edge failed is still open; the next
   misread logs it. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag, which needs a
   reflash. Owner: `08_FUTURE_TASKS.md` T13.
+- **Which iPhone connects (T12): built 2026-11-05, not on the car.** Settings ▸ Phones gets ↑/↓
+  for the connect order and Connect to move CarPlay to another paired phone (a wireless restart with
+  that phone first). Both need adapter firmware with `MGMT_SET_ORDER`/`MGMT_CONNECT_DEVICE`
+  (`tools/ocbm_install.sh --full`); until then the app shows a note instead. Untested with two
+  phones. Owner: `08_FUTURE_TASKS.md` T12.
 - **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The
   iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
   Maps it took two toggles and about 3 s, which the owner flagged. 229 (2026-11-04) ends each

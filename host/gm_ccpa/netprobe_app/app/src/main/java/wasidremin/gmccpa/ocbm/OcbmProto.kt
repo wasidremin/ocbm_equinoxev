@@ -304,6 +304,10 @@ object Ocbm {
     const val MGMT_FORGET_DEVICE: Byte = 0x04
     const val MGMT_RESTART_WIRELESS: Byte = 0x05
     const val MGMT_ENTER_NCM: Byte = 0x06
+    /** `[mac]`: CarPlay moves to that bonded phone; the box restarts wireless with it first. */
+    const val MGMT_CONNECT_DEVICE: Byte = 0x07
+    /** `[mac,mac,…]`: which phone the box tries first, kept on its flash. */
+    const val MGMT_SET_ORDER: Byte = 0x08
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

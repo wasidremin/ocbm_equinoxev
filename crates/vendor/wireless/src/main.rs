@@ -334,6 +334,12 @@ fn main() {
     let session_active = Arc::new(AtomicBool::new(false));
     let ctrl = Arc::new(control::Control::new(session_active.clone()));
     control::serve(ctrl.clone());
+    // The app's Connect on one phone restarted us (ocbmd, MGMT_CONNECT_DEVICE): that phone is the
+    // reconnect loop's first and only target, then the policy order as usual if it is not in range.
+    if let Some(a) = control::take_connect_next() {
+        log(&format!("the app asked for {} — trying it first", control::fmt_addr(&a)));
+        ctrl.request_connect(Some(a));
+    }
 
     while !shutdown.load(Ordering::Relaxed) {
         match arbiter_client::try_claim(ARBITER_SOCK) {
