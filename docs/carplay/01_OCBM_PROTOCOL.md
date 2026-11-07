@@ -299,6 +299,8 @@ endpoint, stand its A/V consumers up, show progress UI) had nothing to trigger o
 | `0x04` | `BTP_IDENTIFYING` | `0x1D01` IdentificationInformation sent |
 | `0x05` | `BTP_IDENTIFIED` | `0x1D02` accepted — the phone has the accessory |
 | `0x06` | `BTP_WIFI_HANDOFF` | `0x5703` sent: the phone now has the hotspot credentials |
+| `0x07` | `BTP_PAIR_REJECTED` | a phone rejected 3 pairing confirmations without a new link key: the stored key no longer matches |
+| `0x08` | `BTP_BOND_LOST` | a bonded phone most likely forgot the pairing (2026-11-07): it refused the stored link key (`AUTH_FAILED` 0x05/0x06), or answered and reset the link on 3 reconnect pages in a row. Not progress: a host should ask the driver to forget the adapter on the iPhone and pair again |
 
 **Transport.** `wireless::bt_driver::publish_bt_phase` writes the value to `/tmp/bt_phase`; `ocbmd`'s
 `bt_phase_tick` mirrors it to the host on change. This is deliberately the **same mechanism as

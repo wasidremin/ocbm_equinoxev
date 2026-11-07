@@ -24,6 +24,50 @@ sleeps five seconds before its first attempt; later backoff is unchanged.
 `caps()` reuses a nonempty `/tmp/radio_caps` instead of detecting on every verb;
 `RADIO_REDETECT=1` forces fresh detection after a failed mapping/convergence.
 
+**Startup stalls found in the car's own logs and fixed by enigy/ocbm's CCPA measurements (2026-11-07).**
+enigy/ocbm (lvalen91's fork, adapter firmware 1.0.1 to 1.0.4) measured four costs on an IW416 CCPA with
+the same 3.14.52 kernel as this unit. This car's logs showed the first, and the 10:16 start the second.
+
+- **`hciconfig piscan` loses its wake-up.** HCISETSCAN waits in `__hci_req_sync` with the 10 s
+  `HCI_INIT_TIMEOUT`, and that function starts the request before it joins the wait queue, so a
+  controller that answers inside the window never wakes the caller. It sleeps 10 s and returns success.
+  Car logs 2026-09-21 to 2026-11-07, de-duplicated: `hciconfig ["hci0", "piscan"]` took about 10.0 s in 22
+  of 177 bring-ups (class, name, EIR and sspmode never exceeded 70 ms). btd's CCPA path now writes a
+  raw Write_Scan_Enable (`bt_common::hci::write_scan_enable`) for `piscan` in `bring_up` and `noscan` in
+  `go_quiet`, and `radio_hal.sh` does the same with `hcitool cmd 0x03 0x001a` in `bt_off` and the
+  prewarm. The Command Complete handler still sets `HCI_PSCAN`/`HCI_ISCAN`, so `hciconfig` reads
+  `PSCAN ISCAN` and mgmt's `SET_CONNECTABLE`/`SET_DISCOVERABLE` still succeed afterwards. This is for the
+  3.14 kernel only: `hci::set_scan` keeps the ioctl for the native backend, whose modern kernels need it.
+- **`hciconfig down`/`up` can stall the same way** (enigy saw it once, 10.3 s). They cannot go raw (the
+  DOWN→UP cycle exists for what `hci_dev_do_open` does), so btd's `run_rt` and `radio_hal.sh`'s `hci_rt`
+  run them under `chrt -f 1` where BusyBox `chrt` exists. The box has one core and the HCI workqueue
+  cannot preempt a real-time caller, so the caller is on the wait queue before the command leaves.
+- **A powered-down adapter waited 8 s before it was powered up.** `do_bt_on` ran
+  `bt_responsive_confirmed` (5 name reads, 2 s apart) first; on a DOWN adapter every read fails at once
+  with ENETDOWN. It now checks the kernel's UP flag (`bt_powered_up`, which never reaches the chip) first.
+- **A phone that was never told the link ended.** `down` resets the controller; it is not a disconnect.
+  `do_bt_off` now sends an HCI Disconnect for every ACL (`hcitool dc`) before powering down, so the
+  phone does not learn of it only from its supervision timeout.
+- **The AP lease file is kept.** `radio_ap_up.sh` and `start_bluetooth_wifi.sh` deleted
+  `/var/lib/udhcpd.leases` at every AP start. An iPhone rejoining a network it knows asks for its old
+  address (INIT-REBOOT); udhcpd stays silent on a client it has no lease for, so the phone waited, was
+  handed another address, and sockets on the old one died. This udhcpd saves the file at every ACK, so
+  kept, it holds each phone's address across AP restarts and power cuts.
+- **The app-gone teardown killed itself.** `wireless_down` runs its kill list as `setsid sh -c '<text>'`,
+  so a comment inside that text is part of the subshell's argv. The `[b]tmon` pkill line carried a
+  comment with the plain word, so the pkill matched the teardown subshell and SIGTERMed it right after
+  btd and carplayd: `wifi_ap_off` and `bt_off` never ran. Bench on this unit, 2026-11-07, after the host
+  left: `hostapd` and `udhcpd` still up, `hci0` UP, no `/tmp/wlan_off.log` or `/tmp/bt_off.log`.
+  enigy/ocbm found it on 2026-10-20 (a902008); both blocks now word the comment without the pattern
+  word, and a note above them says comments are argv too. After the fix, the same bench: processes gone,
+  `hci0` DOWN, both logs written, `BT disconnected <phone> before power-down`. Never write a pattern's
+  plain word anywhere inside such a block.
+- **Bench result, 2026-11-07, adapter on the server (EST, a bonded iPhone in range):** btd bring-up
+  `down` 202 ms, `up` 312 ms, scan enable 0 ms; bonded phone paged, connected 3.7 s after bring-up and
+  reached CarPlay (RECORD) both runs; `radio_hal.sh bt_on` from DOWN 0.48 s; `bt_off` 0.30 s;
+  `/var/lib/udhcpd.leases` written at the phone's ACK and present after teardown.
+- **Reconnect retries** are in "Accessory-initiated BT reconnect" below.
+
 On host_present the BT convergence/advertiser path no longer waits for SoftAP:
 AP bring-up is launched in parallel, and a failed BT return prevents advertiser launch.
 “BT-first” describes the session critical path, not literal serialization of the two
@@ -646,6 +690,28 @@ Design notes carried over: retry with bounded backoff (10→60 s), spawn only wh
 accept-path as the fallback, and remember the "our own outbound connect fires `DEVICE_CONNECTED` for the
 peer bdaddr" gotcha — the real connect-success signal is the **RFCOMM accept / iAP2 progress**, not the
 mgmt `DEVICE_CONNECTED`.
+
+### Retries after a page that was answered and reset (2026-11-07)
+
+`reconnect.rs` used to sleep `BACKOFF_START_SECS` (10 s) after any failed round. Two cases cost that
+10 s for nothing, both seen in this car (2026-11-07 10:16: the box's SDP query was answered and reset,
+`SDP query failed: Connection reset by peer`, and the next page would have connected) and measured on
+enigy/ocbm's bench (3 of 8 reconnects after a power cut):
+
+- `FIRST_RETRY_SECS` (2 s): one quick retry after a first round that failed outright, once per daemon
+  start. Every later round keeps the 10 s floor and the doubling.
+- `RESET_RETRY_SECS` (2 s): a phone that answers the page and then resets the link
+  (`ConnectionReset` from the SDP query or the RFCOMM connect, `Attempt::Reset`) is paged once more
+  before the walk goes on to the next bonded phone (`walk`). A Connect request or a live session during
+  the pause ends the walk.
+
+`ResetStreak` counts each phone's answered-and-reset pages across rounds. Three in a row, with no
+session or failure of its own between them, means the iPhone most likely forgot the pairing: btd
+publishes `BTP_BOND_LOST` once per streak (`docs/carplay/01_OCBM_PROTOCOL.md`). A new bond (the
+link-key store was rewritten) starts the count over and holds the news back 10 minutes, since an
+iPhone also refuses iAP2 until the driver accepts CarPlay after a re-pair. The other source is
+`AUTH_FAILED` with status 0x05 or 0x06 in `ssp_agent`, the definite sign (`on_bond_lost`). The GM app
+shows it on the Board and the status line and keeps it out of the session summary's progress.
 
 ### Status of the code
 The Model-A `l2cap_connect` + reconnect scaffolding was **not committed** and is being reverted from the

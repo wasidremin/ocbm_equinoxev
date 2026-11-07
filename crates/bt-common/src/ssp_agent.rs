@@ -65,6 +65,12 @@ const EV_DEVICE_DISCONNECTED: u16 = 0x000C;
 const EV_CONNECT_FAILED: u16 = 0x000D;
 const EV_AUTH_FAILED: u16 = 0x0011;
 
+/// An `AUTH_FAILED` status that means the phone no longer accepts the stored link key: 0x05 Authentication
+/// Failed or 0x06 Not Paired (mgmt-api status codes).
+fn auth_failure_means_bond_lost(status: Option<u8>) -> bool {
+    matches!(status, Some(0x05 | 0x06))
+}
+
 /// Human-readable name for a mgmt event code (BlueZ mgmt-api.txt), for the diagnostic fallback below.
 fn mgmt_event_name(ev: u16) -> &'static str {
     match ev {
@@ -158,7 +164,9 @@ pub fn state_dir() -> &'static str {
     })
 }
 
-fn link_key_store() -> &'static str {
+/// The link-key store (`bt_link_keys`): rewritten on every new bond. `pub` for btd's reconnect walk,
+/// which holds back BTP_BOND_LOST while a bond is new.
+pub fn link_key_store() -> &'static str {
     static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     P.get_or_init(|| format!("{}/bt_link_keys", state_dir()))
 }
@@ -681,6 +689,11 @@ fn refuse_pairing(bdaddr: &[u8; 6]) {
 /// callback hook rather than a hardcoded publish call; the wireless daemon wires it to
 /// `BTP_PAIR_REJECTED`. `None` (e.g. in tests) just means the warning is log-only.
 ///
+/// `on_bond_lost` is called when the controller reports `AUTH_FAILED` with status 0x05 (Authentication Failed)
+/// or 0x06 (Not Paired): the phone no longer accepts the stored link key, the definite sign of a pairing it has
+/// forgotten (the wireless daemon wires it to `BTP_BOND_LOST`; the reconnect walk's answered-and-reset streak is
+/// the other, weaker one). `None` keeps it log-only.
+///
 /// `pair_answer` is the head unit's yes/no for Numeric Comparison (see [`PairAnswer`]). With it,
 /// numeric mode WAITS for a real answer instead of auto-accepting. `None` — or the
 /// `BT_SSP_INTERACTIVE=1` lever — wait for the head unit's yes/no instead of confirming at once.
@@ -688,6 +701,7 @@ pub fn run(
     controller_index: u16,
     shutdown: &AtomicBool,
     on_pair_rejected: Option<&dyn Fn()>,
+    on_bond_lost: Option<&dyn Fn()>,
     pair_answer: Option<&PairAnswer>,
 ) -> std::io::Result<()> {
     let mut sock = open_mgmt_socket()?;
@@ -1060,13 +1074,20 @@ pub fn run(
                 params.get(7).map_or("?".to_string(), |s| format!("0x{s:02x}"))
             )),
             // mgmt ev_auth_failed params = `[bdaddr 6][addr_type 1][status 1]` — status at offset 7.
-            EV_AUTH_FAILED => log(&format!(
-                "AUTH_FAILED ..{} status={} — a stale/mismatched link key is the usual cause; \
-                 check {} and the iPhone's Settings > General > CarPlay list",
-                addr(params).map_or("????".into(), |(b, _)| fmt_bdaddr_tail(&b)),
-                params.get(7).map_or("?".to_string(), |s| format!("0x{s:02x}")),
-                link_key_store()
-            )),
+            EV_AUTH_FAILED => {
+                log(&format!(
+                    "AUTH_FAILED ..{} status={} — a stale/mismatched link key is the usual cause; \
+                     check {} and the iPhone's Settings > General > CarPlay list",
+                    addr(params).map_or("????".into(), |(b, _)| fmt_bdaddr_tail(&b)),
+                    params.get(7).map_or("?".to_string(), |s| format!("0x{s:02x}")),
+                    link_key_store()
+                ));
+                if auth_failure_means_bond_lost(params.get(7).copied()) {
+                    if let Some(hook) = on_bond_lost {
+                        hook();
+                    }
+                }
+            }
 
             // QC 2026-07-25: the old `_ => {}` silently dropped EVERY unrecognized mgmt event with zero
             // logging, which is the sole reason the 2026-07-24 "Pairing Unsuccessful" failure was
@@ -1083,6 +1104,15 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The definite sign of a forgotten pairing: the phone refuses the stored key (enigy/ocbm bench, 5 Nov).
+    #[test]
+    fn only_a_refused_link_key_means_the_bond_is_lost() {
+        assert!(auth_failure_means_bond_lost(Some(0x05)), "Authentication Failed");
+        assert!(auth_failure_means_bond_lost(Some(0x06)), "Not Paired");
+        assert!(!auth_failure_means_bond_lost(Some(0x08)), "a timeout is not");
+        assert!(!auth_failure_means_bond_lost(None));
+    }
 
     #[test]
     fn build_cmd_matches_mgmt_header_layout() {

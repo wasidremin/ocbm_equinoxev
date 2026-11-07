@@ -181,7 +181,15 @@ base=${WLANIP%.*}
 sed -i "s/192\.168\.[0-9]*\.100/${base}.100/; s/192\.168\.[0-9]*\.200/${base}.200/" /etc/udhcpd.conf 2>/dev/null
 # Point udhcpd at the interface we are actually serving.
 grep -q '^interface' /etc/udhcpd.conf 2>/dev/null && sed -i "s/^interface.*/interface	$IF/" /etc/udhcpd.conf
-rm -f /var/lib/udhcpd.leases
+# THE LEASE FILE IS KEPT (enigy/ocbm bench, 2026-11-02). It used to be deleted here, as the vendor
+# script does, so after every AP restart udhcpd had no record of a phone. An iPhone rejoining a
+# network it knows keeps using its old address and asks for it again (INIT-REBOOT); udhcpd stays
+# silent on such a request from a client it has no lease for (upstream udhcp: "else remain silent"),
+# so the phone carried on at its old address, gave up asking, was handed a different one, and its
+# CarPlay sockets on the old address died. This udhcpd saves the file at every ACK ("save dhcp lease
+# file" in radio_ap_dhcp.log), on the jffs2 root, so kept it holds each phone's lease through AP
+# restarts and power cuts alike: a phone keeps its address from one drive to the next, and its
+# request is ACKed (one for another address is NAKed).
 
 echo 1 > "/proc/sys/net/ipv6/conf/$IF/disable_ipv6" 2>/dev/null
 ifconfig "$IF" "$WLANIP" netmask 255.255.255.0 mtu 1500 up || {

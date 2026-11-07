@@ -127,6 +127,7 @@ object Ocbm {
     const val BTP_IDENTIFIED: Byte = 0x05
     const val BTP_WIFI_HANDOFF: Byte = 0x06
     const val BTP_PAIR_REJECTED: Byte = 0x07
+    const val BTP_BOND_LOST: Byte = 0x08
 
     fun btpName(b: Byte): String =
         when (b) {
@@ -138,6 +139,7 @@ object Ocbm {
             BTP_IDENTIFIED -> "IDENTIFIED"
             BTP_WIFI_HANDOFF -> "WIFI_HANDOFF"
             BTP_PAIR_REJECTED -> "PAIR_REJECTED"
+            BTP_BOND_LOST -> "BOND_LOST"
             else -> "BTP_0x%02x".format(b)
         }
 

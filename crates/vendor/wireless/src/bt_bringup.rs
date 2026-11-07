@@ -80,11 +80,35 @@ fn eir_hex(name: &str) -> String {
 }
 
 fn run(args: &[&str]) -> std::io::Result<()> {
+    run_with(Command::new("hciconfig"), args)
+}
+
+/// BusyBox `chrt`, present on the CCPA rootfs.
+const CHRT: &str = "/usr/bin/chrt";
+
+/// `hciconfig down` / `up` at SCHED_FIFO 1 where `chrt` exists, plain `hciconfig` otherwise.
+///
+/// Both are ioctls that wait in the kernel's `__hci_req_sync`, the path that loses its wake-up on
+/// the CCPA's 3.14 kernel when the controller answers before the caller is on the wait queue (the
+/// 10 s piscan stall, `hci::write_scan_enable`; enigy/ocbm saw it once on `up` as well). Unlike
+/// scan enable these cannot go raw: the DOWN->UP cycle exists for what `hci_dev_do_open` does. But
+/// the box has ONE core, and the command is only sent by the HCI workqueue, which cannot preempt a
+/// real-time caller, so the caller is always on the wait queue before the command leaves.
+fn run_rt(args: &[&str]) -> std::io::Result<()> {
+    if !std::path::Path::new(CHRT).exists() {
+        return run(args);
+    }
+    let mut cmd = Command::new(CHRT);
+    cmd.args(["-f", "1", "hciconfig"]);
+    run_with(cmd, args)
+}
+
+fn run_with(mut cmd: Command, args: &[&str]) -> std::io::Result<()> {
     // Captured (not inherited) so a failure's stderr lands in the SAME log line as the argv and exit
     // status -- `hciconfig`'s own stderr is a few words with no context, and split across a raw
     // process's inherited stdio it is unattributable once other daemons are logging concurrently.
     let t0 = std::time::Instant::now();
-    let out = Command::new("hciconfig").args(args).output()?;
+    let out = cmd.args(args).output()?;
     // Per-step timing (2026-10-02): the 11:01 cold start spent 10.5 s between "BT already
     // converged" and "HCI bring-up OK" vs 1 s at 15:41 — this decomposes that gap.
     eprintln!("[btd] hciconfig {args:?} took {}ms", t0.elapsed().as_millis());
@@ -232,8 +256,8 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
     }
     eprintln!("[btd] prewarm proof consumed={prewarmed} dev={hci_dev}");
     if !prewarmed {
-        let _ = run(&[hci_dev, "down"]);
-        run(&[hci_dev, "up"])?;
+        let _ = run_rt(&[hci_dev, "down"]);
+        run_rt(&[hci_dev, "up"])?;
     }
     // Force Simple Pairing mode ON at the HCI level (HCI Write_Simple_Pairing_Mode). The NXP IW416
     // firmware defaults SSP OFF and the mgmt SET_SSP path can be rejected silently, leaving "Simple
@@ -244,9 +268,11 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
     run(&[hci_dev, "class", &format!("0x{CLASS_OF_DEVICE:06x}")])?;
     run(&[hci_dev, "name", name])?;
     run(&[hci_dev, "inqdata", &eir_hex(name)])?;
-    if !prewarmed {
-    }
-    run(&[hci_dev, "piscan"])?;
+    // NOT `hciconfig piscan`: its HCISETSCAN ioctl loses its wake-up on this 3.14 kernel and sleeps
+    // the full 10 s request timeout (22 of 177 bring-ups in this car's logs, `hci::write_scan_enable`).
+    let t0 = std::time::Instant::now();
+    crate::hci::write_scan_enable(crate::hci::dev_id(hci_dev)?, crate::hci::SCAN_PAGE_AND_INQUIRY)?;
+    eprintln!("[btd] hciconfig [{hci_dev:?}, \"piscan\"] took {}ms (raw Write_Scan_Enable)", t0.elapsed().as_millis());
     eprintln!("[btd] HCI bring-up OK dev={hci_dev} name={name}");
     Ok(())
 }
@@ -258,7 +284,8 @@ pub fn go_quiet(hci_dev: &str) -> std::io::Result<()> {
         let dev = crate::hci::dev_id(hci_dev)?;
         return crate::hci::set_scan(dev, crate::hci::SCAN_NONE);
     }
-    run(&[hci_dev, "noscan"])
+    // Raw, not `hciconfig noscan`, for the same lost-wake-up reason as bring_up's scan enable.
+    crate::hci::write_scan_enable(crate::hci::dev_id(hci_dev)?, crate::hci::SCAN_NONE)
 }
 
 /// Drop the boot-prewarm proof because it no longer describes this controller.

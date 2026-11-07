@@ -196,6 +196,19 @@ hci_dev() {
 bt_responsive() {  # $1 = hci dev
   timeout 5 hciconfig "$1" name 2>/dev/null | grep -q "Name:"
 }
+# Kernel flags only (HCIGETDEVINFO, what `hciconfig <dev>` prints): never reaches the chip, so it
+# answers instantly even against a wedged controller. Says nothing about responsiveness - that is
+# still bt_responsive's job - only whether a name read can possibly succeed.
+bt_powered_up() {  # $1 = hci dev
+  timeout 5 hciconfig "$1" 2>/dev/null | grep -q "UP RUNNING"
+}
+# `hciconfig <dev> up|down` at SCHED_FIFO 1 where chrt exists. Both wait in the kernel's
+# __hci_req_sync, which on the CCPA's single-core 3.14 kernel can lose its wake-up and sleep the
+# full 10 s timeout; a real-time caller is always waiting before the HCI workqueue can even send
+# the command (btd's bt_bringup::run_rt has the details; enigy/ocbm measured it).
+hci_rt() {
+  if command -v chrt >/dev/null 2>&1; then chrt -f 1 hciconfig "$@"; else hciconfig "$@"; fi
+}
 
 # Confirmed variant - used for DECISIONS, never inside a poll loop.
 #
@@ -512,7 +525,11 @@ do_bt_on() {
   caps || { publish "$BT_STATE" "result=unsupported" "detail=no-descriptor"; return 3; }
 
   _d=$(hci_dev 2>/dev/null) || _d=""
-  if [ -n "$_d" ] && bt_responsive_confirmed "$_d"; then
+  # Only a POWERED-UP adapter can pass the confirmation: on a DOWN one every name read fails
+  # instantly with ENETDOWN, so the confirmation's 5 tries x 2 s sleeps were 8 s of pure waiting
+  # before the power-up branch below, paid on every session that starts from the supervisor's
+  # between-sessions state (enigy/ocbm measured bt_on at 9.5 s from DOWN vs 0.4 s for the power-up).
+  if [ -n "$_d" ] && bt_powered_up "$_d" && bt_responsive_confirmed "$_d"; then
     log "BT already converged — skipping preload"
     publish "$BT_STATE" "result=ok" "backend=$RADIO_BACKEND" "hci_dev=$_d" \
             "bt_mac=$(cat /sys/class/bluetooth/$_d/address 2>/dev/null)"
@@ -528,8 +545,12 @@ do_bt_on() {
   # when a single `hciconfig up` was the entire fix. Today's testing was all cold bring-up, which
   # never exercises this path.
   if [ -n "$_d" ]; then
-    log "$_d present but not answering - trying to power it up before assuming it is wedged"
-    hciconfig "$_d" up 2>/dev/null
+    if bt_powered_up "$_d"; then
+      log "$_d present but not answering - trying to power it up before assuming it is wedged"
+    else
+      log "$_d powered down (between-sessions state) - powering it up"
+    fi
+    hci_rt "$_d" up 2>/dev/null
     if bt_responsive_confirmed "$_d"; then
       log "$_d was only powered down - up and responsive, no reset needed"
       publish "$BT_STATE" "result=ok" "backend=$RADIO_BACKEND" "hci_dev=$_d" \
@@ -765,10 +786,10 @@ do_bt_prewarm() {
   _warm_dev=$(hci_dev 2>/dev/null) || return 1
   # Initialize the kernel event mask here, not on the subscribe critical path.
   # No stock advertising daemons were started by the mapped attach path.
-  hciconfig "$_warm_dev" noscan 2>/dev/null || return 1
-  hciconfig "$_warm_dev" down 2>/dev/null || return 1
-  hciconfig "$_warm_dev" up 2>/dev/null || return 1
-  hciconfig "$_warm_dev" noscan 2>/dev/null || return 1
+  timeout 5 hcitool -i "$_warm_dev" cmd 0x03 0x001a 0x00 >/dev/null 2>&1 || return 1
+  hci_rt "$_warm_dev" down 2>/dev/null || return 1
+  hci_rt "$_warm_dev" up 2>/dev/null || return 1
+  timeout 5 hcitool -i "$_warm_dev" cmd 0x03 0x001a 0x00 >/dev/null 2>&1 || return 1
   apply_sco "$_warm_dev" >/dev/null 2>&1 || true
   bt_responsive_confirmed "$_warm_dev" || return 1
   echo "$_warm_dev" > /tmp/.radio_bt_prewarmed
@@ -783,8 +804,18 @@ do_bt_off() {
   # attach helper - re-attach is the wedge-prone half, which is why the supervisor stops at
   # `hciconfig down` rather than calling bt_off.sh.
   _d=$(hci_dev 2>/dev/null) || { rm -f "$BT_STATE"; return 0; }
-  hciconfig "$_d" noscan 2>/dev/null
-  hciconfig "$_d" down   2>/dev/null
+  # Raw Write_Scan_Enable(0x00), not `hciconfig noscan`: that ioctl can sleep its full 10 s
+  # timeout on the CCPA's 3.14 kernel (lost wake-up, btd's hci::write_scan_enable), and this
+  # runs under the bt lock, so the next session's bt_on would wait behind it.
+  timeout 5 hcitool -i "$_d" cmd 0x03 0x001a 0x00 >/dev/null 2>&1
+  # End every ACL with a real HCI Disconnect before powering down. `down` resets the controller,
+  # and a reset is not a disconnect: the phone is not told the link ended and may only learn it
+  # from its supervision timeout. enigy/ocbm saw the next session's first page fail in 3 of 8
+  # reconnects once the teardown really reached this point, each costing the reconnect loop's backoff.
+  for _a in $(timeout 3 hcitool -i "$_d" con 2>/dev/null | awk '/ACL/ {print $3}'); do
+    timeout 3 hcitool -i "$_d" dc "$_a" 2>/dev/null && log "BT disconnected $_a before power-down"
+  done
+  hci_rt "$_d" down 2>/dev/null
   rm -f "$BT_STATE"
   log "BT $_d powered down (attach left in place)"
   return 0

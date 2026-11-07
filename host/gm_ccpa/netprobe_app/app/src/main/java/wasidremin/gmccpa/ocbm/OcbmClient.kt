@@ -485,7 +485,7 @@ class OcbmClient(
     }
 
     /**
-     * The pairing state, readable at any offset. `PAIR_REJECTED` is a FAILED entry; anything else is
+     * The pairing state, readable at any offset. `PAIR_REJECTED` and `BOND_LOST` are FAILED entries; anything else is
      * UP with the phase name. A phase moving BACKWARDS while the box reports no projection session
      * (`CT_PROJ_MODE` NONE) is logged at WARN: the BT/iAP2 handshake reset before a session formed,
      * which used to be silent — the phase lines all read as progress in isolation. Once a projection
@@ -500,10 +500,15 @@ class OcbmClient(
             boardFailed(OcbmBoard.BT_PHASE, "PAIR_REJECTED — the pairing was refused; the bond may need forgetting on the box (MGMT_FORGET) AND on the iPhone")
             return
         }
+        if (p == Ocbm.BTP_BOND_LOST) {
+            boardFailed(OcbmBoard.BT_PHASE, "BOND_LOST — an iPhone most likely forgot this adapter; on the iPhone forget it under Settings > Bluetooth, then pair it again")
+            if (!replay) log.w("~~ BT BOND_LOST — the iPhone refused the stored pairing (or answered and reset the link on 3+ reconnect pages); it needs pairing again")
+            return
+        }
         boardUp(OcbmBoard.BT_PHASE, if (replay) "$name (replayed mirror, not a change)" else name)
         val v = p.toInt() and 0xFF
         val pv = prev.toInt() and 0xFF
-        if (!replay && prev != Ocbm.BTP_PAIR_REJECTED && v < pv && lastProjMode == Ocbm.PM_NONE) {
+        if (!replay && prev != Ocbm.BTP_PAIR_REJECTED && prev != Ocbm.BTP_BOND_LOST && v < pv && lastProjMode == Ocbm.PM_NONE) {
             log.w("~~ BT phase went BACKWARDS ${Ocbm.btpName(prev)} -> $name with no projection session (PROJ_MODE NONE) — " +
                 "the BT/iAP2 handshake reset before a session formed; if PROJ_MODE just went NONE above, this is the tail of a session that ended")
         }

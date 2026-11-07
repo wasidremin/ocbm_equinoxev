@@ -23,7 +23,10 @@ class StartupContract(unittest.TestCase):
         source = (ROOT / "ccpa/rootfs/script/radio_hal.sh").read_text()
         body = source.split("do_bt_prewarm() {", 1)[1].split("do_bt_off()", 1)[0]
         self.assertLess(body.index("/tmp/host_present"), body.index("do_bt_on"))
-        self.assertLess(body.rindex('noscan'), body.index("echo \"$_warm_dev\""))
+        # The prewarm leaves scan disabled: the last scan write is the raw Write_Scan_Enable(0x00)
+        # (not `hciconfig noscan`, whose ioctl can sleep 10 s on the CCPA's 3.14 kernel).
+        self.assertLess(body.rindex('0x001a 0x00'), body.index("echo \"$_warm_dev\""))
+        self.assertNotIn("hciconfig \"$_warm_dev\" noscan", body)
         self.assertIn("bt_responsive_confirmed", body)
 
     def test_first_reconnect_has_no_settle_sleep(self):
@@ -31,14 +34,19 @@ class StartupContract(unittest.TestCase):
         body = source.split("pub fn run(", 1)[1].split("let mut backoff", 1)[0]
         self.assertNotIn("sleep(", body)
         self.assertNotIn("INITIAL_SETTLE", source)
-        self.assertIn("sleep_or_request(backoff, shutdown, ctrl)", source)
+        # The 10 s floor between rounds stays; the one exception is a single 2 s retry after a first
+        # round that failed outright (a phone that answered the page and reset the link).
+        self.assertIn("sleep_or_request(if quick { FIRST_RETRY_SECS } else { backoff }, shutdown, ctrl)", source)
+        self.assertIn("let quick = first_round && !ran && !rejected;", source)
+        self.assertIn("const FIRST_RETRY_SECS: u64 = 2;", source)
 
     def test_idle_watchdog_keeps_five_minute_prehello_threshold(self):
         source = (ROOT / "tools/session_supervisor.sh").read_text()
         body = source.split("ocbmd_wedged() {", 1)[1].split("\n}", 1)[0]
-        self.assertIn("_alive_mmin=4", body)
-        self.assertIn('[ -e /tmp/ocbm_hello_seen ] && _alive_mmin=0', body)
-        self.assertIn("-mmin +$_alive_mmin", body)
+        # Uptime-domain stamp in milliseconds (2026-10-02): 300 s before the first HELLO, 60 s after.
+        self.assertIn("_alive_ms=300000", body)
+        self.assertIn('[ -e /tmp/ocbm_hello_seen ] && _alive_ms=60000', body)
+        self.assertIn('-ge "$_alive_ms"', body)
         self.assertNotIn('[ -e /tmp/ocbm_hello_seen ] || return', body)
         daemon = (ROOT / "ccpa/ocbmd/src/main.rs").read_text()
         hello = daemon.split("if pl.first() == Some(&p::CT_HELLO) {", 1)[1]

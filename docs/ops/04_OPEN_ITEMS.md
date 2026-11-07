@@ -156,9 +156,12 @@ high-water mark: versionCode 233 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   6–9 s of each for the Allow tap. At 10:16 the phone reset the adapter's first Bluetooth connect and
   the box's reconnect loop waited its fixed 10 s (`BACKOFF_START_SECS`) to try again. At 11:19 the
   phone took the Wi-Fi handoff and never joined the AP; the app restarted the session itself after
-  55 s. From 233 (published 2026-11-07) that restart runs 15 s after a silent handoff (`04_SYSTEM_MODEL.md` §4b). Not done: a
-  quicker box retry after a reset (adapter firmware), and why the phone skipped the AP, which only
-  its own log would show. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
+  55 s. From 233 (published 2026-11-07) that restart runs 15 s after a silent handoff (`04_SYSTEM_MODEL.md` §4b).
+  Adapter firmware, 2026-11-07 (on the adapter and bench-tested on the server; not yet driven): a reset page is retried 2 s later instead of 10 s,
+  and `hciconfig piscan`, which took 10.0 s in 22 of 177 bring-ups in the car's logs, is a raw
+  Write_Scan_Enable (`docs/wireless/01_BT_AND_RADIO.md`, ported from enigy/ocbm). Not done: why the
+  phone skipped the AP, which only its own log would show. The AP lease file is now kept across AP
+  restarts, which may matter there. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
 - **Album art late enough to miss the card's wait (2026-11-07 11:22, "Believer").** The phone named
   a cover with an empty image, then sent the real one 0.62 s after the title. The card's 0.5 s wait
   ran out, so the car got two cards without art and then one with it inside 0.13 s. Four of the 140

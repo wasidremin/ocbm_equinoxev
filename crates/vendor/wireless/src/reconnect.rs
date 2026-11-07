@@ -19,7 +19,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::control::Control;
 use crate::{bt_driver, control, sdp_client};
@@ -30,6 +30,19 @@ use crate::{bt_driver, control, sdp_client};
 const CONNECT_TIMEOUT_SECS: i64 = 8;
 const BACKOFF_START_SECS: u64 = 10;
 const BACKOFF_MAX_SECS: u64 = 60;
+/// One short retry when the FIRST round after start-up fails, instead of the full
+/// `BACKOFF_START_SECS`. enigy/ocbm's reset cycle on a CCPA (2026-10-20): in 3 of 8 reconnects the
+/// first page failed ~5 s in (`SDP query failed: Connection reset by peer` twice, `Host is down`
+/// once) and the very next attempt succeeded, but only after the 10 s floor, so each cost ~15 s. This
+/// car shows the same shape (2026-11-07 10:16: the phone reset the SDP query, the box waited 10 s).
+/// Once per daemon start, so it cannot spin: every later round still gets the floor and the doubling.
+const FIRST_RETRY_SECS: u64 = 2;
+/// The pause before the one more try a phone gets when it answers the page and then resets the link
+/// ([`Attempt::Reset`]), before the next phone in the call order is paged. enigy/ocbm's bench (2 Nov):
+/// 32 s after a power cut the first-called iPhone accepted the page and reset it 4 s later, and the
+/// walk went straight on to the second phone, which got CarPlay. [`FIRST_RETRY_SECS`] only helps when
+/// no phone in the round connected.
+const RESET_RETRY_SECS: u64 = 2;
 
 /// `@<unix_ms> ` write-time stamp (docs/carplay/01_OCBM_PROTOCOL.md CH_LOG): the box.log tailer
 /// parses this prefix and uses it instead of the millisecond it happened to READ the line at.
@@ -87,10 +100,144 @@ enum Attempt {
     Ran,
     /// SDP/RFCOMM failed for an ordinary reason (absent phone, page timeout, lost claim).
     Failed,
+    /// The phone answered the page and then reset the link (`ConnectionReset` from SDP or RFCOMM): it is
+    /// there but not ready, as an iPhone still letting go of a session a power cut ended. Paged once more
+    /// before the next phone ([`walk`]).
+    Reset,
     /// The phone rejected the SSP re-pair (`rfcomm_uspace::connect_to` → `PermissionDenied`):
     /// paging it again just produces another prompt it cannot accept. Hold off for the maximum
     /// backoff and let the operator re-pair from the iPhone.
     PairRejected,
+}
+
+/// [`Attempt::Reset`] when the phone reset the link, else [`Attempt::Failed`].
+fn failure(e: &std::io::Error) -> Attempt {
+    if e.kind() == std::io::ErrorKind::ConnectionReset {
+        Attempt::Reset
+    } else {
+        Attempt::Failed
+    }
+}
+
+/// What one walk down the call order did.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Walk {
+    ran: bool,
+    rejected: bool,
+}
+
+/// Answered-and-reset pages in a row, across reconnect rounds, for [`ocbm_proto::BTP_BOND_LOST`]. A still-paired
+/// iPhone also answers and hangs up once after a power cut, so one or two say little; every page answered and
+/// reset, [`Self::TELL_AT`] or more with nothing else between, means it most likely forgot the pairing
+/// (enigy/ocbm bench, 5 Nov: six, and the phone offered pairing only a minute later). Told once per streak.
+///
+/// A new bond starts the count over, and holds the news back for [`Self::NEW_BOND_HOLD`]: right after a pairing,
+/// until the driver accepts CarPlay on the iPhone, it refuses iAP2 and answers-and-resets too.
+#[derive(Debug, Default)]
+struct ResetStreak {
+    /// Each phone's own run: another phone's page doesn't end it. With two bonded iPhones and one away, every
+    /// round pages both, and the absent one's failure would otherwise end the count.
+    runs: std::collections::HashMap<[u8; 6], Run>,
+    /// When the link-key store was last written, as of the last page.
+    bonds: Option<std::time::SystemTime>,
+    /// When btd first saw that write, on the monotonic clock: the hold's start when the write's age is unknown.
+    seen: Option<Instant>,
+}
+
+#[derive(Debug, Default)]
+struct Run {
+    count: u32,
+    told: bool,
+}
+
+impl ResetStreak {
+    const TELL_AT: u32 = 3;
+    const NEW_BOND_HOLD: Duration = Duration::from_secs(10 * 60);
+
+    /// One page of `peer`, with the link-key store's last write ([`bonds_written`]), the wall clock and the
+    /// monotonic one: true exactly when that phone's run is at [`Self::TELL_AT`] or more and no bond is newer than
+    /// [`Self::NEW_BOND_HOLD`]. A session (Ran) or a new bond ends every run; the phone's own failure ends its own.
+    /// A write stamped later than the wall clock (the box clock reads 2020 until the host's CT_SETTIME lands) has
+    /// no age: its hold then runs from when btd first saw it, so it can't last.
+    fn note(
+        &mut self,
+        peer: [u8; 6],
+        result: Attempt,
+        bonds: Option<std::time::SystemTime>,
+        now: std::time::SystemTime,
+        mono: Instant,
+    ) -> bool {
+        if bonds != self.bonds {
+            self.runs.clear();
+            self.bonds = bonds;
+            self.seen = Some(mono);
+        }
+        match result {
+            Attempt::Reset => {}
+            Attempt::Ran => {
+                self.runs.clear();
+                return false;
+            }
+            Attempt::Failed | Attempt::PairRejected => {
+                self.runs.remove(&peer);
+                return false;
+            }
+        }
+        let new_bond = match bonds.map(|t| now.duration_since(t)) {
+            None => false,
+            Some(Ok(age)) => age < Self::NEW_BOND_HOLD,
+            Some(Err(_)) => self.seen.is_some_and(|s| mono.duration_since(s) < Self::NEW_BOND_HOLD),
+        };
+        let run = self.runs.entry(peer).or_default();
+        run.count += 1;
+        if run.count >= Self::TELL_AT && !run.told && !new_bond {
+            run.told = true;
+            return true;
+        }
+        false
+    }
+
+    /// A session the phone started itself: it knows the adapter, and every run ends.
+    fn session(&mut self) {
+        self.runs.clear();
+    }
+}
+
+/// When the link-key store was last written: a new bond rewrites it.
+fn bonds_written() -> Option<std::time::SystemTime> {
+    std::fs::metadata(bt_common::ssp_agent::link_key_store()).and_then(|m| m.modified()).ok()
+}
+
+/// Page `targets` in order until `stop` says not to go on. A phone that answers and resets the link
+/// ([`Attempt::Reset`]) is paged once more, after `pause` (false: go no further), before the next one.
+fn walk(
+    targets: &[[u8; 6]],
+    mut stop: impl FnMut() -> bool,
+    mut pause: impl FnMut([u8; 6]) -> bool,
+    mut page: impl FnMut([u8; 6]) -> Attempt,
+) -> Walk {
+    let mut out = Walk::default();
+    for &peer in targets {
+        if stop() {
+            break;
+        }
+        let mut result = page(peer);
+        if result == Attempt::Reset {
+            if !pause(peer) {
+                break;
+            }
+            result = page(peer);
+        }
+        match result {
+            Attempt::Ran => out.ran = true,
+            Attempt::Failed | Attempt::Reset => {}
+            Attempt::PairRejected => {
+                out.rejected = true;
+                break; // do not page the next phone into the same rejection storm
+            }
+        }
+    }
+    out
 }
 
 fn attempt(
@@ -104,7 +251,7 @@ fn attempt(
         Ok(s) => s,
         Err(e) => {
             log(&format!("SDP query failed: {e}"));
-            return Attempt::Failed;
+            return failure(&e);
         }
     };
     let Some(channel) = services.iap2 else {
@@ -123,7 +270,7 @@ fn attempt(
         }
         Err(e) => {
             log(&format!("RFCOMM connect to channel {channel} failed: {e}"));
-            return Attempt::Failed;
+            return failure(&e);
         }
     };
     log(&format!("RFCOMM connected OUT to the phone (ch {channel}) — starting iAP2 handshake"));
@@ -170,6 +317,8 @@ pub fn run(
     // First bonded-phone attempt is immediate; subsequent attempts retain the
     // existing bounded backoff. The session claim still arbitrates incoming RFCOMM.
     let mut backoff = BACKOFF_START_SECS;
+    let mut streak = ResetStreak::default();
+    let mut first_round = true;
     // Log only on a change in the bonded/idle state, so the per-round re-read below doesn't spam the log.
     // `None` = nothing logged yet; `Some(true)` = had bonds; `Some(false)` = idle.
     let mut last_state: Option<bool> = None;
@@ -178,6 +327,7 @@ pub fn run(
         // Never fight an in-progress session (accept path or a prior reconnect). Advisory fast-path
         // only — the authoritative claim is the compare_exchange in attempt().
         if session_active.load(Ordering::Relaxed) {
+            streak.session();
             if !interruptible_sleep(BACKOFF_START_SECS, shutdown) {
                 break;
             }
@@ -243,21 +393,33 @@ pub fn run(
             _ => bonds.clone(),
         };
 
-        let mut ran = false;
-        let mut rejected = false;
-        for &peer in &targets {
-            if shutdown.load(Ordering::Relaxed) || session_active.load(Ordering::Relaxed) {
-                break;
-            }
-            match attempt(peer, name, shutdown, session_active, ctrl) {
-                Attempt::Ran => ran = true,
-                Attempt::Failed => {}
-                Attempt::PairRejected => {
-                    rejected = true;
-                    break; // do not page the next phone into the same rejection storm
+        let Walk { ran, rejected } = walk(
+            &targets,
+            || shutdown.load(Ordering::Relaxed) || session_active.load(Ordering::Relaxed),
+            |peer| {
+                log(&format!(
+                    "{} answered and reset the link -- paging it once more in {RESET_RETRY_SECS}s before the next phone",
+                    control::fmt_addr(&peer)
+                ));
+                sleep_or_request(RESET_RETRY_SECS, shutdown, ctrl)
+                    && !ctrl.has_request()
+                    && !session_active.load(Ordering::Relaxed)
+            },
+            |peer| {
+                let result = attempt(peer, name, shutdown, session_active, ctrl);
+                if streak.note(peer, result, bonds_written(), std::time::SystemTime::now(), Instant::now())
+                    && !session_active.load(Ordering::Relaxed)
+                {
+                    log(&format!(
+                        "{} answered and reset the link on {} pages in a row: it has most likely forgotten the pairing",
+                        control::fmt_addr(&peer),
+                        ResetStreak::TELL_AT
+                    ));
+                    bt_driver::publish_bt_phase(ocbm_proto::BTP_BOND_LOST);
                 }
-            }
-        }
+                result
+            },
+        );
         if rejected {
             backoff = BACKOFF_MAX_SECS; // the phone said no; more paging only rotates codes
         } else if ran {
@@ -269,15 +431,180 @@ pub fn run(
         // DLC then drops, or fails auth fast) makes each attempt return in well under a second. Without this
         // floor the old `continue` spun the loop back-to-back — pinning the single i.MX6UL core and paging
         // the phone continuously. A genuine session that just ended still retries within BACKOFF_START_SECS.
-        if !sleep_or_request(backoff, shutdown, ctrl) {
+        // The single exception is FIRST_RETRY_SECS, once, after a first round that failed outright.
+        let quick = first_round && !ran && !rejected;
+        first_round = false;
+        if quick {
+            log(&format!("first page round failed -- one quick retry in {FIRST_RETRY_SECS}s"));
+        }
+        if !sleep_or_request(if quick { FIRST_RETRY_SECS } else { backoff }, shutdown, ctrl) {
             break;
         }
         if rejected {
             // The hold-off is over: drop the flag so the next attempt is judged on its own.
             let _ = std::fs::remove_file(bt_common::rfcomm_uspace::PAIR_REJECTED_FLAG);
-        } else if !ran {
+        } else if !ran && !quick {
             backoff = (backoff * 2).min(BACKOFF_MAX_SECS);
         }
     }
     log("reconnect loop exiting");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{failure, walk, Attempt, ResetStreak, Walk};
+    use std::time::{Duration, Instant};
+
+    const SCOTT: [u8; 6] = [1, 0, 0, 0, 0, 0];
+    const YODA: [u8; 6] = [2, 0, 0, 0, 0, 0];
+
+    /// Walk `[SCOTT, YODA]` with each phone's answers in turn (Failed once they run out), never stopping and
+    /// always ready to retry: which phones were paged, in order, and what the walk did.
+    fn walk_with(answers: &[(&[u8; 6], Attempt)]) -> (Vec<[u8; 6]>, Walk) {
+        let mut queue: Vec<_> = answers.iter().map(|(p, a)| (**p, *a)).collect();
+        let mut paged = Vec::new();
+        let walked = walk(
+            &[SCOTT, YODA],
+            || false,
+            |_| true,
+            |peer| {
+                paged.push(peer);
+                match queue.iter().position(|(p, _)| *p == peer) {
+                    Some(i) => queue.remove(i).1,
+                    None => Attempt::Failed,
+                }
+            },
+        );
+        (paged, walked)
+    }
+
+    /// A phone that answers the page and resets the link (car, 2026-11-07 10:16) is paged once more before
+    /// the walk moves to the next phone.
+    #[test]
+    fn a_phone_that_answers_and_resets_is_paged_once_more_before_the_next() {
+        let (paged, walked) = walk_with(&[(&SCOTT, Attempt::Reset), (&SCOTT, Attempt::Ran)]);
+        assert_eq!(&paged[..2], &[SCOTT, SCOTT]);
+        assert!(walked.ran);
+        let (paged, walked) = walk_with(&[(&SCOTT, Attempt::Reset), (&SCOTT, Attempt::Reset), (&YODA, Attempt::Ran)]);
+        assert_eq!(paged, vec![SCOTT, SCOTT, YODA], "only once: then the next phone");
+        assert!(walked.ran);
+    }
+
+    /// An iPhone that had forgotten the adapter answered six pages and reset each (enigy/ocbm, 5 Nov). A
+    /// still-paired one also answers and hangs up once after a power cut, so only a streak of three says so, once.
+    #[test]
+    fn three_answered_and_reset_pages_in_a_row_say_the_bond_is_lost_once() {
+        let mut s = ResetStreak::default();
+        let m = Instant::now();
+        let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let old = Some(t - Duration::from_secs(3600)); // bonded an hour ago
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        assert!(s.note(SCOTT, Attempt::Reset, old, t, m), "the third in a row tells");
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m), "once per streak");
+        assert!(!s.note(SCOTT, Attempt::Failed, old, t, m), "its own failure ends its run");
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Ran, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m), "a session between: the count starts again");
+        assert!(s.note(SCOTT, Attempt::Reset, old, t, m));
+    }
+
+    /// Re-paired, then the iPhone answers-and-resets while the driver has not yet accepted CarPlay: a new bond
+    /// starts the count over and holds the news back while it is new.
+    #[test]
+    fn a_new_bond_starts_the_count_over_and_holds_it_back() {
+        let mut s = ResetStreak::default();
+        let m = Instant::now();
+        let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let old = Some(t - Duration::from_secs(3600));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        let new = Some(t); // NEW_LINK_KEY: the store is rewritten
+        assert!(!s.note(SCOTT, Attempt::Reset, new, t, m), "the count starts over");
+        assert!(!s.note(SCOTT, Attempt::Reset, new, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, new, t + Duration::from_secs(60), m), "three, but the bond is a minute old");
+        let later = t + ResetStreak::NEW_BOND_HOLD + Duration::from_secs(1);
+        assert!(s.note(SCOTT, Attempt::Reset, new, later, m), "still resetting once the bond is no longer new: tell");
+    }
+
+    /// The box clock reads 2020 until the host's CT_SETTIME lands, so a bond can be stamped later than "now".
+    /// Its age is unknown: the hold runs from when btd first saw it, and ends.
+    #[test]
+    fn a_bond_stamped_ahead_of_the_clock_is_held_from_when_it_was_seen_not_forever() {
+        let mut s = ResetStreak::default();
+        let m = Instant::now();
+        let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let ahead = Some(t + Duration::from_secs(365 * 24 * 3600));
+        assert!(!s.note(SCOTT, Attempt::Reset, ahead, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, ahead, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, ahead, t, m + Duration::from_secs(60)), "held while it is new to btd");
+        let after = m + ResetStreak::NEW_BOND_HOLD + Duration::from_secs(1);
+        assert!(s.note(SCOTT, Attempt::Reset, ahead, t, after), "the hold ends on the monotonic clock");
+    }
+
+    /// Two bonded iPhones, the one that forgot the adapter here and the other away. Every round pages both, and
+    /// the absent one's failure used to end the count, so it never told. Each phone keeps its own run.
+    #[test]
+    fn another_phone_away_does_not_hide_the_one_that_forgot() {
+        let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let old = Some(t - Duration::from_secs(3600));
+        let m = Instant::now();
+        for order in [[SCOTT, YODA], [YODA, SCOTT]] {
+            let mut s = ResetStreak::default();
+            let mut told = Vec::new();
+            for round in 1..=3 {
+                walk(&order, || false, |_| true, |peer| {
+                    let result = if peer == SCOTT { Attempt::Reset } else { Attempt::Failed };
+                    if s.note(peer, result, old, t, m) {
+                        told.push((round, peer));
+                    }
+                    result
+                });
+            }
+            assert_eq!(told, vec![(2, SCOTT)], "{order:?}: told once, in the second round (pages 3 and 4 are its)");
+        }
+        let mut s = ResetStreak::default();
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        s.session(); // it started a session itself: it knows the adapter
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m), "the run starts over after a session");
+        assert!(!s.note(YODA, Attempt::Ran, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m));
+        assert!(!s.note(SCOTT, Attempt::Reset, old, t, m), "any phone's session ends every run");
+        assert!(s.note(SCOTT, Attempt::Reset, old, t, m));
+    }
+
+    #[test]
+    fn an_absent_phone_is_not_paged_twice() {
+        let (paged, _) = walk_with(&[(&SCOTT, Attempt::Failed), (&YODA, Attempt::Ran)]);
+        assert_eq!(paged, vec![SCOTT, YODA]);
+    }
+
+    #[test]
+    fn a_request_or_a_session_during_the_pause_ends_the_walk() {
+        let mut paged = Vec::new();
+        let walked = walk(&[SCOTT, YODA], || false, |_| false, |peer| {
+            paged.push(peer);
+            Attempt::Reset
+        });
+        assert_eq!(paged, vec![SCOTT]);
+        assert_eq!(walked, Walk::default());
+    }
+
+    #[test]
+    fn a_rejected_pairing_still_ends_the_walk() {
+        let (paged, walked) = walk_with(&[(&SCOTT, Attempt::PairRejected)]);
+        assert_eq!(paged, vec![SCOTT]);
+        assert!(walked.rejected && !walked.ran);
+    }
+
+    #[test]
+    fn only_a_reset_link_counts_as_a_reset() {
+        let reset = std::io::Error::from_raw_os_error(libc::ECONNRESET);
+        assert_eq!(failure(&reset), Attempt::Reset);
+        for errno in [libc::EHOSTDOWN, libc::ETIMEDOUT, libc::ECONNREFUSED] {
+            assert_eq!(failure(&std::io::Error::from_raw_os_error(errno)), Attempt::Failed, "errno {errno}");
+        }
+    }
 }

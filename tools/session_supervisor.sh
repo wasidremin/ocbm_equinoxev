@@ -874,10 +874,15 @@ wireless_down() {
     # before it reaches wlan_off, orphaning the AP (hostapd kept broadcasting → iOS shows the phone still
     # on WiFi with CarPlay inactive). `[/]usr/...` matches the real daemon but NOT this text (verified:
     # busybox pgrep `[h]ostapd` matches, `[z]hostapd` doesn't). Same footgun the wireless_up guard notes.
+    # COMMENTS INSIDE THE BLOCK ARE ARGV TOO (found by enigy/ocbm 2026-10-20, seen on this unit
+    # 2026-11-07): a comment with the plain word of the capture-tool pattern on that pkill line made it
+    # SIGTERM this subshell right after btd and carplayd, so wifi_ap_off and bt_off never ran: hostapd
+    # kept beaconing and hci0 stayed up after every app disconnect, with no /tmp/wlan_off.log or
+    # /tmp/bt_off.log. Never write a pattern's plain word anywhere in the block.
     setsid sh -c '
       pkill -f "[/]usr/sbin/btd" 2>/dev/null
       pkill -f "[c]arplayd" 2>/dev/null
-      pkill -f "[b]tmon" 2>/dev/null   # btmon bench lever (2026-09-03), harmless if never armed
+      pkill -f "[b]tmon" 2>/dev/null   # the 2026-09-03 HCI-capture bench lever, harmless if never armed
       sleep 1
       pkill -9 -f "[c]arplayd" 2>/dev/null
       pkill -9 -f "[/]usr/sbin/btd" 2>/dev/null
@@ -914,7 +919,7 @@ wireless_down() {
     # (see the COMPLETE-teardown branch above for the full rationale).
     setsid sh -c '
       pkill -f "[/]usr/sbin/btd" 2>/dev/null
-      pkill -f "[b]tmon" 2>/dev/null   # btmon bench lever (2026-09-03), harmless if never armed
+      pkill -f "[b]tmon" 2>/dev/null   # the 2026-09-03 HCI-capture bench lever, harmless if never armed
       sleep 1
       pkill -9 -f "[/]usr/sbin/btd" 2>/dev/null
       pkill -9 -f "[b]tmon" 2>/dev/null

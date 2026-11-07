@@ -343,7 +343,10 @@ class MainActivity : Activity() {
      */
     private fun onBoxBtPhase(phase: Byte) {
         SessionSummary.current()?.onBtPhase(phase)
-        ui.setDetail("Bluetooth: ${Ocbm.btpName(phase)}")
+        ui.setDetail(
+            if (phase == Ocbm.BTP_BOND_LOST) "Bluetooth: an iPhone forgot this adapter. Forget it on the iPhone (Settings > Bluetooth) and pair again"
+            else "Bluetooth: ${Ocbm.btpName(phase)}",
+        )
         // BTP_WIFI_HANDOFF in particular is the only trustworthy "a CarPlay connect is coming" signal
         // we get; before the supervisor existed this method logged it and nothing acted on it. The
         // replay flag rides on the client rather than on the callback (see OcbmClient.lastBtPhaseReplay)

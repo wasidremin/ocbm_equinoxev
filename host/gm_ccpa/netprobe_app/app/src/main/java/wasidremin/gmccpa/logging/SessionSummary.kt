@@ -395,6 +395,10 @@ object SessionSummary {
         // contract: treat an unknown value as progress, never gate on ordering).
         private val highestBtpRaw = AtomicInteger(-1)
         fun onBtPhase(phase: Byte) {
+            // PAIR_REJECTED (7) and BOND_LOST (8) sort above WIFI_HANDOFF but report a pairing that
+            // FAILED, not progress: counted, they would make a session that never got past Bluetooth
+            // read as "reached handoff".
+            if (phase == Ocbm.BTP_PAIR_REJECTED || phase == Ocbm.BTP_BOND_LOST) return
             val v = phase.toInt() and 0xFF
             while (true) {
                 val cur = highestBtpRaw.get()
