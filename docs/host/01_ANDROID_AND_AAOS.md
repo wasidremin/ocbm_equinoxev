@@ -356,6 +356,46 @@ This finding is orthogonal to, and does not upgrade, the USB-handler squat below
 the "workaround" section), never a signature|privileged `android.car` grant. The two mechanisms
 guard different resources and neither substitutes for the other.
 
+### The steering-wheel call key never reaches a Play app (verified 2026-11-06)
+
+The Equinox's answer/end rocker cannot answer a CarPlay call, because of where stock AAOS 14 sends
+the key. `CarInputService.dispatchKeyEventForDriver` (android14-release) handles `KEYCODE_CALL` itself,
+ahead of every app. `handleCallKey`, on key up:
+
+1. answers a ringing call that Android's Telecom knows about (`acceptCallIfRinging`);
+2. ends a call if the car sets `config_callButtonEndsOngoingCall`;
+3. hands the key to a projection app registered through `CarProjectionManager`, which needs the
+   signature|privileged `CAR_PROJECTION` (above);
+4. otherwise opens the car's dialer with `ACTION_DIAL`.
+
+A long press does the same, ending in "dial the last number". The owner keeps the iPhone off the car's
+Bluetooth, so Telecom knows of no call, and a press during a CarPlay ring opens the car's dialer.
+AAOS 14 emulator: `cmd car_service inject-key 5` logged `CAR.INPUT: call key, launch dialer intent`, and
+`com.android.car.dialer/.ui.TelecomActivity` came to the front.
+
+**Closed, do not retry: registering the CarPlay call with Telecom as a self-managed call.** It would
+make step 1 see a ringing call, but `TelecomServiceImpl.acceptRingingCallInternal` drops an accept for a
+self-managed call ("self-mgd accept ignored"), so `Connection.onAnswer` never runs. The press is then
+swallowed with nothing done. Telecom would also take ring audio focus and set `MODE_RINGTONE` for the
+call (`Ringer.getRingerAttributes`: a self-managed call acquires focus). A managed `CALL_PROVIDER`
+account needs the driver to enable it in a Settings screen AAOS does not have, and would put the call
+in the car's own phone UI.
+
+What the app does instead (`av/WheelCall.kt`, versionCode 233):
+
+- **The voice button answers a ringing call.** It reaches the app as the digital assistant (T14). While
+  a CarPlay call rings it sends Answer instead of Siri, the way GM's push-to-talk answers a Bluetooth
+  call. Emulator: `inject-key 231` reached the assistant session.
+- **A phone key that reaches a window or the media session acts on the call.** `CALL` or
+  `HEADSETHOOK` answers a ringing call; `ENDCALL` declines or hangs up. This covers GM if it routes the
+  rocker differently from AOSP: GM sends wheel media keys through its own `com.gm.rhmi` (uid 1000)
+  rather than `CarInputService`'s media-key path. `input keyevent KEYCODE_CALL` reached the window on
+  the emulator; `KEYCODE_ENDCALL` never reaches an app.
+- **Logging.** Every key the app's windows or media session receive is logged as `[call ] key …`, and
+  the CarPlay screen losing focus during a call is logged too. If GM keeps AOSP's routing, a rocker press
+  during a ring shows as `CarPlay screen lost window focus while a call rings`, followed by the car's
+  dialer.
+
 ## GM AAOS USB permission handler
 
 <!-- absorbed: ../host/01_ANDROID_AND_AAOS.md -->

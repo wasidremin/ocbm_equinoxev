@@ -131,6 +131,20 @@ class MainActivity : Activity() {
             override fun restartSession() { requestRestart() }
             override fun adapterWifi(): Boolean =
                 wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this@MainActivity)
+            // Its own thread, not runAsync: the command executor can sit in awaitClaimable for ten
+            // minutes, and mgmtGetInfo must never run on the read thread that fills its reply queue.
+            override fun checkBoxSession(why: String) {
+                val c = ocbmProbe?.client
+                if (c == null) { supervisor.onBoxSessionChecked(null, why); return }
+                Thread({
+                    val live = runCatching { c.boxProjectionLive() }.getOrNull()
+                    supervisor.onBoxSessionChecked(live, why)
+                }, "box-session-check").apply { isDaemon = true }.start()
+            }
+            override fun endUnannouncedSession(why: String) {
+                val c = ocbmProbe?.client ?: return
+                Thread({ c.projectionEndedUnannounced(why) }, "box-session-end").apply { isDaemon = true }.start()
+            }
         })
     }
 
@@ -1828,6 +1842,9 @@ class MainActivity : Activity() {
     private fun bindAdapterSession() {
         wasidremin.gmccpa.ocbm.AdapterSession.onKeyed = { launchCarPlayUi(); vehicle.onSessionUp() }
         wasidremin.gmccpa.ocbm.AdapterSession.onRetired = { onCarPlaySessionDown() }
+        wasidremin.gmccpa.av.HevcRenderer.onFirstFrameMissing = {
+            supervisor.verifySession("no picture ${wasidremin.gmccpa.av.HevcRenderer.FIRST_FRAME_MS / 1000}s after the video connected")
+        }
     }
 
     /** One binding site so toggleCarPlayRx() and rebindSessionCallbacks() cannot drift. */
@@ -1872,6 +1889,11 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) DisplayPrefs.applyWindow(this)
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (wasidremin.gmccpa.av.WheelCall.onKey(event, "the settings screen")) return true
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onDestroy() {

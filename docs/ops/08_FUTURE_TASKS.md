@@ -488,6 +488,11 @@ request: `capture #N heard: VOICE_RECOGNITION …` shows a real peak, with no al
 was met on 2026-10-27. One question remains open: whether calls echo for the far end while the role
 is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on that drive.
 
+**Answering calls (233, 2026-11-06).** The wheel's answer rocker cannot reach a Play app; stock AAOS
+opens the car's dialer with it (`docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key").
+So while a CarPlay call rings, this button answers it instead of starting Siri
+(`voice button (…) while a call rings -> answer sent=true`). Unverified on the car.
+
 ## T15. GM app: no Allow tap for the adapter, through a sideloaded USB bridge (raised 2026-11-06; BUILT, not on the car)
 
 **The ask.** The driver taps Allow for the adapter on every drive. The owner found the XDA post

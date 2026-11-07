@@ -77,7 +77,8 @@ class HevcRenderer(
     /** Keyframe requests issued since the last IRAP, so the seam-ended line can say how futile they were. */
     private var keyframeReqsSinceIrap = 0
 
-    private companion object {
+    // Internal, not private, for [onFirstFrameMissing] and [FIRST_FRAME_MS].
+    internal companion object {
         const val CONFIGURE_RETRY_MS = 5_000L      // don't re-attempt configure per NAL (codec-pool leak)
         const val KEYFRAME_COOLDOWN_MS = 500L      // H264Renderer's REACTIVE_KEYFRAME_COOLDOWN
         /**
@@ -106,6 +107,12 @@ class HevcRenderer(
          * with a live seam" — the fault the owner reported 2026-09-08 on return from the homescreen.
          */
         const val FIRST_FRAME_MS = 5_000L
+        /**
+         * Fired on the trace watchdog thread when [EXPECT_FIRST_FRAME] misses. The screen came back
+         * over a session the box may already have ended (2026-11-06 17:59: black screen, the session
+         * gone since 17:53), so MainActivity asks the box. Must not block.
+         */
+        @Volatile var onFirstFrameMissing: (() -> Unit)? = null
         /** [SessionTrace.Board] entry for the live decoder. */
         const val BOARD_DECODER = "video-decoder"
     }
@@ -164,7 +171,8 @@ class HevcRenderer(
         // line at all — only the absence of one. Met in [drain] on this connection's first frame.
         SessionTrace.expect(EXPECT_FIRST_FRAME, FIRST_FRAME_MS,
             "the video seam connected, so parameter sets, an IRAP (ours to request every " +
-            "${KEYFRAME_COOLDOWN_MS}ms) and a rendered frame should follow; measured 145ms on 2026-09-09")
+            "${KEYFRAME_COOLDOWN_MS}ms) and a rendered frame should follow; measured 145ms on 2026-09-09",
+            onMiss = { onFirstFrameMissing?.invoke() })
         val hdr = ByteArray(4)
         try {
             while (running.get()) {

@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -1831,11 +1832,23 @@ class CarPlayActivity : Activity() {
         super.onResume()
         applySystemUi()
         MapsWatch.start(this)
+        WheelCall.noteScreenFocus(true, "the foreground")
+    }
+
+    override fun onPause() {
+        WheelCall.noteScreenFocus(false, "the foreground")
+        super.onPause()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) applySystemUi()
+        WheelCall.noteScreenFocus(hasFocus, "window focus")
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (WheelCall.onKey(event, "the CarPlay screen")) return true
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onDestroy() {

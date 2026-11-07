@@ -115,6 +115,13 @@ class SessionSupervisor(private val act: Actions) {
         fun restartSession()
         /** Adapter Wi-Fi has no mDNS responder, so rung 0 cannot announce anything. */
         fun adapterWifi(): Boolean
+        /**
+         * Ask the box whether its projection session is up, off this scheduler, and answer through
+         * [onBoxSessionChecked].
+         */
+        fun checkBoxSession(why: String)
+        /** The box has no session but its `PROJ_MODE NONE` never arrived: end it as if it had. */
+        fun endUnannouncedSession(why: String)
     }
 
     private companion object {
@@ -227,6 +234,17 @@ class SessionSupervisor(private val act: Actions) {
 
         /** How often the waiting sentence refreshes the age of the last page. */
         const val PAGE_AGE_TICK_MS = 10_000L
+
+        /**
+         * From the phone leaving Bluetooth range, with CarPlay still live here, to asking the box
+         * whether its session is still up. The box ended the session 4 s after the timeout at 17:53
+         * and 13 s after it at 18:08 on 2026-11-06, so a `PROJ_MODE NONE` due by then that has not
+         * arrived was lost.
+         */
+        const val SESSION_CHECK_MS = 20_000L
+
+        /** Ask again this often while the phone stays out of range and the box still has a session. */
+        const val SESSION_RECHECK_MS = 30_000L
     }
 
     /**
@@ -303,6 +321,8 @@ class SessionSupervisor(private val act: Actions) {
     @Volatile private var lastRadioCycleAt = 0L
     private var pageConfirmTimer: ScheduledFuture<*>? = null
     private var pageAgeTimer: ScheduledFuture<*>? = null
+    /** Asks the box about its session while the phone is out of range. See [SESSION_CHECK_MS]. */
+    private var sessionCheckTimer: ScheduledFuture<*>? = null
     private var lastPageAt = 0L
     /** Extra `CT_RADIO` cycles sent because `driving reconnect` did not arrive. Capped at one. */
     private var confirmRetries = 0
@@ -659,10 +679,50 @@ class SessionSupervisor(private val act: Actions) {
                 phoneOutOfRange = true
                 reconnect.onPhoneOutOfRange()
                 log.i("phone out of range — Bluetooth timeout, not a fault")
+                if (phase == RxPhase.SESSION_UP) armSessionCheck(SESSION_CHECK_MS, "the phone left Bluetooth range")
             }
         } else if (phoneOutOfRange) {
             phoneOutOfRange = false
+            sessionCheckTimer?.cancel(false); sessionCheckTimer = null
             log.i("phone back on Bluetooth")
+        }
+    }
+
+    /**
+     * Something says the session may be gone although no `PROJ_MODE NONE` arrived (the screen came
+     * back with no picture). Ask the box now. Only from [RxPhase.SESSION_UP]: the box must be linked
+     * to answer, and every other phase already knows the session is not up.
+     */
+    fun verifySession(why: String) = post {
+        if (phase != RxPhase.SESSION_UP) return@post
+        log.i("session check: $why — asking the adapter whether its CarPlay session is still up")
+        act.checkBoxSession(why)
+    }
+
+    /**
+     * The box's answer to [Actions.checkBoxSession]: true while it owns a projection session, false
+     * when it has none, null when it did not answer. False under [RxPhase.SESSION_UP] means its
+     * `PROJ_MODE NONE` was lost on the way (2026-11-06 17:53:50), so end the session here; the normal
+     * path then runs, grace and then the walk-away reconnect.
+     */
+    fun onBoxSessionChecked(live: Boolean?, why: String) = post {
+        if (phase != RxPhase.SESSION_UP) return@post
+        when (live) {
+            false -> {
+                log.w("session check: the adapter has no CarPlay session but its PROJ_MODE NONE never arrived ($why) — ending the session here")
+                act.endUnannouncedSession("the adapter reports no CarPlay session ($why)")
+            }
+            true -> log.i("session check: the adapter still has its CarPlay session ($why)")
+            null -> log.w("session check: the adapter did not answer ($why)")
+        }
+        if (live != false && phoneOutOfRange) armSessionCheck(SESSION_RECHECK_MS, "the phone is still out of Bluetooth range")
+    }
+
+    private fun armSessionCheck(delayMs: Long, why: String) {
+        sessionCheckTimer = arm(sessionCheckTimer, delayMs) {
+            if (phase != RxPhase.SESSION_UP || !phoneOutOfRange) return@arm
+            log.i("session check: $why ${delayMs / 1000}s ago and CarPlay still reads live — asking the adapter")
+            act.checkBoxSession(why)
         }
     }
 
@@ -1224,6 +1284,7 @@ class SessionSupervisor(private val act: Actions) {
 
     private fun cancelAllTimers() {
         graceTimer?.cancel(false); graceTimer = null
+        sessionCheckTimer?.cancel(false); sessionCheckTimer = null
         inboundTimer?.cancel(false); inboundTimer = null
         ladderTimer?.cancel(false); ladderTimer = null
         // Never drop a pending radios-ON. Losing it strands the box with its radios inhibited.

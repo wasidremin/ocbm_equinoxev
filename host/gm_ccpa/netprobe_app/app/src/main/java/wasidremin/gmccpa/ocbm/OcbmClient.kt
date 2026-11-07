@@ -393,39 +393,66 @@ class OcbmClient(
                 else boardUp(OcbmBoard.PHONE, phoneSummary(json))
                 onPhoneIdent?.invoke(json)
             }
-            Ocbm.CT_PROJ_MODE -> {
-                if (pl.size >= 2) {
-                    val m = pl[1]
-                    lastProjMode = m
-                    log.i("<< PROJ_MODE ${Ocbm.pmName(m)}${if (replay) " (replay)" else ""}")
-                    boardUp(OcbmBoard.PROJ_MODE, Ocbm.pmName(m))
-                    onProjMode?.invoke(m)
-                    // A live AirPlay session that ends (the box's 30 s idle backstop after the
-                    // screen is destroyed, device-observed 2026-09-26 14:39) arrives as NONE
-                    // while the USB link stays up. Leaving the lanes armed keeps sessionUp true,
-                    // and the next open restores a surface onto a phone that is already gone:
-                    // 0 frames, touches hid_sent=false. Retire here. A replayed mirror is the
-                    // box re-reading its latch, not a session ending.
-                    if (!replay && adapterMode && m == Ocbm.PM_WIRELESS_CP && lanes == null) {
-                        ensureLanes()
-                    }
-                    // A live AirPlay session that ends retires the lanes. The next session does not
-                    // re-subscribe: the link stays up and the box pages the phone itself. Arm a new
-                    // generation once the old one is off the field (its close runs on a daemon
-                    // thread). HOST_GONE clears [subscribed] first, and [stop] clears [running], so
-                    // neither of those retires gets a replacement.
-                    if (!replay && adapterMode && m == Ocbm.PM_NONE) {
-                        val had = synchronized(lanesLock) { lanes != null }
-                        retireLanes("projection ended")
-                        if (had && subscribed && running.get()) {
-                            armLanes()
-                            if (lanes != null) log.i("A/V lanes re-armed — waiting for the next session")
-                        }
-                    }
-                }
-            }
+            Ocbm.CT_PROJ_MODE -> if (pl.size >= 2) applyProjMode(pl[1], replay)
             else -> log.i("<< CTRL unknown type 0x%02x (${pl.size}B)".format(pl[0]))
         }
+    }
+
+    /** Serialises [applyProjMode], so a received NONE and [projectionEndedUnannounced] cannot both retire and re-arm. */
+    private val projLock = Any()
+
+    /**
+     * One projection-mode change: the box's `CT_PROJ_MODE`, or [projectionEndedUnannounced] standing
+     * in for a NONE that never arrived ([missing] is then why the app concluded it).
+     */
+    private fun applyProjMode(m: Byte, replay: Boolean, missing: String? = null) = synchronized(projLock) {
+        lastProjMode = m
+        if (missing == null) log.i("<< PROJ_MODE ${Ocbm.pmName(m)}${if (replay) " (replay)" else ""}")
+        else log.w("PROJ_MODE ${Ocbm.pmName(m)} applied without the box's frame — $missing")
+        boardUp(OcbmBoard.PROJ_MODE, Ocbm.pmName(m))
+        onProjMode?.invoke(m)
+        // A live AirPlay session that ends (the box's 30 s idle backstop after the
+        // screen is destroyed, device-observed 2026-09-26 14:39) arrives as NONE
+        // while the USB link stays up. Leaving the lanes armed keeps sessionUp true,
+        // and the next open restores a surface onto a phone that is already gone:
+        // 0 frames, touches hid_sent=false. Retire here. A replayed mirror is the
+        // box re-reading its latch, not a session ending.
+        if (!replay && adapterMode && m == Ocbm.PM_WIRELESS_CP && lanes == null) {
+            ensureLanes()
+        }
+        // A live AirPlay session that ends retires the lanes. The next session does not
+        // re-subscribe: the link stays up and the box pages the phone itself. Arm a new
+        // generation once the old one is off the field (its close runs on a daemon
+        // thread). HOST_GONE clears [subscribed] first, and [stop] clears [running], so
+        // neither of those retires gets a replacement.
+        if (!replay && adapterMode && m == Ocbm.PM_NONE) {
+            val had = synchronized(lanesLock) { lanes != null }
+            retireLanes("projection ended")
+            if (had && subscribed && running.get()) {
+                armLanes()
+                if (lanes != null) log.i("A/V lanes re-armed — waiting for the next session")
+            }
+        }
+    }
+
+    /**
+     * Whether the box has a projection session, read from MGMT_INFO's `transport` (the flag
+     * `CT_PROJ_MODE` mirrors). Null when the box did not answer. Blocks up to [timeoutMs], so never
+     * on the read thread, which is the one that fills the reply queue.
+     */
+    fun boxProjectionLive(timeoutMs: Long = 3000): Boolean? =
+        mgmtGetInfo(timeoutMs)?.let { BoxSessionCheck.transportLive(it) }
+
+    /**
+     * The box's session is over but its `CT_PROJ_MODE` NONE never arrived. Equinox 2026-11-06
+     * 17:53:50: the box logged `projection mode -> host: 0`, this client never logged the frame,
+     * and the screen said "CarPlay live" for seven minutes with no phone, so the walk-away
+     * reconnect never ran. Applies NONE as if it had arrived. False when NONE is already held.
+     */
+    fun projectionEndedUnannounced(why: String): Boolean {
+        if (!running.get() || lastProjMode == Ocbm.PM_NONE) return false
+        applyProjMode(Ocbm.PM_NONE, replay = false, missing = why)
+        return true
     }
 
     /**
@@ -866,10 +893,24 @@ class OcbmClient(
             val STABLE_TICKS_TO_CLEAR = 30
             // Set on the presumed-dead exit so `finally` does not overwrite FAILED with DOWN.
             var died = false
+            // Once a minute, any bytes the reassembler skipped to resync. A torn stream loses whole
+            // frames with no other trace: the 2026-11-06 17:53:50 PROJ_MODE NONE left none, and the
+            // total was only ever logged at a clean stop, which that link never had.
+            var resyncTicks = 0
+            var resyncLogged = 0L
             try {
                 while (running.get()) {
                     try { Thread.sleep(Ocbm.HEARTBEAT_MS) } catch (_: InterruptedException) { break }
                     if (!running.get()) break
+                    if (++resyncTicks * Ocbm.HEARTBEAT_MS >= RESYNC_LOG_MS) {
+                        resyncTicks = 0
+                        val rs = reasm.resyncBytes
+                        if (rs != resyncLogged) {
+                            log.w("link: the reassembler skipped ${rs - resyncLogged} byte(s) to resync in the last minute " +
+                                "($rs in all, $framesIn frames in) — the USB stream tore and a frame may be lost")
+                            resyncLogged = rs
+                        }
+                    }
                     // One-shot, on this thread because it already ticks: promote a pending HCI wait
                     // to MISSED at its deadline so the Board says so even if the box never pushes
                     // another health report. Logs once per subscribe at most — see [hciState].
@@ -1013,6 +1054,9 @@ class OcbmClient(
          * loop gives up far later, so anything past 45 s is the box failing, not the budget.
          */
         const val BT_ATTACH_BUDGET_MS = 45_000L
+
+        /** How often the heartbeat thread reports new reassembler resync bytes. */
+        private const val RESYNC_LOG_MS = 60_000L
 
         private const val HCI_PENDING = 0
         private const val HCI_SEEN = 1
@@ -1285,36 +1329,47 @@ class OcbmClient(
 
     // ---- CH_MGMT --------------------------------------------------------------------------------
 
+    /**
+     * One CH_MGMT request at a time. Each request clears [mgmtQ] before it sends, so a second caller
+     * would throw away the first one's reply; the supervisor's session check made that a real overlap
+     * with the Phones page.
+     */
+    private val mgmtLock = Any()
+
     /** MGMT_GET_INFO → MGMT_INFO, whose payload is UTF-8 JSON running to the end of the frame. */
     fun mgmtGetInfo(timeoutMs: Long = 5000): String? {
-        mgmtQ.clear()
-        if (!send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_GET_INFO))) return null
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val pl = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-            if (pl.isNotEmpty() && pl[0] == Ocbm.MGMT_INFO) {
-                return String(pl, 1, pl.size - 1, Charsets.UTF_8)
+        synchronized(mgmtLock) {
+            mgmtQ.clear()
+            if (!send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_GET_INFO))) return null
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                val pl = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                if (pl.isNotEmpty() && pl[0] == Ocbm.MGMT_INFO) {
+                    return String(pl, 1, pl.size - 1, Charsets.UTF_8)
+                }
             }
+            return null
         }
-        return null
     }
 
     /** Any of the four action verbs; returns the status byte from MGMT_ACK (0 ok, 1 error). */
     fun mgmtAction(verb: Byte, arg: ByteArray = ByteArray(0), timeoutMs: Long = 5000): Int? {
-        mgmtQ.clear()
-        val pl = ByteArray(1 + arg.size)
-        pl[0] = verb
-        System.arraycopy(arg, 0, pl, 1, arg.size)
-        if (!send(Ocbm.CH_MGMT, pl)) return null
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val r = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-            if (r.size >= 3 && r[0] == Ocbm.MGMT_ACK && r[1] == verb) {
-                if (r[2].toInt() == 0) reArmAfterMgmt(verb)
-                return r[2].toInt()
+        synchronized(mgmtLock) {
+            mgmtQ.clear()
+            val pl = ByteArray(1 + arg.size)
+            pl[0] = verb
+            System.arraycopy(arg, 0, pl, 1, arg.size)
+            if (!send(Ocbm.CH_MGMT, pl)) return null
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                val r = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                if (r.size >= 3 && r[0] == Ocbm.MGMT_ACK && r[1] == verb) {
+                    if (r[2].toInt() == 0) reArmAfterMgmt(verb)
+                    return r[2].toInt()
+                }
             }
+            return null
         }
-        return null
     }
 
     /**

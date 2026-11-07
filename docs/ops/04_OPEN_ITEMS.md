@@ -139,6 +139,19 @@ high-water mark: versionCode 232 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   that phone first). Both need adapter firmware with `MGMT_SET_ORDER`/`MGMT_CONNECT_DEVICE`
   (`tools/ocbm_install.sh --full`); until then the app shows a note instead. The app side is in 232
   (published 2026-11-06). Untested with two phones. Owner: `08_FUTURE_TASKS.md` T12.
+- **CarPlay stayed dead after a walk-away with the accessories on (2026-11-06 17:53–18:01).** The box
+  ended the session when the phone left, but its `PROJ_MODE NONE` never reached the app. The app kept
+  "CarPlay live", so the walk-away reconnect never ran, and at 17:59 the screen came back black. Only an
+  app restart brought CarPlay back. From 233 the app asks the box when the phone has been out of
+  Bluetooth range for 20 s or the screen comes back with no picture, and ends a session the box no
+  longer has. Why the frame was lost is open; 233 logs resync bytes once a minute. Unverified on the
+  car. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
+- **Wheel answer button: Android sends it to the car's dialer.** Stock AAOS 14 keeps `KEYCODE_CALL`
+  from every app and opens the dialer when Android's Telecom has no ringing call, and the iPhone is
+  not on the car's Bluetooth. From 233 the wheel's voice button answers a ringing CarPlay call, a phone
+  key that does reach the app answers or ends it, and every key and every focus loss during a call is
+  logged. The next ring with a rocker press shows what GM does with the key. Owner:
+  `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key".
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether

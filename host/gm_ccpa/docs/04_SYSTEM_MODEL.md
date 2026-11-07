@@ -291,6 +291,22 @@ moment.
   `mfiProven`, `subscribed` as explicit fields.
 - **`CarPlayActivity.onSessionEnded()` tears the screen down on session end** — the LIVE screen does not
   linger after the phone disconnects (companion `onSessionEnded` in `av/CarPlayActivity.kt`).
+- **The end of a session must not depend on one pushed frame.** On 2026-11-06 the owner parked at 17:53
+  with the car's accessories still on and walked away. The phone left Bluetooth range at 17:53:46, and
+  the box ended its session at 17:53:50 and logged `projection mode -> host: 0`. The app never logged
+  that `CT_PROJ_MODE` frame. Its next control frame, 3 s later, arrived, and the box counted no drops.
+  So the app read "CarPlay live" with no phone, the walk-away reconnect (GRACE, then `AWAY`'s
+  `CT_RADIO` cycle) never ran, and nothing paged the phone. At 17:59 the screen came back black, and
+  CarPlay returned only after the app was restarted at 18:01. From 233 the supervisor asks the box
+  itself, through MGMT_INFO `transport`, the flag `CT_PROJ_MODE` mirrors:
+  - 20 s after the phone leaves Bluetooth range while CarPlay still reads live, then every 30 s while
+    it stays away (`SESSION_CHECK_MS`, `SESSION_RECHECK_MS`);
+  - when the screen comes back with no picture in 5 s (`HevcRenderer.onFirstFrameMissing`).
+
+  A box with no session ends the session here through the `PROJ_MODE NONE` path
+  (`OcbmClient.projectionEndedUnannounced`), so grace and the walk-away reconnect follow. Only a
+  `false` answer acts; no answer acts on nothing. Unverified on the car. The client also logs reassembler
+  resync bytes once a minute, which shows whether a lost frame was a torn stream.
 - **A readiness probe must not perturb what it measures.** `CarPlayRx.selfTest()` deliberately does not
   dial `:7011` on loopback — that would enter `acceptLoop`, take a liveness slot, spin up a native core
   and fire a spurious session-down on close. Holding the bound, open `ServerSocket` is the capability

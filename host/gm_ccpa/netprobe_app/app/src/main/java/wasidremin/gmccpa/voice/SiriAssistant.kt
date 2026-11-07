@@ -66,7 +66,9 @@ class SiriAssistantSession(ctx: Context) : VoiceInteractionSession(ctx) {
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        SiriTrigger.tap(context, "wheel button (assistant session, flags=0x${Integer.toHexString(showFlags)})")
+        val source = "wheel button (assistant session, flags=0x${Integer.toHexString(showFlags)})"
+        // While a CarPlay call rings, the button answers it (WheelCall); otherwise it is Siri.
+        if (!wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers(source)) SiriTrigger.tap(context, source)
         hide()
         finish()
     }
@@ -173,7 +175,7 @@ object AssistantRole {
     fun statusText(ctx: Context): String {
         val s = state(ctx)
         return when {
-            s.held -> "On. The wheel's voice button starts Siri. Google Assistant is off while this is selected."
+            s.held -> "On. The wheel's voice button starts Siri, and answers a ringing call. Google Assistant is off while this is selected."
             s.picker == null -> "This car has no assistant choice in Settings, so the wheel button stays with Google Assistant."
             else -> "Pick GM CCPA as the digital assistant to make the wheel's voice button start Siri. This turns off Google Assistant."
         }

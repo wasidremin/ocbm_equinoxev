@@ -291,6 +291,74 @@ class OcbmProbe(context: Context) {
         check("SEV_HOST_GONE clears subscribed (re-arm path)", !c.subscribed)
         c.stop()
 
+        // 4b. A PROJ_MODE NONE that never arrives (2026-11-06 17:53:50). The box answers MGMT_INFO
+        // with no transport, and the client ends the projection as if the frame had come.
+        val fake2 = FakeTransport()
+        val c2 = OcbmClient(fake2, wasidremin.gmccpa.ProbeLog.silent(), hostInstance, trace = false)
+        val modes = java.util.concurrent.CopyOnWriteArrayList<Byte>()
+        c2.onProjMode = { modes.add(it) }
+        c2.start()
+        fake2.feed(Framing.frame(Ocbm.CH_CTRL, Ocbm.F_BOTH, 0, byteArrayOf(Ocbm.CT_PROJ_MODE, Ocbm.PM_WIRELESS_CP)))
+        check("PROJ_MODE WIRELESS_CP latched", c2.lastProjMode == Ocbm.PM_WIRELESS_CP)
+        val box2 = Thread {
+            // Answer the MGMT_GET_INFO request, whatever else the client wrote first.
+            val deadline = System.currentTimeMillis() + 2000
+            while (System.currentTimeMillis() < deadline) {
+                val w = fake2.takeWritten(200) ?: continue
+                if (w.size > Ocbm.HDR_LEN && (w[8].toInt() and 0xFF) == Ocbm.CH_MGMT && w[Ocbm.HDR_LEN] == Ocbm.MGMT_GET_INFO) {
+                    fake2.feed(Framing.frame(Ocbm.CH_MGMT, Ocbm.F_BOTH, 0,
+                        byteArrayOf(Ocbm.MGMT_INFO) + "{\"uptime_s\":9,\"transport\":\"\",\"host_present\":true}".toByteArray()))
+                    break
+                }
+            }
+        }
+        box2.start()
+        val live = c2.boxProjectionLive(2000)
+        box2.join(2500)
+        check("MGMT_INFO with no transport reads as no session", live == false, "got $live")
+        check("an unannounced end applies PROJ_MODE NONE",
+            c2.projectionEndedUnannounced("self-test") && c2.lastProjMode == Ocbm.PM_NONE && modes.lastOrNull() == Ocbm.PM_NONE,
+            "modes=$modes")
+        check("a second unannounced end is a no-op", !c2.projectionEndedUnannounced("self-test"))
+        c2.stop()
+
+        // 4c. The supervisor asks the box only while CarPlay reads live, and ends the session only
+        // on the box's own "no session".
+        val asked = java.util.concurrent.atomic.AtomicInteger()
+        val ended = java.util.concurrent.CountDownLatch(1)
+        var boxAnswer: Boolean? = true
+        lateinit var sup: wasidremin.gmccpa.SessionSupervisor
+        sup = wasidremin.gmccpa.SessionSupervisor(object : wasidremin.gmccpa.SessionSupervisor.Actions {
+            override fun boxLinkAlive() = true
+            override fun reannounce() = false
+            override fun setBoxRadios(on: Boolean) = true
+            override fun restartBoxWireless() = true
+            override fun pauseDiscovery() {}
+            override fun resumeDiscovery() {}
+            override fun report(phase: wasidremin.gmccpa.RxPhase, detail: String) {}
+            override fun sessionKeyed() = true
+            override fun ensureLanes() = true
+            override fun restartSession() {}
+            override fun adapterWifi() = true
+            override fun checkBoxSession(why: String) { asked.incrementAndGet(); sup.onBoxSessionChecked(boxAnswer, why) }
+            override fun endUnannouncedSession(why: String) { ended.countDown() }
+        })
+        try {
+            sup.verifySession("self-test, idle")
+            Thread.sleep(150)
+            check("no session check outside CarPlay live", asked.get() == 0, "asked ${asked.get()}x")
+            sup.onSessionUp()
+            sup.verifySession("self-test, box still has its session")
+            Thread.sleep(150)
+            check("a box that still has its session keeps it", asked.get() == 1 && ended.count == 1L,
+                "asked ${asked.get()}x ended=${ended.count == 0L}")
+            boxAnswer = false
+            sup.verifySession("self-test, box has no session")
+            check("a box with no session ends it here", ended.await(1, java.util.concurrent.TimeUnit.SECONDS))
+        } finally {
+            sup.stop()
+        }
+
         val pinned = VehicleConfigYaml.defaultIsPinned()
         check("vehicle config matches the pinned HEVC document", pinned)
         val adapter = runCatching { VehicleConfigYaml.renderAdapter("adapterpass1") }.getOrNull()
@@ -426,6 +494,25 @@ class OcbmProbe(context: Context) {
         check("disconnect one call preserves the other", calls.phoneAction() == Ocbm.TEL_END)
         calls.clear("self-test")
         check("session end clears call action", calls.phoneAction() == null)
+        // The wheel's phone keys read the process-wide call table, so borrow it only when no real
+        // call is up. With no adapter linked the answer is sent=false; the decision is what is checked.
+        val np = wasidremin.gmccpa.av.CarPlayActivity.nowPlaying
+        if (np.phoneAction() == null) {
+            val key = { action: Int, code: Int -> android.view.KeyEvent(action, code) }
+            np.onCallState(org.json.JSONObject("{\"callUuid\":\"self-test\",\"status\":2}"))
+            try {
+                val callKey = android.view.KeyEvent.KEYCODE_CALL
+                check("the wheel's call key answers a ringing call, down and up",
+                    wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_DOWN, callKey), "self-test") &&
+                        wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_UP, callKey), "self-test"))
+                check("the voice button answers a ringing call", wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers("self-test"))
+            } finally {
+                np.onCallState(org.json.JSONObject("{\"callUuid\":\"self-test\",\"status\":0}"))
+            }
+            check("a media key is never taken for the call",
+                !wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT), "self-test"))
+            check("the voice button stays Siri with no call", !wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers("self-test"))
+        }
         val inset = runCatching {
             VehicleConfigYaml.renderAdapter("adapterpass1", width = 1996, height = 768, safeRight = 38)
         }.getOrNull()?.toString(Charsets.UTF_8) ?: ""

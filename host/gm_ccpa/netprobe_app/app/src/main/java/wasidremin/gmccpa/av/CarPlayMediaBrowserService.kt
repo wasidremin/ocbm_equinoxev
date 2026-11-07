@@ -773,6 +773,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             @Suppress("DEPRECATION")
             val ev = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
                 ?: return super.onMediaButtonEvent(intent)
+            // A phone key during a call is the call's, ahead of HEADSETHOOK's play/pause below.
+            if (WheelCall.onKey(ev, "the media session (${callerLabel()})")) return true
             if (ev.action != KeyEvent.ACTION_DOWN) return true
             val caller = callerLabel()
             val idx = when (ev.keyCode) {
