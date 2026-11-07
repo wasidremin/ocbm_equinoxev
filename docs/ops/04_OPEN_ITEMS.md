@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 232 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 233 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -142,13 +142,13 @@ high-water mark: versionCode 232 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
 - **CarPlay stayed dead after a walk-away with the accessories on (2026-11-06 17:53–18:01).** The box
   ended the session when the phone left, but its `PROJ_MODE NONE` never reached the app. The app kept
   "CarPlay live", so the walk-away reconnect never ran, and at 17:59 the screen came back black. Only an
-  app restart brought CarPlay back. From 233 the app asks the box when the phone has been out of
+  app restart brought CarPlay back. From 233 (published 2026-11-07) the app asks the box when the phone has been out of
   Bluetooth range for 20 s or the screen comes back with no picture, and ends a session the box no
   longer has. Why the frame was lost is open; 233 logs resync bytes once a minute. Unverified on the
   car. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
 - **Wheel answer button: Android sends it to the car's dialer.** Stock AAOS 14 keeps `KEYCODE_CALL`
   from every app and opens the dialer when Android's Telecom has no ringing call, and the iPhone is
-  not on the car's Bluetooth. From 233 the wheel's voice button answers a ringing CarPlay call, a phone
+  not on the car's Bluetooth. From 233 (published 2026-11-07) the wheel's voice button answers a ringing CarPlay call, a phone
   key that does reach the app answers or ends it, and every key and every focus loss during a call is
   logged. The next ring with a rocker press shows what GM does with the key. Owner:
   `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key".
@@ -156,13 +156,13 @@ high-water mark: versionCode 232 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   6–9 s of each for the Allow tap. At 10:16 the phone reset the adapter's first Bluetooth connect and
   the box's reconnect loop waited its fixed 10 s (`BACKOFF_START_SECS`) to try again. At 11:19 the
   phone took the Wi-Fi handoff and never joined the AP; the app restarted the session itself after
-  55 s. From 233 that restart runs 15 s after a silent handoff (`04_SYSTEM_MODEL.md` §4b). Not done: a
+  55 s. From 233 (published 2026-11-07) that restart runs 15 s after a silent handoff (`04_SYSTEM_MODEL.md` §4b). Not done: a
   quicker box retry after a reset (adapter firmware), and why the phone skipped the AP, which only
   its own log would show. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
 - **Album art late enough to miss the card's wait (2026-11-07 11:22, "Believer").** The phone named
   a cover with an empty image, then sent the real one 0.62 s after the title. The card's 0.5 s wait
   ran out, so the car got two cards without art and then one with it inside 0.13 s. Four of the 140
-  title changes on record look like this (554–657 ms). From 233 the card waits up to 1 s. Unverified
+  title changes on record look like this (554–657 ms). From 233 (published 2026-11-07) the card waits up to 1 s. Unverified
   on the car. Owner: `08_FUTURE_TASKS.md` T13.
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
