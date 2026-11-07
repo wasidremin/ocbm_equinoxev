@@ -276,6 +276,10 @@ pub struct Control {
     /// and every phone-initiated connect — report `active:false`, and the app then offered
     /// **Forget** for the phone that was actively projecting, which deletes a live phone's link key.
     session_active: Arc<AtomicBool>,
+    /// Sessions claimed on EITHER path since btd started ([`SessionClaim::try_claim`]). The reconnect
+    /// loop polls `session_active` only between rounds, so a phone-started session that begins and ends
+    /// inside a backoff sleep is visible only here.
+    sessions: std::sync::atomic::AtomicU64,
     /// The head unit's yes/no for a Numeric-Comparison pairing prompt, read by the SSP agent's mgmt
     /// loop. PROCESS-lifetime like the rest of this struct, and cloned into each session's agent
     /// thread — pairing happens on the accept path, before any session exists, so a per-session
@@ -297,6 +301,11 @@ impl Control {
     /// thread; `handle_request`'s `pair_answer` verb writes it.
     pub fn pair_answer(&self) -> Arc<ssp_agent::PairAnswer> {
         self.pair_answer.clone()
+    }
+
+    /// How many sessions have been claimed since btd started, on either path.
+    pub fn sessions_started(&self) -> u64 {
+        self.sessions.load(Ordering::Acquire)
     }
 
     /// True while a session is live on EITHER path, named peer or not.
@@ -371,6 +380,7 @@ impl<'a> SessionClaim<'a> {
     ) -> Option<Self> {
         flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .ok()?;
+        ctrl.sessions.fetch_add(1, Ordering::AcqRel);
         ctrl.set_session_peer(peer);
         Some(Self { flag, ctrl })
     }

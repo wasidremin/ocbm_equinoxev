@@ -65,10 +65,17 @@ const EV_DEVICE_DISCONNECTED: u16 = 0x000C;
 const EV_CONNECT_FAILED: u16 = 0x000D;
 const EV_AUTH_FAILED: u16 = 0x0011;
 
-/// An `AUTH_FAILED` status that means the phone no longer accepts the stored link key: 0x05 Authentication
-/// Failed or 0x06 Not Paired (mgmt-api status codes).
-fn auth_failure_means_bond_lost(status: Option<u8>) -> bool {
-    matches!(status, Some(0x05 | 0x06))
+/// Whether an `AUTH_FAILED` means a bonded phone refused the stored link key, the definite sign of a pairing
+/// it has forgotten.
+///
+/// The status alone does not say so: the kernel maps HCI 0x05 (Authentication Failure) and 0x06 (PIN or Key
+/// Missing) both to mgmt 0x05, so a first pairing the user cancels, a head-unit "Cancel", a 55 s confirm
+/// timeout and iOS refusing a numeric comparison all arrive as the same 0x05. Two more facts separate them:
+/// the address must be one we hold a key for, and no confirm prompt may have come up on this connection (a
+/// phone that forgot us and is paged with our key never gets that far; one that does is pairing afresh, and
+/// a failed pairing is `PAIR_REJECTED`'s business).
+fn auth_failure_means_bond_lost(status: Option<u8>, bonded: bool, confirm_seen: bool) -> bool {
+    matches!(status, Some(0x05 | 0x06)) && bonded && !confirm_seen
 }
 
 /// Human-readable name for a mgmt event code (BlueZ mgmt-api.txt), for the diagnostic fallback below.
@@ -238,6 +245,15 @@ pub fn bonded_addrs() -> Vec<[u8; 6]> {
             a
         })
         .collect()
+}
+
+/// The stored link-key record for `addr`, or `None` when it is not bonded. A re-pair rewrites it, so a
+/// change in it is that phone's new bond (btd's reconnect walk holds `BTP_BOND_LOST` back while it is new).
+pub fn bond_record(addr: &[u8; 6]) -> Option<Vec<u8>> {
+    load_stored_link_keys()
+        .chunks_exact(LINK_KEY_RECORD_LEN)
+        .find(|r| r[0..6] == addr[..])
+        .map(<[u8]>::to_vec)
 }
 
 /// Persist one link-key record, replacing any existing record for the same bdaddr (a re-pair supersedes
@@ -502,6 +518,11 @@ impl ConfirmTracker {
         } else {
             None
         }
+    }
+
+    /// Whether a confirm prompt came up for `addr` on this connection.
+    fn seen(&self, addr: &[u8]) -> bool {
+        self.counts.contains_key(&Self::key(addr))
     }
 
     /// Clear the streak for `addr` — a fresh bond (NEW_LINK_KEY) or a torn-down connection
@@ -1082,9 +1103,16 @@ pub fn run(
                     params.get(7).map_or("?".to_string(), |s| format!("0x{s:02x}")),
                     link_key_store()
                 ));
-                if auth_failure_means_bond_lost(params.get(7).copied()) {
-                    if let Some(hook) = on_bond_lost {
-                        hook();
+                if let Some((bdaddr, _)) = addr(params) {
+                    let bonded = bonded_addrs().iter().any(|a| a[..] == bdaddr[..]);
+                    if auth_failure_means_bond_lost(params.get(7).copied(), bonded, confirm_tracker.seen(&bdaddr)) {
+                        log(&format!(
+                            "..{} refused our stored link key: it has most likely forgotten the pairing",
+                            fmt_bdaddr_tail(&bdaddr)
+                        ));
+                        if let Some(hook) = on_bond_lost {
+                            hook();
+                        }
                     }
                 }
             }
@@ -1105,13 +1133,32 @@ pub fn run(
 mod tests {
     use super::*;
 
-    /// The definite sign of a forgotten pairing: the phone refuses the stored key (enigy/ocbm bench, 5 Nov).
+    /// The definite sign of a forgotten pairing: a bonded phone refuses the stored key (enigy/ocbm bench, 5 Nov).
     #[test]
-    fn only_a_refused_link_key_means_the_bond_is_lost() {
-        assert!(auth_failure_means_bond_lost(Some(0x05)), "Authentication Failed");
-        assert!(auth_failure_means_bond_lost(Some(0x06)), "Not Paired");
-        assert!(!auth_failure_means_bond_lost(Some(0x08)), "a timeout is not");
-        assert!(!auth_failure_means_bond_lost(None));
+    fn only_a_bonded_phone_refusing_our_key_means_the_bond_is_lost() {
+        assert!(auth_failure_means_bond_lost(Some(0x05), true, false), "Authentication Failed");
+        assert!(auth_failure_means_bond_lost(Some(0x06), true, false), "Not Paired");
+        assert!(!auth_failure_means_bond_lost(Some(0x08), true, false), "a timeout is not");
+        assert!(!auth_failure_means_bond_lost(None, true, false));
+    }
+
+    /// The kernel reports any failed pairing as 0x05 too: a phone we never bonded, or a pairing that got as far
+    /// as a confirm prompt (cancelled, refused, timed out), is not a lost bond.
+    #[test]
+    fn a_failed_pairing_is_not_a_lost_bond() {
+        assert!(!auth_failure_means_bond_lost(Some(0x05), false, false), "never bonded");
+        assert!(!auth_failure_means_bond_lost(Some(0x05), true, true), "a confirm came up: a pairing attempt");
+    }
+
+    #[test]
+    fn confirm_tracker_remembers_a_prompt_until_the_connection_ends() {
+        let mut t = ConfirmTracker::new();
+        let a = [1, 2, 3, 4, 5, 6];
+        assert!(!t.seen(&a));
+        t.record_confirm(&a);
+        assert!(t.seen(&a));
+        t.reset(&a);
+        assert!(!t.seen(&a));
     }
 
     #[test]

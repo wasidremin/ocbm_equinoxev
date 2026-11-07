@@ -502,7 +502,7 @@ class OcbmClient(
         }
         if (p == Ocbm.BTP_BOND_LOST) {
             boardFailed(OcbmBoard.BT_PHASE, "BOND_LOST — an iPhone most likely forgot this adapter; on the iPhone forget it under Settings > Bluetooth, then pair it again")
-            if (!replay) log.w("~~ BT BOND_LOST — the iPhone refused the stored pairing (or answered and reset the link on 3+ reconnect pages); it needs pairing again")
+            if (!replay) log.w("~~ BT BOND_LOST — the iPhone refused the stored pairing (or answered and reset the link in 3 reconnect rounds); it needs pairing again")
             return
         }
         boardUp(OcbmBoard.BT_PHASE, if (replay) "$name (replayed mirror, not a change)" else name)

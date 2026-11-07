@@ -349,7 +349,8 @@ fn plock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// and every change of phone meant a failed pair-verify and a full pair-setup (9 of 10 sessions on one
 /// bench), one of which the phone abandoned. Each id now keeps up to [`KEYS_PER_PEER_ID`] keys, the
 /// most recent first, and pair-verify accepts any of them. The file format is unchanged; an id simply
-/// appears once per key, and an older carplayd reading it keeps the last entry per id, as before.
+/// appears once per key, written OLDEST first, because an older carplayd reading it keeps the last
+/// entry per id (`HashMap::insert`): after a rollback that is the most recent key, as before.
 #[derive(Clone)]
 struct DiskPeers {
     map: Arc<Mutex<PeerKeys>>,
@@ -388,8 +389,10 @@ impl DiskPeers {
         DiskPeers { map: Arc::new(Mutex::new(map)), path: Arc::new(path) }
     }
     /// Read entries into `map` in file order (each id's keys most recent first); returns how many keys.
+    /// The file holds each id's keys oldest first ([`Self::encode`]), so each entry read is that id's
+    /// most recent so far.
     fn load_into(mut b: &[u8], map: &mut PeerKeys) -> usize {
-        let mut n = 0;
+        let before: usize = map.values().map(Vec::len).sum();
         while !b.is_empty() {
             let idl = b[0] as usize;
             if b.len() < 1 + idl + 32 {
@@ -398,14 +401,10 @@ impl DiskPeers {
             let id = b[1..1 + idl].to_vec();
             let mut ltpk = [0u8; 32];
             ltpk.copy_from_slice(&b[1 + idl..1 + idl + 32]);
-            let keys = map.entry(id).or_default();
-            if !keys.contains(&ltpk) && keys.len() < KEYS_PER_PEER_ID {
-                keys.push(ltpk);
-                n += 1;
-            }
+            Self::remember(map, &id, ltpk);
             b = &b[1 + idl + 32..];
         }
-        n
+        map.values().map(Vec::len).sum::<usize>() - before
     }
     /// `ltpk` becomes `id`'s most recent key: moved to the front if known, else added there, with the
     /// oldest past [`KEYS_PER_PEER_ID`] dropped.
@@ -419,14 +418,15 @@ impl DiskPeers {
         keys.insert(0, ltpk);
         keys.truncate(KEYS_PER_PEER_ID);
     }
-    /// The file's bytes for `map`: one `[id_len][id][LTPK]` entry per key, each id's most recent first.
+    /// The file's bytes for `map`: one `[id_len][id][LTPK]` entry per key, each id's oldest first, so the
+    /// last entry per id is its most recent key for any reader that keeps only one ([`DiskPeers`]).
     fn encode(map: &PeerKeys) -> Vec<u8> {
         let mut out = Vec::new();
         for (id, keys) in map {
             if id.len() > 255 {
                 continue;
             }
-            for ltpk in keys {
+            for ltpk in keys.iter().rev() {
                 out.push(id.len() as u8);
                 out.extend_from_slice(id);
                 out.extend_from_slice(ltpk);
@@ -1804,6 +1804,27 @@ mod tests {
         let mut back = HashMap::new();
         assert_eq!(DiskPeers::load_into(&bytes, &mut back), 3);
         assert_eq!(back, map);
+    }
+
+    /// The review's case: after a rollback to a carplayd that keeps one key per id (the last entry it reads,
+    /// `HashMap::insert`), that key must be the most recent, as it was before several keys per id.
+    #[test]
+    fn a_one_key_reader_keeps_the_most_recent_key() {
+        let mut map = HashMap::new();
+        DiskPeers::remember(&mut map, ID, [1; 32]);
+        DiskPeers::remember(&mut map, ID, [2; 32]);
+        DiskPeers::remember(&mut map, ID, [3; 32]);
+        let bytes = DiskPeers::encode(&map);
+        let mut old_reader: HashMap<Vec<u8>, [u8; 32]> = HashMap::new();
+        let mut b = &bytes[..];
+        while !b.is_empty() {
+            let idl = b[0] as usize;
+            let mut ltpk = [0u8; 32];
+            ltpk.copy_from_slice(&b[1 + idl..1 + idl + 32]);
+            old_reader.insert(b[1..1 + idl].to_vec(), ltpk);
+            b = &b[1 + idl + 32..];
+        }
+        assert_eq!(old_reader[ID], [3; 32]);
     }
 
     #[test]

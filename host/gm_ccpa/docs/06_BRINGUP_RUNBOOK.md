@@ -688,7 +688,9 @@ sources that produced it.
 
 
 
-Every session emits one `SESSION v=2 …` line plus a `SESSION_DETAIL` block. That is the point: a drive
+Every session emits one `SESSION v=4 …` line plus a `SESSION_DETAIL` block (the schema history is in
+`SessionSummary.kt`; v=4, 2026-11-07, appended `bt_fail=` for a `PAIR_REJECTED` or `BOND_LOST` from the
+box). That is the point: a drive
 capture in `evidence/` can run into gigabytes, and reading it is not a diagnostic strategy — diffing one
 line per session is.
 

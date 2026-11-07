@@ -180,8 +180,8 @@ pub const BTP_PAIR_REJECTED: u8 = 0x07; // phone rejected N re-pair confirmation
                                          // stored key no longer matches; app should tell the user to
                                          // re-pair on the iPhone or forget the box (ssp_agent.rs)
 pub const BTP_BOND_LOST: u8 = 0x08; // a bonded phone most likely forgot the pairing: it refused the stored
-                                    // link key (AUTH_FAILED 0x05/0x06), or answered and reset the link on 3+
-                                    // reconnect pages in a row. The app may ask the driver to forget the
+                                    // link key (AUTH_FAILED, bonded, no confirm prompt), or answered and reset
+                                    // the link in 3 reconnect rounds in a row. The app may ask the driver to forget the
                                     // adapter on the iPhone and pair again (btd; enigy/ocbm 5 Nov bench)
 pub const CT_RADIO: u8 = 0x16; // host->box [CT_RADIO][0=radios off now | 1=radios on if cfg allows]
                                // (docs/carplay/04_CAPABILITIES_AND_CONFIG.md radio gating: mid-session kill switch; radios-on is otherwise

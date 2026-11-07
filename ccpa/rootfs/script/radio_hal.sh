@@ -205,9 +205,40 @@ bt_powered_up() {  # $1 = hci dev
 # `hciconfig <dev> up|down` at SCHED_FIFO 1 where chrt exists. Both wait in the kernel's
 # __hci_req_sync, which on the CCPA's single-core 3.14 kernel can lose its wake-up and sleep the
 # full 10 s timeout; a real-time caller is always waiting before the HCI workqueue can even send
-# the command (btd's bt_bringup::run_rt has the details; enigy/ocbm measured it).
+# the command (btd's bt_bringup::run_rt has the details; enigy/ocbm measured it). A chrt that
+# exists but fails (applet missing, EPERM) never runs hciconfig, so any failure there is retried
+# plain; repeating up or down is harmless (EALREADY, which hciconfig exits 0 on).
 hci_rt() {
-  if command -v chrt >/dev/null 2>&1; then chrt -f 1 hciconfig "$@"; else hciconfig "$@"; fi
+  if command -v chrt >/dev/null 2>&1 && chrt -f 1 hciconfig "$@"; then return 0; fi
+  hciconfig "$@"
+}
+# Page and inquiry scan off with a raw Write_Scan_Enable(0x00), not `hciconfig noscan`: that
+# ioctl can sleep its full 10 s timeout on the CCPA's 3.14 kernel (lost wake-up, btd's
+# hci::write_scan_enable), and both callers hold the bt lock the next session's bt_on waits on.
+hci_scan_off() {  # $1 = hci dev
+  timeout 5 hcitool -i "$1" cmd 0x03 0x001a 0x00 >/dev/null 2>&1
+}
+# The peer address of every ACL on $1, one per line.
+hci_acl_peers() {  # $1 = hci dev
+  timeout 3 hcitool -i "$1" con 2>/dev/null | awk '/ACL/ {print $3}'
+}
+# End every ACL on $1 with a real HCI Disconnect before a power-down. `down` resets the controller,
+# and a reset is not a disconnect: the phone is not told the link ended and may only learn it from
+# its supervision timeout (enigy/ocbm saw the next session's first page fail in 3 of 8 reconnects,
+# each costing the reconnect loop's backoff). `hcitool dc` exits 0 whether or not the controller
+# took the command, so the result is read back from the connection list (up to 1 s). Address tail
+# only in the log, as ssp_agent does: box.log is uploaded.
+hci_drop_acls() {  # $1 = hci dev
+  for _a in $(hci_acl_peers "$1"); do
+    timeout 3 hcitool -i "$1" dc "$_a" >/dev/null 2>&1
+    _n=0
+    while hci_acl_peers "$1" | grep -qi "^$_a\$" && [ "$_n" -lt 10 ]; do _n=$((_n+1)); sleep 0.1; done
+    if hci_acl_peers "$1" | grep -qi "^$_a\$"; then
+      log "BT ..${_a#*:*:*:*:} still connected after HCI Disconnect - powering down anyway"
+    else
+      log "BT disconnected ..${_a#*:*:*:*:} before power-down"
+    fi
+  done
 }
 
 # Confirmed variant - used for DECISIONS, never inside a poll loop.
@@ -786,10 +817,10 @@ do_bt_prewarm() {
   _warm_dev=$(hci_dev 2>/dev/null) || return 1
   # Initialize the kernel event mask here, not on the subscribe critical path.
   # No stock advertising daemons were started by the mapped attach path.
-  timeout 5 hcitool -i "$_warm_dev" cmd 0x03 0x001a 0x00 >/dev/null 2>&1 || return 1
+  hci_scan_off "$_warm_dev" || return 1
   hci_rt "$_warm_dev" down 2>/dev/null || return 1
   hci_rt "$_warm_dev" up 2>/dev/null || return 1
-  timeout 5 hcitool -i "$_warm_dev" cmd 0x03 0x001a 0x00 >/dev/null 2>&1 || return 1
+  hci_scan_off "$_warm_dev" || return 1
   apply_sco "$_warm_dev" >/dev/null 2>&1 || true
   bt_responsive_confirmed "$_warm_dev" || return 1
   echo "$_warm_dev" > /tmp/.radio_bt_prewarmed
@@ -804,17 +835,8 @@ do_bt_off() {
   # attach helper - re-attach is the wedge-prone half, which is why the supervisor stops at
   # `hciconfig down` rather than calling bt_off.sh.
   _d=$(hci_dev 2>/dev/null) || { rm -f "$BT_STATE"; return 0; }
-  # Raw Write_Scan_Enable(0x00), not `hciconfig noscan`: that ioctl can sleep its full 10 s
-  # timeout on the CCPA's 3.14 kernel (lost wake-up, btd's hci::write_scan_enable), and this
-  # runs under the bt lock, so the next session's bt_on would wait behind it.
-  timeout 5 hcitool -i "$_d" cmd 0x03 0x001a 0x00 >/dev/null 2>&1
-  # End every ACL with a real HCI Disconnect before powering down. `down` resets the controller,
-  # and a reset is not a disconnect: the phone is not told the link ended and may only learn it
-  # from its supervision timeout. enigy/ocbm saw the next session's first page fail in 3 of 8
-  # reconnects once the teardown really reached this point, each costing the reconnect loop's backoff.
-  for _a in $(timeout 3 hcitool -i "$_d" con 2>/dev/null | awk '/ACL/ {print $3}'); do
-    timeout 3 hcitool -i "$_d" dc "$_a" 2>/dev/null && log "BT disconnected $_a before power-down"
-  done
+  hci_scan_off "$_d"
+  hci_drop_acls "$_d"
   hci_rt "$_d" down 2>/dev/null
   rm -f "$BT_STATE"
   log "BT $_d powered down (attach left in place)"

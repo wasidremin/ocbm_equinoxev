@@ -61,6 +61,9 @@ import java.util.concurrent.atomic.AtomicLong
  *    origin stays `none`.
  *  - `v=3` (2026-09-29): `unlocked=` appended (`true` | `false` | `unknown`). `user=` is
  *    `UserHandle.myUserId()` (uid / 100000 on the API 32 stub, where that method is hidden).
+ *  - `v=4` (2026-11-07): `bt_fail=` appended (`none` | `PAIR_REJECTED` | `BOND_LOST`): the last pairing
+ *    failure the box reported. Those two phases are kept out of `btp_max=` (they sort above
+ *    `WIFI_HANDOFF` but are not progress), so this is where they show.
  *
  * A lower-frequency `SESSION_DETAIL id=<id> ...` block (session-end only, one key per line) carries the
  * fields too long or too structured for one line: the raw phone-identity JSON and the two `MGMT_INFO`
@@ -79,7 +82,7 @@ import java.util.concurrent.atomic.AtomicLong
 object SessionSummary {
 
     /** Bump on any field-set/order change; never reinterpret an existing key. History in the class KDoc. */
-    const val SCHEMA_VERSION = 3
+    const val SCHEMA_VERSION = 4
 
     /**
      * How long a permission-dialog observation with NO open session waits for a session to claim it.
@@ -289,6 +292,7 @@ object SessionSummary {
             // v=2: appended at the END, per the format contract — nothing above moved.
             append(" origin=${s.attach.origin.tag}")
             append(" unlocked=${AndroidUser.unlockedToken()}")
+            append(" bt_fail=${s.btFailureName ?: "none"}")
         }
         log.i(line)
 
@@ -394,11 +398,16 @@ object SessionSummary {
         // still participates in "reached furthest" (advisory/monotonic-ish, per Ocbm.btpName's own
         // contract: treat an unknown value as progress, never gate on ordering).
         private val highestBtpRaw = AtomicInteger(-1)
+        /** The last pairing failure the box reported (`bt_fail=`), or null. */
+        @Volatile var btFailureName: String? = null; private set
         fun onBtPhase(phase: Byte) {
             // PAIR_REJECTED (7) and BOND_LOST (8) sort above WIFI_HANDOFF but report a pairing that
             // FAILED, not progress: counted, they would make a session that never got past Bluetooth
-            // read as "reached handoff".
-            if (phase == Ocbm.BTP_PAIR_REJECTED || phase == Ocbm.BTP_BOND_LOST) return
+            // read as "reached handoff". They are recorded as `bt_fail=` instead.
+            if (phase == Ocbm.BTP_PAIR_REJECTED || phase == Ocbm.BTP_BOND_LOST) {
+                btFailureName = Ocbm.btpName(phase)
+                return
+            }
             val v = phase.toInt() and 0xFF
             while (true) {
                 val cur = highestBtpRaw.get()

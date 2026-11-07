@@ -94,13 +94,21 @@ const CHRT: &str = "/usr/bin/chrt";
 /// scan enable these cannot go raw: the DOWN->UP cycle exists for what `hci_dev_do_open` does. But
 /// the box has ONE core, and the command is only sent by the HCI workqueue, which cannot preempt a
 /// real-time caller, so the caller is always on the wait queue before the command leaves.
+///
+/// A `chrt` that exists but fails (an applet missing from a unit's BusyBox, EPERM on
+/// `sched_setscheduler`) never runs `hciconfig` at all, so any failure on that path is retried once
+/// with plain `hciconfig`. Repeating `down` or `up` is harmless: the kernel answers an already-done
+/// one with EALREADY, which `hciconfig` exits 0 on.
 fn run_rt(args: &[&str]) -> std::io::Result<()> {
-    if !std::path::Path::new(CHRT).exists() {
-        return run(args);
+    if std::path::Path::new(CHRT).exists() {
+        let mut cmd = Command::new(CHRT);
+        cmd.args(["-f", "1", "hciconfig"]);
+        match run_with(cmd, args) {
+            Ok(()) => return Ok(()),
+            Err(e) => eprintln!("[btd] {CHRT} -f 1 hciconfig {args:?} failed ({e}) -- retrying without real-time priority"),
+        }
     }
-    let mut cmd = Command::new(CHRT);
-    cmd.args(["-f", "1", "hciconfig"]);
-    run_with(cmd, args)
+    run(args)
 }
 
 fn run_with(mut cmd: Command, args: &[&str]) -> std::io::Result<()> {

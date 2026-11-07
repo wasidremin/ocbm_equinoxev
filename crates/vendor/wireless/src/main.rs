@@ -141,6 +141,9 @@ fn run_active_session(
     // The head unit's Numeric-Comparison yes/no. Owned by the PROCESS-lifetime `Control` (the
     // control port is bound before the claim loop), cloned into each session's agent thread.
     let pair_answer = ctrl.pair_answer();
+    // BOND_LOST is about a phone that cannot connect. While another phone's session is live it would
+    // overwrite that session's latched phase (WIFI_HANDOFF) and tell the driver to re-pair mid-CarPlay.
+    let bond_lost_active = session_active.clone();
     let ssp_handle = thread::spawn(move || {
         // Restart on error, like both accept loops below. `run` returns `Ok(())` on the shutdown
         // flag, so an `Err` is always a transient failure (the mgmt socket right after bring_up's
@@ -148,7 +151,13 @@ fn run_active_session(
         // that exits leaves the box discoverable but unable to pair for the rest of the session.
         while !t.load(Ordering::Relaxed) {
             let on_pair_rejected = || bt_driver::publish_bt_phase(ocbm_proto::BTP_PAIR_REJECTED);
-            let on_bond_lost = || bt_driver::publish_bt_phase(ocbm_proto::BTP_BOND_LOST);
+            let on_bond_lost = || {
+                if bond_lost_active.load(Ordering::Acquire) {
+                    log("BOND_LOST not published: another phone's session is live");
+                } else {
+                    bt_driver::publish_bt_phase(ocbm_proto::BTP_BOND_LOST);
+                }
+            };
             match ssp_agent::run(CONTROLLER_INDEX, &t, Some(&on_pair_rejected), Some(&on_bond_lost), Some(&pair_answer)) {
                 Ok(()) => break,
                 Err(e) => {

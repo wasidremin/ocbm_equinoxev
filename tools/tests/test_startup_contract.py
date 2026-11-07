@@ -1,6 +1,7 @@
 """Hardware-free startup invariants; run with python3 -m unittest discover -s tools/tests."""
 import pathlib
 import subprocess
+import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -25,9 +26,33 @@ class StartupContract(unittest.TestCase):
         self.assertLess(body.index("/tmp/host_present"), body.index("do_bt_on"))
         # The prewarm leaves scan disabled: the last scan write is the raw Write_Scan_Enable(0x00)
         # (not `hciconfig noscan`, whose ioctl can sleep 10 s on the CCPA's 3.14 kernel).
-        self.assertLess(body.rindex('0x001a 0x00'), body.index("echo \"$_warm_dev\""))
+        self.assertLess(body.rindex('hci_scan_off "$_warm_dev"'), body.index("echo \"$_warm_dev\""))
         self.assertNotIn("hciconfig \"$_warm_dev\" noscan", body)
         self.assertIn("bt_responsive_confirmed", body)
+
+    def test_scan_off_is_one_raw_helper(self):
+        source = (ROOT / "ccpa/rootfs/script/radio_hal.sh").read_text()
+        self.assertEqual(source.count("0x03 0x001a 0x00"), 1, "one helper, no copies to drift")
+        bt_off = source.split("do_bt_off() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn('hci_scan_off "$_d"', bt_off)
+        self.assertNotIn("noscan", bt_off.split("#")[0])
+        self.assertLess(bt_off.index("hci_drop_acls"), bt_off.index('hci_rt "$_d" down'))
+
+    def test_teardown_blocks_cannot_kill_themselves(self):
+        # `setsid sh -c '<text>'` puts the whole block, comments included, in the subshell's argv, and
+        # `pkill -f` matches argv. A `[x]yz` pattern does not match its own text, but the plain word
+        # anywhere else in the block does, and the teardown then SIGTERMs itself before wifi_ap_off and
+        # bt_off (seen on the adapter 2026-11-07; enigy/ocbm a902008).
+        source = (ROOT / "tools/session_supervisor.sh").read_text()
+        blocks = re.findall(r"^[ \t]*setsid sh -c '\n(.*?)\n[ \t]*' </dev/null", source, re.S | re.M)
+        self.assertGreaterEqual(len(blocks), 2, "the two wireless_down teardown blocks")
+        checked = 0
+        for body in blocks:
+            # The pkill -f patterns are regexes; these are plain enough for Python's engine to read the same.
+            for pattern in re.findall(r'p(?:kill|grep)\b[^\n"]*"(\[.\][^"]*)"', body):
+                checked += 1
+                self.assertIsNone(re.search(pattern, body), f"the block text matches its own pattern {pattern}")
+        self.assertGreater(checked, 0)
 
     def test_first_reconnect_has_no_settle_sleep(self):
         source = (ROOT / "crates/vendor/wireless/src/reconnect.rs").read_text()

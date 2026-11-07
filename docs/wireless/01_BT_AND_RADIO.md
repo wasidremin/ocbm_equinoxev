@@ -46,8 +46,13 @@ the same 3.14.52 kernel as this unit. This car's logs showed the first, and the 
   `bt_responsive_confirmed` (5 name reads, 2 s apart) first; on a DOWN adapter every read fails at once
   with ENETDOWN. It now checks the kernel's UP flag (`bt_powered_up`, which never reaches the chip) first.
 - **A phone that was never told the link ended.** `down` resets the controller; it is not a disconnect.
-  `do_bt_off` now sends an HCI Disconnect for every ACL (`hcitool dc`) before powering down, so the
-  phone does not learn of it only from its supervision timeout.
+  `do_bt_off` now sends an HCI Disconnect for every ACL (`hci_drop_acls`) before powering down, so the
+  phone does not learn of it only from its supervision timeout. `hcitool dc` exits 0 whether or not the
+  controller took it, so the helper reads the connection list back (up to 1 s) and logs either
+  `BT disconnected ..<tail>` or `still connected after HCI Disconnect`, with the address tail only.
+- **`chrt` can fail.** A `chrt` that exists but cannot set the policy never runs `hciconfig`, so btd's
+  `run_rt` and `radio_hal.sh`'s `hci_rt` retry plain `hciconfig` on any failure (repeating `up`/`down`
+  is harmless). Scan-off is one helper, `hci_scan_off`, used by the prewarm and `bt_off`.
 - **The AP lease file is kept.** `radio_ap_up.sh` and `start_bluetooth_wifi.sh` deleted
   `/var/lib/udhcpd.leases` at every AP start. An iPhone rejoining a network it knows asks for its old
   address (INIT-REBOOT); udhcpd stays silent on a client it has no lease for, so the phone waited, was
@@ -65,7 +70,11 @@ the same 3.14.52 kernel as this unit. This car's logs showed the first, and the 
 - **Bench result, 2026-11-07, adapter on the server (EST, a bonded iPhone in range):** btd bring-up
   `down` 202 ms, `up` 312 ms, scan enable 0 ms; bonded phone paged, connected 3.7 s after bring-up and
   reached CarPlay (RECORD) both runs; `radio_hal.sh bt_on` from DOWN 0.48 s; `bt_off` 0.30 s;
-  `/var/lib/udhcpd.leases` written at the phone's ACK and present after teardown.
+  `/var/lib/udhcpd.leases` written at the phone's ACK and present after teardown. After the review
+  fixes (same day, third run): bring-up through `chrt` with no fallback, scan enable 0 ms, bonded phone
+  authenticated and handed Wi-Fi 3.9 s after bring-up, no `BOND_LOST`, teardown complete (`hci0` DOWN,
+  no daemons). The `chrt` fallback and the ACL read-back were checked with stubbed tools under dash and
+  BusyBox sh, since this unit's `chrt` works and no ACL was up at that teardown.
 - **Reconnect retries** are in "Accessory-initiated BT reconnect" below.
 
 On host_present the BT convergence/advertiser path no longer waits for SoftAP:
@@ -705,13 +714,25 @@ enigy/ocbm's bench (3 of 8 reconnects after a power cut):
   before the walk goes on to the next bonded phone (`walk`). A Connect request or a live session during
   the pause ends the walk.
 
-`ResetStreak` counts each phone's answered-and-reset pages across rounds. Three in a row, with no
-session or failure of its own between them, means the iPhone most likely forgot the pairing: btd
-publishes `BTP_BOND_LOST` once per streak (`docs/carplay/01_OCBM_PROTOCOL.md`). A new bond (the
-link-key store was rewritten) starts the count over and holds the news back 10 minutes, since an
-iPhone also refuses iAP2 until the driver accepts CarPlay after a re-pair. The other source is
-`AUTH_FAILED` with status 0x05 or 0x06 in `ssp_agent`, the definite sign (`on_bond_lost`). The GM app
-shows it on the Board and the status line and keeps it out of the session summary's progress.
+`ResetStreak` counts, per phone, the ROUNDS in which it answered and reset the link, with the round's
+own 2 s retry counted as part of the round (a per-page count reached three about 17 s after start for a
+still-paired phone letting go of an old session, the very case the retries are for). Three rounds in a
+row (about 45 s) with no session or failure of its own between them mean the iPhone most likely forgot
+the pairing: btd publishes `BTP_BOND_LOST` once per streak (`docs/carplay/01_OCBM_PROTOCOL.md`).
+- Any session ends every run, including one the phone started and ended during a backoff sleep
+  (`Control::sessions_started` counts claims on both paths).
+- Each phone's bond is its own stored link-key record (`ssp_agent::bond_record`). A change in it (that
+  phone re-paired) starts its count over and holds its news back 10 minutes, since an iPhone also
+  refuses iAP2 until the driver accepts CarPlay after a re-pair. Pairing or forgetting another phone
+  touches nobody else. Only a phone btd sees for the first time inherits the store file's age.
+
+The other source is `ssp_agent`'s `AUTH_FAILED` with mgmt status 0x05 (`on_bond_lost`). The kernel maps
+HCI 0x05 and 0x06 both to that status, so a cancelled, refused or timed-out pairing arrives the same
+way; it counts only for a phone we hold a key for, with no confirm prompt on that connection (a phone
+paged with our key that has forgotten it never gets to one). btd does not publish it while another
+phone's session is live, where it would replace that session's phase. The GM app shows `BOND_LOST` on
+the Board and the status line, keeps it out of `btp_max=`, and records it as `bt_fail=` in the
+`SESSION` line (schema v=4).
 
 ### Status of the code
 The Model-A `l2cap_connect` + reconnect scaffolding was **not committed** and is being reverted from the

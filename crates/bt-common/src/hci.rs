@@ -24,11 +24,14 @@
 //! # Backend selection
 //!
 //! Chosen by `BT_HCI_BACKEND`:
-//!   * `hciconfig` (**default**) — the original shell-out. Keeps the proven CCPA path byte-for-byte.
-//!   * `native` — this module. What the Raspberry Pi port uses.
+//!   * `hciconfig` (**default**) — the shell-out, for every operation but one.
+//!   * `native` — this module for all of them. What the Raspberry Pi port used.
 //!
-//! Defaulting to the old behaviour is deliberate: the CCPA path is device-proven and this module has
-//! not been exercised there, so opting in per-host is the honest default.
+//! The one exception on the default (CCPA) path, since 2026-11-07: scan enable and disable go through
+//! [`write_scan_enable`] on this module's raw socket, never `hciconfig piscan`/`noscan`, whose ioctl
+//! loses its wake-up on the CCPA's 3.14 kernel and sleeps 10 s (see that function). Measured on the
+//! adapter: 0 ms, `PSCAN ISCAN` read back, mgmt SET_CONNECTABLE/SET_DISCOVERABLE still succeed after it.
+//! Everything else on the CCPA path is still the shell-out.
 
 use std::io;
 
