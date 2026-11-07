@@ -152,6 +152,18 @@ high-water mark: versionCode 232 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   key that does reach the app answers or ends it, and every key and every focus loss during a call is
   logged. The next ring with a rocker press shows what GM does with the key. Owner:
   `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key".
+- **Slow starts on 2026-11-07.** From the adapter attaching to CarPlay live: 20 s, 35 s, 19 s and 81 s,
+  6–9 s of each for the Allow tap. At 10:16 the phone reset the adapter's first Bluetooth connect and
+  the box's reconnect loop waited its fixed 10 s (`BACKOFF_START_SECS`) to try again. At 11:19 the
+  phone took the Wi-Fi handoff and never joined the AP; the app restarted the session itself after
+  55 s. From 233 that restart runs 15 s after a silent handoff (`04_SYSTEM_MODEL.md` §4b). Not done: a
+  quicker box retry after a reset (adapter firmware), and why the phone skipped the AP, which only
+  its own log would show. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
+- **Album art late enough to miss the card's wait (2026-11-07 11:22, "Believer").** The phone named
+  a cover with an empty image, then sent the real one 0.62 s after the title. The card's 0.5 s wait
+  ran out, so the car got two cards without art and then one with it inside 0.13 s. Four of the 140
+  title changes on record look like this (554–657 ms). From 233 the card waits up to 1 s. Unverified
+  on the car. Owner: `08_FUTURE_TASKS.md` T13.
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether

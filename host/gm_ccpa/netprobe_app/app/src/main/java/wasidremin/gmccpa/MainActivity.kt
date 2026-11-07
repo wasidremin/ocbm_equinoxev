@@ -128,6 +128,8 @@ class MainActivity : Activity() {
                 wasidremin.gmccpa.ocbm.AdapterSession.sessionUp
             override fun ensureLanes(): Boolean =
                 ocbmProbe?.client?.ensureLanes() == true
+            override fun lanesArmed(): Boolean =
+                ocbmProbe?.client?.lanesAreArmed() == true
             override fun restartSession() { requestRestart() }
             override fun adapterWifi(): Boolean =
                 wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this@MainActivity)

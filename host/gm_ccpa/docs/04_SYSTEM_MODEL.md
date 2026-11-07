@@ -272,6 +272,15 @@ moment.
 - **`BTP_WIFI_HANDOFF` is the only trustworthy "a CarPlay connect is coming" signal.** The phone
   appearing on the SoftAP is not one: the vehicle hotspot is an ordinary saved network on the phone, so
   it joins whenever in range whether or not CarPlay is involved.
+- **A phone silent 15 s after the handoff gets Restart Session, not 55 s of waiting.** In the 128
+  handoffs on record up to 2026-11-07, CarPlay was live 3.4 s after `BTP_WIFI_HANDOFF` at the median
+  and 8.1 s at the slowest. On 2026-11-07 11:19 the phone took the SSID and never joined the adapter's
+  AP: no DHCP packet, no AirPlay connection. The 45 s handoff watchdog plus `UNKEYED_RESTART_MS` left
+  the screen empty for 55 s, and the automatic restart was live 9 s later. From 233
+  `SessionSupervisor.armHandoffSilence` runs that restart at `HANDOFF_SILENCE_MS` (15 s) when the box
+  reports a projection, this process has its lanes armed and nothing is keyed. It is the same once-per-
+  episode restart (`ReconnectPolicy`); the ladder keeps the 45 s watchdog. Why the phone did not join
+  is not visible from the car or the box. Unverified on the car.
 - **A live session outranks every BT phase.** Bluetooth builds a session; it does not sustain one. Once
   the phone is streaming over Wi-Fi, a late or repeated `CT_BT_PHASE` says nothing about session
   health, and acting on it walks the machine backwards out of `SESSION_UP` — which resumes discovery

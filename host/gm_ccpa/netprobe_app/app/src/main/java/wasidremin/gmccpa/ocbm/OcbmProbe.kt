@@ -338,6 +338,7 @@ class OcbmProbe(context: Context) {
             override fun report(phase: wasidremin.gmccpa.RxPhase, detail: String) {}
             override fun sessionKeyed() = true
             override fun ensureLanes() = true
+            override fun lanesArmed() = true
             override fun restartSession() {}
             override fun adapterWifi() = true
             override fun checkBoxSession(why: String) { asked.incrementAndGet(); sup.onBoxSessionChecked(boxAnswer, why) }
@@ -357,6 +358,47 @@ class OcbmProbe(context: Context) {
             check("a box with no session ends it here", ended.await(1, java.util.concurrent.TimeUnit.SECONDS))
         } finally {
             sup.stop()
+        }
+
+        // 4d. A phone that takes the SSID and never connects gets Restart Session at the short
+        // handoff deadline, once per Bluetooth episode, and only with lanes armed and nothing keyed.
+        val restarts = java.util.concurrent.atomic.AtomicInteger()
+        var keyed = false
+        var armedLanes = false
+        val sup2 = wasidremin.gmccpa.SessionSupervisor(object : wasidremin.gmccpa.SessionSupervisor.Actions {
+            override fun boxLinkAlive() = true
+            override fun reannounce() = false
+            override fun setBoxRadios(on: Boolean) = true
+            override fun restartBoxWireless() = true
+            override fun pauseDiscovery() {}
+            override fun resumeDiscovery() {}
+            override fun report(phase: wasidremin.gmccpa.RxPhase, detail: String) {}
+            override fun sessionKeyed() = keyed
+            override fun ensureLanes() = true
+            override fun lanesArmed() = armedLanes
+            override fun restartSession() { restarts.incrementAndGet() }
+            override fun adapterWifi() = true
+            override fun checkBoxSession(why: String) {}
+            override fun endUnannouncedSession(why: String) {}
+        }, handoffSilenceMs = 200L)
+        try {
+            sup2.noteProjection(Ocbm.PM_WIRELESS_CP)
+            sup2.onBtPhase(Ocbm.BTP_WIFI_HANDOFF)
+            Thread.sleep(400)
+            check("a silent handoff without lanes waits for the 45 s watchdog", restarts.get() == 0, "restarts=${restarts.get()}")
+            armedLanes = true; keyed = true
+            sup2.onBtPhase(Ocbm.BTP_WIFI_HANDOFF)
+            Thread.sleep(400)
+            check("a keyed session is not restarted", restarts.get() == 0, "restarts=${restarts.get()}")
+            keyed = false
+            sup2.onBtPhase(Ocbm.BTP_WIFI_HANDOFF)
+            Thread.sleep(400)
+            check("a silent handoff restarts the session", restarts.get() == 1, "restarts=${restarts.get()}")
+            sup2.onBtPhase(Ocbm.BTP_WIFI_HANDOFF)
+            Thread.sleep(400)
+            check("the restart runs once per Bluetooth episode", restarts.get() == 1, "restarts=${restarts.get()}")
+        } finally {
+            sup2.stop()
         }
 
         val pinned = VehicleConfigYaml.defaultIsPinned()

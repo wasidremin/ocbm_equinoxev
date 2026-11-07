@@ -448,7 +448,7 @@ The card line is exactly the shape the previous build lacked:
 
 - a track change publishes **three** `MediaMetadata` rebuilds (`art=none`, then `queueId`, then
   `art=300x300`) — 49 publishes for 9 track changes, and the card shows ~100–150 ms of no art
-  (since 2026-10-29 a card with no picture is held up to 500 ms for it, so one publish goes out;
+  (since 2026-10-29 a card with no picture is held for it, 500 ms and from 233 1 s, so one publish goes out;
   see docs/ops/08_FUTURE_TASKS.md T13 "Recurred 2026-10-29");
 - the **title frame carries no PlaybackAttributes at all** — no `elapsedMs`, no `playbackStatus`.
   That is §14.4.

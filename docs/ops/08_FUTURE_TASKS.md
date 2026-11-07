@@ -432,6 +432,15 @@ episode that morning (12:29:37).
 `np: no artwork id 250 ms after the title change — same cover, keeping id N`. A new id that comes
 later still replaces it. The cost: if a new item has a different cover the phone never names, the
 card shows the old one instead of none.
+**A fourth case, 2026-11-07 11:22 local (232).** "Believer" came as a title, then an id whose
+transfer was an empty probe (the adapter logs `size=0 probe`), then a second id with the 76,675 B
+cover 617 ms after the title. The 500 ms hold expired first, so the car got `art=none` twice and the
+picture 125 ms later. Of 140 title changes on record the picture followed in 90 ms at the median and
+178 ms at the 95th percentile. The four slower ones, 554–657 ms, all had this probe-first shape
+(10-18 17:17, 11-05 12:28 and 12:29, 11-07 16:22 UTC).
+*Change (233, 2026-11-07, unverified on the car):* `ART_WAIT_MS` is 1 s, so every title change on
+record would have gone out once with its picture. A title with no picture at all now waits 1 s,
+logged as `card: no picture 1000 ms after "<title>"`.
 
 **Later (adapter firmware, `tools/ocbm_install.sh`).**
 - Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.

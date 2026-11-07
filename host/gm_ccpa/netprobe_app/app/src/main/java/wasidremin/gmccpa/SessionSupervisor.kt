@@ -82,7 +82,11 @@ enum class RxPhase(val label: String) {
  * field here needs locking. Callers post events; the supervisor decides. It never blocks: the actions
  * it invokes are expected to hand off (they are dispatched onto the caller's own executor).
  */
-class SessionSupervisor(private val act: Actions) {
+class SessionSupervisor(
+    private val act: Actions,
+    /** [HANDOFF_SILENCE_MS]; shorter only in the self-test. */
+    private val handoffSilenceMs: Long = HANDOFF_SILENCE_MS,
+) {
 
     /**
      * Everything the supervisor can do to the world. An interface rather than direct calls so the
@@ -111,6 +115,8 @@ class SessionSupervisor(private val act: Actions) {
         fun sessionKeyed(): Boolean
         /** Arm A/V lanes if a projection is up and this process dropped them. Already-armed is quiet. */
         fun ensureLanes(): Boolean
+        /** This process has A/V lanes armed, so a missing key is the phone's silence, not ours. */
+        fun lanesArmed(): Boolean
         /** Same path as Restart Session. Must not block this scheduler. */
         fun restartSession()
         /** Adapter Wi-Fi has no mDNS responder, so rung 0 cannot announce anything. */
@@ -152,6 +158,16 @@ class SessionSupervisor(private val act: Actions) {
          * to a first inbound connection was measured at 6-9 s and a slow one should not be punished.
          */
         const val HANDOFF_TIMEOUT_MS = 45_000L
+
+        /**
+         * From the Wi-Fi handoff to restarting the session when the box already reports a projection
+         * and nothing has been keyed. In the 128 handoffs on record up to 2026-11-07, CarPlay was live
+         * 3.4 s after it at the median and 8.1 s at the slowest. On 2026-11-07 11:19 the phone took
+         * the SSID and never joined; the 45 s watchdog plus [UNKEYED_RESTART_MS] kept the screen
+         * empty for 55 s, and the restart was live 9 s later. Only the restart uses this clock; the
+         * ladder still waits [HANDOFF_TIMEOUT_MS].
+         */
+        const val HANDOFF_SILENCE_MS = 15_000L
 
         /**
          * How long after trying a rung before trying the next one.
@@ -286,6 +302,8 @@ class SessionSupervisor(private val act: Actions) {
     private var retryTimer: ScheduledFuture<*>? = null
     /** Deadline on the box-side phases, which otherwise carry no clock. See [HANDOFF_TIMEOUT_MS]. */
     private var handoffTimer: ScheduledFuture<*>? = null
+    /** The phone has the SSID and has not connected. See [HANDOFF_SILENCE_MS]. */
+    private var handoffSilenceTimer: ScheduledFuture<*>? = null
     private var rung = 0
     private val lastRungAt = LongArray(RUNG_COOLDOWN_MS.size)
     /** Set while the box is absent and a CarPlay session is up, so the relink knows to hold BT down. */
@@ -578,7 +596,9 @@ class SessionSupervisor(private val act: Actions) {
                 to(RxPhase.BT_PAIRED, "phone identified over iAP2")
             }
             Ocbm.BTP_WIFI_HANDOFF -> {
-                if (!replay) { armHandoffWatchdog(); deferLadder("box sent the Wi-Fi handoff") }
+                if (!replay) {
+                    armHandoffWatchdog(); armHandoffSilence(); deferLadder("box sent the Wi-Fi handoff")
+                }
                 // The only trustworthy signal that a CarPlay connect is actually coming. The phone
                 // appearing on the SoftAP is NOT one: the vehicle hotspot is an ordinary saved network
                 // on the phone, so it joins whenever it is in range whether or not CarPlay is
@@ -618,6 +638,7 @@ class SessionSupervisor(private val act: Actions) {
         // deadlines then burned two rungs in four seconds, promoting the ladder to the destructive
         // rung 2 (observed 17:31:17.732 and 17:31:21.243).
         handoffTimer?.cancel(false); handoffTimer = null
+        handoffSilenceTimer?.cancel(false); handoffSilenceTimer = null
         // Same reasoning, applied to the ladder's blind 20 s retry: the dial-back clock armed just
         // below is now the only deadline that applies. Observed firing rung 2 into a healthy session
         // 1.4 s after this transition on 2026-09-08. See [deferLadder].
@@ -786,6 +807,7 @@ class SessionSupervisor(private val act: Actions) {
     private fun enterAway() {
         retryTimer?.cancel(false); retryTimer = null
         handoffTimer?.cancel(false); handoffTimer = null
+        handoffSilenceTimer?.cancel(false); handoffSilenceTimer = null
         btdAbsentTimer?.cancel(false); btdAbsentTimer = null
         confirmRetries = 0
         lastPageAt = 0L
@@ -1176,12 +1198,7 @@ class SessionSupervisor(private val act: Actions) {
                         act.ensureLanes()
                         handoffTimer = arm(handoffTimer, UNKEYED_RESTART_MS) {
                             if (act.sessionKeyed()) return@arm
-                            if (!reconnect.shouldAutoRestart()) {
-                                log.i("auto-restart already used this Bluetooth episode")
-                                return@arm
-                            }
-                            log.w("auto-restart: box has a session the app never keyed")
-                            act.restartSession()
+                            autoRestart()
                         }
                         return@arm
                     }
@@ -1194,6 +1211,31 @@ class SessionSupervisor(private val act: Actions) {
                 else -> Unit
             }
         }
+    }
+
+    /**
+     * The phone has the SSID and the box reports a projection, but nothing reached this process.
+     * With lanes armed nothing is missing on this side, so Restart Session runs at
+     * [HANDOFF_SILENCE_MS] instead of after the 45 s watchdog. Without lanes, or once the restart is
+     * used, this does nothing and the watchdog keeps its own path.
+     */
+    private fun armHandoffSilence() {
+        handoffSilenceTimer = arm(handoffSilenceTimer, handoffSilenceMs) {
+            if (phase != RxPhase.HANDOFF_SENT || act.sessionKeyed()) return@arm
+            if (!(boxSessionEstablished || projWireless) || !act.lanesArmed()) return@arm
+            log.w("no CarPlay connect ${handoffSilenceMs / 1000}s after the Wi-Fi handoff (the slowest on record took 8 s)")
+            autoRestart()
+        }
+    }
+
+    /** Restart Session, once per Bluetooth episode ([ReconnectPolicy]). */
+    private fun autoRestart() {
+        if (!reconnect.shouldAutoRestart()) {
+            log.i("auto-restart already used this Bluetooth episode")
+            return
+        }
+        log.w("auto-restart: box has a session the app never keyed")
+        act.restartSession()
     }
 
     /**
@@ -1307,6 +1349,7 @@ class SessionSupervisor(private val act: Actions) {
         }
         retryTimer?.cancel(false); retryTimer = null
         handoffTimer?.cancel(false); handoffTimer = null
+        handoffSilenceTimer?.cancel(false); handoffSilenceTimer = null
         btdAbsentTimer?.cancel(false); btdAbsentTimer = null
         pageConfirmTimer?.cancel(false); pageConfirmTimer = null
         pageAgeTimer?.cancel(false); pageAgeTimer = null
@@ -1363,6 +1406,7 @@ class SessionSupervisor(private val act: Actions) {
         // The 45 s "phone never connected" clock would CT_RADIO on top of this restart.
         handoffTimer?.cancel(false)
         handoffTimer = null
+        handoffSilenceTimer?.cancel(false); handoffSilenceTimer = null
         deferLadder("restarting the wireless advertiser")
         act.restartBoxWireless()
         handoffTimer = arm(null, WIRELESS_RESTART_SETTLE_MS) {

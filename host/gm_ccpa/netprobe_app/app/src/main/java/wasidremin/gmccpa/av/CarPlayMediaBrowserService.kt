@@ -141,10 +141,14 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
         private const val ART_MAX_PX = 512
 
         /**
-         * How long a card waits for its picture. The JPEG lands 20–120 ms after the title
-         * (14_LESSONS_LEARNED §14.2; 2026-10-29: 25–115 ms).
+         * How long a card waits for its picture. The JPEG usually lands 20–180 ms after the title
+         * (14_LESSONS_LEARNED §14.2; 140 title changes to 2026-11-07: median 90 ms, 95th percentile
+         * 178 ms). When the app has not fetched the cover yet, the phone first names an id with an
+         * empty image and sends the real one under a second id: 554–657 ms in all four such cases.
+         * At 500 ms those went out without art, again without art, then with it inside ~130 ms,
+         * the burst the cluster has kept the picture-less version of.
          */
-        private const val ART_WAIT_MS = 500L
+        private const val ART_WAIT_MS = 1_000L
 
         private const val ACTIONS = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
             PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or

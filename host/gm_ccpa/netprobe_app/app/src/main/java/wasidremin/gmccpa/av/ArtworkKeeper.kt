@@ -161,7 +161,7 @@ class ArtworkKeeper(
     private companion object {
         const val CACHE_MAX = 4
         const val MISMATCH_MS = 2_000L
-        /** Under the card's 500 ms wait for a picture, so the kept cover goes out with the title. */
+        /** Under the card's 1 s wait for a picture, so the kept cover goes out with the title. */
         const val CARRY_MS = 250L
     }
 }
