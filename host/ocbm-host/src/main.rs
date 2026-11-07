@@ -946,10 +946,26 @@ fn mode_session(link: &mut Link, secs: u64, cfg_path: Option<&str>) {
         None
     };
     let mut next_hb = Instant::now() + Duration::from_secs(1);
+    // Bench lever: OCBM_SESSION_UI_URL=maps: sends one `CMD_REQUEST_UI_URL` OCBM_SESSION_UI_URL_AT
+    // seconds (default 25, time for a phone to reach RECORD) into the session, as the GM app's
+    // top-bar launches do. carplayd logs `[input] requestUI url=… sent=…`.
+    let mut ui_url = std::env::var("OCBM_SESSION_UI_URL").ok().filter(|u| !u.is_empty());
+    let ui_url_at = Instant::now()
+        + Duration::from_secs(
+            std::env::var("OCBM_SESSION_UI_URL_AT").ok().and_then(|s| s.parse().ok()).unwrap_or(25),
+        );
     loop {
         if let Some(d) = deadline {
             if Instant::now() >= d {
                 break;
+            }
+        }
+        if Instant::now() >= ui_url_at {
+            if let Some(url) = ui_url.take() {
+                let mut f = vec![p::INPUT_COMMAND, p::CMD_REQUEST_UI_URL];
+                f.extend_from_slice(url.as_bytes());
+                link.send(p::CH_INPUT, p::F_SOM | p::F_EOM, &f);
+                println!("[session] sent requestUI url={url}");
             }
         }
         // drain any SESSION_EVENTs (short wait so heartbeats stay ~1/s)

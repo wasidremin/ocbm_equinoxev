@@ -1156,6 +1156,21 @@ RouteGuidanceManeuverCurrentList(13), …TotalCount(14), plus EV/charging/timezo
 AfterManeuverRoadName(4), DistanceBetweenManeuver(5, u32 m) + string(6)/units(7), DrivingSide(8),
 JunctionType(9), ExitInfo(13). Wire-verified live values in `WIRED_NAV_METADATA.md`.
 
+**Ported from enigy/ocbm 2026-11-07 (8ad4798, 09a9844), not yet seen on this car's wire.**
+- `start_route_guidance()` adds selector 3, a bare `00 04 00 03` flag. iOS fills 0x5202 ExitInfo(13),
+  the highway exit label, only when the subscribe asks for it. The subscribe grows by 4 bytes; the
+  Identify is unchanged.
+- `maneuver()` also emits JunctionElementAngle(10, repeated once per junction arm, int16) as
+  `junctionAngles`, JunctionElementExitAngle(11) as `junctionExitAngle` and
+  LinkedLaneGuidanceInformation(12) as `linkedLaneGuidance`.
+- `route_guidance()` emits LaneGuidanceCurrentIndex(16), LaneGuidanceTotalCount(17) and
+  PresentLaneGuidance(18) next to the existing VisibleInApp(15): iOS sends every 0x5204 block of a
+  route at once and says here which one it is presenting.
+- `lane_guidance()` adds `laneCount` and `laneAngles` (every direction a lane leads) to each record.
+  0x5204 itself arrives only at the `extended` tier, which the GM app does not push (lanes cannot show
+  on the Equinox's cluster, `docs/host/02_GM_AAOS_FIELD_REFERENCE.md`).
+The GM app uses the exit label: the cluster's road text reads "Exit 273 · Wade Green Rd".
+
 **Extra offer gate for nav** [E — `WIRED_NAV_METADATA.md` §"offer gate"]: beyond declaring 0x5201/0x5202
 receivable + subscribing, iOS withholds route guidance unless the accessory declares a
 **RouteGuidanceDisplayComponent (id 30)** in `0x1D01` — `{identifier:u16=42, name:utf8="RouteGuidance"}`

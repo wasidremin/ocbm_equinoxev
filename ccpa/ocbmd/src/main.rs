@@ -3847,8 +3847,12 @@ impl Daemon {
                         self.conns.clear();
                         self.hello_cleared_conns = true;
                     }
-                    let mut caps =
-                        p::CAP_CONSOLE | p::CAP_ECHO | p::CAP_IP | p::CAP_FILE | p::CAP_ETH;
+                    let mut caps = p::CAP_CONSOLE
+                        | p::CAP_ECHO
+                        | p::CAP_IP
+                        | p::CAP_FILE
+                        | p::CAP_ETH
+                        | p::CAP_UI_URL;
                     if self.mfi.is_some() {
                         caps |= p::CAP_MFI;
                     }
