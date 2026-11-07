@@ -58,6 +58,10 @@ object ClusterNav {
     private const val BIND_DEADLINE_MS = 10_000L
     /** Minimum gap between two bootstraps, so a host that never binds cannot make the screen strobe. */
     private const val BOOTSTRAP_COOLDOWN_MS = 120_000L
+    /** Rebinds after a session the car ended mid-route: at most this many in [REBIND_WINDOW_MS]. */
+    private const val REBIND_LIMIT = 3
+    private const val REBIND_WINDOW_MS = 10 * 60_000L
+    private const val REBIND_DELAY_MS = 2_000L
 
     /** The merged route. Fed from the seam by [onRecord]; read by the session. */
     val route = RouteGuidance()
@@ -102,6 +106,7 @@ object ClusterNav {
             (app as? Application)?.registerActivityLifecycleCallbacks(FrontTracker)
             loaded = true
         }
+        NavFocus.start(ctx)
         applyComponent(ctx.applicationContext)
         log.i("nav: cluster turn-by-turn ${if (enabled) "ON" else "off"} support=${support(ctx)}")
     }
@@ -112,6 +117,7 @@ object ClusterNav {
         prefs(ctx).edit().putBoolean(KEY_ENABLED, on).apply()
         applyComponent(ctx.applicationContext)
         log.i("nav: cluster turn-by-turn ${if (on) "ON" else "off"} (Settings)")
+        NavFocus.setNavigating(on && route.snapshot.routeActive)
         // A bound session re-renders against the new switch: off ends its trip now.
         sink.get()?.onRoute(route.snapshot)
         if (on) {
@@ -192,6 +198,7 @@ object ClusterNav {
         val before = route.snapshot
         val s = route.onRecord(kind, json) ?: return
         logTransition(before, s)
+        NavFocus.setNavigating(enabled && s.routeActive)
         if (!s.routeActive) {
             triedThisRoute = false
             bootstrapPending = false
@@ -206,6 +213,7 @@ object ClusterNav {
         val s = route.clear()
         triedThisRoute = false
         bootstrapPending = false
+        NavFocus.setNavigating(false)
         if (had) log.i("nav: route cleared — $why")
         sink.get()?.onRoute(s)
     }
@@ -262,7 +270,39 @@ object ClusterNav {
     }
 
     fun detach(s: Sink) {
-        if (sink.compareAndSet(s, null)) log.i("nav: session unbound")
+        if (sink.compareAndSet(s, null)) {
+            log.i("nav: session unbound")
+            rebindIfRouteUp()
+        }
+    }
+
+    private val rebinds = ArrayDeque<Long>()
+
+    /**
+     * The host ended the session while a route was still up: bind again by itself (enigy/carlink
+     * `cluster/ClusterRebind.kt`, whose truck lost the cluster three times in six minutes and needed a
+     * button press each time). At most [REBIND_LIMIT] in [REBIND_WINDOW_MS], so a car that keeps
+     * dropping the session cannot keep the screen flashing the hidden activity. Turning the setting
+     * off ends the session too, but [enabled] is already false by then.
+     */
+    private fun rebindIfRouteUp() {
+        if (!enabled || !route.snapshot.showable) return
+        val now = SystemClock.elapsedRealtime()
+        synchronized(rebinds) {
+            while (rebinds.isNotEmpty() && now - rebinds.first() > REBIND_WINDOW_MS) rebinds.removeFirst()
+            if (rebinds.size >= REBIND_LIMIT) {
+                log.w("nav: session ended with a route up — not binding again: $REBIND_LIMIT rebinds in ${REBIND_WINDOW_MS / 60_000} min")
+                return
+            }
+            rebinds.addLast(now)
+        }
+        log.i("nav: session ended with a route up — binding again in ${REBIND_DELAY_MS / 1000}s")
+        main.postDelayed({
+            if (!enabled || sink.get() != null || !route.snapshot.showable) return@postDelayed
+            triedThisRoute = false
+            lastBootstrapAt = 0L
+            requestBootstrap("session ended with a route up")
+        }, REBIND_DELAY_MS)
     }
 
     // ---- bootstrap ------------------------------------------------------------------------------

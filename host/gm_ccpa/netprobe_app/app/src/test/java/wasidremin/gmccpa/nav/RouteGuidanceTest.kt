@@ -118,4 +118,23 @@ class RouteGuidanceTest {
         assertFalse(s.routeActive)
         assertNull(r.snapshot.current)
     }
+
+    /** The adapter asks for ExitInfo (selector 3): the box's `exitInfo` lands on the maneuver and leads the cue. */
+    @Test fun anExitLabelLeadsTheCue() {
+        val r = RouteGuidance()
+        r.route(""""routeGuidanceState":1,"currentManeuverIndex":4""")
+        val s = r.turn(""""index":4,"maneuverType":8,"afterManeuverRoadName":"Wade Green Rd","exitInfo":"273"""")
+        assertNotNull(s)
+        assertEquals("273", r.snapshot.current?.exitInfo)
+        assertEquals("Exit 273 · Wade Green Rd", r.snapshot.current?.cue)
+    }
+
+    @Test fun exitCueWording() {
+        assertEquals("Wade Green Rd", RouteGuidance.exitCue(null, "Wade Green Rd"))
+        assertEquals("Wade Green Rd", RouteGuidance.exitCue("  ", "Wade Green Rd"))
+        assertEquals("Exit 273", RouteGuidance.exitCue("273", null))
+        assertEquals("Exit 12B · I-75 N", RouteGuidance.exitCue("Exit 12B", "I-75 N"))
+        assertEquals("Exit 273", RouteGuidance.exitCue("273", "273"))
+        assertNull(RouteGuidance.exitCue(null, null))
+    }
 }

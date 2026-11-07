@@ -119,6 +119,7 @@ class VehicleStateWatcher(private val ctx: Context) {
             0 -> null
             else -> true
         }
+        wasidremin.gmccpa.lyrics.BarLyrics.parked = limited?.not()
         if (limited != gearLimited) {
             gearLimited = limited
             log.i("gear=${gearName(g)} -> limitedUI=${limited ?: "no opinion"}")

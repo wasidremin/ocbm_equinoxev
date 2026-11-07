@@ -121,6 +121,17 @@ class CarPlayActivity : Activity() {
     }
 
     private fun launchOrFallback(role: String, fallback: () -> Unit) {
+        // By URL when the adapter takes it: one command, no screen capture and no icon to find
+        // (the vision launch took two toggles and about 3 s from full-screen Maps, 2026-11-03).
+        val url = CarPlayUrls.forRole(role)
+        if (url != null && wasidremin.gmccpa.ocbm.AdapterSession.canOpenUrl()) {
+            touchHandler?.post {
+                val sent = wasidremin.gmccpa.ocbm.AdapterSession.openUrl(url)
+                log.i("topbar: open $role by url $url sent=$sent")
+                if (sent) MapsWatch.hint(role)
+            }
+            return
+        }
         if (!wasidremin.gmccpa.av.VisionLauncher.isCalibrated(this, role)) {
             fallback()
             return
@@ -367,16 +378,21 @@ class CarPlayActivity : Activity() {
          * bound when Media Center asks, not when we start), so an Activity-instance field would be
          * unreachable from it. Session scope is restored by CLEARING it in [stopSession] instead.
          */
+        private fun NowPlayingState.Snapshot.feedLyrics() = wasidremin.gmccpa.lyrics.BarLyrics.onSnapshot(
+            title, artist, album, durationMs, elapsedMs, elapsedKnown, playing)
+
         val nowPlaying = NowPlayingState().apply {
             onMetadataChanged = { snapshot ->
                 CarPlayMediaBrowserService.publish(snapshot)
                 wasidremin.gmccpa.BarArtwork.onArtwork(snapshot.artwork)
+                snapshot.feedLyrics()
                 live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
             }
             // The rail icon follows ticks too: status arrives in its own sparse frames, so
             // metadata-only refresh left the play/pause glyph stale for whole tracks.
             onPlaybackTick = {
                 CarPlayMediaBrowserService.publishPlaybackState(it)
+                it.feedLyrics()
                 live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
             }
             // Cluster turn-by-turn rides the same seam and the same session end. Every teardown

@@ -595,7 +595,7 @@ class LauncherUi(private val act: Activity) {
             act, "Play Spotify on connect",
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },
-        )))
+        )).addRow(lyricsRow()))
         page.addView(eqSectionLabel(act, "Navigation"))
         val nav = wasidremin.gmccpa.nav.ClusterNav
         navRow = EqRow(
@@ -630,11 +630,35 @@ class LauncherUi(private val act: Activity) {
                 eqButton(act, "Choose", EqButtonStyle.SECONDARY) { role.openPicker(act) } else null,
         )
         page.addView(EqCard(act).addRow(voiceRow))
+        page.addView(eqSectionLabel(act, "Calls"))
+        page.addView(wasidremin.gmccpa.calltest.CallTestsCard(act).build())
         page.addView(eqSectionLabel(act, "Phones"))
         phonesCard = EqCard(act)
         page.addView(phonesCard)
         // The pages are rebuilt when the settings width settles; keep what was last shown.
         fillPhones(shownPhones, shownPhonesNote, shownCanChoose)
+    }
+
+    /** Settings ▸ Playback ▸ Lyrics in the top bar, with Clear for the songs kept on the head unit. */
+    private fun lyricsRow(): View {
+        val lyrics = wasidremin.gmccpa.lyrics.BarLyrics
+        lyrics.load(act)
+        fun subtitle() = "Shows the line being sung in the custom top bar while the car is in Park. " +
+            "Song titles, artists, albums and lengths go to lrclib.net. " + lyrics.usageText(act)
+        lateinit var row: EqRow
+        val clear = eqButton(act, "Clear", EqButtonStyle.SECONDARY) {
+            val n = lyrics.clear(act)
+            row.setSubtitle(subtitle())
+            act.runOnUiThread { android.widget.Toast.makeText(act, "Cleared $n songs' lyrics", android.widget.Toast.LENGTH_SHORT).show() }
+        }
+        val controls = android.widget.LinearLayout(act).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(clear, android.widget.LinearLayout.LayoutParams(-2, -2).apply { marginEnd = EqTheme.px(20f) })
+            addView(EqToggle(act, lyrics.enabled) { on -> lyrics.setEnabled(act, on); row.setSubtitle(subtitle()) })
+        }
+        row = EqRow(act, "Lyrics in the top bar", subtitle(), trailing = controls)
+        return row
     }
 
     private var shownPhones: List<PhoneBook.Phone>? = null
@@ -746,10 +770,13 @@ class LauncherUi(private val act: Activity) {
      * Only a genuinely missing template set (no built-in AND no override) is a profile error.
      */
     private fun launcherStatusSubtitle(): String {
+        val byUrl = wasidremin.gmccpa.ocbm.AdapterSession.canOpenUrl()
         val missing = wasidremin.gmccpa.match.ScreenModel.ROLES.filter {
-            !wasidremin.gmccpa.av.VisionLauncher.isCalibrated(act, it)
+            !(byUrl && wasidremin.gmccpa.av.CarPlayUrls.forRole(it) != null) &&
+                !wasidremin.gmccpa.av.VisionLauncher.isCalibrated(act, it)
         }
-        return launcherStatusText(missing)
+        val text = launcherStatusText(missing)
+        return if (byUrl) "Maps, Now Playing and Phone open by command from the adapter. $text" else text
     }
 
     private fun refreshLauncherStatusRow() = act.runOnUiThread {

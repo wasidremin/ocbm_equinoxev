@@ -287,6 +287,8 @@ object Ocbm {
     const val CAP_IP: Int = 0x0000_0008
     const val CAP_FILE: Int = 0x0000_0010
     const val CAP_ETH: Int = 0x0000_0020
+    /** carplayd takes [CMD_REQUEST_UI_URL]; an older box drops it unsent. lib.rs CAP_UI_URL. */
+    const val CAP_UI_URL: Int = 0x0000_0040
 
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
@@ -296,6 +298,7 @@ object Ocbm {
         if (caps and CAP_IP != 0) bits.add("IP")
         if (caps and CAP_FILE != 0) bits.add("FILE")
         if (caps and CAP_ETH != 0) bits.add("ETH")
+        if (caps and CAP_UI_URL != 0) bits.add("UI_URL")
         return if (bits.isEmpty()) "none" else bits.joinToString("|")
     }
 
@@ -418,6 +421,12 @@ object Ocbm {
     const val CMD_UI_APPEARANCE: Byte = 0x0E // lib.rs:272
     const val CMD_MAP_APPEARANCE: Byte = 0x0F // lib.rs:273
     const val CMD_NIGHT_MODE: Byte = 0x10 // lib.rs:274
+    /**
+     * `[INPUT_COMMAND][CMD_REQUEST_UI_URL][url…]` -> `requestUI{url}`: open a CarPlay app on the main
+     * screen. UTF-8, no terminator, 1..[REQUEST_UI_URL_MAX] bytes. Only on a box with [CAP_UI_URL].
+     */
+    const val CMD_REQUEST_UI_URL: Byte = 0x12
+    const val REQUEST_UI_URL_MAX: Int = 255
 
     const val APPEARANCE_STREAM_MAIN: Byte = 0x00 // lib.rs:275
     const val APPEARANCE_STREAM_ALT: Byte = 0x01 // lib.rs:276

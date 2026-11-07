@@ -1565,6 +1565,18 @@ class OcbmClient(
         return subscribed
     }
 
+    /**
+     * `[INPUT_COMMAND][CMD_REQUEST_UI_URL][url…]` -> the box's `requestUI{url}`, which brings a CarPlay
+     * app forward on the main screen ([wasidremin.gmccpa.av.CarPlayUrls]). False, and nothing sent,
+     * for a box without [Ocbm.CAP_UI_URL] or a URL outside 1..[Ocbm.REQUEST_UI_URL_MAX] bytes.
+     */
+    fun sendRequestUiUrl(url: String): Boolean {
+        val bytes = url.toByteArray(Charsets.UTF_8)
+        if (caps and Ocbm.CAP_UI_URL == 0 || bytes.isEmpty() || bytes.size > Ocbm.REQUEST_UI_URL_MAX) return false
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_REQUEST_UI_URL) + bytes)
+        return subscribed
+    }
+
     /** `[INPUT_COMMAND][CMD_NIGHT_MODE][on]` -> the box's `setNightMode{nightMode}`. */
     fun sendNightMode(night: Boolean): Boolean {
         enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_NIGHT_MODE, if (night) 1 else 0))

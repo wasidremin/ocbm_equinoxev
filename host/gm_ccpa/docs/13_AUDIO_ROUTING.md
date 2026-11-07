@@ -502,7 +502,10 @@ an activity-based gate would clip the onset.
   VOICE_RECOGNITION peak 5746 (-15 dBFS), 5/266 chunks all-zero, silenced=false`. The two calls
   either side logged -11 dBFS and -8 dBFS. Consequence, still unverified: while the role is held,
   CarPlay calls also use `VOICE_RECOGNITION`. They therefore lose whatever echo cancellation the
-  platform attaches to `VOICE_COMMUNICATION`. No echo was reported on that drive.
+  platform attaches to `VOICE_COMMUNICATION`. No echo was reported on that drive. From 2026-11-07
+  Settings ▸ Calls has a parked Echo test and Voice test (ported from enigy/carlink) that compare these
+  paths in the car without a call; one run of each answers this. On the emulator the echo test runs end
+  to end and finds no echo on any path, as it must with no acoustic path.
 - **A call whose far end was silent (2026-10-27 21:28, incoming, answered from the call pill).** The
   far end heard the driver, but the driver heard nothing. The capture rules out the receive path. The
   phone's telephony stream carried 794 frames (`stream 100 ended after 794 frames (0 drops)`) and the

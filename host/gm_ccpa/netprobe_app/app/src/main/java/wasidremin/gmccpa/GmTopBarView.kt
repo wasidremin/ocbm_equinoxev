@@ -57,6 +57,10 @@ class GmTopBarView(ctx: Context) : View(ctx) {
     var selected: BarTarget? = null
         set(v) { field = v; invalidate() }
 
+    /** The line being sung ([wasidremin.gmccpa.lyrics.BarLyrics]), drawn in the free middle; null draws nothing. */
+    var lyricLine: String? = null
+        set(v) { if (field != v) { field = v; invalidate() } }
+
     /** The current album art for the Now Playing tile ([BarArtwork]); null draws the glyph. */
     var nowPlayingArt: android.graphics.Bitmap? = null
         set(v) { if (field !== v) { field = v; invalidate() } }
@@ -108,8 +112,12 @@ class GmTopBarView(ctx: Context) : View(ctx) {
         override fun run() { invalidate(); postDelayed(this, 15_000) }
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick); BarArtwork.attach(this) }
-    override fun onDetachedFromWindow() { removeCallbacks(tick); BarArtwork.detach(this); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow(); post(tick); BarArtwork.attach(this); wasidremin.gmccpa.lyrics.BarLyrics.attach(this)
+    }
+    override fun onDetachedFromWindow() {
+        removeCallbacks(tick); BarArtwork.detach(this); wasidremin.gmccpa.lyrics.BarLyrics.detach(this); super.onDetachedFromWindow()
+    }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         bg.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), bgTop, bgBottom, Shader.TileMode.CLAMP)
@@ -204,6 +212,7 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             w, h, clusterInset, 0f, contentH, margin, row.end, natural, endIndent = endIndent)
         val edge = layout.rightEdge
         val fit = layout.rightScale
+        var clusterLeft = edge
         if (fit > 0f) {
             val ts = baseText * fit
             val small = baseSmall * fit
@@ -252,7 +261,22 @@ class GmTopBarView(ctx: Context) : View(ctx) {
             text.textAlign = Paint.Align.CENTER
             c.drawText(profileInitial, x - ar, mid + text.textSize * 0.36f, text)
             text.textAlign = Paint.Align.LEFT
+            clusterLeft = x - ar * 2f
         }
+        lyricLine?.let { drawLyric(c, it, row.end + h * 0.6f, clusterLeft - h * 0.6f, h) }
+    }
+
+    /** One lyric line, centred between the tiles and the right cluster, shrunk then elided to fit. */
+    private fun drawLyric(c: Canvas, line: String, left: Float, right: Float, h: Float) {
+        val room = right - left
+        if (room < h * 2f) return
+        text.color = textCol
+        text.textSize = h * 0.26f
+        val natural = text.measureText(line)
+        if (natural > room) text.textSize = (h * 0.26f * room / natural).coerceAtLeast(h * 0.18f)
+        val shown = android.text.TextUtils.ellipsize(line, android.text.TextPaint(text), room, android.text.TextUtils.TruncateAt.END).toString()
+        val x = left + (room - text.measureText(shown)) / 2f
+        c.drawText(shown, x, h / 2f + text.textSize * 0.36f, text)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {

@@ -39,9 +39,15 @@ class RouteGuidance {
         /** 0 right-hand traffic, 1 left-hand. Decides U-turn and roundabout direction. */
         val drivingSide: Int? = null,
         val junctionType: Int? = null,
-        /** Only sent when the subscribe asks for ExitInfo, which today's does not (doc 03 selector gap). */
+        /**
+         * The highway exit label ("273"). iOS fills it only when the route-guidance subscribe asks for
+         * ExitInfo, which adapter firmware from 2026-11-07 does (selector 3, ported from enigy/ocbm).
+         */
         val exitInfo: String? = null,
-    )
+    ) {
+        /** What the cluster reads for this step: "Exit 273 · Wade Green Rd", or the road alone ([exitCue]). */
+        val cue: String? get() = exitCue(exitInfo, afterRoadName ?: description)
+    }
 
     data class Snapshot(
         /** RouteGuidanceState: 0 no route, 1 route set, 2 arrived, 3 loading, 4 locating, 5 rerouting, 6 proceed to route. */
@@ -170,6 +176,21 @@ class RouteGuidance {
     }
 
     companion object {
+        /**
+         * "Exit 273 · road" when an exit label is known, else the road (enigy/carlink [236]). A label that
+         * already reads "Exit …" is not prefixed again, and the road is dropped when it only repeats it.
+         * On the Equinox the cluster draws GM's own arrow from the maneuver type and ignores app icons
+         * (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`), so this text is where the exit can show.
+         */
+        fun exitCue(exitInfo: String?, road: String?): String? {
+            val exit = exitInfo?.trim()?.takeIf { it.isNotEmpty() } ?: return road
+            val label = if (exit.startsWith("exit", ignoreCase = true)) exit else "Exit $exit"
+            val r = road?.trim()?.takeIf {
+                it.isNotEmpty() && !it.equals(exit, ignoreCase = true) && !it.equals(label, ignoreCase = true)
+            }
+            return if (r == null) label else "$label · $r"
+        }
+
         const val KIND_ROUTE = "routeGuidance"
         const val KIND_MANEUVER = "maneuver"
 

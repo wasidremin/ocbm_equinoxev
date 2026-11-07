@@ -552,6 +552,15 @@ Kept here so a later session does not promote them into tasks.
   (`GEAR_SELECTION`). It stays parked: the sources that would show the wire contract (the CarPlay
   Simulator, `CarPlaySDK.framework`) are macOS-only and this fork has no Mac. The route left is an
   advertise-only build read through the iPhone's own logs (`idevicesyslog`).
+- **enigy/carlink features that cannot show on this cluster (checked 2026-11-07).** Junction-shaped
+  turn icons, lane guidance (both the lane strip image and asking the iPhone for lanes, which needs the
+  `extended` tier) and the flashing turn alert all work by sending icons, which the Equinox's VCU
+  cluster ignores (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`). The exit label was taken instead.
+- **Split-screen media pane with lyrics (deferred 2026-11-07).** enigy's pane gives CarPlay one side
+  of the panel through a second view area and draws a media card with lyrics on the other. Here that
+  touches the calibrated video geometry (top bar, traced edges, rail), so lyrics went into the custom
+  top bar instead (Settings ▸ Playback). The pane stays possible: the adapter already has enigy's 100 ms
+  view-area animation floor.
 - **Wrong panel.** Knob, d-pad, and touchpad descriptors are for other head units. The Equinox is
   a touchscreen.
 - **No surface yet.** A second CarPlay video stream on the Equinox cluster waits until the VCU

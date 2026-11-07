@@ -23,7 +23,8 @@ import java.time.ZonedDateTime
  *   host found that epoch is expressed against the destination's time zone and rendered a four-hour
  *   shifted clock (`MetadataWindow.swift`, 2026-07-12);
  * - step cue = the road AFTER the maneuver, as carlink does: the cluster has room for a road name,
- *   not Apple's full "Turn right onto…" sentence.
+ *   not Apple's full "Turn right onto…" sentence. A highway exit leads it: "Exit 273 · Wade Green Rd"
+ *   ([RouteGuidance.Maneuver.cue]).
  */
 internal object TripFactory {
     fun build(s: RouteGuidance.Snapshot, ctx: Context, nowMs: Long = System.currentTimeMillis()): Trip {
@@ -59,7 +60,7 @@ internal object TripFactory {
 
     private fun step(m: RouteGuidance.Maneuver, ctx: Context): Step {
         val sb = Step.Builder().setManeuver(ManeuverMap.build(m, ctx))
-        (m.afterRoadName ?: m.description)?.let { sb.setCue(it) }
+        m.cue?.let { sb.setCue(it) }
         m.afterRoadName?.let { sb.setRoad(it) }
         return sb.build()
     }

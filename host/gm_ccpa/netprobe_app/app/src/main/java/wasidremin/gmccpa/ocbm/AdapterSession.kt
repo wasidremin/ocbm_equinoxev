@@ -122,6 +122,15 @@ object AdapterSession {
         return client?.sendCommand(cmd) == true
     }
 
+    /** Whether the adapter can open a CarPlay app by URL ([Ocbm.CAP_UI_URL]). */
+    fun canOpenUrl(): Boolean = (client?.caps ?: 0) and Ocbm.CAP_UI_URL != 0
+
+    /** Open a CarPlay app by URL ([wasidremin.gmccpa.av.CarPlayUrls]); false when nothing was sent. */
+    fun openUrl(url: String): Boolean {
+        MapsWatch.noteInput()
+        return client?.sendRequestUiUrl(url) == true
+    }
+
     fun sendNightMode(night: Boolean): Boolean =
         client?.sendNightMode(night) == true
 
