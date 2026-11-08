@@ -236,6 +236,22 @@
                  which is precisely when a CarPlay screen must stay up. MainActivity already carries it. -->
             <meta-data android:name="distractionOptimized" android:value="true" />
         </activity>
+        <!-- GM's driver display reports page changes here (nav/GmClusterPageService), the route
+             openautolink uses: GM's cluster category and SupportedDisplay=IPC. GM finds it at boot,
+             so it needs one head-unit restart after install. Exported with no permission so GM's
+             sender is never refused; a forged event can at most reopen the map window. -->
+        <uses-library android:name="info3_cluster" android:required="false" />
+        <service
+            android:name="wasidremin.gmccpa.nav.GmClusterPageService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="gm.cluster.action.APP_SELECTED" />
+                <action android:name="gm.cluster.action.FULL_MAP_SELECTED" />
+                <category android:name="com.gm.intent.category.COREAPP" />
+            </intent-filter>
+            <meta-data android:name="AppType" android:value="gmccpa_page_observer" />
+            <meta-data android:name="SupportedDisplay" android:value="IPC" />
+        </service>
         <!-- CarPlay's cluster map on the driver display (nav/DriverDisplay). Opened there with
              ActivityOptions.setLaunchDisplayId; its own task so it never joins the CarPlay screen's.
              Resizeable, because a window on a second display takes the size of that display. -->

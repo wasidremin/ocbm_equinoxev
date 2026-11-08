@@ -248,6 +248,16 @@ high-water mark: versionCode 237 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
      stayed up for the whole upload (2,100 frames over 2 min, none dropped), including when a route
      started at 12:00:38: Turn-by-turn in the cluster stood down (no `navigationStarted`), and nothing
      took the display back.
+     **Evening drives on 237 (19:50–21:12):** the window opened in all four sessions, within a second
+     of CarPlay's picture. GM hid it twice: at 19:50:51, 6 s after a steering-wheel track skip, with
+     CarPlay still in front on the main screen, so nothing reopened it; and at 20:04:37, together with
+     the CarPlay screen itself, when GM's media service took the main screen. From 238
+     (`nav/GmClusterPageService`, openautolink's "GM page-return handling" re-implemented): a service in
+     GM's cluster category (`com.gm.intent.category.COREAPP`, `SupportedDisplay=IPC`) receives GM's
+     `APP_SELECTED`/`FULL_MAP_SELECTED` page events, logs each (`GM page event … state= type=`), and a
+     full-map page selected while no map window is open reopens it (at most 3 a minute). GM finds the
+     service at boot: one head-unit restart after install. Emulator-checked with synthetic events;
+     whether the Equinox sends them is the next upload's question.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

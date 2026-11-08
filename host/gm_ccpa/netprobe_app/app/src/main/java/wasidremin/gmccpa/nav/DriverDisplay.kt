@@ -1,6 +1,5 @@
 package wasidremin.gmccpa.nav
 
-import android.app.Activity
 import android.app.ActivityManager
 import android.app.ActivityOptions
 import android.content.Context
@@ -149,7 +148,7 @@ object DriverDisplay {
      * Main thread. The owner asked for the map back (a long-press on the strip right of CarPlay):
      * open the window again after GM took the display back, at most once every two seconds.
      */
-    fun reopen(from: Activity, why: String) {
+    fun reopen(from: Context, why: String) {
         if (display == null || size == null) {
             log.i("map not reopened ($why) — ${if (!enabled) "the setting is off" else "no driver display this session"}")
             return
@@ -163,7 +162,7 @@ object DriverDisplay {
     @Volatile private var lastReopenAt = 0L
 
     /** Main thread. Open the window on the driver display unless it is already open. */
-    fun show(from: Activity, why: String) {
+    fun show(from: Context, why: String) {
         val d = display ?: return
         if (size == null || DriverDisplayActivity.isOpen()) return
         if (launches >= LAUNCHES_PER_SESSION) return
@@ -180,6 +179,33 @@ object DriverDisplay {
         } catch (e: Exception) {
             log.w("opening the map window on display ${d.id} failed: ${e.javaClass.simpleName}: ${e.message}")
         }
+    }
+
+    /** Automatic returns in the last minute ([onGmPage]), so GM and the app can never ping-pong. */
+    private val autoReturns = ArrayDeque<Long>()
+    private const val AUTO_RETURNS_PER_MINUTE = 3
+
+    /**
+     * GM's driver display reported a page change ([GmClusterPageService]). Selecting the full-map
+     * page again brings CarPlay's map back, the return openautolink built for the same problem:
+     * GM covers our window when the driver leaves the map page, and we close it then, so a map
+     * page selected while no window is open means the driver came back for it. Never more than
+     * [AUTO_RETURNS_PER_MINUTE] a minute; never when the page left is reported.
+     */
+    fun onGmPage(ctx: Context, selected: Int?, type: String?) {
+        if (selected != 1 || !enabled || display == null || size == null) return
+        if (DriverDisplayActivity.isOpen()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        synchronized(autoReturns) {
+            while (autoReturns.isNotEmpty() && now - autoReturns.first() > 60_000L) autoReturns.removeFirst()
+            if (autoReturns.size >= AUTO_RETURNS_PER_MINUTE) {
+                log.w("map page selected (${type ?: "?"}) — not returning: $AUTO_RETURNS_PER_MINUTE returns in the last minute")
+                return
+            }
+            autoReturns.addLast(now)
+        }
+        launches = 0
+        show(ctx, "GM's map page selected (${type ?: "?"})")
     }
 
     /** The first map frame of the session reached the driver display. */
