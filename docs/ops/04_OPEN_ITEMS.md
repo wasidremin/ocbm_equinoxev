@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 235 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -167,7 +167,9 @@ high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   ran out, so the car got two cards without art and then one with it inside 0.13 s. Four of the 140
   title changes on record look like this (554–657 ms). From 233 (published 2026-11-07) the card waits up to 1 s. Unverified
   on the car. Owner: `08_FUTURE_TASKS.md` T13.
-- **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), in Play 234, none yet tried in the car.**
+- **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), in Play 234 (the pane's tap strip in
+  235).** On the 2026-11-08 drive the lyrics lookup, the top-bar line and Now Playing by URL were used;
+  the rest is not yet tried in the car.
   - *Top-bar Now Playing, Maps, Spotify and Phone open by command:* `CMD_REQUEST_UI_URL` on an adapter
     whose `HELLO_ACK` carries `CAP_UI_URL`, instead of finding and tapping the icon. Benched on the
     owner's iPhone with the recorded picture: `nowplaying:`, `maps:`, `spotify:`, `mobilephone:` (and
