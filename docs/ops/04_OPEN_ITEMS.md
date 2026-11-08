@@ -184,8 +184,9 @@ high-water mark: versionCode 236 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     Off, its default then (`pane: no split this session`), and the owner saw lyrics only in the top bar.
     So since 2026-11-08 a tap on the glass right of the picture (x 2630–2914 under the top bar) shows or
     hides it, the state is kept for the next drive, and the default is *Over CarPlay*: the pane is laid
-    over the right 30% of the picture and nothing is sent to the phone. Emulator-checked (strip, × button,
-    both modes); not yet on the car. Choosing a side instead declares a second view area (`initial: true`
+    over the right 30% of the picture and nothing is sent to the phone. On the car 2026-11-08 11:13 the
+    strip showed and hid the pane three times (Over CarPlay); the owner then chose Right, 40%, and the
+    next sessions started split (CarPlay 1482x960, pane 988 px wide). No switch of the split was tried. Choosing a side instead declares a second view area (`initial: true`
     only when the pane was last showing), CarPlay on one side and the pane on the other; the strip then
     sends `CMD_VIEW_AREA`. Benched on the owner's iPhone with the app's exact document
     (2400x960, pane right 30%): iOS negotiated `viewAreas`, drew CarPlay in 1680x960 with the right 30%
@@ -220,10 +221,18 @@ high-water mark: versionCode 236 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   (`docs/carplay/06_AV_PIPELINE.md` "VALIDATED 2026-07-12"). Emulator-checked on a simulated public
   display (window opens there, the main screen keeps focus); the emulator's own cluster displays are
   private, as the car's may be. Open, in order:
-  1. Whether the Equinox's VCU on AAOS 14 shows the driver display to the app at all. Every connect
-     logs each display with its size and `window allowed|refused` (`[cluster] display …`), setting on
-     or off; the first upload answers it.
-  2. If it does: the picture, which page of the driver display it needs, and whether GM's own turn
+  1. ~~Whether the Equinox's VCU on AAOS 14 shows the driver display to the app at all.~~ **Yes, 2026-11-08
+     11:11:** display 2, 2000x810, 220 dpi, flags `0x4083`, `window allowed` (also a private, off
+     2103x774 display 11, unused). On the first try the iPhone streamed the cluster map (HEVC 2000x810,
+     first frame 0.35 s after the window opened, 0 frames dropped): 62 frames before the window was
+     hidden 2.4 s later, then, after a head-unit restart, 640 frames over 33 s before it was hidden
+     again. Nothing GM sends the app says why a window is hidden. The first time was 0.6 s after
+     Turn-by-turn in the cluster started navigation, the second 12 s after it ended it, so the
+     owner's account of the driver display is the missing piece. Same day, a bug: that feature's
+     bootstrap took the map window for "the screen in front" and launched the CarAppActivity on the
+     driver display over the map (16:15:50); it now tracks main-display screens only.
+  2. What the owner saw: the picture, which page of the driver display it needs, whether GM's
+     speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
      it may conflict with Turn-by-turn in the cluster). Their first enable also needed a head-unit
      restart (End Call held ~30 s while parked).

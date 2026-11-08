@@ -364,6 +364,10 @@ object ClusterNav {
             // Neither is a screen to return to: the CarAppActivity is the bootstrap itself, and the
             // USB attach trampoline is NoDisplay and finishes in the same frame.
             if (a.javaClass.name == CAR_APP_ACTIVITY || a is wasidremin.gmccpa.UsbAttachActivity) return
+            // Nor is a window on another display (the driver display's map): a bootstrap launched
+            // from it opens the CarAppActivity THERE, over the map, and hands back the wrong task
+            // (2026-11-08 16:15:50, "launched CarAppActivity over DriverDisplayActivity").
+            if ((a.display?.displayId ?: android.view.Display.DEFAULT_DISPLAY) != android.view.Display.DEFAULT_DISPLAY) return
             front = WeakReference(a)
             if (bootstrapPending) requestBootstrap("deferred")
         }

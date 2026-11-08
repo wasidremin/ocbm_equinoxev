@@ -356,9 +356,10 @@ Activity on the driver display, which GM exposes there as
 a public Android display (`ActivityOptions.setLaunchDisplayId` after
 `isActivityStartAllowedOnDisplay`; no privilege). The GM app does the same since 2026-11-08
 (`nav/DriverDisplay`, Settings ▸ Navigation ▸ CarPlay map on the driver display, off by default),
-decoding `CH_ALT_VIDEO`. Whether the Equinox's VCU on AAOS 14 (`burmese_orange` VCUUL-13.1) exposes
-its driver display that way is not known yet: every connect logs the displays Android shows the app
-(`[cluster] display …` lines).
+decoding `CH_ALT_VIDEO`. The Equinox's VCU on AAOS 14 (`burmese_orange` VCUUL-13.1) exposes its
+driver display that way too: display 2, 2000x810, 220 dpi, flags `0x4083`, start allowed, and the
+first map frames rendered there on 2026-11-08 (`docs/ops/04_OPEN_ITEMS.md`). Every connect logs the
+displays Android shows the app (`[cluster] display …` lines).
 
 This finding is orthogonal to, and does not upgrade, the USB-handler squat below: squatting as
 `android.car.usb.handler` buys silent USB device-permission arbitration only (confirmed narrow in
