@@ -421,6 +421,8 @@ object Ocbm {
     const val CMD_UI_APPEARANCE: Byte = 0x0E // lib.rs:272
     const val CMD_MAP_APPEARANCE: Byte = 0x0F // lib.rs:273
     const val CMD_NIGHT_MODE: Byte = 0x10 // lib.rs:274
+    /** `[INPUT_COMMAND][CMD_VIEW_AREA][index]` -> `updateViewArea` for the MAIN display; refused unless `/info` declared the index. */
+    const val CMD_VIEW_AREA: Byte = 0x11
     /**
      * `[INPUT_COMMAND][CMD_REQUEST_UI_URL][url…]` -> `requestUI{url}`: open a CarPlay app on the main
      * screen. UTF-8, no terminator, 1..[REQUEST_UI_URL_MAX] bytes. Only on a box with [CAP_UI_URL].

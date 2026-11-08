@@ -581,6 +581,7 @@ class LauncherUi(private val act: Activity) {
             "GM-style controls above CarPlay when the car hides its top bar. Off keeps today's picture.",
             trailing = customTopBarControl,
         ))
+        card.addRow(mediaPaneRow())
         page.addView(card)
         val bt = AudioRoute.bluetooth
         audioRow = EqRow(
@@ -595,7 +596,7 @@ class LauncherUi(private val act: Activity) {
             act, "Play Spotify on connect",
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },
-        )).addRow(lyricsRow()))
+        )).also { lyricsRows(it) })
         page.addView(eqSectionLabel(act, "Navigation"))
         val nav = wasidremin.gmccpa.nav.ClusterNav
         navRow = EqRow(
@@ -639,25 +640,51 @@ class LauncherUi(private val act: Activity) {
         fillPhones(shownPhones, shownPhonesNote, shownCanChoose)
     }
 
-    /** Settings ▸ Playback ▸ Lyrics in the top bar, with Clear for the songs kept on the head unit. */
-    private fun lyricsRow(): View {
+    /** Settings ▸ Playback: Look up lyrics (with Clear) and Lyrics in the top bar. */
+    private fun lyricsRows(card: EqCard) {
         val lyrics = wasidremin.gmccpa.lyrics.BarLyrics
         lyrics.load(act)
-        fun subtitle() = "Shows the line being sung in the custom top bar while the car is in Park. " +
-            "Song titles, artists, albums and lengths go to lrclib.net. " + lyrics.usageText(act)
+        fun subtitle() = "Timed lyrics for the media pane and the top bar. Song titles, artists, albums and lengths go to lrclib.net. " +
+            lyrics.usageText(act)
         lateinit var row: EqRow
         val clear = eqButton(act, "Clear", EqButtonStyle.SECONDARY) {
             val n = lyrics.clear(act)
             row.setSubtitle(subtitle())
-            act.runOnUiThread { android.widget.Toast.makeText(act, "Cleared $n songs' lyrics", android.widget.Toast.LENGTH_SHORT).show() }
+            android.widget.Toast.makeText(act, "Cleared $n songs' lyrics", android.widget.Toast.LENGTH_SHORT).show()
         }
         val controls = android.widget.LinearLayout(act).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
             addView(clear, android.widget.LinearLayout.LayoutParams(-2, -2).apply { marginEnd = EqTheme.px(20f) })
-            addView(EqToggle(act, lyrics.enabled) { on -> lyrics.setEnabled(act, on); row.setSubtitle(subtitle()) })
+            addView(EqToggle(act, lyrics.lookup) { on -> lyrics.setLookup(act, on); row.setSubtitle(subtitle()) })
         }
-        row = EqRow(act, "Lyrics in the top bar", subtitle(), trailing = controls)
+        row = EqRow(act, "Look up lyrics", subtitle(), trailing = controls)
+        card.addRow(row)
+        card.addRow(EqRow(
+            act, "Lyrics in the top bar",
+            "The line being sung, in the custom top bar, while the car is in Park. Needs Look up lyrics.",
+            trailing = EqToggle(act, lyrics.topBar) { on -> lyrics.setTopBar(act, on) },
+        ))
+    }
+
+    /** Settings ▸ Display ▸ Media pane: off, or which side and how wide. Applies at the next connect. */
+    private fun mediaPaneRow(): EqRow {
+        val pane = wasidremin.gmccpa.pane.SplitPane
+        lateinit var row: EqRow
+        lateinit var value: android.widget.TextView
+        fun subtitle(c: wasidremin.gmccpa.pane.SplitPane.Choice) =
+            if (c.side == wasidremin.gmccpa.pane.SplitPane.Side.OFF) "CarPlay uses the whole screen."
+            else "CarPlay keeps the other ${100 - c.percent}%; the pane shows the song, its controls and lyrics, in any gear. " +
+                "CarPlay's own button switches to full screen and back. Applies at the next connect."
+        val choice = pane.choice(act)
+        value = eqButton(act, choice.label, EqButtonStyle.SECONDARY) {
+            val cur = pane.choice(act)
+            val next = pane.CHOICES[(pane.CHOICES.indexOf(cur) + 1) % pane.CHOICES.size]
+            pane.setChoice(act, next)
+            value.text = next.label
+            row.setSubtitle(subtitle(next))
+        }
+        row = EqRow(act, "Media pane", subtitle(choice), trailing = value)
         return row
     }
 
@@ -776,7 +803,7 @@ class LauncherUi(private val act: Activity) {
                 !wasidremin.gmccpa.av.VisionLauncher.isCalibrated(act, it)
         }
         val text = launcherStatusText(missing)
-        return if (byUrl) "Maps, Now Playing and Phone open by command from the adapter. $text" else text
+        return if (byUrl) "Maps, Now Playing, Spotify and Phone open by command from the adapter. $text" else text
     }
 
     private fun refreshLauncherStatusRow() = act.runOnUiThread {

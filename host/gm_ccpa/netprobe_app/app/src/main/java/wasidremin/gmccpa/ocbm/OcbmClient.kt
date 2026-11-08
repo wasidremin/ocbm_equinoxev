@@ -1565,6 +1565,12 @@ class OcbmClient(
         return subscribed
     }
 
+    /** `[INPUT_COMMAND][CMD_VIEW_AREA][index]` -> the box's `updateViewArea` (the split pane's full-screen button). */
+    fun sendViewArea(index: Int): Boolean {
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_VIEW_AREA, index.toByte()))
+        return subscribed
+    }
+
     /**
      * `[INPUT_COMMAND][CMD_REQUEST_UI_URL][url…]` -> the box's `requestUI{url}`, which brings a CarPlay
      * app forward on the main screen ([wasidremin.gmccpa.av.CarPlayUrls]). False, and nothing sent,

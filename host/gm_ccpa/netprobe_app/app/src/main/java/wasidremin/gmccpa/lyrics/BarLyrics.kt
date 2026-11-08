@@ -9,11 +9,14 @@ import wasidremin.gmccpa.ProbeLog
 import java.util.concurrent.Executors
 
 /**
- * The line being sung, in the custom top bar's free middle ([GmTopBarView.lyricLine]).
+ * Timed lyrics for the song playing now, for the media pane ([wasidremin.gmccpa.pane.MediaPaneView])
+ * and the custom top bar's free middle ([GmTopBarView.lyricLine]).
  *
- * Settings ▸ Playback ▸ Lyrics in the top bar, off by default: it sends each song's title, artist,
- * album and length to lrclib.net ([LrcLib]). Shown only while the car is in Park, as enigy/carlink
- * shows its lyrics card only while parked by default; the line clears as soon as the gear leaves Park.
+ * Two switches (Settings ▸ Playback):
+ *  - Look up lyrics, off by default: it sends each song's title, artist, album and length to
+ *    lrclib.net ([LrcLib]). With it off nothing leaves the head unit and there are no lyrics anywhere.
+ *  - Lyrics in the top bar: the line being sung, only while the car is in Park (the top bar is in the
+ *    driver's eyeline). The media pane is for the passenger and shows lyrics in any gear.
  *
  * Fed by [onSnapshot] from the now-playing merge on every metadata change and playback tick (about
  * 2 Hz). Between ticks the position is extrapolated while playing, so the line changes on time.
@@ -24,10 +27,15 @@ object BarLyrics {
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "bar-lyrics").apply { isDaemon = true } }
 
     private const val PREFS = "lyrics"
-    private const val KEY_ENABLED = "top_bar"
+    private const val KEY_LOOKUP = "lookup"
+    private const val KEY_TOP_BAR = "top_bar"
     private const val TICK_MS = 250L
 
-    @Volatile var enabled = false
+    /** Look up lyrics on lrclib.net. */
+    @Volatile var lookup = false
+        private set
+    /** Show the line being sung in the top bar (Park only). */
+    @Volatile var topBar = false
         private set
     @Volatile private var loaded = false
     private var disk: LyricsDiskCache? = null
@@ -36,8 +44,13 @@ object BarLyrics {
     @Volatile var parked: Boolean? = null
         set(v) { field = v; main.post { push() } }
 
+    /** Where a song's lyrics stand, for the pane's note. */
+    enum class Status { OFF, NO_SONG, LOOKING, FOUND, NONE, UNREACHABLE }
+
     @Volatile private var key: LyricsKey? = null
     @Volatile private var lyrics: SyncedLyrics? = null
+    @Volatile var status: Status = Status.OFF
+        private set
     @Volatile private var anchorMs = 0L
     @Volatile private var anchorAt = 0L
     @Volatile private var playing = false
@@ -57,21 +70,33 @@ object BarLyrics {
         synchronized(this) {
             if (loaded) return
             val app = ctx.applicationContext
-            enabled = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
+            val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            lookup = p.getBoolean(KEY_LOOKUP, false)
+            topBar = p.getBoolean(KEY_TOP_BAR, false)
             disk = LyricsDiskCache.get(app)
+            status = if (lookup) Status.NO_SONG else Status.OFF
             loaded = true
         }
     }
 
-    fun setEnabled(ctx: Context, on: Boolean) {
+    fun setLookup(ctx: Context, on: Boolean) {
         load(ctx)
-        enabled = on
-        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, on).apply()
-        log.i("lyrics: top bar ${if (on) "ON" else "off"} (Settings)")
+        lookup = on
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_LOOKUP, on).apply()
+        log.i("lyrics: look up ${if (on) "ON" else "off"} (Settings)")
         val k = key
         key = null
         lyrics = null
+        status = if (!on) Status.OFF else if (k == null) Status.NO_SONG else Status.LOOKING
         if (on && k != null) startLookup(k)
+        main.post { push() }
+    }
+
+    fun setTopBar(ctx: Context, on: Boolean) {
+        load(ctx)
+        topBar = on
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_TOP_BAR, on).apply()
+        log.i("lyrics: top bar ${if (on) "ON" else "off"} (Settings)")
         main.post { push() }
     }
 
@@ -100,7 +125,12 @@ object BarLyrics {
         if (k != key) {
             key = k
             lyrics = null
-            if (k != null && enabled) startLookup(k)
+            status = when {
+                !lookup -> Status.OFF
+                k == null -> Status.NO_SONG
+                else -> Status.LOOKING
+            }
+            if (k != null && lookup) startLookup(k)
             main.post { push() }
         }
     }
@@ -108,13 +138,27 @@ object BarLyrics {
     private fun startLookup(k: LyricsKey) {
         key = k
         worker.execute {
-            if (key != k || !enabled) return@execute
-            val answer = LrcLib.find(k, disk) ?: return@execute
+            if (key != k || !lookup) return@execute
+            val answer = LrcLib.find(k, disk)
             if (key != k) return@execute
+            if (answer == null) {
+                status = Status.UNREACHABLE
+                return@execute
+            }
             answer.lyrics?.let { disk?.noteUse(k) }
             lyrics = answer.lyrics
+            status = if (answer.lyrics != null) Status.FOUND else Status.NONE
             main.post { push(); if (lyrics != null) { main.removeCallbacks(tick); main.post(tick) } }
         }
+    }
+
+    /** Where the song is now, extrapolated between the phone's ticks while it plays. */
+    fun positionMs(): Long = anchorMs + if (playing) SystemClock.uptimeMillis() - anchorAt else 0L
+
+    /** The song's timed lines, or null; and the index of the one being sung (-1 before the first). */
+    fun current(): Pair<SyncedLyrics, Int>? {
+        val l = lyrics ?: return null
+        return l to l.indexAt(positionMs())
     }
 
     /** Main thread. */
@@ -131,12 +175,11 @@ object BarLyrics {
         if (bars.isEmpty()) main.removeCallbacks(tick)
     }
 
-    /** Main thread: the line for now, onto every bar. */
+    /** Main thread: the line for now, onto every top bar. */
     private fun push() {
         val l = lyrics
-        val line = if (!enabled || l == null || parked != true) null else {
-            val pos = anchorMs + if (playing) SystemClock.uptimeMillis() - anchorAt else 0L
-            val i = l.indexAt(pos)
+        val line = if (!lookup || !topBar || l == null || parked != true) null else {
+            val i = l.indexAt(positionMs())
             if (i == shownIndex && bars.all { it.lyricLine != null }) return
             shownIndex = i
             if (i < 0) null else l.lines[i].text.takeIf { it.isNotBlank() }

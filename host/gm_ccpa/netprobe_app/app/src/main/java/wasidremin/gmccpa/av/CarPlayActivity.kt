@@ -360,6 +360,12 @@ class CarPlayActivity : Activity() {
 
         fun onAdapterViewArea(root: Any?) {
             val idx = BPlist.int(root, "params", "viewAreaIndex")?.toInt() ?: return
+            // A split session (Settings ▸ Display ▸ Media pane): the box already answered iOS; the
+            // picture keeps its geometry and only the pane shows or hides.
+            if (wasidremin.gmccpa.pane.SplitPane.declared != null) {
+                wasidremin.gmccpa.pane.SplitPane.onViewArea(idx, "CarPlay's own switch")
+                return
+            }
             val act = live?.get() ?: return
             if (idx !in VIEW_AREAS.indices) return
             act.runOnUiThread { act.applyViewArea(idx) }
@@ -386,14 +392,14 @@ class CarPlayActivity : Activity() {
                 CarPlayMediaBrowserService.publish(snapshot)
                 wasidremin.gmccpa.BarArtwork.onArtwork(snapshot.artwork)
                 snapshot.feedLyrics()
-                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
+                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) { act.updateRailPlayback(); act.pane?.bind(snapshot) } } }
             }
             // The rail icon follows ticks too: status arrives in its own sparse frames, so
             // metadata-only refresh left the play/pause glyph stale for whole tracks.
             onPlaybackTick = {
                 CarPlayMediaBrowserService.publishPlaybackState(it)
                 it.feedLyrics()
-                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) act.updateRailPlayback() } }
+                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) { act.updateRailPlayback(); act.pane?.bind(it) } } }
             }
             // Cluster turn-by-turn rides the same seam and the same session end. Every teardown
             // path already clears this object, so hooking the clear covers all of them.
@@ -483,6 +489,10 @@ class CarPlayActivity : Activity() {
     private var chromeIsRail: Boolean? = null
     /** Top-bar state the current rail was built for; a change flips Home/Settings on the rail. */
     private var chromeTopBarOn: Boolean = false
+    /** The split layout's media pane ([wasidremin.gmccpa.pane.SplitPane]), over the strip iOS leaves black. */
+    private var pane: wasidremin.gmccpa.pane.MediaPaneView? = null
+    private val paneListener: () -> Unit = { runOnUiThread { if (!isDestroyed) placePane() } }
+
     /** Index into [VIEW_AREAS] the surface is currently laid out for. */
     @Volatile private var viewAreaIndex = 0
     /** Cancels a pending shrink if another transition arrives first. */
@@ -604,6 +614,42 @@ class CarPlayActivity : Activity() {
         if (DisplayPrefs.controls(this).stats) {
             root.addView(ProjectionStatsPill(this, previewOnly), android.widget.FrameLayout.LayoutParams(-2, -2))
         }
+        pane = wasidremin.gmccpa.pane.MediaPaneView(this, object : wasidremin.gmccpa.pane.MediaPaneView.Actions {
+            override fun mediaButton(index: Byte) {
+                // Play/pause as the rail sends it: the state the phone last reported decides.
+                val i = if (index != wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE) index else when {
+                    nowPlaying.snapshot.playing -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE
+                    nowPlaying.snapshot.playbackStatus == null -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE
+                    else -> wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY
+                }
+                sendMedia(i)
+            }
+            override fun fullScreen() {
+                if (previewOnly) { log.i("pane preview: full screen — no command sent"); return }
+                touchHandler?.post {
+                    val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendViewArea(0)
+                    log.i("pane: full-screen button -> CMD_VIEW_AREA 0 sent=$sent")
+                    if (sent) wasidremin.gmccpa.pane.SplitPane.onViewArea(0, "the pane's full-screen button")
+                }
+            }
+        }).also {
+            it.visibility = View.GONE
+            it.bind(nowPlaying.snapshot)
+            root.addView(it, android.widget.FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
+        }
+        wasidremin.gmccpa.pane.SplitPane.listener = paneListener
+        // Hardware-free look at the pane: `pane_preview` declares the chosen split for this screen only.
+        if (previewOnly && intent.getBooleanExtra("pane_preview", false)) root.post {
+            val c = wasidremin.gmccpa.pane.SplitPane.choice(this).let {
+                if (it.side == wasidremin.gmccpa.pane.SplitPane.Side.OFF) wasidremin.gmccpa.pane.SplitPane.CHOICES[1] else it
+            }
+            wasidremin.gmccpa.pane.SplitPane.onSubscribe(
+                wasidremin.gmccpa.pane.SplitPane.carPlayArea(VideoFrame.width, VideoFrame.height, c.side, c.percent))
+            val sample = NowPlayingState.Snapshot(title = "Send Me on My Way", artist = "Rusted Root", album = "When I Woke",
+                appName = "Spotify", durationMs = 263_000, elapsedMs = 61_000, playbackStatus = NowPlayingState.PLAY)
+            sample.feedLyrics()
+            pane?.bind(sample)
+        }
         // In-call overlay pill: added once, above the picture and the rail, driven by
         // NowPlayingState.callPhase via updateCallPill. It positions itself from persisted
         // fractions once the root has a size; see CallPillView.bind.
@@ -698,6 +744,7 @@ class CarPlayActivity : Activity() {
         val resized = VideoFrame.railPx > 0 && viewAreaIndex == 0
         val rail = resized || (DisplayPrefs.sidebar(this) && viewAreaIndex == 0 && !wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this))
         applyVideoFrame()
+        placePane()
         // Keep the current chrome unless the kind changed, or the rail's Home/Settings visibility
         // (driven by the top-bar toggle) no longer matches what it was built for.
         val railStale = rail && chromeTopBarOn != DisplayPrefs.customTopBar(this)
@@ -1730,6 +1777,43 @@ class CarPlayActivity : Activity() {
      * Guarded on API 31 for [SurfaceControl.Transaction.setGeometry]; below that the picture simply
      * stays full-bleed, which is the behaviour this app shipped with.
      */
+    /**
+     * Lay the media pane over the part of the picture outside CarPlay's split area, or hide it.
+     *
+     * The surface shows the whole advertised frame scaled to its view, and iOS draws black outside its
+     * view area, so the pane covers exactly `[area.right, width)` (pane on the right) or `[0, area.x)`
+     * (on the left) of the picture, mapped through the surface's own scale. A pane on the right keeps
+     * clear of the advertised safe-area inset, the glass the display cutout hides.
+     */
+    private fun placePane() {
+        val p = pane ?: return
+        val area = wasidremin.gmccpa.pane.SplitPane.declared
+        val lp = surfaceView.layoutParams as? android.widget.FrameLayout.LayoutParams
+        if (area == null || wasidremin.gmccpa.pane.SplitPane.index != 1 || lp == null || lp.width <= 1 || VideoFrame.width <= 0) {
+            if (p.visibility != View.GONE) { p.visibility = View.GONE; log.i("pane: hidden") }
+            return
+        }
+        val sx = lp.width.toFloat() / VideoFrame.width
+        val onRight = area.x == 0
+        val left = if (onRight) lp.marginStart + (area.right * sx).roundToInt() else lp.marginStart
+        val width = if (onRight) lp.width - (area.right * sx).roundToInt() else (area.x * sx).roundToInt()
+        val cutout = if (onRight) (VideoFrame.safeRightPx * sx).roundToInt() else 0
+        val plp = p.layoutParams as android.widget.FrameLayout.LayoutParams
+        val changed = plp.width != width || plp.height != lp.height || plp.marginStart != left || plp.topMargin != lp.topMargin
+        if (changed) {
+            plp.width = width
+            plp.height = lp.height
+            plp.marginStart = left
+            plp.topMargin = lp.topMargin
+            p.layoutParams = plp
+            p.setPadding(p.paddingLeft, p.paddingTop, wasidremin.gmccpa.EqTheme.px(22f) + cutout, p.paddingBottom)
+        }
+        if (p.visibility != View.VISIBLE || changed) {
+            p.visibility = View.VISIBLE
+            log.i("pane: shown ${width}x${lp.height}@$left,${lp.topMargin} (CarPlay area ${area.width}x${area.height}@${area.x},${area.y}, cutout pad $cutout)")
+        }
+    }
+
     private fun applyGeometry(r: android.graphics.Rect) {
         if (android.os.Build.VERSION.SDK_INT < 31) return
         val sc = surfaceView.surfaceControl
@@ -1880,6 +1964,7 @@ class CarPlayActivity : Activity() {
             nowPlaying.onCallChanged = null
             live = null
         }
+        if (wasidremin.gmccpa.pane.SplitPane.listener === paneListener) wasidremin.gmccpa.pane.SplitPane.listener = null
         stopSession("activity destroyed")
         touchThread?.quitSafely(); touchThread = null; touchHandler = null
         super.onDestroy()

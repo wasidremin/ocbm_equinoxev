@@ -122,6 +122,9 @@ object AdapterSession {
         return client?.sendCommand(cmd) == true
     }
 
+    /** Switch CarPlay between the split pane's area (1) and the full panel (0). */
+    fun sendViewArea(index: Int): Boolean = client?.sendViewArea(index) == true
+
     /** Whether the adapter can open a CarPlay app by URL ([Ocbm.CAP_UI_URL]). */
     fun canOpenUrl(): Boolean = (client?.caps ?: 0) and Ocbm.CAP_UI_URL != 0
 

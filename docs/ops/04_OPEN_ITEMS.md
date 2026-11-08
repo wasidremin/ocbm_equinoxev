@@ -168,16 +168,30 @@ high-water mark: versionCode 233 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   title changes on record look like this (554–657 ms). From 233 (published 2026-11-07) the card waits up to 1 s. Unverified
   on the car. Owner: `08_FUTURE_TASKS.md` T13.
 - **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), none yet tried in the car.**
-  - *Top-bar Now Playing, Maps and Phone open by command:* `CMD_REQUEST_UI_URL` (`nowplaying:`,
-    `maps:`, `mobilephone:`) on an adapter whose `HELLO_ACK` carries `CAP_UI_URL`, instead of finding
-    and tapping the icon. The adapter on the server reports the bit; the bench had no phone in range, so
-    no URL has reached an iPhone from this tree yet (enigy benched all three in their truck).
+  - *Top-bar Now Playing, Maps, Spotify and Phone open by command:* `CMD_REQUEST_UI_URL` on an adapter
+    whose `HELLO_ACK` carries `CAP_UI_URL`, instead of finding and tapping the icon. Benched on the
+    owner's iPhone with the recorded picture: `nowplaying:`, `maps:`, `spotify:`, `mobilephone:` (and
+    `music:`, `podcasts:`, `messages:`) open their app; the full list is in `01_OCBM_PROTOCOL.md`.
   - *Cluster:* the road text leads with the exit ("Exit 273 · …") now that the adapter asks for
     ExitInfo; the app binds the cluster again by itself (3 times in 10 min at most) if the car ends the
     session mid-route; and it holds Android's NAVIGATION app focus while a route is up with the cluster
     setting on (`nav: focus` lines). What GM does with the focus is unknown.
   - *Settings ▸ Calls ▸ Echo test / Voice test* (parked) for `13_AUDIO_ROUTING.md` §4's echo question.
-  - *Settings ▸ Playback ▸ Lyrics in the top bar* (off by default; lrclib.net; Park only).
+  - *Settings ▸ Display ▸ Media pane* (off by default): a second view area declared with `initial: true`,
+    CarPlay on one side and a pane with the song, its controls and timed lyrics on the other, lyrics in
+    any gear (it is for the passenger). Benched on the owner's iPhone with the app's exact document
+    (2400x960, pane right 30%): iOS negotiated `viewAreas`, drew CarPlay in 1680x960 with the right 30%
+    black, and put its own area toggle at the top of the dock. The pane's full-screen button
+    (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one run that sent them recorded no
+    picture after the switch; whether the video carries on through a host-sent switch is still open
+    (iOS's own toggle is the device-proven path, `06_AV_PIPELINE.md` §3).
+  - *Settings ▸ Playback ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
+    *Lyrics in the top bar* shows the current line there, in Park only.
+  - Bench, same evening (owner's iPhone in range): of nine sessions, four failed before CarPlay. Twice
+    the other bonded iPhone answered first and never got to CarPlay; once the iPhone took the Wi-Fi
+    handoff and never joined the AP; twice it joined, answered `GET /ctrl-int/1/connect` with 200, and
+    never connected back (a no-config control session did the same, so not the split document). The
+    last two match the car's slow starts; the iPhone's own log (`idevicesyslog`) is what can say why.
   - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
@@ -423,9 +437,9 @@ high-water mark: versionCode 233 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   `updateViewArea` — device-proven with `1600x960@800,0` on 2400x960 and `600x400@240,760` /
   `1080x1600@0,160` on 1080x1920 (`docs/carplay/06_AV_PIPELINE.md` §3, "Bench lever, 2026-09-05").
   The `VehicleConfigModel`/`ViewArea2Rule` host side above was the macOS app's and went with it on
-  2026-10-27. The GM app declares one area only (`VehicleConfigYaml.kt`: "Do not emit viewAreas[1]
-  here"). Still open: a second area from the GM app, if one is wanted; `initial` authoring (the box
-  parses it); `updateDisplayPanels` live re-negotiation; and the type-112 second cluster.
+  2026-10-27. Since 2026-11-07 the GM app declares a second area, with `initial: true`, when
+  Settings ▸ Display ▸ Media pane is on (see the enigy ports entry above). Still open:
+  `updateDisplayPanels` live re-negotiation; and the type-112 second cluster.
   Source: `docs/carplay/06_AV_PIPELINE.md` §2–§4, `docs/carplay/03_SDK_GROUND_TRUTH.md` §10, `docs/carplay/02_SESSION_LIFECYCLE.md` §"Apple's session/lifecycle model".
 
 - **`displays[].features` is a hardcoded `if levers::dpad() { 0x1A } else { 0x0A }`, and four parsed

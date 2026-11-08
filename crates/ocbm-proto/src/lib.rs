@@ -507,10 +507,12 @@ pub const CMD_VIEW_AREA: u8 = 0x11;
 // `[INPUT_COMMAND][CMD_REQUEST_UI_URL][url…]` — the URL is the remaining bytes, UTF-8, no terminator,
 // 1..=REQUEST_UI_URL_MAX bytes. carplayd sends `{type:"requestUI", params:{url}}`, the shape
 // `_AirPlayReceiverSessionRequestUI` builds when a url is given (CMD_REQUEST_UI is the no-url twin).
-// An empty, over-long or non-UTF-8 URL is refused with a log line and nothing is sent. Benched by
-// enigy/ocbm in their truck 2026-10-26: `maps:`, `nowplaying:` and `mobilephone:` bring their app
-// forward on the main screen; `music:` does nothing. Ported here 2026-11-07 for the GM app's top-bar
-// Now Playing and Maps launches, which used to find and tap the icon on screen.
+// An empty, over-long or non-UTF-8 URL is refused with a log line and nothing is sent. Benched on the
+// owner's iPhone 2026-11-07 (`ocbm-host avdec` with OCBM_SESSION_UI_URLS, frames decoded locally):
+// `maps:`, `nowplaying:`, `mobilephone:`, `music:`, `spotify:`, `podcasts:` and `messages:` bring their
+// app forward on the main screen; `audiobooks:`, `videoplayback:`, `calendar:`, `home:`, `carplay:`
+// and `springboard:` do nothing (enigy/ocbm saw `music:` do nothing on theirs). The GM app's top-bar
+// launches use it in place of finding and tapping the icon on screen.
 pub const CMD_REQUEST_UI_URL: u8 = 0x12;
 pub const REQUEST_UI_URL_MAX: usize = 255;
 pub const APPEARANCE_STREAM_MAIN: u8 = 0x00;

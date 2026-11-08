@@ -881,6 +881,15 @@ static multi-view-area) are documented with their implementation cost + teardown
   today). Additive; risk only if an index is out of range or a safeArea exceeds the panel.
 
 ### 3. Dynamic resizing / runtime view-area switching (DOCUMENT-ONLY here; for the Android port)
+
+> **GM app media pane, 2026-11-07.** The GM app now declares a second area from its pushed config
+> (`viewAreas[1]` + `initial: true`, `view_area_anim_ms: 500`; `VehicleConfigYaml.kt`, `pane/SplitPane.kt`).
+> Benched with the app's exact 2400x960 document on the owner's iPhone (iOS 27.2): carplayd logged
+> `view areas: 2 declared — [0] 2400x960@0,0, [1] 1680x960@0,0, transitionControl=true,
+> initialViewArea=1`, SETUP negotiated `viewAreas`, and the recorded picture showed CarPlay drawn in
+> 1680x960 with the rest black and iOS's area toggle at the top of the dock. The app does not crop the
+> surface for this area: its pane covers the black strip. A host-sent `CMD_VIEW_AREA 0` and `1` were
+> answered with `updateViewArea` (500 ms); the picture after them is still to be seen on the car.
 > **DIRECTION CORRECTED 2026-09-05.** This section previously said
 > `AirPlayReceiverSessionViewAreaUpdate` emits `kAirPlayCommand_RequestViewArea` and carries a rect —
 > i.e. it had the two messages pointing the same way and the payload wrong. They are OPPOSITE

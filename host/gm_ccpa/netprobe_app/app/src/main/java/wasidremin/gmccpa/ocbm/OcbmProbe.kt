@@ -1212,6 +1212,13 @@ class OcbmProbe(context: Context) {
         if (VideoFrame.railPx > 0) {
             log.i("sidebar: advertising ${VideoFrame.width}x${VideoFrame.height}, rail ${VideoFrame.railPx}px, panel ${VideoFrame.panelPx}px")
         }
+        // The split pane (Settings ▸ Display ▸ Media pane): CarPlay's side, declared now or not at all.
+        val pane = wasidremin.gmccpa.pane.SplitPane.choice(ctx)
+        val splitArea = if (!adapterWifi) null else wasidremin.gmccpa.pane.SplitPane.carPlayArea(
+            VideoFrame.width, VideoFrame.height, pane.side, pane.percent)
+        if (adapterWifi && pane.side != wasidremin.gmccpa.pane.SplitPane.Side.OFF && splitArea == null) {
+            log.w("pane: ${pane.label} has no legal CarPlay area on ${VideoFrame.width}x${VideoFrame.height} — full screen this session")
+        }
         val rendered = if (adapterWifi) {
             VehicleConfigYaml.renderAdapter(
                 AdapterWifi.passphrase(ctx),
@@ -1224,9 +1231,14 @@ class OcbmProbe(context: Context) {
                 physicalHeightMm = VideoFrame.physicalHeightMm,
                 // Not in defaultAdapterDocument: the structural fallback stays the proven document.
                 iapConfig = wasidremin.gmccpa.ev.CarPlayEv.iapConfigYaml(ctx),
+                viewArea2 = splitArea,
+                viewAreaAnimMs = wasidremin.gmccpa.pane.SplitPane.TRANSITION_MS,
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)
+        // The fallback document never declares a split; tell the pane what was really sent.
+        wasidremin.gmccpa.pane.SplitPane.onSubscribe(
+            splitArea?.takeIf { doc.toString(Charsets.UTF_8).contains("\n      initial: true\n") })
         c.subscribe(doc)
         if (doc.toString(Charsets.UTF_8).contains("\nwifi_ap: true\n")) armWifiWatch()
         c.startHeartbeat()

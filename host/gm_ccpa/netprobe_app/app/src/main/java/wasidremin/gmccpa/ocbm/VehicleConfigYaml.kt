@@ -91,11 +91,30 @@ data class VehicleConfigSpec(
     val oemIconImages: List<OemIcon.Image> = emptyList(),
     val oemIconLabel: String = "",
     val oemIconVisible: Boolean = true,
+    /**
+     * A second main view area, CarPlay's part of the split layout ([wasidremin.gmccpa.pane.SplitPane]),
+     * or null for one area. Emitted as `viewAreas[1]` with the box's `initial: true` extension key, so
+     * the session STARTS in it (`vehicle_config.rs::ViewAreaEntry`), and it arms
+     * `accessoryConfig.enablesViewAreas`; the box derives `viewAreaTransitionControl`,
+     * `initialViewArea` and `adjacentViewAreas` for `/info`. Null keeps the pinned document.
+     */
+    val viewArea2: PixelRect? = null,
+    /**
+     * The box's top-level `view_area_anim_ms` extension key: the `animationDurationMillis` of its
+     * `updateViewArea`. Null omits the key (the box then sends 3000).
+     */
+    val viewAreaAnimMs: Int? = null,
 ) {
     init {
         require(maxFps == 30 || maxFps == 60) { "maxFPS must be 30 or 60; the box ignores anything else" }
         require(width > 0 && height > 0) { "pixelDimensions must be positive" }
         require(metadataTier in LEGAL_TIERS) { "metadata tier must be one of $LEGAL_TIERS" }
+        viewAreaAnimMs?.let { require(it in VIEW_AREA_ANIM_MS_RANGE) { "view_area_anim_ms must be in $VIEW_AREA_ANIM_MS_RANGE; the box clamps anything else" } }
+        // The split's CarPlay area: a teardown rule ends the session, the floor locks it out black.
+        viewArea2?.let { a ->
+            ViewAreaRule.teardownVerdict(a, width, height)?.let { throw IllegalArgumentException("viewArea 2: $it") }
+            ViewAreaRule.floorVerdict(a.width, a.height)?.let { throw IllegalArgumentException("viewArea 2: $it") }
+        }
     }
 
     companion object {
@@ -105,6 +124,58 @@ data class VehicleConfigSpec(
          * Identify reject that costs the whole CarPlay session, not just the metadata.
          */
         val LEGAL_TIERS = setOf("proven", "extended", "all")
+
+        /** The box's range for `view_area_anim_ms` (`levers::VIEW_AREA_ANIM_MS_RANGE`; floor 100 since 2026-11-07). */
+        val VIEW_AREA_ANIM_MS_RANGE = 100..10_000
+    }
+}
+
+/** A rectangle in advertised pixels. */
+data class PixelRect(val x: Int, val y: Int, val width: Int, val height: Int) {
+    val right: Int get() = x + width
+}
+
+/**
+ * What a view area may be. Ported from enigy/carlink `ocbm/VehicleConfigYaml.kt` (Unlicense), itself
+ * from the macOS host's `ViewArea2Rule`, where every rule below was device-proven.
+ *
+ * Severity: containment, parity and positivity END THE SESSION; the product floor only locks the
+ * area out black ("CarPlay does not support this display resolution") with the session alive.
+ */
+object ViewAreaRule {
+    /** PRODUCT FLOOR: 800 x 480 landscape, 480 x 800 portrait, the documented CarPlay minimum. */
+    const val LANDSCAPE_FLOOR_W = 800
+    const val LANDSCAPE_FLOOR_H = 480
+    const val PORTRAIT_FLOOR_W = 480
+    const val PORTRAIT_FLOOR_H = 800
+
+    /** The floor for an area of this aspect: `w >= h` is landscape. */
+    fun minimumSize(w: Int, h: Int): Pair<Int, Int> =
+        if (w >= h) LANDSCAPE_FLOOR_W to LANDSCAPE_FLOOR_H else PORTRAIT_FLOOR_W to PORTRAIT_FLOOR_H
+
+    /**
+     * Null = legal for the session. Otherwise the FIRST teardown rule violated: containment in the
+     * panel, all four values even (HEVC 4:2:0 cannot express an odd extent), positive size and a
+     * non-negative origin.
+     */
+    fun teardownVerdict(a: PixelRect, panelW: Int, panelH: Int): String? {
+        val right = a.x.toLong() + a.width
+        val bottom = a.y.toLong() + a.height
+        if (right > panelW || bottom > panelH) {
+            return "area extends to ${right}x$bottom px, outside the ${panelW}x$panelH panel — CarPlay tears the session down"
+        }
+        val odd = listOf("X" to a.x, "Y" to a.y, "width" to a.width, "height" to a.height).filter { it.second and 1 != 0 }
+        if (odd.isNotEmpty()) return "odd value: ${odd.joinToString { "${it.first} ${it.second}" }} — all four must be even"
+        if (a.width <= 0 || a.height <= 0) return "width and height must be positive"
+        if (a.x < 0 || a.y < 0) return "the origin must be non-negative"
+        return null
+    }
+
+    /** Null = at or above the product floor. Otherwise the lockout (not teardown) message. */
+    fun floorVerdict(w: Int, h: Int): String? {
+        val (mw, mh) = minimumSize(w, h)
+        if (w >= mw && h >= mh) return null
+        return "area ${w}x$h is below the ${if (w >= h) "landscape" else "portrait"} floor of ${mw}x$mh — CarPlay locks it out black"
     }
 }
 
@@ -137,6 +208,7 @@ object VehicleConfigYaml {
         // Emitted for shape parity with the pinned fixture; the box does not read it. Night mode is a
         // runtime /command (CMD_NIGHT_MODE), not a config value.
         line("nightMode: false")
+        s.viewAreaAnimMs?.let { line("view_area_anim_ms: $it") }
     }
 
     private fun displayPanels(
@@ -180,6 +252,24 @@ object VehicleConfigYaml {
         line("        width: ${s.safeWidth}")
         line("        height: ${s.safeHeight}")
         line("      drawUIOutsideSafeArea: ${s.drawUIOutsideSafeArea}")
+        // The split layout's CarPlay area, index 1, directly after entry 0 and before `hidConfig`,
+        // still inside the `viewAreas` list (a list item after `primaryInput` is not valid YAML at
+        // this indent, and serde would reject the whole subscribe). Its safe area is the area itself;
+        // the box reads only `viewArea` and `initial` from this entry (`second_main_view_area`).
+        s.viewArea2?.let { a ->
+            line("    - viewArea:")
+            line("        originX: ${a.x}")
+            line("        originY: ${a.y}")
+            line("        width: ${a.width}")
+            line("        height: ${a.height}")
+            line("      safeArea:")
+            line("        originX: ${a.x}")
+            line("        originY: ${a.y}")
+            line("        width: ${a.width}")
+            line("        height: ${a.height}")
+            line("      drawUIOutsideSafeArea: false")
+            line("      initial: true")
+        }
         line("    hidConfig:")
         line("      dPadSupport: ${s.dPadSupport}")
         line("      knobSupport: false")
@@ -209,7 +299,7 @@ object VehicleConfigYaml {
         line("  enablesMapAppearance: true")
         line("  enablesCornerMasks: false")
         line("  enablesVideoPlayback: true")
-        line("  enablesViewAreas: false")
+        line("  enablesViewAreas: ${s.viewArea2 != null}")
         line("  enablesEnhancedSiri: false")
         line("  enablesFocusTransfer: false")
         line("  enablesUIContext: false")
@@ -432,6 +522,10 @@ object VehicleConfigYaml {
         physicalHeightMm: Int = 0,
         /** The EV identity block from [wasidremin.gmccpa.ev.CarPlayEv.iapConfigYaml]; "" when off. */
         iapConfig: String = "",
+        /** CarPlay's part of the split layout ([wasidremin.gmccpa.pane.SplitPane]); null for full screen. */
+        viewArea2: PixelRect? = null,
+        /** How long a switch between the split and full screen animates, when [viewArea2] is set. */
+        viewAreaAnimMs: Int? = null,
     ): ByteArray {
         require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
             "iapConfig must be a whole top-level block ending in a newline"
@@ -454,11 +548,13 @@ object VehicleConfigYaml {
         // panel, produced by that emitter after the pin has passed — not a hand-edited copy.
         // safeRight is an advertised-pixel inset on the right. 0 keeps the full-frame safe area
         // the box logs as safe=None. A real inset uses the existing safeArea keys.
-        // Do not emit viewAreas[1] here. A second list item after primaryInput is not valid YAML
-        // at this indent, and serde then rejects the whole subscribe — including wifi_ap — so the
-        // phone is never handed the adapter network.
+        // viewAreas[1] (the split pane's CarPlay area) is emitted by [videoStreams] inside the list,
+        // never after primaryInput: a second list item there is not valid YAML at this indent, and
+        // serde then rejects the whole subscribe — including wifi_ap — so the phone is never handed
+        // the adapter network. [structuralError] checks the result before it is sent.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
-        val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony && physicalWidthMm == 0 && physicalHeightMm == 0) pinned
+        val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony && physicalWidthMm == 0 && physicalHeightMm == 0 &&
+            viewArea2 == null) pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
@@ -468,6 +564,8 @@ object VehicleConfigYaml {
                 safeWidth = width - inset,
                 safeHeight = height,
                 telephonyButtonsSupport = telephony,
+                viewArea2 = viewArea2,
+                viewAreaAnimMs = viewArea2?.let { viewAreaAnimMs },
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

@@ -1101,10 +1101,63 @@ fn mode_avdec(link: &mut Link, secs: u64, cfg_path: Option<&str>, rtt: bool) {
     let mut ping_seq: u32 = 0;
     let mut rtt_samples: Vec<u64> = Vec::new();
     let mut rtt_lost = 0u64;
+    // Bench levers for finding which CarPlay URLs open an app (2026-11-07):
+    //   OCBM_SESSION_UI_URLS=maps:,music:,area:0,…  sent as CMD_REQUEST_UI_URL (or CMD_VIEW_AREA for
+    //   `area:N`) one at a time, starting
+    //   OCBM_SESSION_UI_URL_AT seconds in (default 25) and OCBM_SESSION_UI_URL_EVERY apart (default 8),
+    //   each followed 3 s later by INPUT_KEYFRAME so a decoder has a fresh picture of what it opened;
+    //   OCBM_AVDEC_DUMP=<dir> keeps the decrypted frames (`frames.bin`: [u32 LE len][access unit]…),
+    //   each plaintext codec config (`config_N.bin`) and `marks.txt` (`<frame index> <ms> <event>`).
+    let started = Instant::now();
+    let mut urls: std::collections::VecDeque<String> = std::env::var("OCBM_SESSION_UI_URLS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(String::from)
+        .collect();
+    let env_secs = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    let url_every = Duration::from_secs(env_secs("OCBM_SESSION_UI_URL_EVERY", 8));
+    let mut next_url = started + Duration::from_secs(env_secs("OCBM_SESSION_UI_URL_AT", 25));
+    let mut keyframe_at: Option<Instant> = None;
+    let dump = std::env::var("OCBM_AVDEC_DUMP").ok().filter(|d| !d.is_empty());
+    let mut dump_frames = dump.as_ref().and_then(|d| {
+        let _ = std::fs::create_dir_all(d);
+        std::fs::File::create(format!("{d}/frames.bin")).ok()
+    });
+    let mut dump_marks = dump.as_ref().and_then(|d| std::fs::File::create(format!("{d}/marks.txt")).ok());
+    let mut configs = 0u32;
     loop {
         if let Some(d) = deadline {
             if Instant::now() >= d {
                 break;
+            }
+        }
+        if !urls.is_empty() && Instant::now() >= next_url {
+            if let Some(url) = urls.pop_front() {
+                // `area:N` in the list is a view-area switch (CMD_VIEW_AREA N) instead of a URL.
+                let f = match url.strip_prefix("area:").and_then(|n| n.parse::<u8>().ok()) {
+                    Some(n) => vec![p::INPUT_COMMAND, p::CMD_VIEW_AREA, n],
+                    None => {
+                        let mut f = vec![p::INPUT_COMMAND, p::CMD_REQUEST_UI_URL];
+                        f.extend_from_slice(url.as_bytes());
+                        f
+                    }
+                };
+                link.send(p::CH_INPUT, p::F_SOM | p::F_EOM, &f);
+                eprintln!("[avdec] sent requestUI url={url} at {} ms (frame {ok})", started.elapsed().as_millis());
+                if let Some(m) = dump_marks.as_mut() {
+                    let _ = writeln!(m, "{ok} {} url {url}", started.elapsed().as_millis());
+                }
+                next_url = Instant::now() + url_every;
+                keyframe_at = Some(Instant::now() + Duration::from_secs(3));
+            }
+        }
+        if keyframe_at.is_some_and(|t| Instant::now() >= t) {
+            keyframe_at = None;
+            link.send(p::CH_INPUT, p::F_SOM | p::F_EOM, &[p::INPUT_KEYFRAME]);
+            if let Some(m) = dump_marks.as_mut() {
+                let _ = writeln!(m, "{ok} {} keyframe", started.elapsed().as_millis());
             }
         }
         if let Some((ch, _, l)) = link.recv(&mut out, Instant::now() + Duration::from_millis(300)) {
@@ -1214,12 +1267,25 @@ fn mode_avdec(link: &mut Link, secs: u64, cfg_path: Option<&str>, rtt: bool) {
                                         if let Some(f) = dec.as_mut() {
                                             let _ = f.write_all(&pt);
                                         }
+                                        if let Some(f) = dump_frames.as_mut() {
+                                            let _ = f.write_all(&(pt.len() as u32).to_le_bytes());
+                                            let _ = f.write_all(&pt);
+                                        }
                                     }
                                     Err(_) => fail += 1,
                                 }
                             }
                         }
-                        1 => cfg += 1, // plaintext avcC/hvcC config (no decrypt)
+                        1 => {
+                            cfg += 1; // plaintext avcC/hvcC config (no decrypt)
+                            if let Some(d) = dump.as_ref() {
+                                let _ = std::fs::write(format!("{d}/config_{configs}.bin"), body);
+                                if let Some(m) = dump_marks.as_mut() {
+                                    let _ = writeln!(m, "{ok} {} config {configs}", started.elapsed().as_millis());
+                                }
+                                configs += 1;
+                            }
+                        }
                         _ => {}
                     }
                 }
