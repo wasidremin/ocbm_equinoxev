@@ -68,7 +68,7 @@ object MapsWatch {
     }
 
     private fun tick(ctx: Context) {
-        val watching = ClusterNav.enabled && ClusterNav.artWhileMaps && ClusterNav.bound &&
+        val watching = ClusterNav.active && ClusterNav.artWhileMaps && ClusterNav.bound &&
             ClusterNav.route.snapshot.routeActive
         if (!watching) {
             announced = false

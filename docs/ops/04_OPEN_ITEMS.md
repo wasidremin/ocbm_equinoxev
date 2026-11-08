@@ -186,7 +186,10 @@ high-water mark: versionCode 236 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     hides it, the state is kept for the next drive, and the default is *Over CarPlay*: the pane is laid
     over the right 30% of the picture and nothing is sent to the phone. On the car 2026-11-08 11:13 the
     strip showed and hid the pane three times (Over CarPlay); the owner then chose Right, 40%, and the
-    next sessions started split (CarPlay 1482x960, pane 988 px wide). No switch of the split was tried. Choosing a side instead declares a second view area (`initial: true`
+    next sessions started split (CarPlay 1482x960, pane 988 px wide). No switch of the split was tried.
+    At the owner's request (2026-11-08) the art became a thumbnail beside the title (a sixth of the
+    pane's height) and the lyrics show nine lines, three before the sung one and five after, in
+    larger type (Play 237). Choosing a side instead declares a second view area (`initial: true`
     only when the pane was last showing), CarPlay on one side and the pane on the other; the strip then
     sends `CMD_VIEW_AREA`. Benched on the owner's iPhone with the app's exact document
     (2400x960, pane right 30%): iOS negotiated `viewAreas`, drew CarPlay in 1680x960 with the right 30%
@@ -231,7 +234,15 @@ high-water mark: versionCode 236 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
      owner's account of the driver display is the missing piece. Same day, a bug: that feature's
      bootstrap took the map window for "the screen in front" and launched the CarAppActivity on the
      driver display over the map (16:15:50); it now tracks main-display screens only.
-  2. What the owner saw: the picture, which page of the driver display it needs, whether GM's
+     **The owner's account (same day):** the CarPlay map showed briefly, with the speedometer still
+     visible, then GM's own Google map took the display back; cycling the driver display's pages did
+     not bring it back, and worse, the map page itself could not be reached again (a head-unit restart
+     followed at ~11:15). The window had been left stopped behind GM's map, and in the second session
+     the bootstrap's CarAppActivity too. So from 237: the window closes the moment it is hidden, so the
+     display is left exactly as GM had it; a long-press on the strip right of CarPlay opens it again
+     (`DriverDisplay.reopen`); and Turn-by-turn in the cluster stands down while this is on
+     (`ClusterNav.active`), as GM took the display back 0.6 s after its `navigationStarted`.
+  2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
      it may conflict with Turn-by-turn in the cluster). Their first enable also needed a head-unit

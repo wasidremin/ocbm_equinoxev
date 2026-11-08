@@ -75,6 +75,14 @@ object ClusterNav {
 
     @Volatile var enabled: Boolean = false
         private set
+
+    /**
+     * On in Settings and not standing down for the driver display's map ([DriverDisplay]). It is one
+     * or the other: GM takes the driver display back for its own map as soon as an app starts
+     * navigation (2026-11-08 16:14:33.502 `navigationStarted`, focus lost to GM 6 ms later, the map
+     * window hidden at 34.102), which is what openautolink found on the Blazer too.
+     */
+    val active: Boolean get() = enabled && !DriverDisplay.enabled
     /** Settings ▸ Navigation: give the cluster to the album art while full-screen Maps shows the turns. */
     @Volatile var artWhileMaps: Boolean = true
         private set
@@ -104,6 +112,7 @@ object ClusterNav {
             enabled = prefs(app).getBoolean(KEY_ENABLED, false)
             artWhileMaps = prefs(app).getBoolean(KEY_ART_WHILE_MAPS, true)
             (app as? Application)?.registerActivityLifecycleCallbacks(FrontTracker)
+            DriverDisplay.load(app)
             loaded = true
         }
         NavFocus.start(ctx)
@@ -116,14 +125,27 @@ object ClusterNav {
         enabled = on
         prefs(ctx).edit().putBoolean(KEY_ENABLED, on).apply()
         applyComponent(ctx.applicationContext)
-        log.i("nav: cluster turn-by-turn ${if (on) "ON" else "off"} (Settings)")
-        NavFocus.setNavigating(on && route.snapshot.routeActive)
+        log.i("nav: cluster turn-by-turn ${if (on) "ON" else "off"} (Settings)${if (on && !active) " — standing down while the driver display shows CarPlay's map" else ""}")
+        NavFocus.setNavigating(active && route.snapshot.routeActive)
         // A bound session re-renders against the new switch: off ends its trip now.
         sink.get()?.onRoute(route.snapshot)
-        if (on) {
+        if (active) {
             triedThisRoute = false
             lastBootstrapAt = 0L
             if (route.snapshot.showable) requestBootstrap("enabled with a route up")
+        }
+    }
+
+    /** The driver display's map was turned on or off: stand down, or carry on with the route. */
+    fun onDriverDisplayChanged() {
+        if (!enabled) return
+        log.i("nav: cluster turn-by-turn ${if (active) "back on" else "standing down"} — driver display map ${if (DriverDisplay.enabled) "ON" else "off"}")
+        NavFocus.setNavigating(active && route.snapshot.routeActive)
+        sink.get()?.onRoute(route.snapshot)
+        if (active) {
+            triedThisRoute = false
+            lastBootstrapAt = 0L
+            if (route.snapshot.showable) requestBootstrap("driver display map turned off with a route up")
         }
     }
 
@@ -170,6 +192,7 @@ object ClusterNav {
         Support.NO_TEMPLATES_HOST -> "This car has no Templates Host, so the cluster cannot take turns from apps."
         Support.OK -> when {
             !enabled -> "Shows CarPlay's next turn, distance and arrival time in the instrument cluster."
+            !active -> "Paused while CarPlay map on the driver display is on: GM takes the driver display back when navigation starts."
             bound -> "Connected. CarPlay turns show in the cluster while a route is active."
             else -> "Connects when CarPlay starts a route. The screen flickers once while it does."
         }
@@ -198,13 +221,13 @@ object ClusterNav {
         val before = route.snapshot
         val s = route.onRecord(kind, json) ?: return
         logTransition(before, s)
-        NavFocus.setNavigating(enabled && s.routeActive)
+        NavFocus.setNavigating(active && s.routeActive)
         if (!s.routeActive) {
             triedThisRoute = false
             bootstrapPending = false
         }
         sink.get()?.onRoute(s)
-        if (enabled && s.showable && sink.get() == null && !triedThisRoute) requestBootstrap("route active, no session bound")
+        if (active && s.showable && sink.get() == null && !triedThisRoute) requestBootstrap("route active, no session bound")
     }
 
     /** The CarPlay session ended. Clears the route and tells a bound session to end navigation. */
@@ -286,7 +309,7 @@ object ClusterNav {
      * off ends the session too, but [enabled] is already false by then.
      */
     private fun rebindIfRouteUp() {
-        if (!enabled || !route.snapshot.showable) return
+        if (!active || !route.snapshot.showable) return
         val now = SystemClock.elapsedRealtime()
         synchronized(rebinds) {
             while (rebinds.isNotEmpty() && now - rebinds.first() > REBIND_WINDOW_MS) rebinds.removeFirst()
@@ -298,7 +321,7 @@ object ClusterNav {
         }
         log.i("nav: session ended with a route up — binding again in ${REBIND_DELAY_MS / 1000}s")
         main.postDelayed({
-            if (!enabled || sink.get() != null || !route.snapshot.showable) return@postDelayed
+            if (!active || sink.get() != null || !route.snapshot.showable) return@postDelayed
             triedThisRoute = false
             lastBootstrapAt = 0L
             requestBootstrap("session ended with a route up")
@@ -323,7 +346,7 @@ object ClusterNav {
     private fun bootstrap(from: Activity, why: String) {
         bootstrapPending = false
         // Re-checked here, on the main thread: a deferred request can outlive the route that raised it.
-        if (!enabled || sink.get() != null || triedThisRoute || !route.snapshot.showable) return
+        if (!active || sink.get() != null || triedThisRoute || !route.snapshot.showable) return
         val sup = support(from)
         if (sup != Support.OK) { log.w("nav: bootstrap skipped — support=$sup"); triedThisRoute = true; return }
         val now = SystemClock.elapsedRealtime()

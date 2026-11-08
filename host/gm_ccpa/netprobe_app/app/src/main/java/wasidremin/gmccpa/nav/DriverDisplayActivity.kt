@@ -50,6 +50,20 @@ class DriverDisplayActivity : Activity() {
         log.i("map window open on display ${display?.displayId}")
     }
 
+    /**
+     * Hidden means GM took the display back (its own map, another page). Close rather than linger:
+     * on 2026-11-08 a window left stopped behind GM's map was followed by the owner being unable to
+     * get the driver display's map page back at all until the head unit restarted. A long-press on
+     * the strip right of CarPlay opens a fresh one ([DriverDisplay.reopen]).
+     */
+    override fun onStop() {
+        super.onStop()
+        if (!isFinishing && !isChangingConfigurations) {
+            log.i("map window hidden on display ${display?.displayId} — closing it, the display is GM's again")
+            finish()
+        }
+    }
+
     override fun onDestroy() {
         if (open?.get() === this) open = null
         AdapterSession.detachCluster("map window closed")

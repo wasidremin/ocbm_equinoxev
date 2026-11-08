@@ -68,6 +68,8 @@ object DriverDisplay {
         enabled = on
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, on).apply()
         log.i("driver display map ${if (on) "ON" else "off"} (Settings; applies at the next connect)")
+        ClusterNav.onDriverDisplayChanged()
+        if (!on) DriverDisplayActivity.closeOpen("turned off in Settings")
     }
 
     /** What Settings shows under the switch. */
@@ -76,8 +78,9 @@ object DriverDisplay {
         val found = runCatching { find(ctx, logAll = false) }.getOrNull()
         val where = if (found == null) "No driver display this app may open a window on was found."
             else "Driver display found: ${found.width}×${found.height}."
-        return "CarPlay's Maps on the driver display, from the next connect; pick the maps page there. " +
-            "GM may hide its own turn icons and head-up directions while it shows. $where"
+        return "Experimental. CarPlay's Maps on the driver display, from the next connect. GM's own map can take " +
+            "the display back; long-press the glass right of CarPlay to show CarPlay's again. Turn-by-turn in the " +
+            "cluster pauses while this is on. $where"
     }
 
     /**
@@ -141,6 +144,23 @@ object DriverDisplay {
         if (declared == null) display = null
         else log.i("declared the driver display ${display?.id} as CarPlay's cluster screen, ${declared.width}x${declared.height}")
     }
+
+    /**
+     * Main thread. The owner asked for the map back (a long-press on the strip right of CarPlay):
+     * open the window again after GM took the display back, at most once every two seconds.
+     */
+    fun reopen(from: Activity, why: String) {
+        if (display == null || size == null) {
+            log.i("map not reopened ($why) — ${if (!enabled) "the setting is off" else "no driver display this session"}")
+            return
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastReopenAt < 2_000L) return
+        lastReopenAt = now
+        launches = 0
+        show(from, why)
+    }
+    @Volatile private var lastReopenAt = 0L
 
     /** Main thread. Open the window on the driver display unless it is already open. */
     fun show(from: Activity, why: String) {

@@ -70,10 +70,10 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         setOnClickListener { actions.hide() }
     }
     private val lyricViews = List(LYRIC_ROWS) { i ->
-        EqTheme.text(ctx, if (i == CURRENT_ROW) 25f else 20f, EqTheme.TEXT_FAINT,
+        EqTheme.text(ctx, if (i == CURRENT_ROW) 28f else 22f, EqTheme.TEXT_FAINT,
             if (i == CURRENT_ROW) EqTheme.Weight.MEDIUM else EqTheme.Weight.REGULAR).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            // The line being sung may wrap; the others keep to one so all five fit a short panel.
+            // The line being sung may wrap; the others keep to one so all of them fit a short panel.
             maxLines = if (i == CURRENT_ROW) 2 else 1
             ellipsize = TextUtils.TruncateAt.END
         }
@@ -106,9 +106,17 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
             addView(appName, LayoutParams(0, -2, 1f))
             addView(hideButton, LayoutParams(EqTheme.px(56f), EqTheme.px(56f)))
         }, LayoutParams(-1, -2))
-        addView(art, LayoutParams(0, 0).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = EqTheme.px(8f) })
-        addView(title, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(14f) })
-        addView(artist, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(4f) })
+        // The art is a thumbnail beside the title, so the lyrics get the height (owner, 2026-11-08).
+        addView(LinearLayout(ctx).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(art, LayoutParams(0, 0))
+            addView(LinearLayout(ctx).apply {
+                orientation = VERTICAL
+                addView(title, LayoutParams(-1, -2))
+                addView(artist, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(4f) })
+            }, LayoutParams(0, -2, 1f).apply { marginStart = EqTheme.px(16f) })
+        }, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(8f) })
         addView(progress, LayoutParams(-1, EqTheme.px(14f)).apply { topMargin = EqTheme.px(14f) })
         addView(LinearLayout(ctx).apply {
             orientation = HORIZONTAL
@@ -135,7 +143,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         addView(LinearLayout(ctx).apply {
             orientation = VERTICAL
             gravity = Gravity.CENTER
-            lyricViews.forEach { addView(it, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(8f) }) }
+            lyricViews.forEach { addView(it, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(6f) }) }
             addView(lyricNote, LayoutParams(-1, -2))
         }, LayoutParams(-1, 0, 1f).apply { topMargin = EqTheme.px(10f) })
         bind(shown)
@@ -143,9 +151,8 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
-        // The art is square: the pane's width, but never more than a third of its height, so the
-        // lyrics keep room on a short panel.
-        val side = minOf(w - paddingLeft - paddingRight, (h * 0.34f).toInt()).coerceAtLeast(0)
+        // A square thumbnail: a sixth of the pane's height, never more than a third of its width.
+        val side = minOf((w - paddingLeft - paddingRight) / 3, (h * 0.17f).toInt()).coerceAtLeast(0)
         val lp = art.layoutParams as LayoutParams
         if (lp.width != side) {
             lp.width = side
@@ -329,9 +336,12 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         const val BG = 0xFF0B1220.toInt()
         private const val TICK_MS = 250L
         private const val ART_MAX_PX = 512
-        /** One line before the one being sung, then three after it. */
-        private const val LYRIC_ROWS = 5
-        private const val CURRENT_ROW = 1
+        /**
+         * Three lines before the one being sung, then five after it. On the car's 960 px pane the nine
+         * rows take about 420 of the ~510 px under the controls, leaving room for the sung line to wrap.
+         */
+        private const val LYRIC_ROWS = 9
+        private const val CURRENT_ROW = 3
 
         fun clock(ms: Long): String {
             val s = (ms.coerceAtLeast(0) + 500) / 1000

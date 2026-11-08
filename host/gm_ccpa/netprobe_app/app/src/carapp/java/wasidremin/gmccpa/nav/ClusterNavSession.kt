@@ -109,9 +109,9 @@ internal class ClusterNavSession : Session(), ClusterNav.Sink {
         val nm = nav ?: return
         // Turned off in Settings while still bound: disabling the component normally tears the
         // binding down, but this must not depend on it.
-        if (!ClusterNav.enabled) {
+        if (!ClusterNav.active) {
             disarmArrival()
-            if (navigating) end("turned off in Settings")
+            if (navigating) end(if (ClusterNav.enabled) "standing down for the driver display's map" else "turned off in Settings")
             return
         }
         if (!s.routeActive) {

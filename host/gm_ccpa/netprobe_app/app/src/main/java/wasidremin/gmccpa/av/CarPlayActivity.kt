@@ -635,6 +635,11 @@ class CarPlayActivity : Activity() {
         paneStrip = wasidremin.gmccpa.pane.PaneStrip(this).also {
             it.visibility = View.GONE
             it.setOnClickListener { setPane(!wasidremin.gmccpa.pane.SplitPane.shown, "the strip right of CarPlay") }
+            // A long-press brings CarPlay's map back to the driver display after GM's took it.
+            it.setOnLongClickListener {
+                wasidremin.gmccpa.nav.DriverDisplay.reopen(this, "long-press on the strip right of CarPlay")
+                true
+            }
             root.addView(it, android.widget.FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
         }
         wasidremin.gmccpa.pane.SplitPane.listener = paneListener
@@ -1818,7 +1823,8 @@ class CarPlayActivity : Activity() {
         val area = split.declared
         val lp = surfaceView.layoutParams as? android.widget.FrameLayout.LayoutParams
         val laidOut = lp != null && lp.width > 1 && VideoFrame.width > 0
-        placeStrip(lp.takeIf { laidOut && split.mode != wasidremin.gmccpa.pane.SplitPane.Mode.NONE })
+        placeStrip(lp.takeIf { laidOut && (split.mode != wasidremin.gmccpa.pane.SplitPane.Mode.NONE ||
+            wasidremin.gmccpa.nav.DriverDisplay.size != null) })
         if (!laidOut || !split.shown || split.mode == wasidremin.gmccpa.pane.SplitPane.Mode.NONE) {
             if (p.visibility != View.GONE) { p.visibility = View.GONE; log.i("pane: hidden") }
             return
