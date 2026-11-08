@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 233 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -167,7 +167,7 @@ high-water mark: versionCode 233 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   ran out, so the car got two cards without art and then one with it inside 0.13 s. Four of the 140
   title changes on record look like this (554–657 ms). From 233 (published 2026-11-07) the card waits up to 1 s. Unverified
   on the car. Owner: `08_FUTURE_TASKS.md` T13.
-- **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), none yet tried in the car.**
+- **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), in Play 234, none yet tried in the car.**
   - *Top-bar Now Playing, Maps, Spotify and Phone open by command:* `CMD_REQUEST_UI_URL` on an adapter
     whose `HELLO_ACK` carries `CAP_UI_URL`, instead of finding and tapping the icon. Benched on the
     owner's iPhone with the recorded picture: `nowplaying:`, `maps:`, `spotify:`, `mobilephone:` (and
@@ -187,11 +187,15 @@ high-water mark: versionCode 233 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     (iOS's own toggle is the device-proven path, `06_AV_PIPELINE.md` §3).
   - *Settings ▸ Playback ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
     *Lyrics in the top bar* shows the current line there, in Park only.
-  - Bench, same evening (owner's iPhone in range): of nine sessions, four failed before CarPlay. Twice
-    the other bonded iPhone answered first and never got to CarPlay; once the iPhone took the Wi-Fi
-    handoff and never joined the AP; twice it joined, answered `GET /ctrl-int/1/connect` with 200, and
-    never connected back (a no-config control session did the same, so not the split document). The
-    last two match the car's slow starts; the iPhone's own log (`idevicesyslog`) is what can say why.
+  - Connection time on the new adapter firmware (startup fixes 5389084/749f72c), bench only: when the
+    iPhone answered the first page, subscribe → first picture took 8.8 s and 10.4 s, against the car's
+    10.7 s median on the old firmware (44 sessions since 2026-10-15, `[startup]` lines; fastest 8.1 s).
+    Stage by stage the Bluetooth part is unchanged: discoverable 0.8 s after start, phone connected
+    1.6 s later (car 1.0 s), handoff 2.6 s after that (car 3.0 s). The bench's failed sessions are not
+    evidence either way: the phone was carried away from the server during them. Two cases are owed a
+    car check: a page timeout of 5.2 s whenever the first bonded iPhone (the box holds two) does not
+    answer, and the one split-document session that took 28 s from handoff to picture. App 234 logs the
+    same `[startup]` stages, so the car's numbers on the new firmware come straight from its uploads.
   - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
