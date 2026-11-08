@@ -84,7 +84,10 @@ wherever the rows live; no key changes.
 mandatory-calibration wording: it lists glyph/strip/grid gaps against
 user-only templates. v101 keeps the function for the overrides screen but the
 normal launcher status must NOT call a device "uncalibrated" for having no user
-overrides — built-ins are the default.
+overrides — built-ins are the default. Since 234 (2026-11-07) the status opens with "Maps, Now
+Playing, Spotify and Phone open by command from the adapter" when the adapter reports `CAP_UI_URL`;
+those tiles then need no template, and the templates still serve CarPlay Home, Play Spotify on connect
+and older adapters (`14_LESSONS_LEARNED.md` §15).
 
 ## Advanced page (`Ui.kt buildAdvanced`)
 

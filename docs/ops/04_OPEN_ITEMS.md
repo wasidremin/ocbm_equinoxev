@@ -195,7 +195,8 @@ high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     evidence either way: the phone was carried away from the server during them. Two cases are owed a
     car check: a page timeout of 5.2 s whenever the first bonded iPhone (the box holds two) does not
     answer, and the one split-document session that took 28 s from handoff to picture. App 234 logs the
-    same `[startup]` stages, so the car's numbers on the new firmware come straight from its uploads.
+    same `[startup]` stages, so the car's numbers on the new firmware come straight from its uploads
+    (stage table: `host/gm_ccpa/docs/05_SESSION_FLOW.md` §9).
   - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
@@ -211,6 +212,8 @@ high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
   Maps it took two toggles and about 3 s, which the owner flagged. 229 (2026-11-04) ends each
   toggle's wait once it has landed (expect about 1.5 s to the icon tap); unverified on the car.
+  From 234 (published 2026-11-07), on an adapter whose `HELLO_ACK` carries `CAP_UI_URL`, the tile sends
+  `nowplaying:` instead and needs no toggle or icon; the vision launch remains for older adapters.
   Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15 and §9 item 4.
 - **4½ min without CarPlay at the 2026-11-04 start (asked the owner).** The 228 process, alive since
   the night before, raised the USB permission dialog at 11:58:53, 11:59:24 and 11:59:54 UTC. All
@@ -1369,8 +1372,9 @@ suspected, that is the run to complete.
    no-op. Two fixes: serialise on child reap, and verify the bring-up instead of asserting it.
 4. **Gone with the macOS app (2026-10-27).** `viewArea2*` keys were UserDefaults-only, so
    Import/Export did not round-trip them.
-5. `initial` is parsed box-side but authored by no app (the GM app declares one area).
-6. **CLOSED 2026-09-09 — `animationDurationMillis` is fully characterised; there is no iOS floor or cap.** Swept on hardware (CPC200-CCPA, wired, 1920x1080, second view area): **10 ms renders the switch as an instant flicker; 10000 ms runs the full 10 s.** Honoured literally at both extremes. One nuance worth keeping: at 10000 ms the UI reaches the target geometry at roughly 5 s and then idles showing CarPlay's transition blur until the envelope expires — the duration is the ANIMATION window, not the geometry change, so the accessory gets its settled geometry earlier than the declared duration. Untested: whether a larger area delta occupies more of the envelope instead of finishing early. The shipped range is now **1000–10000** by owner decision — a product limit (sub-second reads as abrupt in a car), NOT a protocol one; 10 ms works and is simply not offered. The original text of this item follows for the record.
+5. `initial` is parsed box-side and, since 2026-11-07, authored by the GM app's media pane (`initial: true`
+   on the second area).
+6. **CLOSED 2026-09-09 — `animationDurationMillis` is fully characterised; there is no iOS floor or cap.** Swept on hardware (CPC200-CCPA, wired, 1920x1080, second view area): **10 ms renders the switch as an instant flicker; 10000 ms runs the full 10 s.** Honoured literally at both extremes. One nuance worth keeping: at 10000 ms the UI reaches the target geometry at roughly 5 s and then idles showing CarPlay's transition blur until the envelope expires — the duration is the ANIMATION window, not the geometry change, so the accessory gets its settled geometry earlier than the declared duration. Untested: whether a larger area delta occupies more of the envelope instead of finishing early. The shipped range is **100–10000** since 2026-11-07 (enigy/ocbm's floor, ported with the GM app's media pane, whose switch takes 500 ms); from 2026-09-09 it was 1000–10000 by owner decision, when sub-second was judged abrupt in a car. Either way a product limit, NOT a protocol one; 10 ms works and is simply not offered. The original text of this item follows for the record.
 
    ~~**`animationDurationMillis` limits are unmeasured; its FLOOR is the open question.**~~ (Corrected
    2026-09-09 — it was "hardcoded 3000, not yet a variable"; both halves are now false.) On the bench

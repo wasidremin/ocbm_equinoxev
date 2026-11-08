@@ -119,8 +119,10 @@ Beyond Identify, pair-setup/verify on `ncm0` derives the ChaCha20 session key, a
 the encrypted A/V + hands the per-stream key over OCBM** (`CH_VIDEO`/`CH_MEDIA_AUDIO`); a Rust debug
 receiver (`ocbm-host avdec`) decrypted hundreds of video frames + thousands of audio packets host-side,
 **0 failures**, driven by the host-app-driven projection lifecycle above. Pairing persists (disk-backed
-PeerStore) so a known device reconnects with pair-verify only. The host app that was "remaining" here is **done and
-hardware-validated** (`host/MacHost/carlink_macOS` — VideoToolbox decode/render, audio, touch
-uplink). Open work: `../ops/04_OPEN_ITEMS.md`. See also `README.md` §Architecture and
+PeerStore, `/etc/carplay_peers.bin`) so a known device reconnects with pair-verify only. Since 2026-11-07 it keeps up
+to 8 keys per pairing identifier and pair-verify accepts any of them, for two iPhones that present the same
+identifier (ported from enigy/ocbm). The host app that was "remaining" here was built and hardware-validated
+upstream (`host/MacHost/carlink_macOS`, removed from this fork 2026-10-27); here the host is the GM app
+(`host/gm_ccpa`). Open work: `../ops/04_OPEN_ITEMS.md`. See also `README.md` §Architecture and
 `../carplay/02_SESSION_LIFECYCLE.md`.
 

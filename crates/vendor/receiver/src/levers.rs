@@ -360,8 +360,9 @@ pub fn set_appsetup(on: bool) {
 /// iOS never acknowledges this field, so the `[events] updateViewArea -> … duration=` line (which
 /// prints the value read from THIS cell, i.e. post-clamp) is the only observability there is.
 pub const VIEW_AREA_ANIM_MS_DEFAULT: i64 = 3000;
-/// FLOOR LOWERED TO 100 ms (owner, 2026-10-25) for the Carlink3 split-screen pane: its Dock switch
-/// should take about half a second, and the 1000 floor measured 1.4 s tap-to-picture on the truck.
+/// FLOOR LOWERED TO 100 ms on 2026-11-07 for the GM app's media pane, ported from enigy/ocbm, which
+/// lowered it on 2026-10-25 for its Carlink3 split-screen pane: the Dock switch should take about half
+/// a second, and the 1000 floor measured 1.4 s tap-to-picture in enigy's truck.
 /// The floor had been RAISED to 1000 (owner, 2026-09-09) after the bench sweep. Both ends are
 /// device-proven on a 1920x1080 panel: 10 ms renders the switch as an instant flicker and 10000 ms
 /// runs the full 10 s envelope, so iOS honours the field literally with NO floor and NO cap of its
@@ -399,7 +400,7 @@ mod tests {
     fn view_area_anim_ms_clamps_to_nearest_bound_and_passes_in_range() {
         assert_eq!(VIEW_AREA_ANIM_MS_DEFAULT, 3000, "absent-key wire must stay 3000");
         assert_eq!(clamp_view_area_anim_ms(3000), 3000);
-        // FLOOR IS 100, not 0 — raised to 1000 by the owner 2026-09-09, lowered to 100 on 2026-10-25
+        // FLOOR IS 100, not 0 — raised to 1000 by the owner 2026-09-09, lowered to 100 on 2026-11-07
         // for the split-screen pane (see VIEW_AREA_ANIM_MS_RANGE). Assertions left expecting an old
         // floor are what turned Tier-0 red from f836a2b onward (found 2026-09-10), so every bound
         // is spelled out here.

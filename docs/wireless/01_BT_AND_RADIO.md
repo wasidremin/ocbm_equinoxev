@@ -962,7 +962,8 @@ every unrecognized event. Now:
   persistent key (`store_hint=1`); without it the kernel reported `store_hint=0` and a freshly
   authenticated key was never written, so the next boot would have prompted again. `ssp_agent`
   still honours whatever hint the kernel returns, as BlueZ does.
-- **`SET_DISCOVERABLE`.** `bt_bringup`'s `hciconfig piscan` can be undone by mgmt's
+- **`SET_DISCOVERABLE`.** `bt_bringup`'s scan enable (a raw Write_Scan_Enable since 2026-11-07,
+  `hciconfig piscan` before) can be undone by mgmt's
   `SET_CONNECTABLE` rewriting Scan_Enable from its own flags. `ssp_agent` sends
   `SET_DISCOVERABLE=general` (no timeout) after `SET_CONNECTABLE` so a phone-initiated re-pair from
   Settings ▸ Bluetooth can still find the box.

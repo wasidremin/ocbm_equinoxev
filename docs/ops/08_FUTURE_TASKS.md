@@ -443,8 +443,11 @@ record would have gone out once with its picture. A title with no picture at all
 logged as `card: no picture 1000 ms after "<title>"`.
 
 **Later (adapter firmware, `tools/ocbm_install.sh`).**
-- Parse `0x5202` params 10/11 (junction and exit angles) for the `_WITH_ANGLE` roundabout types.
-- Add `0x5200` selectors 3–5 so ExitInfo, time zone and EV fields arrive (doc 03 selector gap).
+- Done 2026-11-07 (ported from enigy/ocbm; on the adapter, not yet seen on the car's wire): `0x5202`
+  params 10/11 (junction and exit angles) are forwarded, and selector 3 brings ExitInfo, which the
+  cluster's road text now leads with (`docs/carplay/05_METADATA_AND_CONTROLS.md`). The cluster draws
+  GM's own glyph, so the `_WITH_ANGLE` roundabout angles have no consumer here.
+- Add `0x5200` selectors 4–5 so the time zone and EV fields arrive (doc 03 selector gap).
 - `0x5204` lane guidance is Extended-tier only. Moving it into Proven changes a proven Identify and
   risks an unrecoverable `0x1D03`, so prove it at the Extended tier first.
 
@@ -558,6 +561,10 @@ Kept here so a later session does not promote them into tasks.
   cluster ignores (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`). The exit label was taken instead.
 - **enigy's per-iPhone settings, adapter updates over OCBM, stock conversion.** Not asked for; per-phone
   settings matter little with this app's few per-phone choices, and the adapter is updated on the server.
+- **New enigy commits are reviewed weekly (from 2026-11-09).** A scheduled check on the owner's Claude
+  account, run Mondays on the laptop's `ocbm` bridge, reads enigy/ocbm after `317b3eb` and enigy/carlink
+  after `0766d12` (both reviewed 2026-11-07) and reports each change as port, maybe, skip or already
+  have. It changes nothing; what is taken lands in `04_OPEN_ITEMS.md` like the 2026-11-07 ports.
 - **Wrong panel.** Knob, d-pad, and touchpad descriptors are for other head units. The Equinox is
   a touchscreen.
 - **No surface yet.** A second CarPlay video stream on the Equinox cluster waits until the VCU

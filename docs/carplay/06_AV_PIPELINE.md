@@ -935,11 +935,13 @@ static multi-view-area) are documented with their implementation cost + teardown
   Practical consequence: the accessory owns the pacing of a Dock resize completely, and can make it
   instant. There is no reason to keep 3000 ms other than matching Apple's Simulator.
 
-  **Shipped range is 1000–10000 ms (owner, 2026-09-09) — a PRODUCT limit, not a protocol one.** iOS
-  has no floor; 10 ms was proven to work. The app deliberately does not offer sub-second because it
-  reads as abrupt in a vehicle. Anyone reading this later and wondering whether 10 ms is unreachable
-  because iOS rejects it: it is not, the clamp is ours, in `levers::VIEW_AREA_ANIM_MS_RANGE` and in
-  the app's emitter + `clampInPlace`. The DEFAULT remains 3000 (absent key).
+  **Shipped range is 100–10000 ms (since 2026-11-07; 1000–10000 from 2026-09-09) — a PRODUCT limit,
+  not a protocol one.** iOS has no floor; 10 ms was proven to work. The floor was 1000 because
+  sub-second read as abrupt in a vehicle; it came down to 100, enigy/ocbm's floor, with the GM app's
+  media pane, whose switch is 500 ms. Anyone reading this later and wondering whether 10 ms is
+  unreachable because iOS rejects it: it is not, the limit is ours, in `levers::VIEW_AREA_ANIM_MS_RANGE`
+  (clamps) and in the GM app's emitter (`VehicleConfigYaml.kt` `VIEW_AREA_ANIM_MS_RANGE`, which refuses).
+  The DEFAULT remains 3000 (absent key).
   iPhone handler:
   `carEndpoint_updateViewArea` logging `viewAreaUpdate for display %@: viewArea %d adjacentViewAreas
   %@ animationDurationMillis %d` (AirPlaySender 10767-10772); CarKit `CARSession

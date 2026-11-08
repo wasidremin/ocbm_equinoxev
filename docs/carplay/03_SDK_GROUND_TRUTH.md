@@ -636,7 +636,9 @@ each requires *both* correcting the id and enabling the feed — a feature decis
    Mitigated: none are in the stock subscribe set, so they don't arrive today.
 4. **RouteGuidance selector gap** — `start_route_guidance()` sends only selectors id0/1/2, so the
    (correctly-parsed) id21 timezone, id24 battery, and maneuver `exitInfo` can never fire; the Kit
-   requires selectors id3/id4/id5 to receive them.
+   requires selectors id3/id4/id5 to receive them. **Partly closed 2026-11-07:** selector 3 is now sent
+   and brings `exitInfo` (`05_METADATA_AND_CONTROLS.md`); the time zone and battery fields still wait on
+   selectors 4 and 5.
 
 The feeds that **do** flow — NowPlaying, RouteGuidance, CallState — parse cleanly.
 

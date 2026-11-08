@@ -238,10 +238,12 @@ construction.
   extension key) → `DeviceConfig.main_view_area_2` → the SECOND main `viewAreas[]` entry, `initialViewArea`
   and derived `adjacentViewAreas` in `/info` (the Dock resize button). Main stream only; positive-only in
   `apply()`, containment refused loudly in `info.rs::view_area_2`, and it auto-arms `viewAreas` like a real
-  inset. The `CARPLAY_VIEWAREA2` bench lever is now the app-less fallback. Host: `VehicleConfigModel.viewArea2*`
-  validated by `ViewArea2Rule` in severity order (containment → all four values even → positive dims → the
-  product floor 800x480 landscape / 480x800 portrait); the entry is emitted only when enabled AND legal, so
-  the OFF document is byte-identical (docs/carplay/06_AV_PIPELINE.md §3).
+  inset. The `CARPLAY_VIEWAREA2` bench lever is now the app-less fallback. Host: the GM app's
+  `VehicleConfigSpec.viewArea2` (Settings ▸ Display ▸ Media pane, 2026-11-07), validated by `ViewAreaRule`
+  (`VehicleConfigYaml.kt`) in severity order (containment → all four values even → positive dims → the
+  product floor 800x480 landscape / 480x800 portrait) and emitted with `initial: true`; with the pane off the
+  pinned document goes out unchanged (docs/carplay/06_AV_PIPELINE.md §3). The rule was first the macOS app's
+  `ViewArea2Rule`, removed with that app on 2026-10-27.
 - **Guard:** dimensions are applied only when both are > 0; a partial/garbled config falls through to the
   box default (never zeros the resolution out from under a session). The guard stays; the box default
   it falls to is an interim safety floor — target state per docs/carplay/04_CAPABILITIES_AND_CONFIG.md is hold-IDLE-until-config, with

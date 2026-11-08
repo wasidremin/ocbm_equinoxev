@@ -798,7 +798,7 @@ pub fn send_request_ui() -> bool {
 }
 
 /// `requestUI` WITH a URL — ask iOS to bring a specific app forward on the MAIN screen (`maps:`,
-/// `nowplaying:`, …; OCBM `CMD_REQUEST_UI_URL`, 2026-10-25). Wire: `{type:"requestUI", params:{url}}`
+/// `nowplaying:`, …; OCBM `CMD_REQUEST_UI_URL`, ported from enigy/ocbm 2026-11-07). Wire: `{type:"requestUI", params:{url}}`
 /// — the branch at 0x26bf5c in `_AirPlayReceiverSessionRequestUI` (CarPlaySDK 509.11 @0x26bf20) sets
 /// params["url"] when a url is given, so this is the SDK's own shape; [`send_request_ui`] is the
 /// no-url form. No uuid: requestUI cannot address a stream (see the CMD_NAV_* history in carplayd),

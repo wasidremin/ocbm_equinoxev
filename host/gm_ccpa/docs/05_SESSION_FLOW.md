@@ -29,7 +29,7 @@ separate places per session (§10).
 | # | Stage | Detail |
 |---|---|---|
 | A1 | Radios wake | Off at boot. The app's OCBM `CT_SUBSCRIBE` is the trigger — `ocbmd` mirrors host presence, the box brings BT up on that edge. |
-| A2 | HCI bring-up | Three things make iOS classify this as a CarPlay accessory: CoD `0x200408`, the device name, and an EIR carrying two 128-bit UUIDs — iAP2 `00000000-deca-fade-deca-deafdecacaff` (AD type 0x06) and the CarPlay marker `d31fbf50-5d57-2797-a240-41cd484388ec` (AD type 0x07). Then `piscan`. |
+| A2 | HCI bring-up | Three things make iOS classify this as a CarPlay accessory: CoD `0x200408`, the device name, and an EIR carrying two 128-bit UUIDs — iAP2 `00000000-deca-fade-deca-deafdecacaff` (AD type 0x06) and the CarPlay marker `d31fbf50-5d57-2797-a240-41cd484388ec` (AD type 0x07). Then scan enable, page and inquiry: a raw HCI Write_Scan_Enable since 2026-11-07, because `hciconfig piscan` stalled 10 s in 22 of 177 bring-ups on the CCPA's kernel (`docs/wireless/01_BT_AND_RADIO.md`). |
 | A3 | SDP | Record named "Wireless iAPv2" on L2CAP PSM 1, pointing at RFCOMM channel 1. Not optional — without it the phone pairs, browses SDP, finds nothing, and disconnects. |
 | A4 | SSP pairing | Just-Works (NoInputNoOutput) by default, auto-accepted in-kernel. Link key persisted so later sessions skip this. Numeric-comparison mode exists but is experimental. |
 | A5 | RFCOMM | Inbound (phone dials ch 1), or outbound for a bonded phone. |
@@ -281,9 +281,25 @@ Wireless reconnect of a known device, iPhone-side log, 2026-08-02:
 | RECORD | 14.6 ms |
 | TCP connect → RECORD answered | 2.19 s |
 
-(Session-start → first-video-frame is not measured anywhere in the corpus — the 2026-08-02 session died
-at RECORD on the cornerMasks error and never streamed, and the older captures are untimestamped. Don't
-quote a number for it.)
+That table predates any session that streamed (the 2026-08-02 one died at RECORD on the cornerMasks
+error). Start to first picture is now measured by the app itself: `StartupClock` logs each stage as
+`startup: <stage> +Nms` from the USB attach and a one-line summary at the first rendered frame. Box
+stages reach it through the box log, so they carry ±0.5 s. From the car's uploads, 2026-10-15 to
+2026-11-07, 44 sessions that reached video (adapter firmware before 2026-11-07; repeated upload lines
+removed):
+
+| Stage | Median | Range |
+|---|---|---|
+| SUBSCRIBE → box discoverable | 3.1 s | 1.7–24.1 s |
+| discoverable → phone connected on Bluetooth | 1.0 s | 0.0–3.5 s |
+| Bluetooth connected → Wi-Fi handoff | 3.0 s | 1.6–18.5 s |
+| Wi-Fi handoff → first video frame | 3.7 s | 2.4–8.3 s |
+| **SUBSCRIBE → first video frame** | **10.7 s** | 8.1–47.4 s |
+
+In the same period 3 of 47 sessions that reached the handoff never got a picture. On the 2026-11-07
+adapter firmware (raw scan enable, 2 s reconnect retries), benched on the server, the two sessions in
+which the phone answered the first page took 8.8 s and 10.4 s. The car's numbers on that firmware come
+from the same lines once it has been driven (`docs/ops/04_OPEN_ITEMS.md`).
 
 Phone-enforced timeouts: 10 s on every normal request, 1 s on teardown, 30 s temporary assertion on the
 `connect` command.
