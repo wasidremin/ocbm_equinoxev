@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 235 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 236 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -210,7 +210,7 @@ high-water mark: versionCode 235 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     was 3.1 s), the first-paged iPhone answered 1.5 s after that (no page timeout), the handoff took the
     usual 3.0 s, and the picture came 4.5 s after the handoff (median 3.7 s). One session; not a trend.
   - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
-- **CarPlay map on the driver display: built 2026-11-08, not on the car.** The idea is openautolink's
+- **CarPlay map on the driver display: in Play 236 (2026-11-08), not yet tried in the car.** The idea is openautolink's
   ("driver-display maps", validated on a 2024 Blazer EV: GM VCU on AAOS 12L), re-implemented here
   without their GPL-3.0 code. Settings ▸ Navigation ▸ CarPlay map on the driver display (off by
   default): at subscribe the config declares Apple's cluster pair (`altDisplayPanels` +
