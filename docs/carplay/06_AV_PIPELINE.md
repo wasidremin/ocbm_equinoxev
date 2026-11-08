@@ -896,7 +896,9 @@ static multi-view-area) are documented with their implementation cost + teardown
 > initialViewArea=1`, SETUP negotiated `viewAreas`, and the recorded picture showed CarPlay drawn in
 > 1680x960 with the rest black and iOS's area toggle at the top of the dock. The app does not crop the
 > surface for this area: its pane covers the black strip. A host-sent `CMD_VIEW_AREA 0` and `1` were
-> answered with `updateViewArea` (500 ms); the picture after them is still to be seen on the car.
+> answered with `updateViewArea` (500 ms). On the car 2026-11-08 12:00:24 (Play 237, Equinox, 2470x960
+> main, area 1482x960) a host-sent `CMD_VIEW_AREA 0` left the coded size unchanged: iOS re-sent the
+> same parameter sets through the 500 ms animation and the decoder carried on without a reset.
 > Since 2026-11-08 the area is declared only when the owner picks a side (the default lays the pane
 > over CarPlay and declares nothing), `initial: true` follows whether the pane was showing at the end
 > of the last drive, and a tap on the glass right of the picture sends `CMD_VIEW_AREA 1` or `0`.

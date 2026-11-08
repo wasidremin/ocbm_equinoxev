@@ -480,7 +480,9 @@ closest-length one). The whole-item `dur=0` above may have been the same thing. 
 `NowPlayingState.kt` holds a title-less length that disagrees with a known one by more than 2 s for
 3 s; a new title in that time starts with it, otherwise the next record applies it to the current
 item. Pinned by `aLengthAheadOfItsTitleGoesToTheNewTitle` and its two neighbours. Where the title
-came first (`13:01:55`, length 0.1 s later) nothing changes.
+came first (`13:01:55`, length 0.1 s later) nothing changes. Verified on the car the same day on 237
+(`16:59:43`): the title-less tick came 0.54 s before the title again, the old title kept
+`dur=321213`, and the new one published `dur=310375` with its lyrics looked up at 310 s.
 
 ### 14.4 FIXED: a track-change frame published a fabricated `pos=0 rate=1.0`
 

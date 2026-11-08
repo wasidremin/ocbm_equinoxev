@@ -186,7 +186,10 @@ high-water mark: versionCode 237 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     hides it, the state is kept for the next drive, and the default is *Over CarPlay*: the pane is laid
     over the right 30% of the picture and nothing is sent to the phone. On the car 2026-11-08 11:13 the
     strip showed and hid the pane three times (Over CarPlay); the owner then chose Right, 40%, and the
-    next sessions started split (CarPlay 1482x960, pane 988 px wide). No switch of the split was tried.
+    next sessions started split (CarPlay 1482x960, pane 988 px wide). On 237 at 12:00:24 a strip tap
+    sent `CMD_VIEW_AREA 0` from the split: the box answered iOS with `updateViewArea` (500 ms), iOS
+    sent its burst of unchanged parameter sets, and the main picture carried on (58 fps 10 s later, no
+    decoder reset), so a host-sent switch is proven on the car.
     At the owner's request (2026-11-08) the art became a thumbnail beside the title (a sixth of the
     pane's height) and the lyrics show nine lines, three before the sung one and five after, in
     larger type (Play 237). Choosing a side instead declares a second view area (`initial: true`
@@ -194,9 +197,8 @@ high-water mark: versionCode 237 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     sends `CMD_VIEW_AREA`. Benched on the owner's iPhone with the app's exact document
     (2400x960, pane right 30%): iOS negotiated `viewAreas`, drew CarPlay in 1680x960 with the right 30%
     black, and put its own area toggle at the top of the dock. The pane's full-screen button
-    (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one run that sent them recorded no
-    picture after the switch; whether the video carries on through a host-sent switch is still open
-    (iOS's own toggle is the device-proven path, `06_AV_PIPELINE.md` §3).
+    (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one bench run that sent them
+    recorded no picture after the switch; the car answered it on 2026-11-08 (above): the video carries on.
   - *Settings ▸ Playback ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
     *Lyrics in the top bar* shows the current line there, in Park only.
   - Connection time on the new adapter firmware (startup fixes 5389084/749f72c), bench only: when the
@@ -242,6 +244,10 @@ high-water mark: versionCode 237 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
      display is left exactly as GM had it; a long-press on the strip right of CarPlay opens it again
      (`DriverDisplay.reopen`); and Turn-by-turn in the cluster stands down while this is on
      (`ClusterNav.active`), as GM took the display back 0.6 s after its `navigationStarted`.
+     **First drive on 237, 2026-11-08 11:58–12:01:** the window opened 13 s after the app started and
+     stayed up for the whole upload (2,100 frames over 2 min, none dropped), including when a route
+     started at 12:00:38: Turn-by-turn in the cluster stood down (no `navigationStarted`), and nothing
+     took the display back.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
