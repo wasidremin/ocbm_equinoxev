@@ -667,15 +667,19 @@ class LauncherUi(private val act: Activity) {
         ))
     }
 
-    /** Settings ▸ Display ▸ Media pane: off, or which side and how wide. Applies at the next connect. */
+    /** Settings ▸ Display ▸ Media pane: over CarPlay, beside it on a side and width, or off. Applies at the next connect. */
     private fun mediaPaneRow(): EqRow {
         val pane = wasidremin.gmccpa.pane.SplitPane
         lateinit var row: EqRow
         lateinit var value: android.widget.TextView
-        fun subtitle(c: wasidremin.gmccpa.pane.SplitPane.Choice) =
-            if (c.side == wasidremin.gmccpa.pane.SplitPane.Side.OFF) "CarPlay uses the whole screen."
-            else "CarPlay keeps the other ${100 - c.percent}%; the pane shows the song, its controls and lyrics, in any gear. " +
-                "CarPlay's own button switches to full screen and back. Applies at the next connect."
+        fun subtitle(c: wasidremin.gmccpa.pane.SplitPane.Choice) = when (c.side) {
+            wasidremin.gmccpa.pane.SplitPane.Side.OFF -> "No pane; CarPlay uses the whole screen."
+            wasidremin.gmccpa.pane.SplitPane.Side.OVER ->
+                "The song, its controls and lyrics, in any gear, over the right ${pane.OVER_PERCENT}% of CarPlay. " +
+                    "Tap the glass right of CarPlay to show or hide it."
+            else -> "The song, its controls and lyrics, in any gear; CarPlay moves over to the other ${100 - c.percent}%. " +
+                "Tap the glass right of CarPlay, or CarPlay's own button, to show or hide it. Applies at the next connect."
+        }
         val choice = pane.choice(act)
         value = eqButton(act, choice.label, EqButtonStyle.SECONDARY) {
             val cur = pane.choice(act)

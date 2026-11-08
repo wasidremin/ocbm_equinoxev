@@ -241,8 +241,9 @@ construction.
   inset. The `CARPLAY_VIEWAREA2` bench lever is now the app-less fallback. Host: the GM app's
   `VehicleConfigSpec.viewArea2` (Settings ▸ Display ▸ Media pane, 2026-11-07), validated by `ViewAreaRule`
   (`VehicleConfigYaml.kt`) in severity order (containment → all four values even → positive dims → the
-  product floor 800x480 landscape / 480x800 portrait) and emitted with `initial: true`; with the pane off the
-  pinned document goes out unchanged (docs/carplay/06_AV_PIPELINE.md §3). The rule was first the macOS app's
+  product floor 800x480 landscape / 480x800 portrait) and emitted with `initial: true` when the pane was
+  showing at the end of the last drive (`viewArea2Initial`, since 2026-11-08); with the pane over CarPlay
+  (the default) or off, the pinned document goes out unchanged (docs/carplay/06_AV_PIPELINE.md §3). The rule was first the macOS app's
   `ViewArea2Rule`, removed with that app on 2026-10-27.
 - **Guard:** dimensions are applied only when both are > 0; a partial/garbled config falls through to the
   box default (never zeros the resolution out from under a session). The guard stays; the box default

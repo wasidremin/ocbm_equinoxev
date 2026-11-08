@@ -362,7 +362,7 @@ class CarPlayActivity : Activity() {
             val idx = BPlist.int(root, "params", "viewAreaIndex")?.toInt() ?: return
             // A split session (Settings ▸ Display ▸ Media pane): the box already answered iOS; the
             // picture keeps its geometry and only the pane shows or hides.
-            if (wasidremin.gmccpa.pane.SplitPane.declared != null) {
+            if (wasidremin.gmccpa.pane.SplitPane.mode == wasidremin.gmccpa.pane.SplitPane.Mode.SPLIT) {
                 wasidremin.gmccpa.pane.SplitPane.onViewArea(idx, "CarPlay's own switch")
                 return
             }
@@ -489,8 +489,10 @@ class CarPlayActivity : Activity() {
     private var chromeIsRail: Boolean? = null
     /** Top-bar state the current rail was built for; a change flips Home/Settings on the rail. */
     private var chromeTopBarOn: Boolean = false
-    /** The split layout's media pane ([wasidremin.gmccpa.pane.SplitPane]), over the strip iOS leaves black. */
+    /** The media pane ([wasidremin.gmccpa.pane.SplitPane]): over CarPlay's right, or over the strip a split leaves black. */
     private var pane: wasidremin.gmccpa.pane.MediaPaneView? = null
+    /** The glass right of the picture; a tap there shows or hides [pane]. */
+    private var paneStrip: wasidremin.gmccpa.pane.PaneStrip? = null
     private val paneListener: () -> Unit = { runOnUiThread { if (!isDestroyed) placePane() } }
 
     /** Index into [VIEW_AREAS] the surface is currently laid out for. */
@@ -624,27 +626,27 @@ class CarPlayActivity : Activity() {
                 }
                 sendMedia(i)
             }
-            override fun fullScreen() {
-                if (previewOnly) { log.i("pane preview: full screen — no command sent"); return }
-                touchHandler?.post {
-                    val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendViewArea(0)
-                    log.i("pane: full-screen button -> CMD_VIEW_AREA 0 sent=$sent")
-                    if (sent) wasidremin.gmccpa.pane.SplitPane.onViewArea(0, "the pane's full-screen button")
-                }
-            }
+            override fun hide() = setPane(false, "the pane's button")
         }).also {
             it.visibility = View.GONE
             it.bind(nowPlaying.snapshot)
             root.addView(it, android.widget.FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
         }
+        paneStrip = wasidremin.gmccpa.pane.PaneStrip(this).also {
+            it.visibility = View.GONE
+            it.setOnClickListener { setPane(!wasidremin.gmccpa.pane.SplitPane.shown, "the strip right of CarPlay") }
+            root.addView(it, android.widget.FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
+        }
         wasidremin.gmccpa.pane.SplitPane.listener = paneListener
-        // Hardware-free look at the pane: `pane_preview` declares the chosen split for this screen only.
+        // Hardware-free look at the pane: `pane_preview` declares the chosen layout for this screen
+        // only, showing (Off previews over CarPlay).
         if (previewOnly && intent.getBooleanExtra("pane_preview", false)) root.post {
             val c = wasidremin.gmccpa.pane.SplitPane.choice(this).let {
-                if (it.side == wasidremin.gmccpa.pane.SplitPane.Side.OFF) wasidremin.gmccpa.pane.SplitPane.CHOICES[1] else it
+                if (it.side == wasidremin.gmccpa.pane.SplitPane.Side.OFF) wasidremin.gmccpa.pane.SplitPane.CHOICES[0] else it
             }
-            wasidremin.gmccpa.pane.SplitPane.onSubscribe(
-                wasidremin.gmccpa.pane.SplitPane.carPlayArea(VideoFrame.width, VideoFrame.height, c.side, c.percent))
+            val area = wasidremin.gmccpa.pane.SplitPane.carPlayArea(VideoFrame.width, VideoFrame.height, c.side, c.percent)
+            wasidremin.gmccpa.pane.SplitPane.onSubscribe(this, c, area, startsSplit = true)
+            wasidremin.gmccpa.pane.SplitPane.setShown(true, "preview")
             val sample = NowPlayingState.Snapshot(title = "Send Me on My Way", artist = "Rusted Root", album = "When I Woke",
                 appName = "Spotify", durationMs = 263_000, elapsedMs = 61_000, playbackStatus = NowPlayingState.PLAY)
             sample.feedLyrics()
@@ -1778,26 +1780,58 @@ class CarPlayActivity : Activity() {
      * stays full-bleed, which is the behaviour this app shipped with.
      */
     /**
-     * Lay the media pane over the part of the picture outside CarPlay's split area, or hide it.
+     * Show or hide the media pane: the strip right of the picture, or the pane's own button. Over
+     * CarPlay it changes at once; a split asks the box for the other view area and changes when that
+     * was sent.
+     */
+    private fun setPane(on: Boolean, why: String) {
+        val split = wasidremin.gmccpa.pane.SplitPane
+        when (split.mode) {
+            wasidremin.gmccpa.pane.SplitPane.Mode.NONE -> log.i("pane: $why tapped — the media pane is Off in Settings")
+            wasidremin.gmccpa.pane.SplitPane.Mode.OVER -> split.setShown(on, why)
+            wasidremin.gmccpa.pane.SplitPane.Mode.SPLIT -> {
+                val i = if (on) 1 else 0
+                if (previewOnly) { split.onViewArea(i, "$why (preview, no command sent)"); return }
+                touchHandler?.post {
+                    val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendViewArea(i)
+                    log.i("pane: $why -> CMD_VIEW_AREA $i sent=$sent")
+                    if (sent) split.onViewArea(i, why)
+                }
+            }
+        }
+    }
+
+    /**
+     * Lay out the media pane and the strip that toggles it.
      *
-     * The surface shows the whole advertised frame scaled to its view, and iOS draws black outside its
-     * view area, so the pane covers exactly `[area.right, width)` (pane on the right) or `[0, area.x)`
-     * (on the left) of the picture, mapped through the surface's own scale. A pane on the right keeps
-     * clear of the advertised safe-area inset, the glass the display cutout hides.
+     * Over CarPlay the pane covers the right [wasidremin.gmccpa.pane.SplitPane.OVER_PERCENT] of the
+     * picture. For a split, the surface shows the whole advertised frame scaled to its view and iOS
+     * draws black outside its view area, so the pane covers exactly `[area.right, width)` (pane on the
+     * right) or `[0, area.x)` (on the left) of the picture, mapped through the surface's own scale. A
+     * pane on the right keeps clear of the advertised safe-area inset, the glass the display cutout hides.
      */
     private fun placePane() {
         val p = pane ?: return
-        val area = wasidremin.gmccpa.pane.SplitPane.declared
+        val split = wasidremin.gmccpa.pane.SplitPane
+        val area = split.declared
         val lp = surfaceView.layoutParams as? android.widget.FrameLayout.LayoutParams
-        if (area == null || wasidremin.gmccpa.pane.SplitPane.index != 1 || lp == null || lp.width <= 1 || VideoFrame.width <= 0) {
+        val laidOut = lp != null && lp.width > 1 && VideoFrame.width > 0
+        placeStrip(lp.takeIf { laidOut && split.mode != wasidremin.gmccpa.pane.SplitPane.Mode.NONE })
+        if (!laidOut || !split.shown || split.mode == wasidremin.gmccpa.pane.SplitPane.Mode.NONE) {
             if (p.visibility != View.GONE) { p.visibility = View.GONE; log.i("pane: hidden") }
             return
         }
+        lp!!
         val sx = lp.width.toFloat() / VideoFrame.width
-        val onRight = area.x == 0
-        val left = if (onRight) lp.marginStart + (area.right * sx).roundToInt() else lp.marginStart
-        val width = if (onRight) lp.width - (area.right * sx).roundToInt() else (area.x * sx).roundToInt()
+        val onRight = area == null || area.x == 0
+        val width = when {
+            area == null -> lp.width * wasidremin.gmccpa.pane.SplitPane.OVER_PERCENT / 100
+            onRight -> lp.width - (area.right * sx).roundToInt()
+            else -> (area.x * sx).roundToInt()
+        }
+        val left = if (onRight) lp.marginStart + lp.width - width else lp.marginStart
         val cutout = if (onRight) (VideoFrame.safeRightPx * sx).roundToInt() else 0
+        p.split = area != null
         val plp = p.layoutParams as android.widget.FrameLayout.LayoutParams
         val changed = plp.width != width || plp.height != lp.height || plp.marginStart != left || plp.topMargin != lp.topMargin
         if (changed) {
@@ -1810,8 +1844,49 @@ class CarPlayActivity : Activity() {
         }
         if (p.visibility != View.VISIBLE || changed) {
             p.visibility = View.VISIBLE
-            log.i("pane: shown ${width}x${lp.height}@$left,${lp.topMargin} (CarPlay area ${area.width}x${area.height}@${area.x},${area.y}, cutout pad $cutout)")
+            log.i("pane: shown ${width}x${lp.height}@$left,${lp.topMargin} (" +
+                (area?.let { "CarPlay area ${it.width}x${it.height}@${it.x},${it.y}" } ?: "over CarPlay") + ", cutout pad $cutout)")
         }
+    }
+
+    /**
+     * The strip from the picture's right edge to the window's, over the picture's rows (the top bar
+     * owns the rows above). Gone when there is no pane this session or no strip to speak of. Its
+     * handle goes on the row where the traced glass reaches furthest past the picture.
+     */
+    private fun placeStrip(lp: android.widget.FrameLayout.LayoutParams?) {
+        val s = paneStrip ?: return
+        val x0 = if (lp == null) 0 else lp.marginStart + lp.width
+        val w = root.width - x0
+        if (lp == null || w < wasidremin.gmccpa.pane.PaneStrip.minGlassPx()) {
+            if (s.visibility != View.GONE) s.visibility = View.GONE
+            return
+        }
+        s.lit = wasidremin.gmccpa.pane.SplitPane.shown
+        val slp = s.layoutParams as android.widget.FrameLayout.LayoutParams
+        if (slp.width != w || slp.height != lp.height || slp.marginStart != x0 || slp.topMargin != lp.topMargin) {
+            slp.width = w
+            slp.height = lp.height
+            slp.marginStart = x0
+            slp.topMargin = lp.topMargin
+            s.layoutParams = slp
+            val outline = DisplayPrefs.glassOutline(this, root.width.toFloat(), root.height.toFloat())
+            val half = wasidremin.gmccpa.EqTheme.px(36f)
+            var bestY = lp.topMargin + lp.height / 2
+            var bestRight = outline?.right(bestY.toFloat()) ?: root.width.toFloat()
+            if (outline != null) {
+                for (y in (lp.topMargin + half)..(lp.topMargin + lp.height - half) step 8) {
+                    val r = outline.right(y.toFloat())
+                    if (r > bestRight) { bestRight = r; bestY = y }
+                }
+            }
+            val glass = minOf(bestRight, root.width.toFloat()) - x0
+            if (glass >= wasidremin.gmccpa.pane.PaneStrip.minGlassPx()) s.handleAt(glass / 2f, (bestY - lp.topMargin).toFloat())
+            else s.handleAt(-1f, -1f)
+            log.i("pane: strip ${w}x${lp.height}@$x0,${lp.topMargin}, glass ${glass.roundToInt()}px wide at y $bestY" +
+                if (outline == null) " (no traced outline)" else "")
+        }
+        if (s.visibility != View.VISIBLE) s.visibility = View.VISIBLE
     }
 
     private fun applyGeometry(r: android.graphics.Rect) {

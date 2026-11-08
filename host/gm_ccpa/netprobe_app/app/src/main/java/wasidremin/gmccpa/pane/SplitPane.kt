@@ -6,32 +6,45 @@ import wasidremin.gmccpa.ocbm.PixelRect
 import wasidremin.gmccpa.ocbm.ViewAreaRule
 
 /**
- * The split layout (Settings ▸ Display ▸ Media pane): CarPlay keeps one side of the panel, full
- * height, and this app's media pane ([MediaPaneView]) takes the rest. Ported in shape from enigy/carlink
- * `ocbm/SplitViewArea.kt` (Unlicense).
+ * The media pane ([MediaPaneView]), for the passenger, in any gear (Settings ▸ Display ▸ Media pane).
+ * A tap on the strip of glass right of the CarPlay picture shows or hides it, and so does the button
+ * at its top; the choice is kept for the next drive.
  *
- * CarPlay's side is declared as the main stream's `viewAreas[1]` with `initial: true`, so the session
- * starts split. iOS then offers its own switch between the two areas (`viewAreaTransitionControl`, set
- * by the box when a second area exists) and the box relays its `requestViewArea` to the app; the pane's
- * own full-screen button sends `CMD_VIEW_AREA 0`. The picture itself is never cropped: iOS draws black
- * outside its area, and the pane is laid over exactly that strip.
- *
- * The area is declared at subscribe, so a change here takes effect at the next connect.
+ * Two ways to show it:
+ *  - **Over CarPlay** (the default): the pane is laid over the right [OVER_PERCENT] of the picture.
+ *    Nothing is sent to the phone, so it works in every session and shows at once; what CarPlay draws
+ *    under it is hidden while it is up.
+ *  - **Beside CarPlay** (right or left, 30 or 40%): CarPlay makes room. Its side is declared as the
+ *    main stream's `viewAreas[1]`, `initial: true` when the pane was showing at the end of the last
+ *    drive, and the pane is laid over the strip iOS leaves black. Showing and hiding are a view-area
+ *    switch: the strip and the pane's button send `CMD_VIEW_AREA`, and iOS's own switch
+ *    (`viewAreaTransitionControl`, set by the box when a second area exists) is relayed back by the
+ *    box. Ported in shape from enigy/carlink `ocbm/SplitViewArea.kt` (Unlicense). The area is
+ *    declared at subscribe, so choosing this takes effect at the next connect.
  */
 object SplitPane {
     private val log = ProbeLog.sub("pane")
 
-    enum class Side(val label: String) { OFF("Off"), RIGHT("Right"), LEFT("Left") }
+    enum class Side { OFF, OVER, RIGHT, LEFT }
 
-    /** The choices Settings cycles through: side, then the pane's share of the panel. */
+    /** The choices Settings cycles through: where the pane goes, and for a split its share of the panel. */
     data class Choice(val side: Side, val percent: Int) {
-        val label: String get() = if (side == Side.OFF) "Off" else "${side.label}, $percent%"
+        val label: String get() = when (side) {
+            Side.OFF -> "Off"
+            Side.OVER -> "Over CarPlay"
+            Side.RIGHT -> "Right, $percent%"
+            Side.LEFT -> "Left, $percent%"
+        }
     }
 
+    /** The share of the CarPlay picture an Over CarPlay pane covers. */
+    const val OVER_PERCENT = 30
+
     val CHOICES = listOf(
-        Choice(Side.OFF, 0),
+        Choice(Side.OVER, OVER_PERCENT),
         Choice(Side.RIGHT, 30), Choice(Side.RIGHT, 40),
         Choice(Side.LEFT, 30), Choice(Side.LEFT, 40),
+        Choice(Side.OFF, 0),
     )
 
     /** How long a switch between the split and full screen animates (enigy measured 1 s as 1.4 s tap-to-picture). */
@@ -40,28 +53,41 @@ object SplitPane {
     private const val PREFS = "media_pane"
     private const val KEY_SIDE = "side"
     private const val KEY_PERCENT = "percent"
+    private const val KEY_SHOWN = "shown"
 
     fun choice(ctx: Context): Choice {
         val p = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val side = runCatching { Side.valueOf(p.getString(KEY_SIDE, Side.OFF.name)!!) }.getOrDefault(Side.OFF)
-        return CHOICES.firstOrNull { it.side == side && (side == Side.OFF || it.percent == p.getInt(KEY_PERCENT, 30)) }
+        val side = runCatching { Side.valueOf(p.getString(KEY_SIDE, Side.OVER.name)!!) }.getOrDefault(Side.OVER)
+        return CHOICES.firstOrNull { it.side == side && (side == Side.OFF || side == Side.OVER || it.percent == p.getInt(KEY_PERCENT, 30)) }
             ?: CHOICES.first()
     }
 
     fun setChoice(ctx: Context, c: Choice) {
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_SIDE, c.side.name).putInt(KEY_PERCENT, c.percent).apply()
-        log.i("pane: ${c.label} (Settings; applies at the next connect)")
+        // Off and Over CarPlay send nothing to the phone, so between the two a live session follows
+        // at once; anything involving a split waits for the next connect, when its area is declared.
+        val now = app != null && mode != Mode.SPLIT && (c.side == Side.OFF || c.side == Side.OVER)
+        log.i("pane: ${c.label} (Settings; ${if (now) "now" else "applies at the next connect"})")
+        if (now) {
+            mode = if (c.side == Side.OFF) Mode.NONE else Mode.OVER
+            shown = mode == Mode.OVER && wantShown(ctx)
+            listener?.invoke()
+        }
     }
+
+    /** Whether the pane was showing when it was last shown or hidden. Hidden until the first tap. */
+    fun wantShown(ctx: Context): Boolean =
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_SHOWN, false)
 
     /**
      * CarPlay's rectangle for a pane of [percent] of a [panelW]x[panelH] panel on [side], or null when
-     * no legal one exists (then the session comes up full screen). The width rounds DOWN to even, as
-     * every value must; an area that would tear the session down or fall below the product floor is
-     * not declared. On a 2400x960 panel, 30% on the right is 1680x960 at 0,0.
+     * the side is not a split or no legal one exists (then the pane goes over CarPlay). The width
+     * rounds DOWN to even, as every value must; an area that would tear the session down or fall below
+     * the product floor is not declared. On a 2400x960 panel, 30% on the right is 1680x960 at 0,0.
      */
     fun carPlayArea(panelW: Int, panelH: Int, side: Side, percent: Int): PixelRect? {
-        if (side == Side.OFF || percent !in 1..99) return null
+        if ((side != Side.RIGHT && side != Side.LEFT) || percent !in 1..99) return null
         val carW = (panelW * (100 - percent) / 100) and 1.inv()
         val x = if (side == Side.LEFT) panelW - carW else 0
         val a = PixelRect(x, 0, carW, panelH and 1.inv())
@@ -72,28 +98,65 @@ object SplitPane {
 
     // ---- this session ---------------------------------------------------------------------------
 
-    /** The area declared at this session's subscribe, or null when it is full screen only. */
+    /** How this session shows the pane. */
+    enum class Mode { NONE, OVER, SPLIT }
+
+    @Volatile var mode: Mode = Mode.NONE
+        private set
+    /** CarPlay's area when [mode] is [Mode.SPLIT], else null. */
     @Volatile var declared: PixelRect? = null
         private set
-    /** The view area iOS is showing: 1 split (the session starts there when [declared]), 0 full. */
-    @Volatile var index: Int = 0
+    /** The pane is up: for a split, iOS is showing area 1. */
+    @Volatile var shown: Boolean = false
         private set
     @Volatile var listener: (() -> Unit)? = null
+    @Volatile private var app: Context? = null
 
-    /** At subscribe: what this session declares. Any thread. */
-    fun onSubscribe(area: PixelRect?) {
-        declared = area
-        index = if (area != null) 1 else 0
-        log.i(if (area != null) "pane: declared CarPlay area ${area.width}x${area.height}@${area.x},${area.y}, session starts split"
-            else "pane: no split this session")
+    /**
+     * At subscribe: [c] is the Settings choice and [area] CarPlay's side when the sent document really
+     * declared it; [startsSplit] whether it declared `initial`. A split choice whose area could not be
+     * declared falls back to over CarPlay. Any thread.
+     */
+    fun onSubscribe(ctx: Context, c: Choice, area: PixelRect?, startsSplit: Boolean) {
+        app = ctx.applicationContext
+        mode = when {
+            c.side == Side.OFF -> Mode.NONE
+            area != null -> Mode.SPLIT
+            else -> Mode.OVER
+        }
+        declared = area.takeIf { mode == Mode.SPLIT }
+        shown = when (mode) {
+            Mode.NONE -> false
+            Mode.SPLIT -> startsSplit
+            Mode.OVER -> wantShown(ctx)
+        }
+        log.i(when (mode) {
+            Mode.NONE -> "pane: off this session"
+            Mode.SPLIT -> "pane: declared CarPlay area ${area!!.width}x${area.height}@${area.x},${area.y}, session starts ${if (shown) "split" else "full screen"}"
+            Mode.OVER -> "pane: over CarPlay this session, ${if (shown) "showing" else "hidden"}"
+        })
         listener?.invoke()
     }
 
-    /** iOS's own switch, relayed by the box, or the pane's full-screen button. Any thread. */
+    /** Over CarPlay: show or hide at once. Any thread. */
+    fun setShown(on: Boolean, why: String) {
+        if (mode != Mode.OVER || on == shown) return
+        shown = on
+        remember(on)
+        log.i("pane: ${if (on) "shown" else "hidden"} — $why")
+        listener?.invoke()
+    }
+
+    /** A split's view area changed: iOS's own switch relayed by the box, or one this app sent. Any thread. */
     fun onViewArea(i: Int, why: String) {
-        if (declared == null || i !in 0..1 || i == index) return
-        index = i
+        if (mode != Mode.SPLIT || i !in 0..1 || (i == 1) == shown) return
+        shown = i == 1
+        remember(shown)
         log.i("pane: view area $i (${if (i == 1) "split" else "full screen"}) — $why")
         listener?.invoke()
+    }
+
+    private fun remember(on: Boolean) {
+        app?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putBoolean(KEY_SHOWN, on)?.apply()
     }
 }

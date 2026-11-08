@@ -62,6 +62,45 @@ class NowPlayingLogTest {
         assertEquals(163855L, mergeDuration(163855L, 163855L))
     }
 
+    /** 2026-11-08 12:53:38: the next song's length 0.54 s ahead of its title, which came with none. */
+    @Test fun aLengthAheadOfItsTitleGoesToTheNewTitle() {
+        var t = 0L
+        val l = LengthAhead { t }
+        // The old song keeps its own length while the new one is held.
+        assertEquals(320587L, l.merge(trackChanged = false, titled = false, knownMs = 320587L, statedMs = 203573L))
+        t += 540
+        // The new title, stating no length, starts with the held one.
+        assertEquals(203573L, l.merge(trackChanged = true, titled = true, knownMs = 0L, statedMs = null))
+        // A length the new title states itself still wins.
+        l.merge(false, false, 203573L, 222640L)
+        t += 570
+        assertEquals(222000L, l.merge(true, true, 0L, 222000L))
+    }
+
+    @Test fun aHeldLengthWithNoNewTitleWasTheCurrentSongs() {
+        var t = 0L
+        val l = LengthAhead { t }
+        assertEquals(320587L, l.merge(false, false, 320587L, 203573L))
+        t += LengthAhead.HOLD_MS + 1
+        assertEquals(203573L, l.merge(false, false, 320587L, null))
+        // Applied once; a title after that starts blank as before.
+        assertEquals(0L, l.merge(true, true, 0L, null))
+        // A late hold does not reach a title that comes after it.
+        l.merge(false, false, 203573L, 100000L)
+        t += LengthAhead.HOLD_MS + 1
+        assertEquals(0L, l.merge(true, true, 0L, null))
+    }
+
+    @Test fun ordinaryLengthsMergeAsBefore() {
+        val l = LengthAhead { 0L }
+        // A re-stated length a millisecond apart, a first length, a titled change, a 0: no hold.
+        assertEquals(320587L, l.merge(false, false, 320586L, 320587L))
+        assertEquals(226667L, l.merge(false, false, 0L, 226667L))
+        assertEquals(180000L, l.merge(false, true, 226667L, 180000L))
+        assertEquals(180000L, l.merge(false, false, 180000L, 0L))
+        assertEquals(0L, l.merge(true, true, 0L, null))
+    }
+
     @Test fun unknownPositionIsNotZero() {
         assertEquals(POSITION_UNKNOWN, publishedPosition(elapsedKnown = false, elapsedMs = 0L,
             focusPaused = false, frozenPosition = 0L))

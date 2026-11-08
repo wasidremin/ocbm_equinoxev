@@ -890,6 +890,9 @@ static multi-view-area) are documented with their implementation cost + teardown
 > 1680x960 with the rest black and iOS's area toggle at the top of the dock. The app does not crop the
 > surface for this area: its pane covers the black strip. A host-sent `CMD_VIEW_AREA 0` and `1` were
 > answered with `updateViewArea` (500 ms); the picture after them is still to be seen on the car.
+> Since 2026-11-08 the area is declared only when the owner picks a side (the default lays the pane
+> over CarPlay and declares nothing), `initial: true` follows whether the pane was showing at the end
+> of the last drive, and a tap on the glass right of the picture sends `CMD_VIEW_AREA 1` or `0`.
 > **DIRECTION CORRECTED 2026-09-05.** This section previously said
 > `AirPlayReceiverSessionViewAreaUpdate` emits `kAirPlayCommand_RequestViewArea` and carries a rect —
 > i.e. it had the two messages pointing the same way and the payload wrong. They are OPPOSITE

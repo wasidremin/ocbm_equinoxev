@@ -177,9 +177,15 @@ high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     session mid-route; and it holds Android's NAVIGATION app focus while a route is up with the cluster
     setting on (`nav: focus` lines). What GM does with the focus is unknown.
   - *Settings ▸ Calls ▸ Echo test / Voice test* (parked) for `13_AUDIO_ROUTING.md` §4's echo question.
-  - *Settings ▸ Display ▸ Media pane* (off by default): a second view area declared with `initial: true`,
-    CarPlay on one side and a pane with the song, its controls and timed lyrics on the other, lyrics in
-    any gear (it is for the passenger). Benched on the owner's iPhone with the app's exact document
+  - *Settings ▸ Display ▸ Media pane*: a pane with the song, its controls and timed lyrics, in any gear
+    (it is for the passenger). On the 2026-11-08 morning drive (app 234) it never showed: the setting was
+    Off, its default then (`pane: no split this session`), and the owner saw lyrics only in the top bar.
+    So since 2026-11-08 a tap on the glass right of the picture (x 2630–2914 under the top bar) shows or
+    hides it, the state is kept for the next drive, and the default is *Over CarPlay*: the pane is laid
+    over the right 30% of the picture and nothing is sent to the phone. Emulator-checked (strip, × button,
+    both modes); not yet on the car. Choosing a side instead declares a second view area (`initial: true`
+    only when the pane was last showing), CarPlay on one side and the pane on the other; the strip then
+    sends `CMD_VIEW_AREA`. Benched on the owner's iPhone with the app's exact document
     (2400x960, pane right 30%): iOS negotiated `viewAreas`, drew CarPlay in 1680x960 with the right 30%
     black, and put its own area toggle at the top of the dock. The pane's full-screen button
     (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one run that sent them recorded no
@@ -196,7 +202,11 @@ high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     car check: a page timeout of 5.2 s whenever the first bonded iPhone (the box holds two) does not
     answer, and the one split-document session that took 28 s from handoff to picture. App 234 logs the
     same `[startup]` stages, so the car's numbers on the new firmware come straight from its uploads
-    (stage table: `host/gm_ccpa/docs/05_SESSION_FLOW.md` §9).
+    (stage table: `host/gm_ccpa/docs/05_SESSION_FLOW.md` §9). First car session on it, 2026-11-08 07:50
+    (adapter reporting `UI_URL`): subscribe → first picture 13.1 s, against the 10.7 s median. Bluetooth
+    came up 3.0 s after subscribe and was discoverable 1.1 s later (the old median for the two together
+    was 3.1 s), the first-paged iPhone answered 1.5 s after that (no page timeout), the handoff took the
+    usual 3.0 s, and the picture came 4.5 s after the handoff (median 3.7 s). One session; not a trend.
   - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
@@ -444,8 +454,9 @@ high-water mark: versionCode 234 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   `updateViewArea` — device-proven with `1600x960@800,0` on 2400x960 and `600x400@240,760` /
   `1080x1600@0,160` on 1080x1920 (`docs/carplay/06_AV_PIPELINE.md` §3, "Bench lever, 2026-09-05").
   The `VehicleConfigModel`/`ViewArea2Rule` host side above was the macOS app's and went with it on
-  2026-10-27. Since 2026-11-07 the GM app declares a second area, with `initial: true`, when
-  Settings ▸ Display ▸ Media pane is on (see the enigy ports entry above). Still open:
+  2026-10-27. Since 2026-11-07 the GM app declares a second area when Settings ▸ Display ▸ Media pane
+  is set to a side, with `initial: true` when the pane was last showing (2026-11-08; see the enigy
+  ports entry above). Still open:
   `updateDisplayPanels` live re-negotiation; and the type-112 second cluster.
   Source: `docs/carplay/06_AV_PIPELINE.md` §2–§4, `docs/carplay/03_SDK_GROUND_TRUTH.md` §10, `docs/carplay/02_SESSION_LIFECYCLE.md` §"Apple's session/lifecycle model".
 
@@ -1373,7 +1384,7 @@ suspected, that is the run to complete.
 4. **Gone with the macOS app (2026-10-27).** `viewArea2*` keys were UserDefaults-only, so
    Import/Export did not round-trip them.
 5. `initial` is parsed box-side and, since 2026-11-07, authored by the GM app's media pane (`initial: true`
-   on the second area).
+   on the second area; since 2026-11-08 only when the pane was showing at the end of the last drive).
 6. **CLOSED 2026-09-09 — `animationDurationMillis` is fully characterised; there is no iOS floor or cap.** Swept on hardware (CPC200-CCPA, wired, 1920x1080, second view area): **10 ms renders the switch as an instant flicker; 10000 ms runs the full 10 s.** Honoured literally at both extremes. One nuance worth keeping: at 10000 ms the UI reaches the target geometry at roughly 5 s and then idles showing CarPlay's transition blur until the envelope expires — the duration is the ANIMATION window, not the geometry change, so the accessory gets its settled geometry earlier than the declared duration. Untested: whether a larger area delta occupies more of the envelope instead of finishing early. The shipped range is **100–10000** since 2026-11-07 (enigy/ocbm's floor, ported with the GM app's media pane, whose switch takes 500 ms); from 2026-09-09 it was 1000–10000 by owner decision, when sub-second was judged abrupt in a car. Either way a product limit, NOT a protocol one; 10 ms works and is simply not offered. The original text of this item follows for the record.
 
    ~~**`animationDurationMillis` limits are unmeasured; its FLOOR is the open question.**~~ (Corrected

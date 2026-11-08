@@ -469,6 +469,19 @@ Fix: `mergeDuration(prev, incoming)` in `NowPlayingState.kt` — a **non-positiv
 stated" and leaves the previous value standing. A track change still starts at 0 (its base is blank),
 so a new item never inherits the old length. Pinned by `zeroDurationNeverErasesAKnownOne`.
 
+**Also FIXED 2026-11-08: the next item's length can arrive before its title.** Twice on the
+2026-11-08 morning drive the phone sent a title-less tick carrying the NEW song's length with the
+position back near 0 (`12:53:38.157 pos=544`, `.158 dur=203573` on the old title), and the new title
+0.54 s later with no length (`.816 dur=0`); the same at `12:57:02` (0.57 s). The old title took the
+new length for half a second (and a wasted lyrics lookup for that pairing), and the new title, merged
+onto the blank base, played to its end with `dur=0`: no remaining time on the card, no progress line
+in the media pane, and its lyrics looked up without a length (LRCLIB's first timed hit instead of the
+closest-length one). The whole-item `dur=0` above may have been the same thing. Fix: `LengthAhead` in
+`NowPlayingState.kt` holds a title-less length that disagrees with a known one by more than 2 s for
+3 s; a new title in that time starts with it, otherwise the next record applies it to the current
+item. Pinned by `aLengthAheadOfItsTitleGoesToTheNewTitle` and its two neighbours. Where the title
+came first (`13:01:55`, length 0.1 s later) nothing changes.
+
 ### 14.4 FIXED: a track-change frame published a fabricated `pos=0 rate=1.0`
 
 `22:21:42.043` publishes the new title "The Fate of Ophelia" (from 549 ms on the previous item) and

@@ -93,12 +93,15 @@ data class VehicleConfigSpec(
     val oemIconVisible: Boolean = true,
     /**
      * A second main view area, CarPlay's part of the split layout ([wasidremin.gmccpa.pane.SplitPane]),
-     * or null for one area. Emitted as `viewAreas[1]` with the box's `initial: true` extension key, so
-     * the session STARTS in it (`vehicle_config.rs::ViewAreaEntry`), and it arms
-     * `accessoryConfig.enablesViewAreas`; the box derives `viewAreaTransitionControl`,
-     * `initialViewArea` and `adjacentViewAreas` for `/info`. Null keeps the pinned document.
+     * or null for one area. Emitted as `viewAreas[1]`, with the box's `initial: true` extension key
+     * when [viewArea2Initial] so the session STARTS in it (`vehicle_config.rs::ViewAreaEntry`; without
+     * the key it starts full screen), and it arms `accessoryConfig.enablesViewAreas`; the box derives
+     * `viewAreaTransitionControl`, `initialViewArea` and `adjacentViewAreas` for `/info`. Null keeps
+     * the pinned document.
      */
     val viewArea2: PixelRect? = null,
+    /** The session starts in [viewArea2] (the pane showing) rather than full screen. */
+    val viewArea2Initial: Boolean = true,
     /**
      * The box's top-level `view_area_anim_ms` extension key: the `animationDurationMillis` of its
      * `updateViewArea`. Null omits the key (the box then sends 3000).
@@ -268,7 +271,7 @@ object VehicleConfigYaml {
             line("        width: ${a.width}")
             line("        height: ${a.height}")
             line("      drawUIOutsideSafeArea: false")
-            line("      initial: true")
+            if (s.viewArea2Initial) line("      initial: true")
         }
         line("    hidConfig:")
         line("      dPadSupport: ${s.dPadSupport}")
@@ -524,6 +527,8 @@ object VehicleConfigYaml {
         iapConfig: String = "",
         /** CarPlay's part of the split layout ([wasidremin.gmccpa.pane.SplitPane]); null for full screen. */
         viewArea2: PixelRect? = null,
+        /** The session starts split (the pane showing) rather than full screen, when [viewArea2] is set. */
+        viewArea2Initial: Boolean = true,
         /** How long a switch between the split and full screen animates, when [viewArea2] is set. */
         viewAreaAnimMs: Int? = null,
     ): ByteArray {
@@ -565,6 +570,7 @@ object VehicleConfigYaml {
                 safeHeight = height,
                 telephonyButtonsSupport = telephony,
                 viewArea2 = viewArea2,
+                viewArea2Initial = viewArea2Initial,
                 viewAreaAnimMs = viewArea2?.let { viewAreaAnimMs },
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches

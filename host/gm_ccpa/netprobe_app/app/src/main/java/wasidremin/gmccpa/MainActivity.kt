@@ -1505,6 +1505,11 @@ class MainActivity : Activity() {
                     if (i.hasExtra("sidebar")) DisplayPrefs.setSidebar(this, i.getBooleanExtra("sidebar", false))
                     if (i.hasExtra("scale")) DisplayPrefs.setUiScale(this, i.getIntExtra("scale", 125))
                     if (i.hasExtra("safe_right")) DisplayPrefs.setSafeRightPx(this, i.getIntExtra("safe_right", 48))
+                    // Media pane choice by its Settings label, e.g. "Over CarPlay" or "Right, 30%".
+                    i.getStringExtra("pane")?.let { label ->
+                        wasidremin.gmccpa.pane.SplitPane.CHOICES.firstOrNull { it.label == label }
+                            ?.let { wasidremin.gmccpa.pane.SplitPane.setChoice(this, it) }
+                    }
                     // The existing hardware-free preview exercises the same persisted controls and layout.
                     if (i.hasExtra("inset_top") || i.hasExtra("ui_size") || i.hasExtra("fit") || i.hasExtra("stats")) {
                         val c = DisplayPrefs.controls(this)

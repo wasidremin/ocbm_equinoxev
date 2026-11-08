@@ -22,15 +22,15 @@ import wasidremin.gmccpa.lyrics.BarLyrics
 import java.util.concurrent.Executors
 
 /**
- * The split layout's media pane ([SplitPane]): what is playing, its controls, and its lyrics, for the
- * passenger. Laid over the strip of the CarPlay picture that iOS leaves black outside its view area.
+ * The media pane ([SplitPane]): what is playing, its controls, and its lyrics, for the passenger. Laid
+ * over the right of the CarPlay picture, or over the strip iOS leaves black outside a split's view area.
  *
  * Feature set from enigy/carlink's pane (`ui/pane/MediaCard.kt`, `CardLyrics.kt`; Unlicense), drawn
  * with this app's views: cover art, title and artist, a progress line, previous / play-pause / next
  * (sent to CarPlay as media buttons), and the song's timed lyrics with the line being sung bright.
  * Lyrics show in any gear (the pane is for the passenger) whenever Settings ▸ Playback ▸ Look up
- * lyrics is on. The button at the top gives CarPlay the whole panel; CarPlay's own button brings the
- * split back.
+ * lyrics is on. The button at the top hides the pane (for a split, gives CarPlay the whole panel);
+ * a tap on the strip right of CarPlay brings it back.
  *
  * Everything that sends goes through [actions], so this view never touches the OCBM link itself.
  */
@@ -38,8 +38,17 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
 
     interface Actions {
         fun mediaButton(index: Byte)
-        fun fullScreen()
+        fun hide()
     }
+
+    /** A split's pane: its hide button reads "CarPlay full screen" rather than "close". */
+    var split: Boolean = false
+        set(v) {
+            if (v == field) return
+            field = v
+            hideButton.kind = if (v) Glyph.Kind.EXPAND else Glyph.Kind.CLOSE
+            hideButton.contentDescription = if (v) "CarPlay full screen" else "Hide the pane"
+        }
 
     private val main = Handler(Looper.getMainLooper())
     private val decoder = Executors.newSingleThreadExecutor { r -> Thread(r, "pane-art").apply { isDaemon = true } }
@@ -56,6 +65,10 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
     private val elapsed = EqTheme.text(ctx, 15f, EqTheme.TEXT_FAINT)
     private val remaining = EqTheme.text(ctx, 15f, EqTheme.TEXT_FAINT).apply { gravity = Gravity.END }
     private val playPause = Glyph(ctx, Glyph.Kind.PLAY)
+    private val hideButton = Glyph(ctx, Glyph.Kind.CLOSE).apply {
+        contentDescription = "Hide the pane"
+        setOnClickListener { actions.hide() }
+    }
     private val lyricViews = List(LYRIC_ROWS) { i ->
         EqTheme.text(ctx, if (i == CURRENT_ROW) 25f else 20f, EqTheme.TEXT_FAINT,
             if (i == CURRENT_ROW) EqTheme.Weight.MEDIUM else EqTheme.Weight.REGULAR).apply {
@@ -91,10 +104,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(appName, LayoutParams(0, -2, 1f))
-            addView(Glyph(ctx, Glyph.Kind.EXPAND).apply {
-                contentDescription = "CarPlay full screen"
-                setOnClickListener { actions.fullScreen() }
-            }, LayoutParams(EqTheme.px(56f), EqTheme.px(56f)))
+            addView(hideButton, LayoutParams(EqTheme.px(56f), EqTheme.px(56f)))
         }, LayoutParams(-1, -2))
         addView(art, LayoutParams(0, 0).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = EqTheme.px(8f) })
         addView(title, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(14f) })
@@ -247,7 +257,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
 
     /** A drawn control glyph (no font or image dependency). */
     private class Glyph(ctx: Context, kind: Kind) : View(ctx) {
-        enum class Kind { PREVIOUS, PLAY, PAUSE, NEXT, EXPAND }
+        enum class Kind { PREVIOUS, PLAY, PAUSE, NEXT, EXPAND, CLOSE }
         var kind = kind
             set(v) { if (v != field) { field = v; invalidate() } }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = EqTheme.TEXT }
@@ -292,6 +302,14 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
                     path.moveTo(cx - a, cy - a); path.lineTo(cx - u * 0.3f, cy - u * 0.3f)
                     path.moveTo(cx + a - b, cy + a); path.lineTo(cx + a, cy + a); path.lineTo(cx + a, cy + a - b)
                     path.moveTo(cx + a, cy + a); path.lineTo(cx + u * 0.3f, cy + u * 0.3f)
+                }
+                Kind.CLOSE -> {
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = s * 0.06f
+                    paint.strokeCap = Paint.Cap.ROUND
+                    val a = u * 1.1f
+                    path.moveTo(cx - a, cy - a); path.lineTo(cx + a, cy + a)
+                    path.moveTo(cx + a, cy - a); path.lineTo(cx - a, cy + a)
                 }
             }
             c.drawPath(path, paint)

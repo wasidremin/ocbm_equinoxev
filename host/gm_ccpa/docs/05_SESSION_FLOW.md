@@ -298,8 +298,10 @@ removed):
 
 In the same period 3 of 47 sessions that reached the handoff never got a picture. On the 2026-11-07
 adapter firmware (raw scan enable, 2 s reconnect retries), benched on the server, the two sessions in
-which the phone answered the first page took 8.8 s and 10.4 s. The car's numbers on that firmware come
-from the same lines once it has been driven (`docs/ops/04_OPEN_ITEMS.md`).
+which the phone answered the first page took 8.8 s and 10.4 s. The car's first session on it
+(2026-11-08 07:50, the phone answering the first page) took 13.1 s: Bluetooth discoverable 4.1 s after
+SUBSCRIBE, connected 1.5 s later, handoff 3.0 s, first picture 4.5 s after the handoff. Later drives
+add to this from the same lines (`docs/ops/04_OPEN_ITEMS.md`).
 
 Phone-enforced timeouts: 10 s on every normal request, 1 s on teardown, 30 s temporary assertion on the
 `connect` command.

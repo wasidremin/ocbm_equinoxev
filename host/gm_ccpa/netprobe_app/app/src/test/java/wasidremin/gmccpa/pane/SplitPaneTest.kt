@@ -30,6 +30,8 @@ class SplitPaneTest {
 
     @Test fun offAndIllegalAreasAreNotDeclared() {
         assertNull(SplitPane.carPlayArea(2400, 960, SplitPane.Side.OFF, 30))
+        // Over CarPlay is drawn by the app alone; the phone is told nothing.
+        assertNull(SplitPane.carPlayArea(2400, 960, SplitPane.Side.OVER, SplitPane.OVER_PERCENT))
         // Below the 800 x 480 floor: CarPlay would lock the area out black.
         assertNull(SplitPane.carPlayArea(1000, 600, SplitPane.Side.RIGHT, 40))
         assertNull(SplitPane.carPlayArea(2400, 960, SplitPane.Side.RIGHT, 0))
@@ -52,6 +54,24 @@ class SplitPaneTest {
         assertTrue(doc.contains("      initial: true\n"))
         val adapter = doc + "wifi_ap: true\nwifi_ssid: ccpa-fe01\nwifi_pass: adapterpass1\nwifi_channel: 36\n"
         assertNull(VehicleConfigYaml.structuralError(adapter, true))
+    }
+
+    /** The pane was hidden at the end of the last drive: the area is still declared, the session starts full screen. */
+    @Test fun aHiddenPaneStartsFullScreen() {
+        val area = SplitPane.carPlayArea(2400, 960, SplitPane.Side.RIGHT, 30)!!
+        val doc = VehicleConfigYaml.render(VehicleConfigSpec(viewArea2 = area, viewArea2Initial = false, viewAreaAnimMs = SplitPane.TRANSITION_MS))
+        assertTrue(doc, doc.contains("  enablesViewAreas: true\n"))
+        assertTrue(doc.contains("        width: 1680\n"))
+        assertTrue(doc, "initial: true" !in doc)
+        val adapter = doc + "wifi_ap: true\nwifi_ssid: ccpa-fe01\nwifi_pass: adapterpass1\nwifi_channel: 36\n"
+        assertNull(VehicleConfigYaml.structuralError(adapter, true))
+    }
+
+    @Test fun overCarPlayIsTheDefaultAndOffIsLast() {
+        assertEquals(SplitPane.Side.OVER, SplitPane.CHOICES.first().side)
+        assertEquals(SplitPane.Side.OFF, SplitPane.CHOICES.last().side)
+        assertEquals("Over CarPlay", SplitPane.CHOICES.first().label)
+        assertEquals("Right, 30%", SplitPane.CHOICES[1].label)
     }
 
     @Test fun anIllegalSecondAreaIsRefusedBeforeItReachesTheWire() {

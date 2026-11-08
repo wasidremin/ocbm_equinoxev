@@ -30,6 +30,7 @@ class NowPlayingState {
         Thread(r, "np-art").apply { isDaemon = true }
     }
     private lateinit var art: ArtworkKeeper
+    private val lengthAhead = LengthAhead { android.os.SystemClock.uptimeMillis() }
 
     // ---- music-sync instrumentation -----------------------------------------------------------
     //
@@ -332,8 +333,8 @@ class NowPlayingState {
             // `dur=163854`, .539 -> `dur=0`, same title, same artwork id; and 21:59:16.277 the same
             // way). A 0 is "not stated", so it must fall through to what we already knew. On a
             // track change the base is blank, so a new item still starts with no duration rather
-            // than inheriting the old one.
-            durationMs = mergeDuration(base.durationMs, json.optLongOrNull("durationMs")),
+            // than inheriting the old one — unless its length came just ahead of its title ([LengthAhead]).
+            durationMs = lengthAhead.merge(trackChanged, incomingTitle != null, base.durationMs, json.optLongOrNull("durationMs")),
             elapsedMs = json.optLongOrNull("elapsedMs") ?: base.elapsedMs,
             // Only a frame that states elapsed time makes the position trustworthy; a track-change
             // frame that omits it must not publish the 0 the blank base left behind.
@@ -389,6 +390,7 @@ class NowPlayingState {
     fun clear(why: String) {
         val cleared = synchronized(this) {
             art.clear()
+            lengthAhead.clear()
             calls.clear()
             snapshot = Snapshot()
             log.i("np: cleared — $why")
@@ -561,6 +563,55 @@ internal fun titlelessRecordEvent(
  */
 internal fun mergeDuration(prev: Long, incoming: Long?): Long =
     if (incoming != null && incoming > 0) incoming else prev
+
+/**
+ * The next item's length when the phone states it BEFORE the item's title. 2026-11-08 drive, twice: a
+ * title-less tick with the new length and the position back near 0 (12:53:38.157 `dur=203573
+ * pos=544`), then the new title half a second later with no length. Merged as it came, the old title
+ * took the new length (and a lyrics lookup for that pairing), and the new title, merged onto a blank
+ * record, played to its end with none: no progress line, its lyrics looked up without a length.
+ *
+ * So a title-less length that disagrees with a known one by more than [SLACK_MS] is held for
+ * [HOLD_MS]. A new title within that time starts with it; otherwise it was the current item's after
+ * all, and the first record after the hold applies it. Pure apart from [now], for unit tests.
+ */
+internal class LengthAhead(private val now: () -> Long) {
+    private var heldMs = 0L
+    private var heldAt = 0L
+
+    /**
+     * The length for this record's snapshot. [knownMs] is the current item's (0 = unknown),
+     * [statedMs] the record's own `durationMs` (null or non-positive = not stated).
+     */
+    fun merge(trackChanged: Boolean, titled: Boolean, knownMs: Long, statedMs: Long?): Long {
+        val t = now()
+        if (trackChanged) {
+            val ahead = if (heldMs > 0 && t - heldAt <= HOLD_MS) heldMs else 0L
+            heldMs = 0L
+            return mergeDuration(ahead, statedMs)
+        }
+        if (!titled && statedMs != null && statedMs > 0 && knownMs > 0 && kotlin.math.abs(statedMs - knownMs) > SLACK_MS) {
+            heldMs = statedMs
+            heldAt = t
+            return knownMs
+        }
+        if (heldMs > 0 && t - heldAt > HOLD_MS) {
+            val late = heldMs
+            heldMs = 0L
+            return mergeDuration(late, statedMs)
+        }
+        return mergeDuration(knownMs, statedMs)
+    }
+
+    fun clear() { heldMs = 0L }
+
+    companion object {
+        /** Streaming re-states a length a millisecond or so apart (320586 then 320587). */
+        const val SLACK_MS = 2_000L
+        /** The title followed its length by 0.54 s and 0.57 s. */
+        const val HOLD_MS = 3_000L
+    }
+}
 
 /** `PlaybackState.PLAYBACK_POSITION_UNKNOWN`, restated so the helpers below stay Android-free. */
 internal const val POSITION_UNKNOWN = -1L
