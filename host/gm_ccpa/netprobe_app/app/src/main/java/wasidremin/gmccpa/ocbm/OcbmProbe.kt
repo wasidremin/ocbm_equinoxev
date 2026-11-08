@@ -1219,6 +1219,8 @@ class OcbmProbe(context: Context) {
         if (adapterWifi && (pane.side == wasidremin.gmccpa.pane.SplitPane.Side.RIGHT || pane.side == wasidremin.gmccpa.pane.SplitPane.Side.LEFT) && splitArea == null) {
             log.w("pane: ${pane.label} has no legal CarPlay area on ${VideoFrame.width}x${VideoFrame.height} — over CarPlay this session")
         }
+        // The driver display's map (Settings ▸ Navigation): logs the car's displays on every connect.
+        val cluster = wasidremin.gmccpa.nav.DriverDisplay.declare(ctx).takeIf { adapterWifi }
         val rendered = if (adapterWifi) {
             VehicleConfigYaml.renderAdapter(
                 AdapterWifi.passphrase(ctx),
@@ -1234,6 +1236,7 @@ class OcbmProbe(context: Context) {
                 viewArea2 = splitArea,
                 viewArea2Initial = wasidremin.gmccpa.pane.SplitPane.wantShown(ctx),
                 viewAreaAnimMs = wasidremin.gmccpa.pane.SplitPane.TRANSITION_MS,
+                cluster = cluster,
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)
@@ -1242,6 +1245,7 @@ class OcbmProbe(context: Context) {
         wasidremin.gmccpa.pane.SplitPane.onSubscribe(ctx, pane,
             splitArea?.takeIf { sent.contains("\n  enablesViewAreas: true\n") },
             startsSplit = sent.contains("\n      initial: true\n"))
+        wasidremin.gmccpa.nav.DriverDisplay.onSubscribe(cluster?.takeIf { sent.contains("\n  - videoStreamID: VideoStream.Alt1\n") })
         c.subscribe(doc)
         if (doc.toString(Charsets.UTF_8).contains("\nwifi_ap: true\n")) armWifiWatch()
         c.startHeartbeat()

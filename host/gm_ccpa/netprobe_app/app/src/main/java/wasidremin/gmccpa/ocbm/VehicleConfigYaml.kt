@@ -107,6 +107,14 @@ data class VehicleConfigSpec(
      * `updateViewArea`. Null omits the key (the box then sends 3000).
      */
     val viewAreaAnimMs: Int? = null,
+    /**
+     * The driver display's CarPlay map ([wasidremin.gmccpa.nav.DriverDisplay]), or null for none.
+     * Emitted as Apple's instrument-cluster pair, `altDisplayPanels[0]` (`showsInstruments`) and
+     * `altVideoStreams[0]` (30 fps, `initialURL: maps:/car/instrumentcluster/map`); the box then
+     * advertises the type-111 display and iOS sets the stream up by itself
+     * (`docs/carplay/06_AV_PIPELINE.md` "Instrument-cluster video"). Null keeps both lists empty.
+     */
+    val cluster: PixelSize? = null,
 ) {
     init {
         require(maxFps == 30 || maxFps == 60) { "maxFPS must be 30 or 60; the box ignores anything else" }
@@ -117,6 +125,11 @@ data class VehicleConfigSpec(
         viewArea2?.let { a ->
             ViewAreaRule.teardownVerdict(a, width, height)?.let { throw IllegalArgumentException("viewArea 2: $it") }
             ViewAreaRule.floorVerdict(a.width, a.height)?.let { throw IllegalArgumentException("viewArea 2: $it") }
+        }
+        cluster?.let { c ->
+            require(c.width % 2 == 0 && c.height % 2 == 0 && c.width in 2..3840 && c.height in 2..1600) {
+                "cluster screen must be a positive even size inside 3840x1600"
+            }
         }
     }
 
@@ -137,6 +150,9 @@ data class VehicleConfigSpec(
 data class PixelRect(val x: Int, val y: Int, val width: Int, val height: Int) {
     val right: Int get() = x + width
 }
+
+/** A size in pixels. */
+data class PixelSize(val width: Int, val height: Int)
 
 /**
  * What a view area may be. Ported from enigy/carlink `ocbm/VehicleConfigYaml.kt` (Unlicense), itself
@@ -229,7 +245,18 @@ object VehicleConfigYaml {
             line("      width: ${s.physicalWidthMm}")
             line("      height: ${s.physicalHeightMm}")
         }
-        line("  altDisplayPanels: []")
+        val c = s.cluster
+        if (c == null) {
+            line("  altDisplayPanels: []")
+        } else {
+            line("  altDisplayPanels:")
+            line("  - displayPanelID: DisplayPanel.Alt1")
+            line("    pixelDimensions:")
+            line("      width: ${c.width}")
+            line("      height: ${c.height}")
+            line("    displayProperties:")
+            line("    - showsInstruments")
+        }
     }
 
     private fun videoStreams(
@@ -288,7 +315,37 @@ object VehicleConfigYaml {
         // Emitted LAST in hidConfig, matching the reference emitter's order.
         line("      steeringWheelSupport: false")
         line("    primaryInput: Touchpad")
-        line("  altVideoStreams: []")
+        val c = s.cluster
+        if (c == null) line("  altVideoStreams: []") else clusterStream(b, c)
+    }
+
+    /**
+     * Apple's "Instrument Cluster" template shape. The whole screen is the map's view and safe area
+     * until the visible part of the driver display is known.
+     */
+    private fun clusterStream(
+        b: StringBuilder,
+        c: PixelSize,
+    ) = with(b) {
+        line("  altVideoStreams:")
+        line("  - videoStreamID: VideoStream.Alt1")
+        line("    pixelDimensions:")
+        line("      width: ${c.width}")
+        line("      height: ${c.height}")
+        line("    maxFPS: 30")
+        line("    viewAreas:")
+        line("    - viewArea:")
+        line("        originX: 0")
+        line("        originY: 0")
+        line("        width: ${c.width}")
+        line("        height: ${c.height}")
+        line("      safeArea:")
+        line("        originX: 0")
+        line("        originY: 0")
+        line("        width: ${c.width}")
+        line("        height: ${c.height}")
+        line("      drawUIOutsideSafeArea: false")
+        line("    initialURL: maps:/car/instrumentcluster/map")
     }
 
     private fun accessoryConfig(
@@ -531,6 +588,8 @@ object VehicleConfigYaml {
         viewArea2Initial: Boolean = true,
         /** How long a switch between the split and full screen animates, when [viewArea2] is set. */
         viewAreaAnimMs: Int? = null,
+        /** The driver display's CarPlay map ([wasidremin.gmccpa.nav.DriverDisplay]); null for none. */
+        cluster: PixelSize? = null,
     ): ByteArray {
         require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
             "iapConfig must be a whole top-level block ending in a newline"
@@ -559,7 +618,7 @@ object VehicleConfigYaml {
         // the adapter network. [structuralError] checks the result before it is sent.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
         val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony && physicalWidthMm == 0 && physicalHeightMm == 0 &&
-            viewArea2 == null) pinned
+            viewArea2 == null && cluster == null) pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
@@ -572,6 +631,7 @@ object VehicleConfigYaml {
                 viewArea2 = viewArea2,
                 viewArea2Initial = viewArea2Initial,
                 viewAreaAnimMs = viewArea2?.let { viewAreaAnimMs },
+                cluster = cluster,
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

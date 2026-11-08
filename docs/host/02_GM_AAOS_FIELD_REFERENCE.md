@@ -61,7 +61,7 @@ this file is the *external* evidence and the platform map that write-up rests on
 | **RWerksman** (XDA) | Silverado EV owner (`'24 SEV RST`). Wrote the uDisk auto-arm guide (§4). | thread p.25/26 |
 | **Razorfin** (XDA) | **Equinox EV** owner. The one data point that the Equinox enumerates a uDisk composite (§3). | thread p.24/25 |
 | **f-io** (XDA) | Author of *LIVI* — a Pi/CM4 native CarPlay stack; also a custom CCPA rootfs that serves the MFi chip over TCP (`mfid` on `:5000`, mDNS) and L2-bridges USB to network. MFi chip-generation notes (§7). | thread p.25/26 |
-| **Lurker1126** / mossyhub | *openautolink* — wireless Android Auto for AAOS, sidesteps USB entirely. Reverse-engineered the AA EV energy model. | [github.com/mossyhub/openautolink](https://github.com/mossyhub/openautolink) |
+| **Lurker1126** / mossyhub | *openautolink* — wireless Android Auto for AAOS, sidesteps USB entirely. Reverse-engineered the AA EV energy model. Since 0.1.575 (2026-11) also CarPlay; shows its cluster map on the driver display of a 2024 Blazer EV (VCU, AAOS 12L, `aegean_orange`, 2000x810) through an ordinary window on a public display, at the cost of GM's own turn icons and HUD directions. GPL-3.0, so this repo takes ideas from it, not code. | [github.com/mossyhub/openautolink](https://github.com/mossyhub/openautolink) |
 
 Local clones (throwaway, re-clone as needed): `git clone --depth 1 https://github.com/lvalen91/<repo>` into `/tmp`.
 

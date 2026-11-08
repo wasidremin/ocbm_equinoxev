@@ -43,7 +43,16 @@ class HevcRenderer(
     /** Fired once, on the main thread, at the same moment as `FIRST FRAME RENDERED`. */
     private val onFirstFrame: (() -> Unit)? = null,
 ) {
-    private val log = ProbeLog.sub("hevc")
+    /**
+     * The driver display's CarPlay map ([wasidremin.gmccpa.nav.DriverDisplay]) rather than the main
+     * picture. Set before [start]. A cluster renderer logs as `cluster` and leaves everything that
+     * belongs to the main picture alone: its size and frame count ([VideoPresentation], which re-lays
+     * the CarPlay screen out), the session trace, the startup clock and the session summary.
+     */
+    var cluster = false
+    private val log get() = if (cluster) clusterLog else mainLog
+    private val mainLog = ProbeLog.sub("hevc")
+    private val clusterLog = ProbeLog.sub("cluster")
     private val mainHandler = if (onFirstFrame != null) Handler(Looper.getMainLooper()) else null
     private val running = AtomicBoolean(false)
 
@@ -118,7 +127,7 @@ class HevcRenderer(
     }
 
     fun start() {
-        VideoPresentation.size(width, height)
+        if (!cluster) VideoPresentation.size(width, height)
         // A restart must not carry parameter sets or keyframe state across streams: mixing a new VPS
         // with a stale SPS/PPS configures a codec that cannot decode what follows.
         vps = null; sps = null; pps = null
@@ -141,7 +150,7 @@ class HevcRenderer(
         val dropped = ausDropped.get()
         val msg = "stopping ($why) — ${framesRendered.get()} frames, ${bytesIn.get()} bytes, $dropped AUs dropped"
         if (dropped > 0) log.e("$msg — every drop cost a corrupt GOP until the next IDR") else log.i(msg)
-        wasidremin.gmccpa.logging.SessionSummary.current()
+        if (!cluster) wasidremin.gmccpa.logging.SessionSummary.current()
             ?.onAvFinal(framesRendered.get(), dropped, bytesIn.get())
     }
 
@@ -169,7 +178,7 @@ class HevcRenderer(
         // Armed per connection, on the seam thread, before the first read: a connection that never
         // renders is the "black screen with a healthy session" fault, and until now it produced no
         // line at all — only the absence of one. Met in [drain] on this connection's first frame.
-        SessionTrace.expect(EXPECT_FIRST_FRAME, FIRST_FRAME_MS,
+        if (!cluster) SessionTrace.expect(EXPECT_FIRST_FRAME, FIRST_FRAME_MS,
             "the video seam connected, so parameter sets, an IRAP (ours to request every " +
             "${KEYFRAME_COOLDOWN_MS}ms) and a rendered frame should follow; measured 145ms on 2026-09-09",
             onMiss = { onFirstFrameMissing?.invoke() })
@@ -197,7 +206,7 @@ class HevcRenderer(
         } finally {
             releaseCodec(if (running.get()) "video seam connection ended — rebuilt on the producer's re-dial"
                          else "renderer stopped")
-            if (!firstFrameThisConn) {
+            if (!firstFrameThisConn && !cluster) {
                 // Not a miss: the connection ended before a frame could render. Distinct from met() so
                 // the capture never shows a frame that was not there, and from the watchdog so a
                 // deliberate detach is not an EXPECTED-MISSING.
@@ -312,7 +321,7 @@ class HevcRenderer(
         // deliberate: teardown of a codec we are discarding; a throw here changes nothing we can act on.
         runCatching { c.stop() }
         runCatching { c.release() }
-        SessionTrace.Board.down(BOARD_DECODER, why)
+        if (cluster) log.i("decoder down: $why") else SessionTrace.Board.down(BOARD_DECODER, why)
     }
 
     private fun maybeConfigure() {
@@ -335,7 +344,7 @@ class HevcRenderer(
             configured = true
             configureFailedAt = 0L
             log.i("MediaCodec configured: video/hevc ${width}x$height csd-0=${csd.size} B (VPS+SPS+PPS), decoder=${c.name}")
-            SessionTrace.Board.up(BOARD_DECODER, "${c.name} video/hevc ${width}x$height csd-0=${csd.size}B")
+            if (!cluster) SessionTrace.Board.up(BOARD_DECODER, "${c.name} video/hevc ${width}x$height csd-0=${csd.size}B")
         } catch (e: Throwable) {
             // Throwable, not Exception: an OutOfMemoryError while the framework allocates the input
             // buffers is an Error, and catching only Exception let it escape with the native codec
@@ -346,7 +355,7 @@ class HevcRenderer(
             configureFailedAt = now
             log.e("configure failed (retry in ${CONFIGURE_RETRY_MS}ms): ${e.message}")
             // note(), not failed(): the E above already carries the severity.
-            SessionTrace.Board.note(BOARD_DECODER, "FAILED (configure threw ${e.javaClass.simpleName} — retry in ${CONFIGURE_RETRY_MS}ms, black screen meanwhile)")
+            if (!cluster) SessionTrace.Board.note(BOARD_DECODER, "FAILED (configure threw ${e.javaClass.simpleName} — retry in ${CONFIGURE_RETRY_MS}ms, black screen meanwhile)")
         }
     }
 
@@ -437,14 +446,18 @@ class HevcRenderer(
                     c.releaseOutputBuffer(outIdx, info.size != 0)
                     if (info.size != 0) {
                         lastRenderAt.set(SystemClock.elapsedRealtime())
-                        VideoPresentation.frames.incrementAndGet()
+                        if (!cluster) VideoPresentation.frames.incrementAndGet()
                         val n = framesRendered.incrementAndGet()
                         if (!firstFrameThisConn) {
                             // Per-connection latch: one branch per frame, one met() per connection.
                             firstFrameThisConn = true
-                            SessionTrace.met(EXPECT_FIRST_FRAME)
+                            if (!cluster) SessionTrace.met(EXPECT_FIRST_FRAME)
                         }
-                        if (n == 1L) {
+                        if (n == 1L && cluster) {
+                            log.i("FIRST FRAME RENDERED")
+                            val cb = onFirstFrame
+                            if (cb != null) mainHandler?.post { cb() }
+                        } else if (n == 1L) {
                             log.i("FIRST FRAME RENDERED")
                             // Time-to-first-frame is the one A/V number that separates "the session
                             // never came up" from "it came up slowly". Reported once, off the
@@ -461,7 +474,7 @@ class HevcRenderer(
                     val f = c.outputFormat
                     val w = if (f.containsKey("crop-right")) f.getInteger("crop-right") - f.getInteger("crop-left") + 1 else f.getInteger(MediaFormat.KEY_WIDTH)
                     val h = if (f.containsKey("crop-bottom")) f.getInteger("crop-bottom") - f.getInteger("crop-top") + 1 else f.getInteger(MediaFormat.KEY_HEIGHT)
-                    VideoPresentation.size(w, h)
+                    if (!cluster) VideoPresentation.size(w, h)
                     log.i("output format: $f")
                 }
                 outIdx == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {}

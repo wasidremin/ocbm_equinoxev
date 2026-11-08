@@ -2299,6 +2299,79 @@ videoStreamsConfig:
         assert!(!vc.view_areas_enabled());
     }
 
+    /// The GM app's driver-display map (2026-11-08, `VehicleConfigYaml.kt` `cluster`), byte for byte
+    /// what it emits for a 2000x810 driver display under its 2470x960 main stream: the alt screen
+    /// arms at the display's size and 30 fps, and the main stream keeps its single area.
+    #[test]
+    fn the_gm_apps_driver_display_map_arms_the_alt_screen() {
+        let y = "displayPanelsConfig:
+  mainDisplayPanel:
+    displayPanelID: DisplayPanel.Main
+    pixelDimensions:
+      width: 2470
+      height: 960
+  altDisplayPanels:
+  - displayPanelID: DisplayPanel.Alt1
+    pixelDimensions:
+      width: 2000
+      height: 810
+    displayProperties:
+    - showsInstruments
+videoStreamsConfig:
+  mainVideoStream:
+    videoStreamID: VideoStream.Main
+    pixelDimensions:
+      width: 2470
+      height: 960
+    maxFPS: 60
+    viewAreas:
+    - viewArea:
+        originX: 0
+        originY: 0
+        width: 2470
+        height: 960
+      safeArea:
+        originX: 0
+        originY: 0
+        width: 2470
+        height: 960
+      drawUIOutsideSafeArea: false
+    hidConfig:
+      dPadSupport: false
+    primaryInput: Touchpad
+  altVideoStreams:
+  - videoStreamID: VideoStream.Alt1
+    pixelDimensions:
+      width: 2000
+      height: 810
+    maxFPS: 30
+    viewAreas:
+    - viewArea:
+        originX: 0
+        originY: 0
+        width: 2000
+        height: 810
+      safeArea:
+        originX: 0
+        originY: 0
+        width: 2000
+        height: 810
+      drawUIOutsideSafeArea: false
+    initialURL: maps:/car/instrumentcluster/map
+accessoryConfig:
+  enablesHEVC: true
+  enablesMapAppearance: true
+";
+        let vc = VehicleConfig::from_yaml(y.as_bytes()).unwrap();
+        assert!(vc.alt_screen());
+        assert_eq!(vc.alt_dimensions(), Some((2000, 810)));
+        assert!(vc.map_appearance_enabled());
+        assert_eq!(vc.second_main_view_area(), None);
+        let dev = vc.apply(base());
+        assert_eq!(dev.alt_max_fps, 30);
+        assert_eq!(dev.main_view_area_2, None);
+    }
+
     #[test]
     fn alt_stream_never_gains_a_second_area() {
         // Two entries on the ALT stream, one on main: the cluster's second entry must be ignored

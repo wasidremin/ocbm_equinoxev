@@ -348,8 +348,17 @@ an active `MediaSession` (drives the AAOS media card, cluster now-playing, and s
 keys) in place of `updateProjectionStatus`; `Notification.CallStyle` for calls; `CarAppFocusManager`
 for nav focus; `CarUxRestrictionsManager` listening for drive state (already this doc's own
 "Drive state" pattern in `OCBMANDROID.md`, of reading a UX-restrictions signal instead of a gated
-one). **Cluster turn-by-turn video and `CH_ALT_VIDEO` on a cluster display are out of reach for a
-third-party app** — do not re-plan either against `ClusterHomeManager`.
+one). **Cluster video through `ClusterHomeManager` is out of reach for a third-party app** — do not
+re-plan it against that API. **Corrected 2026-11-08:** that is not the only route. openautolink
+(mossyhub, "driver-display maps", 0.1.575) shows CarPlay's cluster video on a 2024 Blazer EV
+(GM VCU on AAOS 12L, `aegean_orange` VCUSR5-163, 2000x810 driver display) by opening an ordinary
+Activity on the driver display, which GM exposes there as
+a public Android display (`ActivityOptions.setLaunchDisplayId` after
+`isActivityStartAllowedOnDisplay`; no privilege). The GM app does the same since 2026-11-08
+(`nav/DriverDisplay`, Settings ▸ Navigation ▸ CarPlay map on the driver display, off by default),
+decoding `CH_ALT_VIDEO`. Whether the Equinox's VCU on AAOS 14 (`burmese_orange` VCUUL-13.1) exposes
+its driver display that way is not known yet: every connect logs the displays Android shows the app
+(`[cluster] display …` lines).
 
 This finding is orthogonal to, and does not upgrade, the USB-handler squat below: squatting as
 `android.car.usb.handler` buys silent USB device-permission arbitration only (confirmed narrow in

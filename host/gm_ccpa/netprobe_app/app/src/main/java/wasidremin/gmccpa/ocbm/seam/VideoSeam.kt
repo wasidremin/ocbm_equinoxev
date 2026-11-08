@@ -68,6 +68,17 @@ class VideoSeam(
     @Volatile
     var onCodec: ((Boolean) -> Unit)? = null
 
+    /**
+     * Drop an access unit when the pipe is full instead of blocking the OCBM read thread, and ask
+     * for an IDR through [onGap] (the decoder is then off its references until one arrives). For the
+     * driver display's map lane: the main picture's backpressure must never wait on a second screen.
+     */
+    @Volatile
+    var lossy: Boolean = false
+
+    /** Access units [lossy] dropped because the pipe was full. */
+    val framesDroppedFull = AtomicLong(0)
+
     companion object {
         /** Comfortably holds a 4K IDR. See note 1 in the class doc — do NOT reduce to a frame size. */
         const val MAX_MESSAGE: Int = 16 * 1024 * 1024
@@ -310,7 +321,15 @@ class VideoSeam(
         out[2] = ((annexB.size ushr 8) and 0xFF).toByte()
         out[3] = (annexB.size and 0xFF).toByte()
         System.arraycopy(annexB, 0, out, 4, annexB.size)
-        if (p.write(out)) framesOut.incrementAndGet()
+        if (!lossy) {
+            if (p.write(out)) framesOut.incrementAndGet()
+        } else if (p.tryWrite(out)) {
+            framesOut.incrementAndGet()
+        } else {
+            val n = framesDroppedFull.incrementAndGet()
+            if (n == 1L || n % 300 == 0L) log.w("video lane full — access unit dropped, requesting keyframe (dropped=$n)")
+            onGap()
+        }
     }
 
     // ---- codec configuration records -------------------------------------------------------------

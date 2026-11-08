@@ -236,6 +236,20 @@
                  which is precisely when a CarPlay screen must stay up. MainActivity already carries it. -->
             <meta-data android:name="distractionOptimized" android:value="true" />
         </activity>
+        <!-- CarPlay's cluster map on the driver display (nav/DriverDisplay). Opened there with
+             ActivityOptions.setLaunchDisplayId; its own task so it never joins the CarPlay screen's.
+             Resizeable, because a window on a second display takes the size of that display. -->
+        <activity
+            android:name="wasidremin.gmccpa.nav.DriverDisplayActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=".driverdisplay"
+            android:excludeFromRecents="true"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden|uiMode"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+            <meta-data android:name="distractionOptimized" android:value="true" />
+        </activity>
 
         <!-- Foreground service that pins the process at foreground priority for the session lifetime
              (C3). API 32: no foregroundServiceType attribute is mandated. -->

@@ -166,6 +166,7 @@ class OcbmClient(
         Thread(r, "ocbm-input").apply { isDaemon = true }
     }
     private val lastKeyframeNs = java.util.concurrent.atomic.AtomicLong(0)
+    private val lastClusterKeyframeNs = java.util.concurrent.atomic.AtomicLong(0)
 
     /**
      * One decoded box log line off `CH_LOG`. [source] indexes [logSourceName]; [backfill] marks
@@ -295,7 +296,8 @@ class OcbmClient(
             Ocbm.CH_MEDIA_AUDIO -> if (adapterMode) deliverAv(f) { it.feedMedia(f.payload) } else unexpected(f)
             Ocbm.CH_ALT_AUDIO -> if (adapterMode) deliverAv(f) { it.feedVoice(f.payload) } else unexpected(f)
             Ocbm.CH_METADATA -> if (adapterMode) deliverAv(f) { it.feedMetadata(f.payload) } else unexpected(f)
-            Ocbm.CH_ALT_VIDEO -> if (adapterMode) { /* no cluster display is advertised */ } else unexpected(f)
+            // The driver display's map; dropped by its seam while no window shows it.
+            Ocbm.CH_ALT_VIDEO -> if (adapterMode) deliverAv(f) { it.feedClusterVideo(f.payload) } else unexpected(f)
             else -> unexpected(f)
         }
     }
@@ -1511,6 +1513,7 @@ class OcbmClient(
                 onVideoKeyed = {
                     if (videoKeyedThisGeneration.compareAndSet(false, true)) onSessionKeyed?.invoke()
                 },
+                onClusterKeyframeNeeded = { requestClusterKeyframe() },
             )
             lanes = l
             log.i("A/V lanes armed")
@@ -1601,6 +1604,16 @@ class OcbmClient(
         if (now - prev < Ocbm.KEYFRAME_MIN_INTERVAL_MS * 1_000_000L) return false
         if (!lastKeyframeNs.compareAndSet(prev, now)) return false
         enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_KEYFRAME))
+        return subscribed
+    }
+
+    /** [Ocbm.INPUT_KEYFRAME_ALT]: an IDR on the cluster stream only, throttled like [requestKeyframe]. */
+    fun requestClusterKeyframe(): Boolean {
+        val now = System.nanoTime()
+        val prev = lastClusterKeyframeNs.get()
+        if (now - prev < Ocbm.KEYFRAME_MIN_INTERVAL_MS * 1_000_000L) return false
+        if (!lastClusterKeyframeNs.compareAndSet(prev, now)) return false
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_KEYFRAME_ALT))
         return subscribed
     }
 

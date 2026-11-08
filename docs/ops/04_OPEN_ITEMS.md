@@ -210,6 +210,25 @@ high-water mark: versionCode 235 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
     was 3.1 s), the first-paged iPhone answered 1.5 s after that (no page timeout), the handoff took the
     usual 3.0 s, and the picture came 4.5 s after the handoff (median 3.7 s). One session; not a trend.
   - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
+- **CarPlay map on the driver display: built 2026-11-08, not on the car.** The idea is openautolink's
+  ("driver-display maps", validated on a 2024 Blazer EV: GM VCU on AAOS 12L), re-implemented here
+  without their GPL-3.0 code. Settings ▸ Navigation ▸ CarPlay map on the driver display (off by
+  default): at subscribe the config declares Apple's cluster pair (`altDisplayPanels` +
+  `altVideoStreams`, `initialURL: maps:/car/instrumentcluster/map`) at the driver display's own size;
+  once CarPlay's picture is up the app opens `nav/DriverDisplayActivity` on that display, decodes
+  `CH_ALT_VIDEO` into it and sends `CMD_NAV_START`. The box half shipped 2026-07-12
+  (`docs/carplay/06_AV_PIPELINE.md` "VALIDATED 2026-07-12"). Emulator-checked on a simulated public
+  display (window opens there, the main screen keeps focus); the emulator's own cluster displays are
+  private, as the car's may be. Open, in order:
+  1. Whether the Equinox's VCU on AAOS 14 shows the driver display to the app at all. Every connect
+     logs each display with its size and `window allowed|refused` (`[cluster] display …`), setting on
+     or off; the first upload answers it.
+  2. If it does: the picture, which page of the driver display it needs, and whether GM's own turn
+     icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
+     it may conflict with Turn-by-turn in the cluster). Their first enable also needed a head-unit
+     restart (End Call held ~30 s while parked).
+  3. The map's safe area is the whole display for now; their Blazer default kept directions inside
+     558,70–1694,668 of 2000x810, so the Equinox may need one once its visible region is seen.
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
@@ -906,7 +925,8 @@ pre-consolidation open-items list (their banners under-report):**
   `grep -rn "lane_guidance" crates/vendor/iap2-core/src/features.rs`;
   `grep -n "ident_info_wireless_transport_declares_route_guidance_param30" crates/vendor/iap2-core/src/message.rs`.
 - **AltVideo shipped box-side** — `CH_ALT_VIDEO 0x24`, seam `:9005`. (The decoder and window were the
-  macOS app's; the GM app has no cluster surface for it, `08_FUTURE_TASKS.md` "Left off this plan".)
+  macOS app's; since 2026-11-08 the GM app decodes it into a window on the driver display, see "CarPlay
+  map on the driver display" under the GM app items.)
   Verified: `grep -rn "CH_ALT_VIDEO" crates/ ccpa/`.
 - **The other two "Open design items" are genuinely resolved** — the `receiver_core` rootfs
   footprint (≈3.8 MiB measured) and the SETUP-relay latency (p99 2.36 ms, GO). Neither carries a

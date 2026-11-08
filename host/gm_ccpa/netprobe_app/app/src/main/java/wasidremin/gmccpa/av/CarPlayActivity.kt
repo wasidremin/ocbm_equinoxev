@@ -1223,6 +1223,8 @@ class CarPlayActivity : Activity() {
     private fun onIntroFrame() {
         if (isFinishing || isDestroyed) return
         finishIntro(late = false)
+        // The app is in front, which Android needs to open a window on another display.
+        wasidremin.gmccpa.nav.DriverDisplay.show(this, "CarPlay's picture is up")
     }
 
     private fun finishIntro(late: Boolean) {
@@ -2008,6 +2010,8 @@ class CarPlayActivity : Activity() {
         applySystemUi()
         MapsWatch.start(this)
         WheelCall.noteScreenFocus(true, "the foreground")
+        // Reopens the driver display's window if it was closed, never one already open.
+        if (wasidremin.gmccpa.ocbm.AdapterSession.sessionUp) wasidremin.gmccpa.nav.DriverDisplay.show(this, "CarPlay screen in front")
     }
 
     override fun onPause() {

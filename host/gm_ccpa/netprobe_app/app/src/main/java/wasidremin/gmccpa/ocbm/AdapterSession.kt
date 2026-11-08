@@ -61,6 +61,10 @@ object AdapterSession {
     private var renderer: HevcRenderer? = null
     /** A Surface that arrived before [lanes]. [startAudio] attaches it once the lanes exist. */
     private var pendingSurface: Surface? = null
+    /** The driver display's map ([wasidremin.gmccpa.nav.DriverDisplay]): its pipe, decoder and early Surface. */
+    private var clusterPipe: SeamPipe? = null
+    private var clusterRenderer: HevcRenderer? = null
+    private var pendingClusterSurface: Surface? = null
     /** Last `modes resources` line, so a repeated modesChanged does not log the same ownership. */
     private var lastResources: String? = null
     /** Raw key set of each resource dict, once per session. transferType was null in 20260927-100549. */
@@ -191,6 +195,58 @@ object AdapterSession {
         log.i("video epoch closed — $why")
     }
 
+    fun requestClusterKeyframe(): Boolean = client?.requestClusterKeyframe() == true
+
+    /**
+     * The driver display's window has a Surface: decode the cluster stream into it and ask the box
+     * to forward it and the phone to show its map there (`CMD_NAV_START`, `showUI` of
+     * `maps:/car/instrumentcluster/map`). Nothing when this session declared no cluster screen.
+     */
+    @Synchronized
+    fun attachCluster(surface: Surface) {
+        val size = wasidremin.gmccpa.nav.DriverDisplay.size
+        if (size == null || !surface.isValid) {
+            log.i("cluster surface ignored — ${if (size == null) "no cluster screen this session" else "not valid"}")
+            return
+        }
+        val l = lanes
+        if (l == null) {
+            pendingClusterSurface = surface
+            log.i("cluster surface pending — lanes not armed")
+            return
+        }
+        if (clusterRenderer != null) return
+        // Holds a few keyframes of a small map; the lane drops rather than wait when it is full.
+        val pipe = SeamPipe(4 * 1024 * 1024, 64)
+        val r = HevcRenderer(size.width, size.height, surface, { requestClusterKeyframe() }) {
+            wasidremin.gmccpa.nav.DriverDisplay.onFirstFrame()
+        }.apply { cluster = true }
+        r.start()
+        l.runConsumer("cp-cluster", pipe) { r.consume(it) }
+        l.clusterSeam.attach(pipe)
+        clusterPipe = pipe
+        clusterRenderer = r
+        val sent = client?.sendCommand(Ocbm.CMD_NAV_START) == true
+        requestClusterKeyframe()
+        log.i("cluster epoch open ${size.width}x${size.height} — map requested sent=$sent")
+    }
+
+    /** The window lost its Surface or closed: stop the decoder and ask the box to stop the map. */
+    @Synchronized
+    fun detachCluster(why: String) {
+        pendingClusterSurface = null
+        val pipe = clusterPipe
+        val r = clusterRenderer
+        if (pipe == null && r == null) return
+        clusterPipe = null
+        clusterRenderer = null
+        lanes?.clusterSeam?.attach(null)
+        client?.sendCommand(Ocbm.CMD_NAV_STOP)
+        pipe?.close()
+        r?.stop(why)
+        log.i("cluster epoch closed — $why")
+    }
+
     /** Drop renderers and the mic. Does not notify [onRetired] — the caller owns the screen. */
     fun release() {
         val old = client
@@ -209,6 +265,8 @@ object AdapterSession {
 
     private fun quietStop() {
         detachVideo("adapter session released")
+        detachCluster("adapter session released")
+        wasidremin.gmccpa.nav.DriverDisplay.close("adapter session released")
         val m = mic
         mic = null
         m?.stop("adapter session released")
@@ -286,6 +344,11 @@ object AdapterSession {
             log.i("video surface was waiting — attaching now that lanes are armed")
             attachVideo(surface)
         }
+        val cluster = synchronized(this) { pendingClusterSurface?.takeIf { it.isValid && lanes != null } }
+        if (cluster != null) {
+            log.i("cluster surface was waiting — attaching now that lanes are armed")
+            attachCluster(cluster)
+        }
     }
 
     /** Keeps an undrained seam from blocking the USB read thread when a player failed to start. */
@@ -314,7 +377,9 @@ object AdapterSession {
             videoEpoch = 0
             firstFrameCallback = null
         }
+        detachCluster("A/V lanes retired")
         if (notify) {
+            wasidremin.gmccpa.nav.DriverDisplay.close("CarPlay session ended")
             clearResourceLog()
             CarPlayMediaBrowserService.onSessionDown()
             CarPlayActivity.nowPlaying.clear("A/V lanes retired")

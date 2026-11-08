@@ -1562,6 +1562,14 @@ class MainActivity : Activity() {
                 else ocbmProbe?.disconnectPhone() ?: emit("no OCBM link")
             }
             "ocbm_forget" -> runAsync { ocbmProbe?.forgetPhone(i.getStringExtra("mac")) ?: emit("no OCBM link") }
+            // Bench, no session: log the displays and open the driver display's (empty) map window
+            // as a connect would. `--ez enabled true|false` sets the setting first.
+            "driver_display" -> {
+                val dd = wasidremin.gmccpa.nav.DriverDisplay
+                if (i.hasExtra("enabled")) dd.setEnabled(this, i.getBooleanExtra("enabled", false))
+                dd.onSubscribe(dd.declare(this))
+                dd.show(this, "bench")
+            }
             "ocbm_stop" -> runAsync {
                 ocbmProbe?.let { it.stop(); emit(it.stats()); SessionHolder.lastProbeStopAt = android.os.SystemClock.elapsedRealtime() }
                 ocbmProbe = null

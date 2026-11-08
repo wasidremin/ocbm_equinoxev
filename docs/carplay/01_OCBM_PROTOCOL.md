@@ -544,8 +544,10 @@ host consumer is never left keyless or format-blind. Note the trigger is the **b
 not the OCBM channel — ocbmd holds its accepted seam across a host detach, so a host re-attaching to a
 still-running session depends on the presence teardown/re-arm, not on a fresh hand. A Rust debug
 receiver (`ocbm-host avdec`) validated the model live — hundreds of video frames + thousands of audio
-packets, **0 auth failures** — on CH_VIDEO and both audio lanes; CH_ALT_VIDEO is exercised by the macOS
-host only.
+packets, **0 auth failures** — on CH_VIDEO and both audio lanes; CH_ALT_VIDEO was exercised by the macOS
+host only. Since 2026-11-08 the GM app consumes it too (the driver display's map, `nav/DriverDisplay`;
+not yet on the car), on a lane that drops a frame rather than block the read thread when its pipe is
+full (`VideoSeam.lossy`), so the main picture's backpressure never waits on the second screen.
 
 **All of the above is the `OCBM_FWD_ENC` (default-on) wire.** With `OCBM_FWD_ENC=0` the box decrypts
 on-box and none of it applies: the video seam carries `[u32 BE len][Annex-B]` with no magic, marker, key

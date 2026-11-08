@@ -90,6 +90,26 @@ class SeamPipe(
         return true
     }
 
+    /**
+     * Offer one complete message without waiting: false, and the message dropped, when the pipe is
+     * closed or full. For a lane that must never hold up the OCBM read thread — the driver display's
+     * map ([VideoSeam.lossy]), whose window GM can hide at any moment while the main picture plays on.
+     */
+    fun tryWrite(msg: ByteArray): Boolean {
+        if (msg.isEmpty()) return true
+        if (closed.get() || resident.get() > capacityBytes) {
+            dropped.addAndGet(msg.size.toLong())
+            return false
+        }
+        resident.addAndGet(msg.size.toLong())
+        if (!q.offer(msg)) {
+            resident.addAndGet(-msg.size.toLong())
+            dropped.addAndGet(msg.size.toLong())
+            return false
+        }
+        return true
+    }
+
     /** Bytes currently queued — surfaced so a lane can report backpressure rather than hide it. */
     fun residentBytes(): Long = resident.get()
 

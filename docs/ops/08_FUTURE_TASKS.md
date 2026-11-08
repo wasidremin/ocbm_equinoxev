@@ -567,6 +567,8 @@ Kept here so a later session does not promote them into tasks.
   have. It changes nothing; what is taken lands in `04_OPEN_ITEMS.md` like the 2026-11-07 ports.
 - **Wrong panel.** Knob, d-pad, and touchpad descriptors are for other head units. The Equinox is
   a touchscreen.
-- **No surface yet.** A second CarPlay video stream on the Equinox cluster waits until the VCU
-  gives this app a cluster surface. Alt screen already renders in the Mac app.
+- **No surface yet — superseded 2026-11-08.** The app no longer waits for GM to hand it a cluster
+  surface: it opens its own window on the driver display when Android shows that display to it
+  (openautolink's route; Settings ▸ Navigation ▸ CarPlay map on the driver display,
+  `docs/ops/04_OPEN_ITEMS.md`).
 

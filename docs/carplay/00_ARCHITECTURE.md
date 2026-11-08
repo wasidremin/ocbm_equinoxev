@@ -175,7 +175,10 @@ the app.
 > `CAR_DRIVING_STATE`, …) is `signature|privileged` — confirmed unobtainable on a locked unit via
 > `pm list permissions -f`. `:app` substitutes an active `MediaSession`, `Notification.CallStyle`,
 > `CarAppFocusManager` and a permission-free `CarUxRestrictionsManager` listener instead; cluster
-> turn-by-turn video and `CH_ALT_VIDEO` on a cluster display are consequently out of reach for it.
+> video through `ClusterHomeManager` is consequently out of reach for it. Since 2026-11-08 it tries the
+> route openautolink proved on a Blazer EV instead: an ordinary Activity on the driver display, if the
+> car exposes it as a public Android display, decoding `CH_ALT_VIDEO` (`nav/DriverDisplay`; unverified
+> on the Equinox).
 > Full detail: [`../host/01_ANDROID_AND_AAOS.md`](../host/01_ANDROID_AND_AAOS.md) and
 > `host/CarlinkAndroid/OCBMANDROID.md`.
 

@@ -46,6 +46,8 @@ class OcbmAvLanes(
     onMetadata: (marker: Int, payload: ByteArray) -> Unit,
     /** First video key of this generation — the session layer's "device connected" edge. */
     onVideoKeyed: () -> Unit = {},
+    /** A gap or a drop on the cluster lane: ask the box for an IDR on that stream only. */
+    onClusterKeyframeNeeded: () -> Unit = {},
     /**
      * Sized to absorb a burst without unbounded growth. Note `queueDepth` (512 messages) binds long
      * before these byte caps for AAC — an ADTS frame is a few hundred bytes — so the effective media
@@ -56,6 +58,13 @@ class OcbmAvLanes(
 ) {
     /** Session-scoped: holds the per-stream key and the frame sequence counter. */
     val videoSeam = VideoSeam(null, log, onKeyframeNeeded).apply { onKey = onVideoKeyed }
+
+    /**
+     * `CH_ALT_VIDEO`: CarPlay's instrument-cluster map, for the driver display
+     * ([wasidremin.gmccpa.nav.DriverDisplay]). Its own key and counter, as the box keys each stream
+     * separately. [VideoSeam.lossy]: a full pipe drops a frame rather than stall the main picture.
+     */
+    val clusterSeam = VideoSeam(null, ProbeLog.sub("cluster"), onClusterKeyframeNeeded).apply { lossy = true }
 
     /** ONE instance for both audio channels — the scid key and format tables are shared. */
     val mediaPipe = SeamPipe(mediaCapacityBytes)
@@ -111,6 +120,8 @@ class OcbmAvLanes(
 
     fun feedVideo(p: ByteArray) = videoSeam.feed(p)
 
+    fun feedClusterVideo(p: ByteArray) = clusterSeam.feed(p)
+
     fun feedMedia(p: ByteArray) = audioSeam.feedMedia(p)
 
     fun feedVoice(p: ByteArray) = audioSeam.feedVoice(p)
@@ -127,6 +138,7 @@ class OcbmAvLanes(
         if (!closed.compareAndSet(false, true)) return
         audioSeam.closeStreamSignals()
         videoSeam.attach(null)
+        clusterSeam.attach(null)
         mediaPipe.close()
         voicePipe.close()
         val snapshot = synchronized(threads) { threads.toList() }
@@ -141,6 +153,7 @@ class OcbmAvLanes(
         "vid=${videoSeam.framesOut.get()}/${videoSeam.decryptOk.get()}/${videoSeam.decryptFail.get()}" +
             "/${videoSeam.gaps.get()} nopipe=${videoSeam.framesDroppedNoPipe.get()} " +
             "keys=${videoSeam.keysReceived.get()} unkeyed=${videoSeam.unkeyed.get()} " +
+            "cluster=${clusterSeam.framesOut.get()}/${clusterSeam.decryptFail.get()}/${clusterSeam.framesDroppedFull.get()} " +
             "aud=${audioSeam.decryptOk.get()}/${audioSeam.decryptFail.get()}/${audioSeam.unkeyed.get()} " +
             "meta=${metadataSeam.messagesOut.get()}/${metadataSeam.resyncBytes.get()} " +
             "pipe=${mediaPipe.residentBytes()}/${voicePipe.residentBytes()}"

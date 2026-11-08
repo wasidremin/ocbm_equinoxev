@@ -613,6 +613,15 @@ class LauncherUi(private val act: Activity) {
                 "centre screen, and the turns everywhere else. Reads the screen every 2.5 s.",
             trailing = EqToggle(act, nav.artWhileMaps) { on -> nav.setArtWhileMaps(act, on) },
         )
+        val driver = wasidremin.gmccpa.nav.DriverDisplay.also { it.load(act) }
+        lateinit var driverRow: EqRow
+        driverRow = EqRow(
+            act, "CarPlay map on the driver display", driver.statusText(act),
+            trailing = EqToggle(act, driver.enabled) { on ->
+                driver.setEnabled(act, on)
+                driverRow.setSubtitle(driver.statusText(act))
+            },
+        )
         val ev = wasidremin.gmccpa.ev.CarPlayEv
         evRow = EqRow(
             act, "EV battery for Apple Maps", ev.statusText(act),
@@ -621,7 +630,7 @@ class LauncherUi(private val act: Activity) {
                 evRow.setSubtitle(ev.statusText(act))
             },
         )
-        page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow).addRow(evRow))
+        page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow).addRow(driverRow).addRow(evRow))
         page.addView(eqSectionLabel(act, "Voice"))
         val role = wasidremin.gmccpa.voice.AssistantRole
         voiceRow = EqRow(
