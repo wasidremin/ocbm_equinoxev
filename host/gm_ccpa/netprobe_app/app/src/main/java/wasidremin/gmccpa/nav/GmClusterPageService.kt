@@ -48,7 +48,7 @@ class GmClusterPageService : Service() {
         } ?: "none"
         val keys = runCatching { intent.extras?.keySet()?.sorted()?.joinToString(",") }.getOrNull() ?: "unreadable"
         log.i("GM page event ${intent.action} state=$state type=${type ?: "?"} display[$shown] extras=[$keys]")
-        DriverDisplay.onGmPage(applicationContext, state.takeIf { it >= 0 }, type)
+        DriverDisplay.onGmPage(applicationContext, intent.action, state.takeIf { it >= 0 }, type)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

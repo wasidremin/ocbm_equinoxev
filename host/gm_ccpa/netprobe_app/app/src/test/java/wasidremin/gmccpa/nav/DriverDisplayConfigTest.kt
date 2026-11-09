@@ -101,4 +101,11 @@ class DriverDisplayConfigTest {
         assertNotNull(runCatching { VehicleConfigSpec(cluster = PixelSize(2000, 810), clusterSafe = PixelRect(800, 0, 1300, 810)) }.exceptionOrNull())
         assertNotNull(runCatching { VehicleConfigSpec(clusterSafe = PixelRect(0, 0, 100, 100)) }.exceptionOrNull())
     }
+
+    /** 2026-11-09 12:12:04: GM's side zone opening reopened the map, and GM hid it 1.2 s later. */
+    @Test fun onlyTheMapPageBringsTheMapBack() {
+        assertTrue("gm.cluster.action.FULL_MAP_SELECTED" in DriverDisplay.RETURN_ACTIONS)
+        assertTrue("gm.cluster.action.ZONE3_SELECTED" !in DriverDisplay.RETURN_ACTIONS)
+        assertTrue("gm.cluster.action.SERVICE_READY" !in DriverDisplay.RETURN_ACTIONS)
+    }
 }

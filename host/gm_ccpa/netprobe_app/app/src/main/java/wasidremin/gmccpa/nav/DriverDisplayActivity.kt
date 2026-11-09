@@ -78,6 +78,7 @@ class DriverDisplayActivity : Activity() {
         if (!isFinishing && !isChangingConfigurations) {
             log.i("map window hidden on display ${display?.displayId} — closing it, the display is GM's again")
             finish()
+            DriverDisplay.onHidden()
         }
     }
 

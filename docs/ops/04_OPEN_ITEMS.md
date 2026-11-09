@@ -262,6 +262,19 @@ high-water mark: versionCode 239 (`4.0+directions-area`, 2026-11-09; `host/gm_cc
      started and stayed up for the whole 5½-minute upload, none dropped; no page event arrived and none
      was needed. The 237 process had run until the update replaced it, so whether the head unit was
      restarted (needed for GM to find the service) is not known from the log.
+     **First drive on 239, 2026-11-09 11:58–12:14 UTC:** the head unit had been restarted (GM sent
+     `SERVICE_READY` at 11:59:02), and the page events arrive. Leaving the map page sends
+     `FULL_MAP_SELECTED state=0` then `ZONE3_SELECTED state=1`, and GM hides the window; selecting it
+     again sends `FULL_MAP_SELECTED state=1 type=NATIVE`, and the map came back within 30 ms
+     (12:12:16). Two faults, fixed after 239: (a) Turn-by-turn in the cluster stood down for the whole
+     drive because it keyed on the setting, so off the map page the cluster had no turns
+     (`bound=false` on every turn); it now stands down only while CarPlay's map holds the display
+     (`DriverDisplay.holdsDisplay`), binds when GM hides the window (sharing the 3-in-10-min rebind
+     budget), and ends navigation before the window is opened again. (b) `ZONE3_SELECTED state=1`
+     (GM's side zone) was taken as the map page and reopened the window, which GM hid 1.2 s later;
+     only `FULL_MAP_SELECTED`/`APP_SELECTED` return the map now (`DriverDisplay.RETURN_ACTIONS`).
+     Open: whether GM, with our navigation ended, lets the map page show CarPlay's map again, and
+     whether GM's turn display on the other pages takes the turns.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

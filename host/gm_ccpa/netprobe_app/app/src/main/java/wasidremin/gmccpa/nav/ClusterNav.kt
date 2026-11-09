@@ -77,12 +77,14 @@ object ClusterNav {
         private set
 
     /**
-     * On in Settings and not standing down for the driver display's map ([DriverDisplay]). It is one
-     * or the other: GM takes the driver display back for its own map as soon as an app starts
-     * navigation (2026-11-08 16:14:33.502 `navigationStarted`, focus lost to GM 6 ms later, the map
-     * window hidden at 34.102), which is what openautolink found on the Blazer too.
+     * On in Settings and not standing down while CarPlay's map holds the driver display
+     * ([DriverDisplay.holdsDisplay]). It is one or the other at any moment: GM takes the driver display
+     * back for its own map as soon as an app starts navigation (2026-11-08 16:14:33.502
+     * `navigationStarted`, focus lost to GM 6 ms later, the map window hidden at 34.102), which is
+     * what openautolink found on the Blazer too. Once GM has the display (another page), the turns
+     * come back to the cluster.
      */
-    val active: Boolean get() = enabled && !DriverDisplay.enabled
+    val active: Boolean get() = enabled && !DriverDisplay.holdsDisplay
     /** Settings ▸ Navigation: give the cluster to the album art while full-screen Maps shows the turns. */
     @Volatile var artWhileMaps: Boolean = true
         private set
@@ -136,16 +138,20 @@ object ClusterNav {
         }
     }
 
-    /** The driver display's map was turned on or off: stand down, or carry on with the route. */
-    fun onDriverDisplayChanged() {
+    /**
+     * The driver display's map was turned on or off, opened, or hidden by GM: stand down, or carry on
+     * with the route. A bootstrap here goes through the same limit as a rebind, so a driver flicking
+     * pages cannot keep flashing the hidden activity.
+     */
+    fun onDriverDisplayChanged(why: String = "driver display map ${if (DriverDisplay.enabled) "ON" else "off"}") {
         if (!enabled) return
-        log.i("nav: cluster turn-by-turn ${if (active) "back on" else "standing down"} — driver display map ${if (DriverDisplay.enabled) "ON" else "off"}")
+        log.i("nav: cluster turn-by-turn ${if (active) "back on" else "standing down"} — $why (bound=$bound)")
         NavFocus.setNavigating(active && route.snapshot.routeActive)
         sink.get()?.onRoute(route.snapshot)
-        if (active) {
+        if (active && sink.get() == null && route.snapshot.showable && takeRebind("the driver display map gave way")) {
             triedThisRoute = false
             lastBootstrapAt = 0L
-            if (route.snapshot.showable) requestBootstrap("driver display map turned off with a route up")
+            requestBootstrap(why)
         }
     }
 
@@ -310,15 +316,7 @@ object ClusterNav {
      */
     private fun rebindIfRouteUp() {
         if (!active || !route.snapshot.showable) return
-        val now = SystemClock.elapsedRealtime()
-        synchronized(rebinds) {
-            while (rebinds.isNotEmpty() && now - rebinds.first() > REBIND_WINDOW_MS) rebinds.removeFirst()
-            if (rebinds.size >= REBIND_LIMIT) {
-                log.w("nav: session ended with a route up — not binding again: $REBIND_LIMIT rebinds in ${REBIND_WINDOW_MS / 60_000} min")
-                return
-            }
-            rebinds.addLast(now)
-        }
+        if (!takeRebind("session ended with a route up")) return
         log.i("nav: session ended with a route up — binding again in ${REBIND_DELAY_MS / 1000}s")
         main.postDelayed({
             if (!active || sink.get() != null || !route.snapshot.showable) return@postDelayed
@@ -326,6 +324,20 @@ object ClusterNav {
             lastBootstrapAt = 0L
             requestBootstrap("session ended with a route up")
         }, REBIND_DELAY_MS)
+    }
+
+    /** One rebind from the shared budget of [REBIND_LIMIT] in [REBIND_WINDOW_MS]; false when spent. */
+    private fun takeRebind(why: String): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        synchronized(rebinds) {
+            while (rebinds.isNotEmpty() && now - rebinds.first() > REBIND_WINDOW_MS) rebinds.removeFirst()
+            if (rebinds.size >= REBIND_LIMIT) {
+                log.w("nav: $why — not binding again: $REBIND_LIMIT rebinds in ${REBIND_WINDOW_MS / 60_000} min")
+                return false
+            }
+            rebinds.addLast(now)
+        }
+        return true
     }
 
     // ---- bootstrap ------------------------------------------------------------------------------

@@ -125,6 +125,25 @@ object DriverDisplay {
     @Volatile private var launches = 0
     @Volatile private var firstFrameLogged = false
 
+    /**
+     * GM has the driver display this session: it hid the map window (another page, its own map), or
+     * there is no driver display. Turn-by-turn in the cluster stands down only while CarPlay's map
+     * holds the display ([holdsDisplay]); on 2026-11-09 it stood down for the whole drive because it
+     * keyed on the setting, so switching pages left the cluster with no turns at all.
+     */
+    @Volatile private var yielded = false
+    /** On, and CarPlay's map holds the driver display (or is about to): the cluster turns stand down. */
+    val holdsDisplay: Boolean get() = enabled && !yielded
+
+    private fun setYielded(y: Boolean, why: String) {
+        if (yielded == y) return
+        yielded = y
+        ClusterNav.onDriverDisplayChanged(why)
+    }
+
+    /** Main thread. The window was hidden: GM has the driver display until the map is opened again. */
+    fun onHidden() = setYielded(true, "GM took the driver display back")
+
     fun load(ctx: Context) {
         if (loaded) return
         enabled = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
@@ -209,6 +228,7 @@ object DriverDisplay {
         size = declared
         launches = 0
         firstFrameLogged = false
+        setYielded(declared == null, if (declared == null) "no driver display this session" else "the map is declared on the driver display")
         if (declared == null) display = null
         else log.i("declared the driver display ${display?.id} as CarPlay's cluster screen, ${declared.width}x${declared.height}")
     }
@@ -237,22 +257,32 @@ object DriverDisplay {
         if (launches >= LAUNCHES_PER_SESSION) return
         launches++
         val intent = Intent(from, DriverDisplayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val wasYielded = yielded
         try {
             val am = from.getSystemService(ActivityManager::class.java)
             if (am?.isActivityStartAllowedOnDisplay(from, d.id, intent) != true) {
                 log.w("window on display ${d.id} refused now ($why)")
                 return
             }
+            // The cluster turns end before the window opens: GM takes the driver display for its own
+            // map while an app is navigating (2026-11-08 16:14:33, 0.6 s after navigationStarted).
+            setYielded(false, "opening the map on the driver display")
             from.startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(d.id).toBundle())
             log.i("opening the map window on display ${d.id} ($why, launch $launches of $LAUNCHES_PER_SESSION)")
         } catch (e: Exception) {
             log.w("opening the map window on display ${d.id} failed: ${e.javaClass.simpleName}: ${e.message}")
+            setYielded(wasYielded, "the map window did not open")
         }
     }
 
     /** Automatic returns in the last minute ([onGmPage]), so GM and the app can never ping-pong. */
     private val autoReturns = ArrayDeque<Long>()
     private const val AUTO_RETURNS_PER_MINUTE = 3
+    /**
+     * The page events that mean "the map page": not `ZONE3_SELECTED`, GM's side zone, whose
+     * selection reopened the map on 2026-11-09 12:12:04 and had it hidden again 1.2 s later.
+     */
+    internal val RETURN_ACTIONS = setOf("gm.cluster.action.FULL_MAP_SELECTED", "gm.cluster.action.APP_SELECTED")
 
     /**
      * GM's driver display reported a page change ([GmClusterPageService]). Selecting the full-map
@@ -261,7 +291,8 @@ object DriverDisplay {
      * page selected while no window is open means the driver came back for it. Never more than
      * [AUTO_RETURNS_PER_MINUTE] a minute; never when the page left is reported.
      */
-    fun onGmPage(ctx: Context, selected: Int?, type: String?) {
+    fun onGmPage(ctx: Context, action: String?, selected: Int?, type: String?) {
+        if (action !in RETURN_ACTIONS) return
         if (selected != 1 || !enabled || display == null || size == null) return
         if (DriverDisplayActivity.isOpen()) return
         val now = android.os.SystemClock.elapsedRealtime()
