@@ -258,13 +258,33 @@ high-water mark: versionCode 238 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
      full-map page selected while no map window is open reopens it (at most 3 a minute). GM finds the
      service at boot: one head-unit restart after install. Emulator-checked with synthetic events;
      whether the Equinox sends them is the next upload's question.
+     **First drive on 238, 2026-11-08 19:35 local (00:35 UTC 11-09):** the map opened 13 s after the app
+     started and stayed up for the whole 5½-minute upload, none dropped; no page event arrived and none
+     was needed. The 237 process had run until the update replaced it, so whether the head unit was
+     restarted (needed for GM to find the service) is not known from the log.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
      it may conflict with Turn-by-turn in the cluster). Their first enable also needed a head-unit
      restart (End Call held ~30 s while parked).
-  3. The map's safe area is the whole display for now; their Blazer default kept directions inside
-     558,70–1694,668 of 2000x810, so the Equinox may need one once its visible region is seen.
+  3. ~~The map's safe area is the whole display for now.~~ **Directions area, 2026-11-08 (after 238,
+     not on the car):** Settings ▸ Navigation ▸ Directions area on the driver display sets four edge
+     margins (0–35% each) that become the cluster stream's `safeArea` at the next subscribe
+     (`DriverDisplay.safeArea`, `VehicleConfigSpec.clusterSafe`); the map still fills the display.
+     The box needed nothing: it already carries a real alt inset into `/info` and arms `viewAreas`
+     for it (`vehicle_config.rs::the_gm_apps_driver_display_map_arms_the_alt_screen`). "GM layout"
+     sets 28/9/15/17%, i.e. 560,72–1700,674, openautolink's Blazer default of 558,70–1694,668; Reset
+     returns to the whole display. Each change is outlined on the driver display for 30 s while the
+     map window is open (emulator-checked on a simulated 1600x600 display). Open: whether CarPlay
+     moves its turn card and arrival time inside it on the car, and which margins clear the Equinox's
+     gauges.
+  4. **Held for adapter firmware (owner, 2026-11-08):** two more openautolink ideas need the box, so
+     they wait with car GPS (the NMEA item below). CarPlay's status-bar edge (Auto / Bottom / Driver
+     side): `info.rs::view_areas` hardcodes `viewAreaStatusBarEdge: 0` on both main areas; it needs a
+     parsed `statusBarEdge` on `ViewAreaEntry` and an app setting. The car's make, model and year in
+     Maps' vehicle name: param 20 subs 1/6 (and 8 `MapsDisplayName`) are the box's constant `name`
+     (`message.rs` ~:695), so it needs the C-6 `accessoryName` bound wired into the tunnel Identify,
+     where a rejected change costs the whole session (`0x1D03`).
 - **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
@@ -541,7 +561,8 @@ high-water mark: versionCode 238 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
   Source: `docs/carplay/01_OCBM_PROTOCOL.md` §"What is genuinely not supported (open item)". Verified open 2026-08-16:
   `grep -n "CH_VIDEO\|CH_ALT_VIDEO" crates/ocbm-proto/src/lib.rs` → exactly two video channels.
 
-- **Accessory-side NMEA/GPS is parse-only.** The box decodes the phone's `StartLocationInformation`
+- **Accessory-side NMEA/GPS is parse-only.** (openautolink feeds the car's GNSS to CarPlay; the owner
+  wants it, held 2026-11-08 until adapter work is next taken up.) The box decodes the phone's `StartLocationInformation`
   selection but nothing ever sends `LocationInformation` (0xFFFB). Planned as
   `08_FUTURE_TASKS.md` T6. `message.rs` now has a param-22 builder
   (`build_location_information_component`) that no Identify calls.

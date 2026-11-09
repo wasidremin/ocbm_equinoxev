@@ -1237,6 +1237,7 @@ class OcbmProbe(context: Context) {
                 viewArea2Initial = wasidremin.gmccpa.pane.SplitPane.wantShown(ctx),
                 viewAreaAnimMs = wasidremin.gmccpa.pane.SplitPane.TRANSITION_MS,
                 cluster = cluster,
+                clusterSafe = cluster?.let { wasidremin.gmccpa.nav.DriverDisplay.safeArea(ctx, it) },
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)

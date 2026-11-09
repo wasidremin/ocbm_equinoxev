@@ -5,6 +5,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import wasidremin.gmccpa.ocbm.PixelRect
 import wasidremin.gmccpa.ocbm.PixelSize
 import wasidremin.gmccpa.ocbm.VehicleConfigSpec
 import wasidremin.gmccpa.ocbm.VehicleConfigYaml
@@ -57,5 +58,47 @@ class DriverDisplayConfigTest {
         assertNotNull(runCatching { VehicleConfigSpec(cluster = PixelSize(2001, 810)) }.exceptionOrNull())
         assertNotNull(runCatching { VehicleConfigSpec(cluster = PixelSize(2000, 1700)) }.exceptionOrNull())
         assertEquals(PixelSize(2000, 810), VehicleConfigSpec(cluster = PixelSize(2000, 810)).cluster)
+    }
+
+    /** The directions area: margins in percent of the driver display, each edge even. */
+    @Test fun marginsBecomeAnEvenSafeAreaAndNoneKeepsTheWholeDisplay() {
+        val size = PixelSize(2000, 810)
+        assertNull(DriverDisplay.safeArea(size, DriverDisplay.Margins()))
+        // 20% of 2000 = 400 left, 15% = 300 right; 10% of 810 = 81 -> 80 top.
+        assertEquals(PixelRect(400, 80, 1300, 730), DriverDisplay.safeArea(size, DriverDisplay.Margins(left = 20, top = 10, right = 15)))
+        // Over the per-edge cap is clamped, never an empty area.
+        val a = DriverDisplay.safeArea(size, DriverDisplay.Margins(left = 90, right = 90))!!
+        assertEquals(PixelRect(700, 0, 600, 810), a)
+        for (v in listOf(a.x, a.y, a.width, a.height)) assertEquals(0, v % 2)
+        // The GM preset lands within a few pixels of openautolink's 558,70–1694,668.
+        assertEquals(PixelRect(560, 72, 1140, 602), DriverDisplay.safeArea(size, DriverDisplay.GM_LAYOUT))
+    }
+
+    @Test fun theClusterStreamCarriesTheDirectionsAreaAsItsSafeArea() {
+        val doc = VehicleConfigYaml.render(VehicleConfigSpec(width = 2470, height = 960,
+            cluster = PixelSize(2000, 810), clusterSafe = PixelRect(400, 80, 1300, 730)))
+        assertTrue(doc, doc.contains(
+            "  - videoStreamID: VideoStream.Alt1\n" +
+                "    pixelDimensions:\n" +
+                "      width: 2000\n" +
+                "      height: 810\n" +
+                "    maxFPS: 30\n" +
+                "    viewAreas:\n" +
+                "    - viewArea:\n" +
+                "        originX: 0\n" +
+                "        originY: 0\n" +
+                "        width: 2000\n" +
+                "        height: 810\n" +
+                "      safeArea:\n" +
+                "        originX: 400\n" +
+                "        originY: 80\n" +
+                "        width: 1300\n" +
+                "        height: 730\n" +
+                "      drawUIOutsideSafeArea: false\n" +
+                "    initialURL: maps:/car/instrumentcluster/map\n"))
+        assertNull(VehicleConfigYaml.structuralError(doc + wifi, true))
+        // Outside the screen, or without one, is refused before the wire.
+        assertNotNull(runCatching { VehicleConfigSpec(cluster = PixelSize(2000, 810), clusterSafe = PixelRect(800, 0, 1300, 810)) }.exceptionOrNull())
+        assertNotNull(runCatching { VehicleConfigSpec(clusterSafe = PixelRect(0, 0, 100, 100)) }.exceptionOrNull())
     }
 }

@@ -2370,6 +2370,22 @@ accessoryConfig:
         let dev = vc.apply(base());
         assert_eq!(dev.alt_max_fps, 30);
         assert_eq!(dev.main_view_area_2, None);
+        // The whole-display safe area is not an inset: no alt safe area, no viewAreas feature.
+        assert_eq!(dev.alt_safe_area, None);
+        assert!(!vc.view_areas_enabled());
+
+        // The app's directions area (Settings ▸ Navigation): an inset safe area on the cluster
+        // stream reaches `/info` as the type-111 screen's safeArea and negotiates viewAreas.
+        let inset = y.replacen(
+            "      safeArea:\n        originX: 0\n        originY: 0\n        width: 2000\n        height: 810\n",
+            "      safeArea:\n        originX: 400\n        originY: 80\n        width: 1300\n        height: 730\n",
+            1,
+        );
+        assert_ne!(inset, y, "the cluster safeArea must be the one replaced");
+        let vc = VehicleConfig::from_yaml(inset.as_bytes()).unwrap();
+        assert_eq!(vc.apply(base()).alt_safe_area, Some((400, 80, 1300, 730)));
+        assert_eq!(vc.apply(base()).main_safe_area, None);
+        assert!(vc.view_areas_enabled());
     }
 
     #[test]

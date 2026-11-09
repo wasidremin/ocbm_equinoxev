@@ -1568,6 +1568,11 @@ class MainActivity : Activity() {
             "driver_display" -> {
                 val dd = wasidremin.gmccpa.nav.DriverDisplay
                 if (i.hasExtra("enabled")) dd.setEnabled(this, i.getBooleanExtra("enabled", false))
+                // `--es margins l,t,r,b` (percent): the directions area, outlined for 30 s.
+                i.getStringExtra("margins")?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.takeIf { it.size == 4 }?.let {
+                    dd.setMargins(this, wasidremin.gmccpa.nav.DriverDisplay.Margins(it[0], it[1], it[2], it[3]))
+                    emit("driver_display: directions area ${dd.margins(this)}")
+                }
                 if (i.getBooleanExtra("reopen", false)) dd.reopen(this, "bench long-press")
                 else {
                     dd.onSubscribe(dd.declare(this))

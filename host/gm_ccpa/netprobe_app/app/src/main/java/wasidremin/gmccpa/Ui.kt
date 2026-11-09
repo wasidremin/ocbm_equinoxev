@@ -631,6 +631,7 @@ class LauncherUi(private val act: Activity) {
             },
         )
         page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow).addRow(driverRow).addRow(evRow))
+        page.addView(directionsAreaCard())
         page.addView(eqSectionLabel(act, "Voice"))
         val role = wasidremin.gmccpa.voice.AssistantRole
         voiceRow = EqRow(
@@ -826,6 +827,64 @@ class LauncherUi(private val act: Activity) {
             launcherStatusRow.subtitleView.setTextColor(if (err) EqTheme.DANGER else EqTheme.TEXT_DIM)
             launcherStatusRow.setSubtitle(launcherStatusSubtitle())
         }
+    }
+
+    /**
+     * The driver display's directions area ([wasidremin.gmccpa.nav.DriverDisplay.Margins]): four
+     * edge margins, saved as they move, outlined on the driver display for 30 s after each change
+     * while CarPlay's map is there, declared at the next connect.
+     */
+    private fun directionsAreaCard(): EqCard {
+        val dd = wasidremin.gmccpa.nav.DriverDisplay
+        val card = EqCard(act)
+        var m = dd.margins(act)
+        val bars = ArrayList<Pair<android.widget.SeekBar, TextView>>()
+        lateinit var head: EqRow
+        fun subtitle() = (if (m.isZero) "Whole display. " else "Kept clear: $m. ") +
+            "Moves CarPlay's directions and arrival time clear of the gauges; the map still fills the display. " +
+            "The outline shows on the driver display while CarPlay's map is there. Applies at the next connect."
+        fun apply(to: wasidremin.gmccpa.nav.DriverDisplay.Margins) {
+            m = to
+            dd.setMargins(act, m)
+            listOf(m.left, m.top, m.right, m.bottom).forEachIndexed { i, v -> bars.getOrNull(i)?.first?.progress = v }
+            head.setSubtitle(subtitle())
+        }
+        val buttons = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(eqButton(act, "GM layout", EqButtonStyle.SECONDARY) { apply(dd.GM_LAYOUT) })
+            addView(eqButton(act, "Reset", EqButtonStyle.SECONDARY) { apply(wasidremin.gmccpa.nav.DriverDisplay.Margins()) },
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(12f) })
+        }
+        head = EqRow(act, "Directions area on the driver display", subtitle(), trailing = buttons)
+        card.addRow(head)
+        val edges = listOf("Left", "Top", "Right", "Bottom")
+        fun value(i: Int) = when (i) { 0 -> m.left; 1 -> m.top; 2 -> m.right; else -> m.bottom }
+        for (i in edges.indices) {
+            val row = LinearLayout(act).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(EqTheme.px(28f), EqTheme.px(8f), EqTheme.px(28f), EqTheme.px(8f))
+            }
+            val label = EqTheme.text(act, 18f, EqTheme.TEXT).apply { text = "${edges[i]}: ${value(i)}%" }
+            row.addView(label)
+            val bar = android.widget.SeekBar(act).apply {
+                max = dd.MAX_EDGE; progress = value(i); contentDescription = "Directions area ${edges[i]}"
+                setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(b: android.widget.SeekBar, v: Int, user: Boolean) {
+                        label.text = "${edges[i]}: $v%"
+                        if (!user) return
+                        m = when (i) { 0 -> m.copy(left = v); 1 -> m.copy(top = v); 2 -> m.copy(right = v); else -> m.copy(bottom = v) }
+                        dd.setMargins(act, m)
+                        head.setSubtitle(subtitle())
+                    }
+                    override fun onStartTrackingTouch(b: android.widget.SeekBar) = Unit
+                    override fun onStopTrackingTouch(b: android.widget.SeekBar) = Unit
+                })
+            }
+            row.addView(bar, LinearLayout.LayoutParams(-1, EqTheme.px(48f)))
+            bars += bar to label
+            card.addRow(row)
+        }
+        return card
     }
 
     private var displayDraft: DisplayPrefs.Controls? = null

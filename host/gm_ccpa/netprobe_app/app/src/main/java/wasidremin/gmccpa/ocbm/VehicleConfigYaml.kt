@@ -115,6 +115,14 @@ data class VehicleConfigSpec(
      * (`docs/carplay/06_AV_PIPELINE.md` "Instrument-cluster video"). Null keeps both lists empty.
      */
     val cluster: PixelSize? = null,
+    /**
+     * The part of the driver display CarPlay keeps its directions, arrival time and other non-map
+     * content inside ([wasidremin.gmccpa.nav.DriverDisplay.safeArea]), in [cluster] pixels; null for
+     * the whole display. The map still fills [cluster]. The box carries a real inset into `/info` as
+     * the type-111 screen's `safeArea` (`vehicle_config.rs` `alt_safe_area`) and arms the
+     * `viewAreas` feature for it.
+     */
+    val clusterSafe: PixelRect? = null,
 ) {
     init {
         require(maxFps == 30 || maxFps == 60) { "maxFPS must be 30 or 60; the box ignores anything else" }
@@ -129,6 +137,12 @@ data class VehicleConfigSpec(
         cluster?.let { c ->
             require(c.width % 2 == 0 && c.height % 2 == 0 && c.width in 2..3840 && c.height in 2..1600) {
                 "cluster screen must be a positive even size inside 3840x1600"
+            }
+        }
+        clusterSafe?.let { a ->
+            val c = requireNotNull(cluster) { "a cluster safe area needs a cluster screen" }
+            require(a.x >= 0 && a.y >= 0 && a.width > 0 && a.height > 0 && a.right <= c.width && a.y + a.height <= c.height) {
+                "cluster safe area must sit inside the cluster screen"
             }
         }
     }
@@ -316,16 +330,17 @@ object VehicleConfigYaml {
         line("      steeringWheelSupport: false")
         line("    primaryInput: Touchpad")
         val c = s.cluster
-        if (c == null) line("  altVideoStreams: []") else clusterStream(b, c)
+        if (c == null) line("  altVideoStreams: []") else clusterStream(b, c, s.clusterSafe)
     }
 
     /**
-     * Apple's "Instrument Cluster" template shape. The whole screen is the map's view and safe area
-     * until the visible part of the driver display is known.
+     * Apple's "Instrument Cluster" template shape. The whole screen is the map's view area; the safe
+     * area is [safe] (the owner's directions area) or the whole screen.
      */
     private fun clusterStream(
         b: StringBuilder,
         c: PixelSize,
+        safe: PixelRect?,
     ) = with(b) {
         line("  altVideoStreams:")
         line("  - videoStreamID: VideoStream.Alt1")
@@ -340,10 +355,10 @@ object VehicleConfigYaml {
         line("        width: ${c.width}")
         line("        height: ${c.height}")
         line("      safeArea:")
-        line("        originX: 0")
-        line("        originY: 0")
-        line("        width: ${c.width}")
-        line("        height: ${c.height}")
+        line("        originX: ${safe?.x ?: 0}")
+        line("        originY: ${safe?.y ?: 0}")
+        line("        width: ${safe?.width ?: c.width}")
+        line("        height: ${safe?.height ?: c.height}")
         line("      drawUIOutsideSafeArea: false")
         line("    initialURL: maps:/car/instrumentcluster/map")
     }
@@ -590,6 +605,8 @@ object VehicleConfigYaml {
         viewAreaAnimMs: Int? = null,
         /** The driver display's CarPlay map ([wasidremin.gmccpa.nav.DriverDisplay]); null for none. */
         cluster: PixelSize? = null,
+        /** The driver display's directions area, in [cluster] pixels; null for the whole display. */
+        clusterSafe: PixelRect? = null,
     ): ByteArray {
         require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
             "iapConfig must be a whole top-level block ending in a newline"
@@ -632,6 +649,7 @@ object VehicleConfigYaml {
                 viewArea2Initial = viewArea2Initial,
                 viewAreaAnimMs = viewArea2?.let { viewAreaAnimMs },
                 cluster = cluster,
+                clusterSafe = clusterSafe?.takeIf { cluster != null },
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

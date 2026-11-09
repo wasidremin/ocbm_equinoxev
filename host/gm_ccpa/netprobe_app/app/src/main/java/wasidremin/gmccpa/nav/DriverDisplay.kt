@@ -8,6 +8,7 @@ import android.hardware.display.DisplayManager
 import android.util.DisplayMetrics
 import android.view.Display
 import wasidremin.gmccpa.ProbeLog
+import wasidremin.gmccpa.ocbm.PixelRect
 import wasidremin.gmccpa.ocbm.PixelSize
 
 /**
@@ -40,6 +41,74 @@ object DriverDisplay {
     private const val KEY_ENABLED = "enabled"
     /** Window launches per session at most, so a window GM keeps closing cannot become a loop. */
     private const val LAUNCHES_PER_SESSION = 3
+
+    private const val KEY_MARGINS = "directions_margins"
+    /** How long the directions-area outline stays on the driver display after a change. */
+    const val PREVIEW_MS = 30_000L
+
+    /**
+     * The directions area (openautolink's idea, our code): margins, in percent of the driver display,
+     * that CarPlay keeps its turn card, arrival time and other non-map content out of, so GM's gauges
+     * drawn over the map do not cover them. The map itself still fills the display. Declared as the
+     * cluster screen's safe area at subscribe ([safeArea]), so a change applies at the next connect.
+     */
+    data class Margins(val left: Int = 0, val top: Int = 0, val right: Int = 0, val bottom: Int = 0) {
+        val isZero: Boolean get() = left == 0 && top == 0 && right == 0 && bottom == 0
+        fun clamped() = Margins(left.coerceIn(0, MAX_EDGE), top.coerceIn(0, MAX_EDGE),
+            right.coerceIn(0, MAX_EDGE), bottom.coerceIn(0, MAX_EDGE))
+        override fun toString() = "left $left%, top $top%, right $right%, bottom $bottom%"
+    }
+    /** No edge may take more than this percent, so two opposite edges always leave 30% or more. */
+    const val MAX_EDGE = 35
+
+    /**
+     * openautolink's default for GM's 2000x810 driver display (directions inside 558,70–1694,668 on a
+     * 2024 Blazer EV, `docs/ops/04_OPEN_ITEMS.md`), as whole percents: 560,72–1700,674 here.
+     */
+    val GM_LAYOUT = Margins(left = 28, top = 9, right = 15, bottom = 17)
+
+    fun margins(ctx: Context): Margins {
+        val raw = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_MARGINS, null)
+            ?: return Margins()
+        val n = raw.split(',').mapNotNull { it.trim().toIntOrNull() }
+        return if (n.size == 4) Margins(n[0], n[1], n[2], n[3]).clamped() else Margins()
+    }
+
+    fun setMargins(ctx: Context, m: Margins) {
+        val c = m.clamped()
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_MARGINS, "${c.left},${c.top},${c.right},${c.bottom}").apply()
+        previewUntil = android.os.SystemClock.elapsedRealtime() + PREVIEW_MS
+        DriverDisplayActivity.refreshPreview()
+    }
+
+    /** Main thread reads it; the window outlines the directions area until then ([setMargins]). */
+    @Volatile var previewUntil = 0L
+        private set
+
+    /** The directions area to declare for [size], or null for the whole display. */
+    fun safeArea(ctx: Context, size: PixelSize): PixelRect? {
+        val m = margins(ctx)
+        val a = safeArea(size, m)
+        if (a != null) log.i("directions area on the driver display: ${a.width}x${a.height} at ${a.x},${a.y} ($m)")
+        return a
+    }
+
+    /**
+     * Pure: [m] applied to [size], each edge rounded down to even pixels as every coded size is.
+     * Null when no margin is set, so the declaration stays the whole display.
+     */
+    fun safeArea(size: PixelSize, m: Margins): PixelRect? {
+        val c = m.clamped()
+        if (c.isZero) return null
+        fun px(total: Int, pct: Int) = (total * pct / 100) and 1.inv()
+        val l = px(size.width, c.left); val r = px(size.width, c.right)
+        val t = px(size.height, c.top); val b = px(size.height, c.bottom)
+        val w = (size.width - l - r) and 1.inv()
+        val h = (size.height - t - b) and 1.inv()
+        if (w <= 0 || h <= 0) return null
+        return PixelRect(l, t, w, h)
+    }
 
     /** A display this app may open a window on. */
     data class Found(val id: Int, val name: String, val width: Int, val height: Int)

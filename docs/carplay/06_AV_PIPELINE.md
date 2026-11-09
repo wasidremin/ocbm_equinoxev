@@ -691,7 +691,8 @@ the picker uses **`showUI`/`stopUI`, keyed by `params["uuid"]`** — not `reques
 >
 > **GM app host, 2026-11-08 (not yet on the car).** Settings ▸ Navigation ▸ CarPlay map on the driver
 > display emits the alt pair at the driver display's size (`VehicleConfigYaml.kt` `cluster`, 30 fps,
-> whole-display safe area, `initialURL: maps:/car/instrumentcluster/map`), opens a window on that
+> a safe area that is the whole display unless the owner sets a directions area (`clusterSafe`),
+> `initialURL: maps:/car/instrumentcluster/map`), opens a window on that
 > display, decodes `CH_ALT_VIDEO` on a second `HevcRenderer` and sends `CMD_NAV_START` when the window
 > has a Surface and `CMD_NAV_STOP` when it loses it. The box parses exactly that document
 > (`vehicle_config.rs::the_gm_apps_driver_display_map_arms_the_alt_screen`).
