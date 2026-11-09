@@ -284,6 +284,17 @@ high-water mark: versionCode 240 (`4.0+turns-return`, 2026-11-09; `host/gm_ccpa/
      page while another app navigates. After 240 every page event also logs its extras' values
      (numbers and enum names), to tell GM's views apart; the long-press on the strip right of
      CarPlay still reopens the map and ends the turns first.
+     **Evening drive on 240, 2026-11-09 22:33–22:41 UTC, confirms it:** GM's map page came back
+     (`FULL_MAP_SELECTED state=1`, the map then stayed up 8–18 s until the owner left it) three times,
+     each after full-screen Apple Maps had ended the cluster turns, and never while they ran, through
+     a dozen `ZONE3_SELECTED` flips. Three long-presses ended the turns, but GM covered the window
+     ~1 s later (the driver was on another page) and the turns restarted 0.2 s after that, so the
+     map page never appeared. Fixed after 240: for 20 s after the long-press a covered window keeps
+     the turns off, so the map page can be picked; leaving the map page, or 20 s without picking it,
+     brings them back (`DriverDisplay.mapWantedUntil`). The bootstrap's resume reopen recurred at
+     22:35:31 (fixed in 134c297). GM never asked for a cluster session: all 16 Templates Host
+     sessions on record are `displayType=0`, though the service declares `FEATURE_CLUSTER`, so
+     CarPlay's map cannot ride GM's own map page through the Car App Library.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

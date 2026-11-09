@@ -5,6 +5,9 @@ import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
 import wasidremin.gmccpa.ProbeLog
@@ -142,7 +145,30 @@ object DriverDisplay {
     }
 
     /** Main thread. The window was hidden: GM has the driver display until the map is opened again. */
-    fun onHidden() = setYielded(true, "GM took the driver display back")
+    fun onHidden() {
+        val left = mapWantedUntil - SystemClock.elapsedRealtime()
+        if (left > 0) {
+            log.i("map window covered after the long-press — the cluster turns stay off up to ${left / 1000}s so GM's map page can be picked")
+            return
+        }
+        setYielded(true, "GM took the driver display back")
+    }
+
+    /**
+     * After the long-press ([reopen]), a covered window does not bring the turns back until this
+     * time. GM offers its map page only while no app is navigating (2026-11-09 evening: it came
+     * back three times, each after the turns had ended, and never while they ran), and it covers the
+     * window ~1 s after the long-press because the driver is on another page. Before this the turns
+     * restarted 0.2 s later and the map page never appeared.
+     */
+    @Volatile private var mapWantedUntil = 0L
+    private const val MAP_WANTED_MS = 20_000L
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val mapWantedExpired = Runnable {
+        if (mapWantedUntil == 0L || SystemClock.elapsedRealtime() < mapWantedUntil) return@Runnable
+        mapWantedUntil = 0L
+        if (!DriverDisplayActivity.isOpen()) setYielded(true, "GM's map page was not picked within ${MAP_WANTED_MS / 1000}s of the long-press")
+    }
 
     fun load(ctx: Context) {
         if (loaded) return
@@ -247,6 +273,9 @@ object DriverDisplay {
         lastReopenAt = now
         launches = 0
         offMapPage = false
+        mapWantedUntil = now + MAP_WANTED_MS
+        main.removeCallbacks(mapWantedExpired)
+        main.postDelayed(mapWantedExpired, MAP_WANTED_MS)
         show(from, why)
     }
     @Volatile private var lastReopenAt = 0L
@@ -309,7 +338,11 @@ object DriverDisplay {
      * [AUTO_RETURNS_PER_MINUTE] a minute; never when the page left is reported.
      */
     fun onGmPage(ctx: Context, action: String?, selected: Int?, type: String?) {
-        if (action == FULL_MAP && selected == 0) offMapPage = true
+        if (action == FULL_MAP && selected == 0) {
+            // Leaving the map page is the driver's answer: the turns come back with the next cover.
+            offMapPage = true
+            mapWantedUntil = 0L
+        }
         if (action !in RETURN_ACTIONS) return
         if (selected == 1) offMapPage = false
         if (selected != 1 || !enabled || display == null || size == null) return
