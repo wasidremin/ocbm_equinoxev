@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 238 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 239 (`4.0+directions-area`, 2026-11-09; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -267,7 +267,7 @@ high-water mark: versionCode 238 (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6)
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
      it may conflict with Turn-by-turn in the cluster). Their first enable also needed a head-unit
      restart (End Call held ~30 s while parked).
-  3. ~~The map's safe area is the whole display for now.~~ **Directions area, 2026-11-08 (after 238,
+  3. ~~The map's safe area is the whole display for now.~~ **Directions area, Play 239 (2026-11-09,
      not on the car):** Settings ▸ Navigation ▸ Directions area on the driver display sets four edge
      margins (0–35% each) that become the cluster stream's `safeArea` at the next subscribe
      (`DriverDisplay.safeArea`, `VehicleConfigSpec.clusterSafe`); the map still fills the display.
