@@ -54,6 +54,8 @@ class DriverDisplayActivity : Activity() {
         val root = FrameLayout(this)
         root.addView(v, FrameLayout.LayoutParams(-1, -1))
         // Above the SurfaceView's hole: a SurfaceView draws below its window by default.
+        // The turn card first, so the preview's shade and outline draw over it.
+        root.addView(TurnCard.View(this) { directionsArea(root.width, root.height) }, FrameLayout.LayoutParams(-1, -1))
         outline = Outline(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
         setContentView(root)
         DriverDisplay.size?.let { v.holder.setFixedSize(it.width, it.height) }
@@ -107,6 +109,13 @@ class DriverDisplayActivity : Activity() {
             canvas.drawRect(r, line)
             postInvalidateDelayed(left + 50)
         }
+    }
+
+    /** The directions area in this window's pixels; the whole window when none is set. */
+    private fun directionsArea(w: Int, h: Int): android.graphics.Rect {
+        val a = DriverDisplay.safeArea(wasidremin.gmccpa.ocbm.PixelSize(w and 1.inv(), h and 1.inv()), DriverDisplay.margins(this))
+            ?: return android.graphics.Rect(0, 0, w, h)
+        return android.graphics.Rect(a.x, a.y, a.right, a.y + a.height)
     }
 
     override fun onDestroy() {

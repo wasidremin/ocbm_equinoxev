@@ -46,6 +46,7 @@ object DriverDisplay {
     private const val LAUNCHES_PER_SESSION = 3
 
     private const val KEY_MARGINS = "directions_margins"
+    private const val KEY_TURN_CARD = "turn_card"
     /** How long the directions-area outline stays on the driver display after a change. */
     const val PREVIEW_MS = 30_000L
 
@@ -82,6 +83,19 @@ object DriverDisplay {
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_MARGINS, "${c.left},${c.top},${c.right},${c.bottom}").apply()
         previewUntil = android.os.SystemClock.elapsedRealtime() + PREVIEW_MS
+        DriverDisplayActivity.refreshPreview()
+    }
+
+    /** Settings: draw [TurnCard] over CarPlay's map on the driver display during a route. On by default. */
+    @Volatile var turnCard = true
+        private set
+
+    fun setTurnCard(ctx: Context, on: Boolean) {
+        turnCard = on
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_TURN_CARD, on).apply()
+        log.i("turn card on the driver display ${if (on) "ON" else "off"} (Settings)")
+        // Show where it sits, as a margin change does.
+        if (on) previewUntil = android.os.SystemClock.elapsedRealtime() + PREVIEW_MS
         DriverDisplayActivity.refreshPreview()
     }
 
@@ -173,6 +187,7 @@ object DriverDisplay {
     fun load(ctx: Context) {
         if (loaded) return
         enabled = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
+        turnCard = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_TURN_CARD, true)
         loaded = true
     }
 

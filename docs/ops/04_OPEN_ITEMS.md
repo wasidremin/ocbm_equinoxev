@@ -295,6 +295,14 @@ high-water mark: versionCode 240 (`4.0+turns-return`, 2026-11-09; `host/gm_ccpa/
      22:35:31 (fixed in 134c297). GM never asked for a cluster session: all 16 Templates Host
      sessions on record are `displayType=0`, though the service declares `FEATURE_CLUSTER`, so
      CarPlay's map cannot ride GM's own map page through the Car App Library.
+     **Turn card, after 240 (owner's ask, 2026-11-09):** CarPlay's cluster map stream carries the map
+     only (the instruction card is a separate Apple content type, `maps:/car/instrumentcluster/
+     instructioncard`, one per stream; a second cluster stream is type 112, never seen on CCPA and
+     box work). So the app draws its own card over the map window (`nav/TurnCard`, Settings ▸
+     Navigation ▸ Turn card on the driver display, default on): the turn's glyph, distance, road and
+     arrival time from `ClusterNav.route`, top-left of the directions area. It needs no GM
+     navigation, so on the map page the driver gets the map and the turns without losing the page.
+     Emulator-checked with the preview's sample card; open: size and place on the car.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

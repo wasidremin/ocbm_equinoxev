@@ -841,7 +841,7 @@ class LauncherUi(private val act: Activity) {
         val bars = ArrayList<Pair<android.widget.SeekBar, TextView>>()
         lateinit var head: EqRow
         fun subtitle() = (if (m.isZero) "Whole display. " else "Kept clear: $m. ") +
-            "Moves CarPlay's directions and arrival time clear of the gauges; the map still fills the display. " +
+            "Keeps CarPlay's map controls and the turn card clear of the gauges; the map still fills the display. " +
             "The outline shows on the driver display while CarPlay's map is there. Applies at the next connect."
         fun apply(to: wasidremin.gmccpa.nav.DriverDisplay.Margins) {
             m = to
@@ -857,6 +857,12 @@ class LauncherUi(private val act: Activity) {
         }
         head = EqRow(act, "Directions area on the driver display", subtitle(), trailing = buttons)
         card.addRow(head)
+        card.addRow(EqRow(
+            act, "Turn card on the driver display",
+            "During a route, the next turn, its distance, the road and your arrival time, drawn over " +
+                "CarPlay's map in the top-left corner of the directions area.",
+            trailing = EqToggle(act, dd.turnCard) { on -> dd.setTurnCard(act, on) },
+        ))
         val edges = listOf("Left", "Top", "Right", "Bottom")
         fun value(i: Int) = when (i) { 0 -> m.left; 1 -> m.top; 2 -> m.right; else -> m.bottom }
         for (i in edges.indices) {
