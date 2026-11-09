@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 239 (`4.0+directions-area`, 2026-11-09; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 240 (`4.0+turns-return`, 2026-11-09; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -266,7 +266,7 @@ high-water mark: versionCode 239 (`4.0+directions-area`, 2026-11-09; `host/gm_cc
      `SERVICE_READY` at 11:59:02), and the page events arrive. Leaving the map page sends
      `FULL_MAP_SELECTED state=0` then `ZONE3_SELECTED state=1`, and GM hides the window; selecting it
      again sends `FULL_MAP_SELECTED state=1 type=NATIVE`, and the map came back within 30 ms
-     (12:12:16). Two faults, fixed after 239: (a) Turn-by-turn in the cluster stood down for the whole
+     (12:12:16). Two faults, fixed in 240: (a) Turn-by-turn in the cluster stood down for the whole
      drive because it keyed on the setting, so off the map page the cluster had no turns
      (`bound=false` on every turn); it now stands down only while CarPlay's map holds the display
      (`DriverDisplay.holdsDisplay`), binds when GM hides the window (sharing the 3-in-10-min rebind
