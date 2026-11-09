@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 240 (`4.0+turns-return`, 2026-11-09; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 241 (`4.0+turn-card`, 2026-11-09; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -276,12 +276,12 @@ high-water mark: versionCode 240 (`4.0+turns-return`, 2026-11-09; `host/gm_ccpa/
      **First drive on 240, 2026-11-09 13:40–13:41 UTC:** leaving the map page bound the cluster turns
      (bound, `navigationStarted`, the owner saw them). But the bootstrap returned CarPlay to the front,
      whose resume reopened the map over the other page; the turns stood down for it and GM hid it
-     1.2 s later (fixed after 240: `DriverDisplay.showOnResume` does not reopen once GM reported the
+     1.2 s later (fixed in 241: `DriverDisplay.showOnResume` does not reopen once GM reported the
      map page left). Then GM took navigation focus 12 ms after `navigationStarted`, and while the
      turns ran it never sent `FULL_MAP_SELECTED` again: only `ZONE3_SELECTED` 0/1 every ~2 s as the
      owner looked for the map page, which they could not get back. On 239, with no turns running,
      the map page came back with `FULL_MAP_SELECTED state=1`. So GM seems to drop or replace the map
-     page while another app navigates. After 240 every page event also logs its extras' values
+     page while another app navigates. From 241 every page event also logs its extras' values
      (numbers and enum names), to tell GM's views apart; the long-press on the strip right of
      CarPlay still reopens the map and ends the turns first.
      **Evening drive on 240, 2026-11-09 22:33–22:41 UTC, confirms it:** GM's map page came back
@@ -289,13 +289,13 @@ high-water mark: versionCode 240 (`4.0+turns-return`, 2026-11-09; `host/gm_ccpa/
      each after full-screen Apple Maps had ended the cluster turns, and never while they ran, through
      a dozen `ZONE3_SELECTED` flips. Three long-presses ended the turns, but GM covered the window
      ~1 s later (the driver was on another page) and the turns restarted 0.2 s after that, so the
-     map page never appeared. Fixed after 240: for 20 s after the long-press a covered window keeps
+     map page never appeared. Fixed in 241: for 20 s after the long-press a covered window keeps
      the turns off, so the map page can be picked; leaving the map page, or 20 s without picking it,
      brings them back (`DriverDisplay.mapWantedUntil`). The bootstrap's resume reopen recurred at
      22:35:31 (fixed in 134c297). GM never asked for a cluster session: all 16 Templates Host
      sessions on record are `displayType=0`, though the service declares `FEATURE_CLUSTER`, so
      CarPlay's map cannot ride GM's own map page through the Car App Library.
-     **Turn card, after 240 (owner's ask, 2026-11-09):** CarPlay's cluster map stream carries the map
+     **Turn card, Play 241 (owner's ask, 2026-11-09):** CarPlay's cluster map stream carries the map
      only (the instruction card is a separate Apple content type, `maps:/car/instrumentcluster/
      instructioncard`, one per stream; a second cluster stream is type 112, never seen on CCPA and
      box work). So the app draws its own card over the map window (`nav/TurnCard`, Settings ▸
