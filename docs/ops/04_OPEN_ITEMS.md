@@ -273,8 +273,17 @@ high-water mark: versionCode 240 (`4.0+turns-return`, 2026-11-09; `host/gm_ccpa/
      budget), and ends navigation before the window is opened again. (b) `ZONE3_SELECTED state=1`
      (GM's side zone) was taken as the map page and reopened the window, which GM hid 1.2 s later;
      only `FULL_MAP_SELECTED`/`APP_SELECTED` return the map now (`DriverDisplay.RETURN_ACTIONS`).
-     Open: whether GM, with our navigation ended, lets the map page show CarPlay's map again, and
-     whether GM's turn display on the other pages takes the turns.
+     **First drive on 240, 2026-11-09 13:40–13:41 UTC:** leaving the map page bound the cluster turns
+     (bound, `navigationStarted`, the owner saw them). But the bootstrap returned CarPlay to the front,
+     whose resume reopened the map over the other page; the turns stood down for it and GM hid it
+     1.2 s later (fixed after 240: `DriverDisplay.showOnResume` does not reopen once GM reported the
+     map page left). Then GM took navigation focus 12 ms after `navigationStarted`, and while the
+     turns ran it never sent `FULL_MAP_SELECTED` again: only `ZONE3_SELECTED` 0/1 every ~2 s as the
+     owner looked for the map page, which they could not get back. On 239, with no turns running,
+     the map page came back with `FULL_MAP_SELECTED state=1`. So GM seems to drop or replace the map
+     page while another app navigates. After 240 every page event also logs its extras' values
+     (numbers and enum names), to tell GM's views apart; the long-press on the strip right of
+     CarPlay still reopens the map and ends the turns first.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

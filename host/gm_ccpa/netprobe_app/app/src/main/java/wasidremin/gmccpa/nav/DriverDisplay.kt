@@ -246,6 +246,7 @@ object DriverDisplay {
         if (now - lastReopenAt < 2_000L) return
         lastReopenAt = now
         launches = 0
+        offMapPage = false
         show(from, why)
     }
     @Volatile private var lastReopenAt = 0L
@@ -283,6 +284,22 @@ object DriverDisplay {
      * selection reopened the map on 2026-11-09 12:12:04 and had it hidden again 1.2 s later.
      */
     internal val RETURN_ACTIONS = setOf("gm.cluster.action.FULL_MAP_SELECTED", "gm.cluster.action.APP_SELECTED")
+    private const val FULL_MAP = "gm.cluster.action.FULL_MAP_SELECTED"
+
+    /**
+     * GM reported the driver leaving the map page (`FULL_MAP_SELECTED state=0`) and not coming back
+     * yet. While set, CarPlay coming to the front does not reopen the map: on 2026-11-09 13:40:30 the
+     * cluster turns' own bootstrap brought CarPlay back to the front, that reopened the map over
+     * GM's other page, the turns stood down for it, and GM hid it again 1.2 s later. Only the map
+     * page selected again ([onGmPage]) or the long-press ([reopen]) brings it back then.
+     */
+    @Volatile private var offMapPage = false
+
+    /** Main thread. CarPlay's screen came to the front: reopen the map unless the driver left its page. */
+    fun showOnResume(from: Context) {
+        if (offMapPage) return
+        show(from, "CarPlay screen in front")
+    }
 
     /**
      * GM's driver display reported a page change ([GmClusterPageService]). Selecting the full-map
@@ -292,7 +309,9 @@ object DriverDisplay {
      * [AUTO_RETURNS_PER_MINUTE] a minute; never when the page left is reported.
      */
     fun onGmPage(ctx: Context, action: String?, selected: Int?, type: String?) {
+        if (action == FULL_MAP && selected == 0) offMapPage = true
         if (action !in RETURN_ACTIONS) return
+        if (selected == 1) offMapPage = false
         if (selected != 1 || !enabled || display == null || size == null) return
         if (DriverDisplayActivity.isOpen()) return
         val now = android.os.SystemClock.elapsedRealtime()

@@ -2016,8 +2016,9 @@ class CarPlayActivity : Activity() {
         applySystemUi()
         MapsWatch.start(this)
         WheelCall.noteScreenFocus(true, "the foreground")
-        // Reopens the driver display's window if it was closed, never one already open.
-        if (wasidremin.gmccpa.ocbm.AdapterSession.sessionUp) wasidremin.gmccpa.nav.DriverDisplay.show(this, "CarPlay screen in front")
+        // Reopens the driver display's window if it was closed, never one already open, and never
+        // while the driver is on another of GM's pages.
+        if (wasidremin.gmccpa.ocbm.AdapterSession.sessionUp) wasidremin.gmccpa.nav.DriverDisplay.showOnResume(this)
     }
 
     override fun onPause() {

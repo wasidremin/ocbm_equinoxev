@@ -47,7 +47,24 @@ class GmClusterPageService : Service() {
             }
         } ?: "none"
         val keys = runCatching { intent.extras?.keySet()?.sorted()?.joinToString(",") }.getOrNull() ?: "unreadable"
-        log.i("GM page event ${intent.action} state=$state type=${type ?: "?"} display[$shown] extras=[$keys]")
+        // The values too, not only the keys: on 2026-11-09 13:40 the map page could not be reached
+        // while the cluster turns ran, and GM sent only ZONE3_SELECTED, whose view and zone values
+        // were not logged. Numbers and enum names only.
+        @Suppress("DEPRECATION")
+        val values = runCatching {
+            val ex = intent.extras ?: return@runCatching "none"
+            ex.keySet().sorted().filter { it != "display_info" && it != "display_info_list" }.joinToString(" ") { k ->
+                val v = ex.get(k)
+                "$k=" + when (v) {
+                    null -> "null"
+                    is Enum<*> -> v.name
+                    is Number, is Boolean -> v.toString()
+                    is String -> "text(${v.length})"
+                    else -> v.javaClass.simpleName
+                }
+            }
+        }.getOrElse { "unreadable (${it.javaClass.simpleName})" }
+        log.i("GM page event ${intent.action} state=$state type=${type ?: "?"} display[$shown] extras=[$keys] values[$values]")
         DriverDisplay.onGmPage(applicationContext, intent.action, state.takeIf { it >= 0 }, type)
     }
 
