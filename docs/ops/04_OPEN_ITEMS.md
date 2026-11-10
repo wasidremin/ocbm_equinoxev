@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 241 (`4.0+turn-card`, 2026-11-09; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 242 (`4.0+card-area`, 2026-11-10; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -306,7 +306,7 @@ high-water mark: versionCode 241 (`4.0+turn-card`, 2026-11-09; `host/gm_ccpa/doc
      **Turn card area (owner, 2026-11-10, after the first 241 drive):** inside the directions area
      the card covered too much of the map, and the strip left of it, above the gauges (they take
      the bottom third), was empty. The card now has its own area (Settings ▸ Navigation ▸ Turn card
-     area: four edge sliders, Left side = 2/6/72/34%, or follow the directions area), applied at once
+     area: four edge sliders, Left side = 2/6/72/34%, or follow the directions area; Play 242), applied at once
      because CarPlay is not told of it, and it shrinks to fit (`TurnCard.box`). Emulator-checked;
      open: whether Left side clears the Equinox's gauges.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
