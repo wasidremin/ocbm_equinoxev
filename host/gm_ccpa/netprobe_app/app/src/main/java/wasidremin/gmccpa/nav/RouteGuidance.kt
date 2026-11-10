@@ -15,6 +15,8 @@ import wasidremin.gmccpa.av.optStringOrNull
  * ## Two record kinds, two different merge rules
  * - `routeGuidance` (`0x5201`, `metadata.rs` `route_guidance`) is the trip summary, about once a
  *   second. It is a DELTA like `nowPlaying`: fields it omits keep their last value.
+ * - `laneGuidance` (`0x5204`, only when Settings ▸ Driver display ▸ Lane guidance asks the adapter for
+ *   the `extended` metadata tier) is one lane of one junction's block; see [mergeLanes].
  * - `maneuver` (`0x5202`, `metadata.rs` `maneuver`) is ONE entry of the route's maneuver list, keyed
  *   by its `index`. iOS streams the whole list near route start, and `0x5201`'s
  *   `currentManeuverIndex` (the first element of RouteGuidanceManeuverCurrentList) says which entry
@@ -49,6 +51,13 @@ class RouteGuidance {
         val cue: String? get() = exitCue(exitInfo, afterRoadName ?: description)
     }
 
+    /**
+     * One lane of a `0x5204` block (`metadata.rs` `lane_guidance`). [status]: 0 do not take, 1 usable,
+     * 2 preferred. [angles] are every direction the lane leads, in degrees from straight ahead;
+     * [highlight] is the one the route takes.
+     */
+    data class Lane(val index: Int, val status: Int, val angles: List<Int> = emptyList(), val highlight: Int? = null)
+
     data class Snapshot(
         /** RouteGuidanceState: 0 no route, 1 route set, 2 arrived, 3 loading, 4 locating, 5 rerouting, 6 proceed to route. */
         val state: Int? = null,
@@ -70,6 +79,8 @@ class RouteGuidance {
         val current: Maneuver? = null,
         /** The turn after it, for a preview step. */
         val next: Maneuver? = null,
+        /** The lanes at the junction iOS is presenting now, left to right; null when it presents none. */
+        val lanes: List<Lane>? = null,
     ) {
         /** A route exists. Arrived counts: the destination card is still worth showing until it ends. */
         val routeActive: Boolean get() = state != null && state != NO_ROUTE
@@ -79,6 +90,10 @@ class RouteGuidance {
     }
 
     private val maneuvers = HashMap<Int, Maneuver>()
+    /** `0x5204` blocks by their LaneGuidanceIndex, each a lane-index -> [Lane] map. */
+    private val laneBlocks = HashMap<Int, java.util.TreeMap<Int, Lane>>()
+    private var laneIndex: Int? = null
+    private var lanesPresented = false
     @Volatile var snapshot: Snapshot = Snapshot(); private set
 
     /**
@@ -91,6 +106,7 @@ class RouteGuidance {
         val next = when (kind) {
             KIND_ROUTE -> mergeRoute(prev, json)
             KIND_MANEUVER -> mergeManeuver(prev, json)
+            KIND_LANES -> mergeLanes(prev, json)
             else -> return null
         }
         snapshot = next
@@ -101,6 +117,7 @@ class RouteGuidance {
     @Synchronized
     fun clear(): Snapshot {
         maneuvers.clear()
+        clearLanes()
         snapshot = Snapshot()
         return snapshot
     }
@@ -110,8 +127,11 @@ class RouteGuidance {
         // Route ended: everything goes, so a stale turn never outlives the route that owned it.
         if (state == NO_ROUTE) {
             maneuvers.clear()
+            clearLanes()
             return Snapshot(state = NO_ROUTE)
         }
+        json.optIntOrNull("laneGuidanceCurrentIndex")?.let { laneIndex = it }
+        json.optIntOrNull("presentLaneGuidance")?.let { lanesPresented = it != 0 }
         // Deliberately NO clear on a route start or a new destination. The list can arrive BEFORE the
         // summary that announces its route, so clearing here would discard the new route's own
         // maneuvers. The clear above already ran when the previous route ended; a reroute or a
@@ -164,6 +184,29 @@ class RouteGuidance {
         return withManeuvers(prev)
     }
 
+    /**
+     * One lane of one block. iOS sends every block of the route at once and names the one it is
+     * presenting in `0x5201` (`laneGuidanceCurrentIndex`, `presentLaneGuidance`). A block is replaced
+     * lane by lane, and trimmed to the count the record carries when a new route's block is shorter.
+     */
+    private fun mergeLanes(prev: Snapshot, json: JSONObject): Snapshot {
+        val block = json.optIntOrNull("guidanceIndex") ?: 0
+        val index = json.optIntOrNull("index") ?: return prev
+        if (laneBlocks.size >= MAX_LANE_BLOCKS && block !in laneBlocks) return prev
+        val lanes = laneBlocks.getOrPut(block) { java.util.TreeMap() }
+        val angles = json.optJSONArray("laneAngles")?.let { a -> (0 until a.length()).map { a.optInt(it) } }
+            ?: listOfNotNull(json.optIntOrNull("laneAngle"))
+        lanes[index] = Lane(index, json.optIntOrNull("laneStatus") ?: 0, angles, json.optIntOrNull("laneAngleHighlight"))
+        json.optIntOrNull("laneCount")?.let { n -> lanes.keys.retainAll { it < n } }
+        return withManeuvers(prev)
+    }
+
+    private fun clearLanes() {
+        laneBlocks.clear()
+        laneIndex = null
+        lanesPresented = false
+    }
+
     /** Resolve [Snapshot.current] / [Snapshot.next] from the index the phone named. */
     private fun withManeuvers(s: Snapshot): Snapshot {
         // Until a 0x5201 names the current index, the lowest entry seen is the best guess — at route
@@ -172,6 +215,7 @@ class RouteGuidance {
         return s.copy(
             current = cur?.let { maneuvers[it] },
             next = cur?.let { maneuvers[it + 1] },
+            lanes = if (lanesPresented) laneIndex?.let { laneBlocks[it] }?.values?.toList()?.takeIf { it.isNotEmpty() } else null,
         )
     }
 
@@ -193,6 +237,9 @@ class RouteGuidance {
 
         const val KIND_ROUTE = "routeGuidance"
         const val KIND_MANEUVER = "maneuver"
+        const val KIND_LANES = "laneGuidance"
+        /** A route sends 9 to 14 blocks (enigy's 2026-10-21 drive); far above that is a runaway stream. */
+        const val MAX_LANE_BLOCKS = 256
 
         const val NO_ROUTE = 0
         const val ROUTE_SET = 1

@@ -47,7 +47,6 @@ object DriverDisplay {
 
     private const val KEY_MARGINS = "directions_margins"
     private const val KEY_TURN_CARD = "turn_card"
-    private const val KEY_CARD_AREA = "turn_card_area"
     /** How long the directions-area outline stays on the driver display after a change. */
     const val PREVIEW_MS = 30_000L
 
@@ -100,55 +99,15 @@ object DriverDisplay {
         DriverDisplayActivity.refreshPreview()
     }
 
-    /**
-     * Where [TurnCard] may sit, as edge margins in percent of the driver display; null keeps it inside
-     * the directions area. It is the app's own drawing, so unlike the directions area it is never
-     * declared to CarPlay and applies at once. Opposite edges always leave [CARD_MIN_SPAN]% between them.
-     */
-    fun cardArea(ctx: Context): Margins? {
-        val raw = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CARD_AREA, null)
-            ?: return null
-        val n = raw.split(',').mapNotNull { it.trim().toIntOrNull() }
-        return if (n.size == 4) cardAreaClamped(Margins(n[0], n[1], n[2], n[3])) else null
-    }
-
-    fun setCardArea(ctx: Context, m: Margins?) {
-        val e = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        val c = m?.let { cardAreaClamped(it) }
-        if (c == null) e.remove(KEY_CARD_AREA) else e.putString(KEY_CARD_AREA, "${c.left},${c.top},${c.right},${c.bottom}")
-        e.apply()
-        previewUntil = android.os.SystemClock.elapsedRealtime() + PREVIEW_MS
-        DriverDisplayActivity.refreshPreview()
-    }
-
-    const val CARD_MIN_SPAN = 10
-    const val CARD_MAX_EDGE = 100 - CARD_MIN_SPAN
-
-    /**
-     * The strip left of the GM layout's directions area (which starts 28% in) and above the Equinox's
-     * gauges, which take the bottom third.
-     */
-    val CARD_LEFT = Margins(left = 2, top = 6, right = 72, bottom = 34)
-
-    /** Pure: each edge 0..[CARD_MAX_EDGE], the right and bottom trimmed to leave [CARD_MIN_SPAN]%. */
-    fun cardAreaClamped(m: Margins): Margins {
-        val l = m.left.coerceIn(0, CARD_MAX_EDGE)
-        val t = m.top.coerceIn(0, CARD_MAX_EDGE)
-        return Margins(l, t, m.right.coerceIn(0, CARD_MAX_EDGE - l), m.bottom.coerceIn(0, CARD_MAX_EDGE - t))
-    }
-
-    /** Pure: the turn card's area in a [size] window: [card] when set, otherwise the directions area. */
-    fun cardRect(size: PixelSize, card: Margins?, directions: Margins): PixelRect {
-        if (card == null) return safeArea(size, directions) ?: PixelRect(0, 0, size.width, size.height)
-        val c = cardAreaClamped(card)
-        val l = size.width * c.left / 100; val r = size.width * c.right / 100
-        val t = size.height * c.top / 100; val b = size.height * c.bottom / 100
-        return PixelRect(l, t, size.width - l - r, size.height - t - b)
-    }
-
     /** Main thread reads it; the window outlines the directions area until then ([setMargins]). */
     @Volatile var previewUntil = 0L
         private set
+
+    /** Settings changed what the window draws: outline it and show sample cards for [PREVIEW_MS]. */
+    fun preview() {
+        previewUntil = SystemClock.elapsedRealtime() + PREVIEW_MS
+        DriverDisplayActivity.refreshPreview()
+    }
 
     /** The directions area to declare for [size], or null for the whole display. */
     fun safeArea(ctx: Context, size: PixelSize): PixelRect? {
@@ -235,6 +194,7 @@ object DriverDisplay {
         if (loaded) return
         enabled = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
         turnCard = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_TURN_CARD, true)
+        ClusterLayout.load(ctx)
         loaded = true
     }
 

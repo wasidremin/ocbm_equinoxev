@@ -298,17 +298,26 @@ high-water mark: versionCode 242 (`4.0+card-area`, 2026-11-10; `host/gm_ccpa/doc
      **Turn card, Play 241 (owner's ask, 2026-11-09):** CarPlay's cluster map stream carries the map
      only (the instruction card is a separate Apple content type, `maps:/car/instrumentcluster/
      instructioncard`, one per stream; a second cluster stream is type 112, never seen on CCPA and
-     box work). So the app draws its own card over the map window (`nav/TurnCard`, Settings ▸
-     Navigation ▸ Turn card on the driver display, default on): the turn's glyph, distance, road and
-     arrival time from `ClusterNav.route`, top-left of the directions area. It needs no GM
+     box work). So the app draws its own card over the map window (`nav/TurnCard`, default on):
+     the turn's glyph, distance, road and (until 2026-11-10) arrival time from `ClusterNav.route`. It needs no GM
      navigation, so on the map page the driver gets the map and the turns without losing the page.
      Emulator-checked with the preview's sample card; open: size and place on the car.
      **Turn card area (owner, 2026-11-10, after the first 241 drive):** inside the directions area
      the card covered too much of the map, and the strip left of it, above the gauges (they take
-     the bottom third), was empty. The card now has its own area (Settings ▸ Navigation ▸ Turn card
-     area: four edge sliders, Left side = 2/6/72/34%, or follow the directions area; Play 242), applied at once
-     because CarPlay is not told of it, and it shrinks to fit (`TurnCard.box`). Emulator-checked;
-     open: whether Left side clears the Equinox's gauges.
+     the bottom third), was empty. Play 242 gave the card an area of four edge sliders.
+     **Driver display layout (owner interview, 2026-11-10; not on Play yet):** the sliders are
+     replaced by Settings ▸ Driver display, a miniature on which each card is dragged and sized
+     (`nav/ClusterLayout`, `ClusterLayoutEditor`). The turn card (`nav/TurnCard`) is a pill far from
+     the turn and a full card inside 800 m, with a countdown bar, a green exit sign and the turn
+     after; the arrival line is gone because Apple's map draws one. New: a now-playing card on the
+     right (`nav/MediaCard`; open with no route, folded to the cover during one), which a call takes
+     over, and lane arrows under the turn card (default off). Cards follow the car's day and night.
+     Lane guidance is the first thing in the app to push metadata tier `extended`
+     (`VehicleConfigYaml.renderAdapter(metadataTier)`); it switches itself off after a session with
+     no metadata. Emulator-checked with the preview's samples. Open, all on the car: whether the
+     default places clear the gauges and Apple's speed-limit sign; the drag in the editor (the bench
+     has no touch); whether this phone accepts `extended` on the wired arm; and the sign of a lane
+     angle (drawn positive = right; the `cluster` log line `lanes: … highlight=` settles it).
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

@@ -4,15 +4,13 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.os.SystemClock
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.View
-import wasidremin.gmccpa.ocbm.PixelRect
-import java.time.Instant
-import java.time.ZoneId
-import java.time.ZoneOffset
+import wasidremin.gmccpa.av.CarNight
 import java.util.Locale
 
 /**
@@ -21,7 +19,12 @@ import java.util.Locale
  * turn display needs an app navigating, which takes GM's map page away (2026-11-09 evening: the page
  * came back only while no turns ran). Drawing the card ourselves keeps GM out of it.
  *
- * Nothing here is logged: road names and arrival times say where someone is going.
+ * A small pill while the turn is far off; inside [NEAR_M] it grows to a full card with a bar that
+ * fills as the turn comes up, the turn after it when the two are close together, and the lanes when
+ * Settings asks the phone for them. A highway exit number shows as a green sign. The arrival time is
+ * not here: Apple's map draws its own arrival strip.
+ *
+ * Nothing here is logged: road names say where someone is going.
  */
 object TurnCard {
     /** What the card shows. Pure, so it is tested without a screen. */
@@ -29,7 +32,15 @@ object TurnCard {
         val icon: String,
         val distance: String?,
         val road: String?,
-        val arrival: String?,
+        /** The highway exit number alone ("273"), for the green sign. */
+        val exit: String? = null,
+        /** Inside [NEAR_M]: the full card. */
+        val near: Boolean = false,
+        /** How much of the last [NEAR_M] is covered, 0..1; null when the phone sent no metres. */
+        val approach: Float? = null,
+        val thenIcon: String? = null,
+        val thenRoad: String? = null,
+        val lanes: List<RouteGuidance.Lane>? = null,
     )
 
     // Apple DistanceUnit (metadata crate types.rs), as NavDistance reads it.
@@ -40,20 +51,53 @@ object TurnCard {
     private const val APPLE_FEET = 4
     private val IMPERIAL_COUNTRIES = setOf("US", "GB", "MM", "LR")
 
-    /**
-     * The card for [s], or null when there is no turn to show. [clock] formats the arrival time in the
-     * car's 12/24-hour setting.
-     */
-    fun content(s: RouteGuidance.Snapshot, nowMs: Long, clock: (Instant, ZoneId) -> String, locale: Locale = Locale.getDefault()): Content? {
+    /** The card grows inside this many metres of the turn (half a mile). */
+    const val NEAR_M = 800L
+    /** The turn after shows when it follows within this many metres (a quarter mile). */
+    const val THEN_M = 400L
+    const val MAX_LANES = 8
+
+    /** The card for [s], or null when there is no turn to show. [lanes] is the Settings switch. */
+    fun content(s: RouteGuidance.Snapshot, lanes: Boolean = false, locale: Locale = Locale.getDefault()): Content? {
         if (!s.showable) return null
         val cur = s.current ?: return null
         val distance = distance(s.distanceToManeuverText, s.distanceToManeuverUnits, s.distanceToManeuverM, locale)
             ?: distance(cur.distanceText, cur.distanceUnits, null, locale)
-        val arrival = s.timeRemainingSec?.takeIf { it >= 0 }?.let { left ->
-            val zone: ZoneId = s.destTimeZoneOffsetMin?.let { ZoneOffset.ofTotalSeconds(it * 60) } ?: ZoneId.systemDefault()
-            "${clock(Instant.ofEpochMilli(nowMs).plusSeconds(left), zone)} · ${duration(left)}"
+        val left = s.distanceToManeuverM?.takeIf { it >= 0 } ?: meters(s.distanceToManeuverText, s.distanceToManeuverUnits)
+        val near = left != null && left <= NEAR_M
+        val exit = exitNumber(cur.exitInfo)
+        val road = (cur.afterRoadName ?: cur.description)?.trim()?.takeIf {
+            it.isNotEmpty() && !it.equals(exit, ignoreCase = true) && !it.equals("Exit $exit", ignoreCase = true)
         }
-        return Content(icon(cur.type, cur.drivingSide), distance, cur.cue?.trim()?.takeIf { it.isNotEmpty() }, arrival)
+        // DistanceBetweenManeuver on the following entry is how far it lies past this turn.
+        val then = s.next?.takeIf { near && (meters(it.distanceText, it.distanceUnits) ?: Long.MAX_VALUE) <= THEN_M }
+        return Content(
+            icon = icon(cur.type, cur.drivingSide),
+            distance = distance,
+            road = road,
+            exit = exit,
+            near = near,
+            approach = left?.takeIf { near }?.let { 1f - it.toFloat() / NEAR_M },
+            thenIcon = then?.let { icon(it.type, it.drivingSide) },
+            thenRoad = then?.let { RouteGuidance.exitCue(it.exitInfo, it.afterRoadName ?: it.description) },
+            lanes = s.lanes?.takeIf { lanes && near && it.size in 2..MAX_LANES },
+        )
+    }
+
+    /** "273" from "273" or "Exit 273"; null when the phone named no exit. */
+    fun exitNumber(exitInfo: String?): String? {
+        val t = exitInfo?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return (if (t.startsWith("exit", ignoreCase = true)) t.substring(4).trim() else t).takeIf { it.isNotEmpty() }
+    }
+
+    /** The phone's display figure in metres ("0.3" + miles -> 483); null when it cannot be read. */
+    fun meters(text: String?, units: Int?): Long? {
+        val v = text?.trim()?.replace(',', '.')?.toDoubleOrNull()?.takeIf { it >= 0 } ?: return null
+        val per = when (units) {
+            APPLE_KM -> 1000.0; APPLE_MILES -> 1609.344; APPLE_METERS -> 1.0; APPLE_YARDS -> 0.9144; APPLE_FEET -> 0.3048
+            else -> return null
+        }
+        return Math.round(v * per)
     }
 
     /** The phone's own figure and unit ("0.3" + miles -> "0.3 mi"); metres only when it sent no text. */
@@ -75,11 +119,6 @@ object TurnCard {
         } else {
             if (m < 1000) "${m / 10 * 10} m" else String.format(Locale.US, "%.1f km", m / 1000.0)
         }
-    }
-
-    fun duration(sec: Long): String {
-        val min = (sec + 30) / 60
-        return if (min < 60) "$min min" else "${min / 60} h ${String.format(Locale.US, "%02d", min % 60)} min"
     }
 
     /**
@@ -107,90 +146,226 @@ object TurnCard {
         }
     }
 
-    /** Shown during the directions-area preview when no route is up, so the card's place can be judged parked. */
-    val SAMPLE = Content("nav_turn_right", "500 ft", "Turn card", "arrival time · 12 min")
-
-    /** Where the card is drawn, in window pixels; [pad] is the inner margin its contents keep. */
-    data class Box(val left: Float, val top: Float, val width: Float, val height: Float, val pad: Float)
-
-    /**
-     * Pure: the card in the top-left corner of [area]. A quarter of the window's height at most, and
-     * smaller when the area is too short or too narrow for it, so it never spills out of the area.
-     */
-    fun box(area: PixelRect, windowHeight: Int): Box? {
-        // The card plus its outer pad on each side: 1.24 h tall, at least 2.44 h wide (2.2 h of card).
-        val h = minOf(windowHeight * 0.25f, area.height / 1.24f, area.width / 2.44f)
-        if (h < 8f) return null
-        val pad = h * 0.12f
-        return Box(area.x + pad, area.y + pad, minOf(area.width - pad * 2, h * 2.9f), h, pad)
-    }
+    /** Shown during a Settings preview when no route is up, so the card's place can be judged parked. */
+    fun sample(lanes: Boolean) = Content(
+        "nav_turn_right", "500 ft", "Turn card", exit = "12", near = true, approach = 0.6f,
+        thenIcon = "nav_turn_left", thenRoad = "the turn after",
+        lanes = if (lanes) listOf(
+            RouteGuidance.Lane(0, 0, listOf(-90)), RouteGuidance.Lane(1, 1, listOf(0)),
+            RouteGuidance.Lane(2, 2, listOf(0, 90), 90), RouteGuidance.Lane(3, 2, listOf(90), 90),
+        ) else null,
+    )
 
     /**
-     * Draws the card in the top-left corner of its area ([DriverDisplay.cardRect]). Polls
-     * [ClusterNav.route] twice a second and redraws only on a new snapshot or a new minute.
+     * Draws the card at its place ([ClusterLayout.Slot.TURN]). Polls [ClusterNav.route] twice a second
+     * and redraws on a new snapshot, a preview, or a change of day and night.
      */
-    class View(ctx: Context, private val area: () -> PixelRect) : android.view.View(ctx) {
-        private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 16, 18, 22) }
-        private val big = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; isFakeBoldText = true }
-        private val mid = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        private val small = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xB8, 0xC2, 0xCC) }
-        private val timeFormat = android.text.format.DateFormat.getTimeFormat(ctx)
+    class View(ctx: Context) : android.view.View(ctx) {
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val bold = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { isFakeBoldText = true }
+        private val plain = TextPaint(Paint.ANTI_ALIAS_FLAG)
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+        private val r = RectF()
+        private val path = Path()
         private var shown: Content? = null
         private var lastSnapshot: RouteGuidance.Snapshot? = null
-        private var lastMinute = -1L
+        private var night = false
+        /** 0 the pill, 1 the full card; eased toward [Content.near]. */
+        private var grown = 0f
+        private var lastFrame = 0L
+        private var lanesLogged: List<RouteGuidance.Lane>? = null
 
         private val tick = object : Runnable {
             override fun run() {
                 val s = ClusterNav.route.snapshot
-                val minute = System.currentTimeMillis() / 60_000
                 val preview = DriverDisplay.previewUntil > SystemClock.elapsedRealtime()
-                if (s !== lastSnapshot || minute != lastMinute || preview || shown === SAMPLE) {
+                if (s !== lastSnapshot || preview || shown != null || night != CarNight.night) {
                     lastSnapshot = s
-                    lastMinute = minute
-                    val c = if (DriverDisplay.turnCard) content(s, System.currentTimeMillis(), ::clock) else null
-                    val next = c ?: if (preview && DriverDisplay.turnCard) SAMPLE else null
-                    if (next != shown) { shown = next; invalidate() }
+                    val on = DriverDisplay.turnCard
+                    val next = (if (on) content(s, ClusterLayout.lanes) else null)
+                        ?: if (preview && on) sample(ClusterLayout.lanes) else null
+                    if (next != shown || night != CarNight.night) {
+                        if (shown == null) grown = if (next?.near == true) 1f else 0f
+                        shown = next; night = CarNight.night; invalidate()
+                    }
+                    logLanes(s)
                 }
                 postDelayed(this, 500)
             }
         }
 
-        private fun clock(at: Instant, zone: ZoneId): String {
-            timeFormat.timeZone = java.util.TimeZone.getTimeZone(zone)
-            return timeFormat.format(java.util.Date(at.toEpochMilli()))
+        /**
+         * Numbers only, once per junction: the turn's type next to the angle its lanes highlight. One
+         * drive settles which sign of a lane angle is right, which no document here records.
+         */
+        private fun logLanes(s: RouteGuidance.Snapshot) {
+            val l = s.lanes ?: return
+            if (l == lanesLogged) return
+            lanesLogged = l
+            wasidremin.gmccpa.ProbeLog.sub("cluster").i(
+                "lanes: ${l.size} at maneuverType=${s.current?.type} status=${l.map { it.status }} highlight=${l.map { it.highlight }}")
         }
 
         override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
         override fun onDetachedFromWindow() { removeCallbacks(tick); super.onDetachedFromWindow() }
 
+        private fun icon(canvas: Canvas, name: String, left: Float, top: Float, size: Float, tint: Int) {
+            val id = resources.getIdentifier(name, "drawable", context.packageName)
+            if (id == 0) return
+            runCatching {
+                context.getDrawable(id)?.mutate()?.let { d ->
+                    d.setTint(tint)
+                    d.setBounds(left.toInt(), top.toInt(), (left + size).toInt(), (top + size).toInt())
+                    d.draw(canvas)
+                }
+            }
+        }
+
+        private fun ellipsized(text: String, paint: TextPaint, width: Float): String =
+            TextUtils.ellipsize(text, paint, maxOf(0f, width), TextUtils.TruncateAt.END).toString()
+
         override fun onDraw(canvas: Canvas) {
             val c = shown ?: return
             if (width == 0 || height == 0) return
-            val b = box(area(), height) ?: return
+            val b = ClusterLayout.rect(width, height, ClusterLayout.Slot.TURN, ClusterLayout.place(context, ClusterLayout.Slot.TURN))
+            val pal = ClusterLayout.palette(night)
             val h = b.height
-            val pad = b.pad
-            val r = RectF(b.left, b.top, b.left + b.width, b.top + h)
-            canvas.drawRoundRect(r, h * 0.14f, h * 0.14f, bg)
-            val iconSize = (h * 0.62f).toInt()
-            val iconLeft = (r.left + pad).toInt()
-            val iconTop = (r.top + (h - iconSize) / 2f).toInt()
-            val id = resources.getIdentifier(c.icon, "drawable", context.packageName)
-            if (id != 0) runCatching {
-                context.getDrawable(id)?.let { d -> d.setBounds(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize); d.draw(canvas) }
+
+            // Ease between the pill and the full card.
+            val now = SystemClock.uptimeMillis()
+            val target = if (c.near) 1f else 0f
+            if (grown != target) {
+                val step = ((now - lastFrame).coerceIn(0, 50)) / 320f
+                grown = if (grown < target) minOf(target, grown + step) else maxOf(target, grown - step)
+                postInvalidateOnAnimation()
             }
-            val textLeft = iconLeft + iconSize + pad
-            val textWidth = r.right - pad - textLeft
-            big.textSize = h * 0.30f
-            mid.textSize = h * 0.17f
-            small.textSize = h * 0.14f
-            var y = r.top + pad + big.textSize * 0.92f
-            canvas.drawText(c.distance ?: "", textLeft, y, big)
-            c.road?.let {
-                y += mid.textSize * 1.35f
-                canvas.drawText(TextUtils.ellipsize(it, mid, textWidth, TextUtils.TruncateAt.END).toString(), textLeft, y, mid)
+            lastFrame = now
+            val t = grown * grown * (3 - 2 * grown)
+
+            val full = t > 0.5f
+            val pad = h * 0.14f
+            fill.color = pal.card
+            if (full) {
+                val ch = h * (0.52f + 0.48f * t)
+                r.set(b.left, b.top, b.left + b.width, b.top + ch)
+                canvas.drawRoundRect(r, h * 0.18f, h * 0.18f, fill)
+                val iconSize = h * 0.56f
+                icon(canvas, c.icon, r.left + pad, r.top + (ch - iconSize) / 2f - h * 0.02f, iconSize, pal.text)
+                val textLeft = r.left + pad + iconSize + pad * 0.8f
+                val textWidth = r.right - pad - textLeft
+                bold.color = pal.text; bold.textSize = h * 0.34f
+                var y = r.top + h * 0.44f
+                canvas.drawText(c.distance ?: "", textLeft, y, bold)
+                y += h * 0.27f
+                var x = textLeft
+                plain.textSize = h * 0.18f
+                c.exit?.let { exit ->
+                    bold.textSize = h * 0.15f; bold.color = Color.WHITE
+                    val label = "EXIT $exit"
+                    val w = bold.measureText(label) + h * 0.12f
+                    fill.color = ClusterLayout.GREEN
+                    r.set(x, y - h * 0.17f, x + w, y + h * 0.06f)
+                    canvas.drawRoundRect(r, h * 0.05f, h * 0.05f, fill)
+                    canvas.drawText(label, x + h * 0.06f, y, bold)
+                    x += w + h * 0.07f
+                }
+                plain.color = pal.dim
+                c.road?.let { canvas.drawText(ellipsized(it, plain, textLeft + textWidth - x), x, y, plain) }
+                c.approach?.let { a ->
+                    val top = b.top + ch - pad * 0.62f
+                    fill.color = pal.track
+                    r.set(textLeft, top, textLeft + textWidth, top + h * 0.035f)
+                    canvas.drawRoundRect(r, h * 0.02f, h * 0.02f, fill)
+                    fill.color = pal.accent
+                    r.right = textLeft + textWidth * a.coerceIn(0f, 1f)
+                    canvas.drawRoundRect(r, h * 0.02f, h * 0.02f, fill)
+                }
+                var below = b.top + ch + h * 0.06f
+                if (c.thenIcon != null) below = drawThen(canvas, c, b.left, below, b.width, h, pal)
+                c.lanes?.let { drawLanes(canvas, it, b.left, below, b.width, h, pal) }
+            } else {
+                val ch = h * (0.52f + 0.48f * t)
+                val iconSize = h * 0.34f
+                bold.color = pal.text; bold.textSize = h * 0.24f
+                plain.color = pal.dim; plain.textSize = h * 0.17f
+                val dist = c.distance ?: ""
+                val distW = bold.measureText(dist)
+                val gap = h * 0.08f
+                val label = c.exit?.let { "Exit $it" } ?: c.road
+                val room = b.width - pad * 2 - iconSize - gap - distW - gap
+                val road = label?.let { ellipsized(it, plain, room) } ?: ""
+                val natural = pad * 2 + iconSize + gap + distW + (if (road.isEmpty()) 0f else gap + plain.measureText(road))
+                val cw = natural + (b.width - natural) * t
+                r.set(b.left, b.top, b.left + cw, b.top + ch)
+                canvas.drawRoundRect(r, h * 0.18f, h * 0.18f, fill)
+                icon(canvas, c.icon, r.left + pad, r.top + (ch - iconSize) / 2f, iconSize, pal.text)
+                val base = r.top + ch / 2f + bold.textSize * 0.35f
+                val x = r.left + pad + iconSize + gap
+                canvas.drawText(dist, x, base, bold)
+                if (road.isNotEmpty()) canvas.drawText(road, x + distW + gap, base, plain)
             }
-            c.arrival?.let {
-                canvas.drawText(TextUtils.ellipsize(it, small, textWidth, TextUtils.TruncateAt.END).toString(), textLeft, r.bottom - pad, small)
+        }
+
+        /** "Then" and the turn after, on a tab under the card. Returns where the next thing starts. */
+        private fun drawThen(canvas: Canvas, c: Content, left: Float, top: Float, maxWidth: Float, h: Float, pal: ClusterLayout.Palette): Float {
+            val th = h * 0.30f
+            val pad = h * 0.10f
+            val iconSize = h * 0.20f
+            plain.textSize = h * 0.15f
+            val lead = "Then"
+            val leadW = plain.measureText(lead)
+            val road = c.thenRoad?.let { ellipsized(it, plain, maxWidth - pad * 3 - leadW - iconSize - pad) } ?: ""
+            val w = pad + leadW + pad * 0.6f + iconSize + (if (road.isEmpty()) 0f else pad * 0.6f + plain.measureText(road)) + pad
+            fill.color = pal.card
+            r.set(left, top, left + w, top + th)
+            canvas.drawRoundRect(r, th * 0.42f, th * 0.42f, fill)
+            val base = top + th / 2f + plain.textSize * 0.35f
+            plain.color = pal.dim
+            canvas.drawText(lead, left + pad, base, plain)
+            val ix = left + pad + leadW + pad * 0.6f
+            icon(canvas, c.thenIcon ?: return top, ix, top + (th - iconSize) / 2f, iconSize, pal.text)
+            plain.color = pal.text
+            if (road.isNotEmpty()) canvas.drawText(road, ix + iconSize + pad * 0.6f, base, plain)
+            return top + th + h * 0.06f
+        }
+
+        /**
+         * One arrow group per lane, left to right. The direction the route takes is drawn in full
+         * colour on the lanes to use; every other direction, and every lane not to take, is faint.
+         * A positive angle is drawn to the right ([logLanes] is how the car confirms it).
+         */
+        private fun drawLanes(canvas: Canvas, lanes: List<RouteGuidance.Lane>, left: Float, top: Float, maxWidth: Float, h: Float, pal: ClusterLayout.Palette) {
+            val sh = h * 0.40f
+            val cell = minOf(h * 0.36f, maxWidth / lanes.size)
+            fill.color = pal.card
+            r.set(left, top, left + cell * lanes.size, top + sh)
+            canvas.drawRoundRect(r, h * 0.10f, h * 0.10f, fill)
+            stroke.strokeWidth = cell * 0.11f
+            lanes.forEachIndexed { i, lane ->
+                val cx = left + cell * (i + 0.5f)
+                val bottom = top + sh * 0.84f
+                val knee = top + sh * 0.52f
+                val reach = sh * 0.30f
+                val angles = lane.angles.ifEmpty { listOf(0) }
+                // Faint first, so the direction to take is drawn over the others.
+                for (pass in 0..1) for (a in angles) {
+                    val take = lane.status != 0 && (lane.highlight == null || a == lane.highlight)
+                    if (take != (pass == 1)) continue
+                    stroke.color = if (take) pal.text else pal.faint
+                    val rad = Math.toRadians(a.coerceIn(-150, 150).toDouble())
+                    val ex = cx + (reach * Math.sin(rad)).toFloat()
+                    val ey = knee - (reach * Math.cos(rad)).toFloat()
+                    path.rewind()
+                    path.moveTo(cx, bottom); path.lineTo(cx, knee); path.lineTo(ex, ey)
+                    // The arrowhead: two barbs back from the tip.
+                    val barb = cell * 0.17f
+                    for (side in intArrayOf(-1, 1)) {
+                        val br = rad + Math.PI + side * 0.6
+                        path.moveTo(ex, ey)
+                        path.lineTo(ex + (barb * Math.sin(br)).toFloat(), ey - (barb * Math.cos(br)).toFloat())
+                    }
+                    canvas.drawPath(path, stroke)
+                }
             }
         }
     }

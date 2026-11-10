@@ -1473,7 +1473,7 @@ class MainActivity : Activity() {
             "open_tab" -> {
                 val tab = i.getIntExtra("tab", 3)
                 val sub = i.getIntExtra("subtab", 0)
-                ui.openTabFromScript(tab, sub)
+                ui.openTabFromScript(tab, sub, i.getIntExtra("scroll", 0))
             }
             // Settings ▸ Phones with two made-up phones, for layout checks with no adapter attached.
             // Display only: Forget on these goes to the real adapter path and finds no link.
@@ -1573,12 +1573,16 @@ class MainActivity : Activity() {
                     dd.setMargins(this, wasidremin.gmccpa.nav.DriverDisplay.Margins(it[0], it[1], it[2], it[3]))
                     emit("driver_display: directions area ${dd.margins(this)}")
                 }
-                // `--es card_area l,t,r,b` (percent) or `none`: the turn card's own area.
-                i.getStringExtra("card_area")?.let { raw ->
+                // `--es turn x,y,scale` / `--es media x,y,scale` (percent) or `reset`: a card's place.
+                val cl = wasidremin.gmccpa.nav.ClusterLayout
+                for (slot in wasidremin.gmccpa.nav.ClusterLayout.Slot.values()) i.getStringExtra(slot.name.lowercase())?.let { raw ->
                     val n = raw.split(',').mapNotNull { it.trim().toIntOrNull() }
-                    dd.setCardArea(this, if (n.size == 4) wasidremin.gmccpa.nav.DriverDisplay.Margins(n[0], n[1], n[2], n[3]) else null)
-                    emit("driver_display: turn card area ${dd.cardArea(this) ?: "inside the directions area"}")
+                    cl.setPlace(this, slot, if (n.size == 3) wasidremin.gmccpa.nav.ClusterLayout.Place(n[0], n[1], n[2]) else null)
+                    emit("driver_display: ${slot.label} card at ${cl.place(this, slot)}")
                 }
+                if (i.hasExtra("lanes")) cl.setLanes(this, i.getBooleanExtra("lanes", false))
+                // `--ez night true|false`: the cards' day or night look, until the car next reports its own.
+                if (i.hasExtra("night")) wasidremin.gmccpa.av.CarNight.night = i.getBooleanExtra("night", false)
                 if (i.getBooleanExtra("reopen", false)) dd.reopen(this, "bench long-press")
                 else {
                     dd.onSubscribe(dd.declare(this))

@@ -632,7 +632,8 @@ class LauncherUi(private val act: Activity) {
         )
         page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow).addRow(driverRow).addRow(evRow))
         page.addView(directionsAreaCard())
-        page.addView(turnCardCard())
+        page.addView(eqSectionLabel(act, "Driver display"))
+        page.addView(driverLayoutCard())
         page.addView(eqSectionLabel(act, "Voice"))
         val role = wasidremin.gmccpa.voice.AssistantRole
         voiceRow = EqRow(
@@ -889,73 +890,68 @@ class LauncherUi(private val act: Activity) {
     }
 
     /**
-     * The turn card ([wasidremin.gmccpa.nav.TurnCard]) and the area it may sit in
-     * ([wasidremin.gmccpa.nav.DriverDisplay.cardArea]): inside the directions area until a slider
-     * moves or Left side is picked. Outlined in amber on the driver display for 30 s after each
-     * change; applies at once, since CarPlay is not told.
+     * What the app draws over CarPlay's map on the driver display ([wasidremin.gmccpa.nav.ClusterLayout]):
+     * a miniature to drag each card on, size buttons for the card last touched, and a switch per
+     * card. All of it is the app's own drawing, so it applies at once; only lane guidance waits for
+     * the next connect, because it changes what the adapter asks the iPhone for.
      */
-    private fun turnCardCard(): EqCard {
+    private fun driverLayoutCard(): EqCard {
         val dd = wasidremin.gmccpa.nav.DriverDisplay
+        val cl = wasidremin.gmccpa.nav.ClusterLayout.also { it.load(act) }
         val card = EqCard(act)
-        var own = dd.cardArea(act)
-        fun shown() = own ?: dd.margins(act)
-        val bars = ArrayList<android.widget.SeekBar>()
-        lateinit var head: EqRow
-        fun subtitle() = (own?.let { "Kept to: $it. " } ?: "Inside the directions area. ") +
-            "The card sits in this area's top-left corner and shrinks to fit it. Outlined in amber " +
-            "on the driver display while CarPlay's map is there. Applies at once."
-        fun apply(to: wasidremin.gmccpa.nav.DriverDisplay.Margins?) {
-            own = to
-            dd.setCardArea(act, to)
-            val m = shown()
-            listOf(m.left, m.top, m.right, m.bottom).forEachIndexed { i, v -> bars.getOrNull(i)?.progress = v }
-            head.setSubtitle(subtitle())
+        lateinit var sizeRow: EqRow
+        lateinit var editor: wasidremin.gmccpa.nav.ClusterLayoutEditor
+        fun sizeText() = cl.place(act, editor.picked).let { "${editor.picked.label} card: ${it.scale}% of its normal size. Touch a card above to pick it." }
+        editor = wasidremin.gmccpa.nav.ClusterLayoutEditor(act) { sizeRow.setSubtitle(sizeText()) }
+        card.addRow(LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(EqTheme.px(28f), EqTheme.px(20f), EqTheme.px(28f), EqTheme.px(8f))
+            addView(EqTheme.text(act, 18f, EqTheme.TEXT_DIM).apply {
+                text = "Drag a card to where it should sit. The cards on the driver display follow, with samples for 30 s."
+            })
+            addView(editor, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(12f) })
+        })
+        fun resize(by: Int) {
+            val p = cl.place(act, editor.picked)
+            cl.setPlace(act, editor.picked, p.copy(scale = p.scale + by))
+            sizeRow.setSubtitle(sizeText())
+            editor.invalidate()
         }
-        card.addRow(EqRow(
-            act, "Turn card on the driver display",
-            "During a route, the next turn, its distance, the road and your arrival time, drawn over CarPlay's map.",
-            trailing = EqToggle(act, dd.turnCard) { on -> dd.setTurnCard(act, on) },
-        ))
-        val buttons = LinearLayout(act).apply {
+        sizeRow = EqRow(act, "Size", sizeText(), trailing = LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(eqButton(act, "Left side", EqButtonStyle.SECONDARY) { apply(dd.CARD_LEFT) })
-            addView(eqButton(act, "Directions area", EqButtonStyle.SECONDARY) { apply(null) },
+            addView(eqButton(act, "Smaller", EqButtonStyle.SECONDARY) { resize(-cl.SCALE_STEP) })
+            addView(eqButton(act, "Larger", EqButtonStyle.SECONDARY) { resize(cl.SCALE_STEP) },
                 LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(12f) })
-        }
-        head = EqRow(act, "Turn card area", subtitle(), trailing = buttons)
-        card.addRow(head)
-        val edges = listOf("Left", "Top", "Right", "Bottom")
-        fun value(m: wasidremin.gmccpa.nav.DriverDisplay.Margins, i: Int) = when (i) { 0 -> m.left; 1 -> m.top; 2 -> m.right; else -> m.bottom }
-        for (i in edges.indices) {
-            val row = LinearLayout(act).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(EqTheme.px(28f), EqTheme.px(8f), EqTheme.px(28f), EqTheme.px(8f))
-            }
-            val label = EqTheme.text(act, 18f, EqTheme.TEXT).apply { text = "${edges[i]}: ${value(shown(), i)}%" }
-            row.addView(label)
-            val bar = android.widget.SeekBar(act).apply {
-                max = dd.CARD_MAX_EDGE; progress = value(shown(), i); contentDescription = "Turn card area ${edges[i]}"
-                setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(b: android.widget.SeekBar, v: Int, user: Boolean) {
-                        if (!user) { label.text = "${edges[i]}: $v%"; return }
-                        // Opposite edges keep CARD_MIN_SPAN between them: hold this one back.
-                        val m = shown()
-                        val room = dd.CARD_MAX_EDGE - value(m, (i + 2) % 4)
-                        val kept = v.coerceAtMost(room)
-                        own = when (i) { 0 -> m.copy(left = kept); 1 -> m.copy(top = kept); 2 -> m.copy(right = kept); else -> m.copy(bottom = kept) }
-                        dd.setCardArea(act, own)
-                        label.text = "${edges[i]}: $kept%"
-                        if (kept != v) b.progress = kept
-                        head.setSubtitle(subtitle())
-                    }
-                    override fun onStartTrackingTouch(b: android.widget.SeekBar) = Unit
-                    override fun onStopTrackingTouch(b: android.widget.SeekBar) = Unit
-                })
-            }
-            row.addView(bar, LinearLayout.LayoutParams(-1, EqTheme.px(48f)))
-            bars += bar
-            card.addRow(row)
-        }
+            addView(eqButton(act, "Reset", EqButtonStyle.SECONDARY) {
+                for (slot in wasidremin.gmccpa.nav.ClusterLayout.Slot.values()) cl.setPlace(act, slot, null)
+                sizeRow.setSubtitle(sizeText())
+                editor.invalidate()
+            }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(12f) })
+        })
+        card.addRow(sizeRow)
+        card.addRow(EqRow(
+            act, "Turn card",
+            "During a route: a small pill with the next turn, growing to a full card in the last half mile, with " +
+                "the exit number and the turn after it. Apple's map shows the arrival time.",
+            trailing = EqToggle(act, dd.turnCard) { on -> dd.setTurnCard(act, on); editor.invalidate() },
+        ))
+        card.addRow(EqRow(
+            act, "Now playing",
+            "Cover, title, artist and progress. Stays open with no route; during a route it opens for 8 s on a " +
+                "new song, then folds to the cover.",
+            trailing = EqToggle(act, cl.media) { on -> cl.setMedia(act, on); editor.invalidate() },
+        ))
+        card.addRow(EqRow(
+            act, "Call status",
+            "A ringing or active call takes the now-playing card's place, with who it is and how long it has run.",
+            trailing = EqToggle(act, cl.call) { on -> cl.setCall(act, on); editor.invalidate() },
+        ))
+        lateinit var lanesRow: EqRow
+        lanesRow = EqRow(
+            act, "Lane guidance", cl.lanesText(),
+            trailing = EqToggle(act, cl.lanes) { on -> cl.setLanes(act, on); lanesRow.setSubtitle(cl.lanesText()) },
+        )
+        card.addRow(lanesRow)
         return card
     }
 
@@ -1479,7 +1475,7 @@ class LauncherUi(private val act: Activity) {
         if (i > 0) parent.getChildAt(i - 1).visibility = row.visibility
     }
 
-    fun openTabFromScript(index: Int, subtab: Int = 0) = act.runOnUiThread {
+    fun openTabFromScript(index: Int, subtab: Int = 0, scrollY: Int = 0) = act.runOnUiThread {
         settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
         introRestore?.let { intro.removeCallbacks(it) }
         hideIntroLayer()
@@ -1487,6 +1483,8 @@ class LauncherUi(private val act: Activity) {
         if (index == 3 && ::insightsPage.isInitialized) {
             insightsPage.selectSubtab(subtab)
         }
+        // Bench only: a section far down a page, for a layout check without touch.
+        if (scrollY > 0 && ::scroller.isInitialized) scroller.post { scroller.scrollTo(0, scrollY) }
     }
 
     private fun openIntroSettings() {

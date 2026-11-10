@@ -45,6 +45,9 @@ class NowPlayingState {
     private val tally = SyncTally()
     private var sessionRecords = 0L
     private var sessionArtwork = 0L
+    /** Any JSON record at all this session: a quiet phone still sends call and route state. */
+    @Volatile private var sessionAnyRecord = false
+    private var sessionOpen = false
     private var firstRecordAtMs = 0L
     // This object is PROCESS-wide (CarPlayActivity.nowPlaying), so the clock has to be re-based by
     // [beginSession] — measured from construction, "first record N s after the seam opened" read
@@ -181,6 +184,18 @@ class NowPlayingState {
 
     @Volatile var snapshot: Snapshot = Snapshot(); private set
     private val calls = mutableMapOf<String, Int>()
+    /** Who each call is with, for the driver display's call card. Shown, never logged. */
+    private val callNames = mutableMapOf<String, String>()
+    private var callStartedAtMs = 0L
+
+    /** What the driver display's call card shows: the phase, the other party, and when it was answered. */
+    data class CallCard(val phase: CallPhase, val name: String?, val activeSinceMs: Long)
+
+    @Synchronized fun callCard(): CallCard {
+        val phase = callPhaseOf(calls)
+        val id = calls.entries.firstOrNull { it.value == 2 }?.key ?: calls.keys.firstOrNull()
+        return CallCard(phase, id?.let { callNames[it] }, callStartedAtMs)
+    }
     @Volatile var onCallChanged: (() -> Unit)? = null
 
     @Synchronized fun phoneAction(): Byte? = when {
@@ -201,9 +216,15 @@ class NowPlayingState {
             val status = json.optInt("status", -1)
             if (status !in 0..6) return
             val id = json.optString("callUuid").ifEmpty { json.optString("remoteId", "unknown") }
-            if (status == 0 && id == "unknown") calls.clear()
-            else if (status == 0 || status == 6) calls.remove(id)
-            else calls[id] = status
+            val before = callPhaseOf(calls)
+            if (status == 0 && id == "unknown") { calls.clear(); callNames.clear() }
+            else if (status == 0 || status == 6) { calls.remove(id); callNames.remove(id) }
+            else {
+                calls[id] = status
+                (json.optStringOrNull("displayName") ?: json.optStringOrNull("remoteId"))?.let { callNames[id] = it }
+            }
+            val after = callPhaseOf(calls)
+            if (after == CallPhase.ACTIVE && before != CallPhase.ACTIVE) callStartedAtMs = android.os.SystemClock.elapsedRealtime()
         }
         log.i("call-state: action=${phoneAction()}")
         onCallChanged?.invoke()
@@ -227,6 +248,9 @@ class NowPlayingState {
      */
     @Volatile var onNavRecord: ((kind: String, json: JSONObject) -> Unit)? = null
 
+    /** A session of [SILENT_SESSION_MS] or longer ended without a single metadata record. */
+    @Volatile var onSilentSession: (() -> Unit)? = null
+
     /** The session ended ([clear]). Same reasoning as [onNavRecord]. */
     @Volatile var onCleared: ((why: String) -> Unit)? = null
 
@@ -238,11 +262,12 @@ class NowPlayingState {
         when (marker) {
             MetadataSeam.META_JSON -> {
                 val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull() ?: return
+                sessionAnyRecord = true
                 // The seam also carries routeGuidance, maneuver, callState, artworkReady and more.
                 // Navigation goes to [onNavRecord] (the cluster turn-by-turn, wasidremin.gmccpa.nav);
                 // callState drives the call pill; everything else is counted and dropped.
                 val kind = json.optString("kind")
-                if (kind == "routeGuidance" || kind == "maneuver") {
+                if (kind == "routeGuidance" || kind == "maneuver" || kind == "laneGuidance") {
                     noteNavRecord()
                     runCatching { onNavRecord?.invoke(kind, json) }
                         .onFailure { log.e("nav consumer threw: ${it.javaClass.simpleName}: ${it.message}") }
@@ -377,6 +402,8 @@ class NowPlayingState {
         firstRecordAtMs = 0L
         sessionRecords = 0L
         sessionArtwork = 0L
+        sessionAnyRecord = false
+        sessionOpen = true
         tally.clear()
         silentLogged = false
     }
@@ -388,10 +415,16 @@ class NowPlayingState {
      * way [dispatch] does, so a consumer cannot re-enter under the monitor.
      */
     fun clear(why: String) {
+        var silent = false
         val cleared = synchronized(this) {
             art.clear()
             lengthAhead.clear()
             calls.clear()
+            callNames.clear()
+            // A session that ran for a while and never produced one record is what a rejected
+            // Identify looks like from here; whoever changed the Identify decides what to do.
+            if (sessionOpen && !sessionAnyRecord && System.currentTimeMillis() - sessionStartMs >= SILENT_SESSION_MS) silent = true
+            sessionOpen = false
             snapshot = Snapshot()
             log.i("np: cleared — $why")
             // Session totals, because the 30 s beats summed over a drive are harder to read than
@@ -408,6 +441,7 @@ class NowPlayingState {
             snapshot
         }
         onCallChanged?.invoke()
+        if (silent) runCatching { onSilentSession?.invoke() }
         runCatching { onCleared?.invoke(why) }
             .onFailure { log.e("clear consumer threw: ${it.javaClass.simpleName}: ${it.message}") }
         emit(cleared)
@@ -433,6 +467,7 @@ class NowPlayingState {
     companion object {
         /** Beat period for the `np: sync` line. Long enough not to matter for size at 227 MB/h. */
         const val BEAT_MS = 30_000L
+        const val SILENT_SESSION_MS = 90_000L
 
         const val STOP = 0
         const val PLAY = 1

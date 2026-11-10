@@ -607,6 +607,11 @@ object VehicleConfigYaml {
         cluster: PixelSize? = null,
         /** The driver display's directions area, in [cluster] pixels; null for the whole display. */
         clusterSafe: PixelRect? = null,
+        /**
+         * The metadata tier ([wasidremin.gmccpa.nav.ClusterLayout.metadataTier]): `extended` only when
+         * lane guidance on the driver display asks for it.
+         */
+        metadataTier: String = "proven",
     ): ByteArray {
         require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
             "iapConfig must be a whole top-level block ending in a newline"
@@ -635,7 +640,7 @@ object VehicleConfigYaml {
         // the adapter network. [structuralError] checks the result before it is sent.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
         val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony && physicalWidthMm == 0 && physicalHeightMm == 0 &&
-            viewArea2 == null && cluster == null) pinned
+            viewArea2 == null && cluster == null && metadataTier == "proven") pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
@@ -650,6 +655,7 @@ object VehicleConfigYaml {
                 viewAreaAnimMs = viewArea2?.let { viewAreaAnimMs },
                 cluster = cluster,
                 clusterSafe = clusterSafe?.takeIf { cluster != null },
+                metadataTier = metadataTier,
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

@@ -6,28 +6,64 @@ import org.junit.Test
 import java.util.Locale
 
 class TurnCardTest {
-    private val clock = { at: java.time.Instant, zone: java.time.ZoneId ->
-        java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(at)
-    }
+    private fun far(m: Long, next: RouteGuidance.Maneuver? = null, lanes: List<RouteGuidance.Lane>? = null) = RouteGuidance.Snapshot(
+        state = RouteGuidance.ROUTE_SET,
+        distanceToManeuverText = "0.3", distanceToManeuverUnits = 1, distanceToManeuverM = m,
+        current = RouteGuidance.Maneuver(index = 2, type = 2, afterRoadName = "Main St"),
+        next = next, lanes = lanes,
+    )
 
-    @Test fun theCardCarriesThePhonesOwnDistanceTheCueAndTheArrival() {
-        val s = RouteGuidance.Snapshot(
-            state = RouteGuidance.ROUTE_SET,
-            timeRemainingSec = 12 * 60L,
-            distanceToManeuverText = "0.3", distanceToManeuverUnits = 1,
-            destTimeZoneOffsetMin = 0,
-            current = RouteGuidance.Maneuver(index = 2, type = 2, afterRoadName = "Main St"),
-        )
-        val c = TurnCard.content(s, 0L, clock)!!
+    @Test fun farOffTheCardIsThePhonesDistanceAndTheRoad() {
+        val c = TurnCard.content(far(3000))!!
         assertEquals("nav_turn_right", c.icon)
         assertEquals("0.3 mi", c.distance)
         assertEquals("Main St", c.road)
-        assertEquals("00:12 · 12 min", c.arrival)
+        assertEquals(false, c.near)
+        assertNull(c.approach)
+        assertNull(c.exit)
+    }
+
+    @Test fun insideHalfAMileTheCardGrowsAndCountsDown() {
+        val c = TurnCard.content(far(200))!!
+        assertEquals(true, c.near)
+        assertEquals(0.75f, c.approach!!, 0.001f)
+        // No metres from the phone: its display figure decides (0.3 mi = 483 m).
+        val text = TurnCard.content(far(3000).copy(distanceToManeuverM = null))!!
+        assertEquals(true, text.near)
+        assertEquals(483L, TurnCard.meters("0.3", 1))
+        assertNull(TurnCard.meters("0.3", null))
+    }
+
+    @Test fun theTurnAfterShowsOnlyWhenNearAndClose() {
+        val close = RouteGuidance.Maneuver(index = 3, type = 1, afterRoadName = "Oak Ave", distanceText = "500", distanceUnits = 4)
+        val c = TurnCard.content(far(200, close))!!
+        assertEquals("nav_turn_left", c.thenIcon)
+        assertEquals("Oak Ave", c.thenRoad)
+        assertNull(TurnCard.content(far(3000, close))!!.thenIcon)
+        assertNull(TurnCard.content(far(200, close.copy(distanceText = "2", distanceUnits = 1)))!!.thenIcon)
+        assertNull(TurnCard.content(far(200, close.copy(distanceText = null)))!!.thenIcon)
+    }
+
+    @Test fun theExitNumberIsASignNotARoad() {
+        val s = far(3000).let { it.copy(current = it.current!!.copy(exitInfo = "Exit 273", afterRoadName = "273")) }
+        val c = TurnCard.content(s)!!
+        assertEquals("273", c.exit)
+        assertNull(c.road)
+        assertEquals("12B", TurnCard.exitNumber(" 12B "))
+        assertNull(TurnCard.exitNumber(" "))
+    }
+
+    @Test fun lanesShowOnlyWhenAskedForAndNear() {
+        val lanes = listOf(RouteGuidance.Lane(0, 0, listOf(-90)), RouteGuidance.Lane(1, 2, listOf(0, 90), 90))
+        assertEquals(lanes, TurnCard.content(far(200, lanes = lanes), lanes = true)!!.lanes)
+        assertNull(TurnCard.content(far(200, lanes = lanes))!!.lanes)
+        assertNull(TurnCard.content(far(3000, lanes = lanes), lanes = true)!!.lanes)
+        assertNull(TurnCard.content(far(200, lanes = lanes.take(1)), lanes = true)!!.lanes)
     }
 
     @Test fun noRouteNoCard() {
-        assertNull(TurnCard.content(RouteGuidance.Snapshot(state = RouteGuidance.NO_ROUTE), 0L, clock))
-        assertNull(TurnCard.content(RouteGuidance.Snapshot(state = RouteGuidance.ROUTE_SET), 0L, clock))
+        assertNull(TurnCard.content(RouteGuidance.Snapshot(state = RouteGuidance.NO_ROUTE)))
+        assertNull(TurnCard.content(RouteGuidance.Snapshot(state = RouteGuidance.ROUTE_SET)))
     }
 
     @Test fun distancesFallBackToMetresInTheLocalesUnits() {
@@ -47,42 +83,40 @@ class TurnCardTest {
         assertEquals("nav_roundabout_cw", TurnCard.icon(30, 1))
         assertEquals("nav_destination", TurnCard.icon(12, 0))
         assertEquals("nav_straight", TurnCard.icon(99, 0))
-        assertEquals("1 h 05 min", TurnCard.duration(65 * 60L))
     }
 
-    @Test fun theCardAreaFollowsTheDirectionsAreaUntilSet() {
-        val size = wasidremin.gmccpa.ocbm.PixelSize(2000, 810)
-        val gm = DriverDisplay.GM_LAYOUT
-        assertEquals(DriverDisplay.safeArea(size, gm), DriverDisplay.cardRect(size, null, gm))
-        assertEquals(wasidremin.gmccpa.ocbm.PixelRect(0, 0, 2000, 810), DriverDisplay.cardRect(size, null, DriverDisplay.Margins()))
-        // Left side: 40..560 across, 48..534 down, left of the directions area and above the gauges.
-        val left = DriverDisplay.cardRect(size, DriverDisplay.CARD_LEFT, gm)
-        assertEquals(wasidremin.gmccpa.ocbm.PixelRect(40, 48, 520, 487), left)
-        assertEquals(true, left.right <= DriverDisplay.safeArea(size, gm)!!.x)
-    }
-
-    @Test fun oppositeEdgesAlwaysLeaveTenPercent() {
-        val c = DriverDisplay.cardAreaClamped(DriverDisplay.Margins(left = 95, top = 50, right = 50, bottom = 60))
-        assertEquals(DriverDisplay.Margins(left = 90, top = 50, right = 0, bottom = 40), c)
-    }
-
-    @Test fun theCardShrinksToItsArea() {
-        // Roomy: a quarter of the window high, 2.9 times as wide.
-        val big = TurnCard.box(wasidremin.gmccpa.ocbm.PixelRect(0, 0, 2000, 810), 810)!!
-        assertEquals(202.5f, big.height, 0.01f)
-        assertEquals(202.5f * 2.9f, big.width, 0.01f)
-        // The left strip: narrower than 2.9 h, so the width gives, the height does not.
-        val strip = wasidremin.gmccpa.ocbm.PixelRect(40, 48, 520, 487)
-        val b = TurnCard.box(strip, 810)!!
-        assertEquals(202.5f, b.height, 0.01f)
-        assertEquals(true, b.left + b.width + b.pad <= strip.right + 0.01f)
-        // Short or narrow areas shrink the card; it never leaves them.
-        for (a in listOf(wasidremin.gmccpa.ocbm.PixelRect(0, 0, 2000, 120), wasidremin.gmccpa.ocbm.PixelRect(10, 10, 300, 600))) {
-            val s = TurnCard.box(a, 810)!!
-            assertEquals(true, s.top + s.height + s.pad <= a.y + a.height + 0.01f)
-            assertEquals(true, s.left + s.width + s.pad <= a.right + 0.01f)
-            assertEquals(true, s.width >= s.height * 2.2f - 0.01f)
+    @Test fun aCardAndWhatHangsUnderItStayOnTheDisplay() {
+        val turn = ClusterLayout.Slot.TURN
+        val b = ClusterLayout.rect(2000, 810, turn, turn.default)
+        assertEquals(178.2f, b.height, 0.01f)
+        assertEquals(178.2f * 2.9f, b.width, 0.01f)
+        // Left of GM's directions area, which starts 28% across.
+        assertEquals(true, b.left + b.width <= 2000 * 0.28f)
+        assertEquals(40f, b.left, 0.01f)
+        // Above the Equinox's gauges, which take the bottom third.
+        assertEquals(true, b.top + b.height * turn.stack <= 810 * 0.66f)
+        // Dragged off the corner: pushed back in, stack and all.
+        val corner = ClusterLayout.rect(2000, 810, turn, ClusterLayout.Place(100, 100))
+        assertEquals(2000f, corner.left + corner.width, 0.01f)
+        assertEquals(810f, corner.top + corner.height * turn.stack, 0.01f)
+        // Too big to fit: shrunk, never clipped.
+        for (slot in ClusterLayout.Slot.values()) {
+            val big = ClusterLayout.rect(2000, 810, slot, ClusterLayout.Place(50, 50, 900))
+            assertEquals(true, big.left >= 0f && big.left + big.width <= 2000.01f)
+            assertEquals(true, big.top >= 0f && big.top + big.height * slot.stack <= 810.01f)
+            assertEquals(slot.aspect, big.width / big.height, 0.01f)
         }
-        assertNull(TurnCard.box(wasidremin.gmccpa.ocbm.PixelRect(0, 0, 10, 10), 810))
+        assertEquals(ClusterLayout.Place(0, 100, ClusterLayout.MIN_SCALE), ClusterLayout.Place(-5, 140, 10).clamped())
+    }
+
+    @Test fun nowPlayingOpensOnANewSongAndFoldsDuringARoute() {
+        assertEquals(MediaCard.Mode.HIDDEN, MediaCard.mode(false, false, 0))
+        assertEquals(MediaCard.Mode.OPEN, MediaCard.mode(true, false, 60_000))
+        assertEquals(MediaCard.Mode.OPEN, MediaCard.mode(true, true, MediaCard.OPEN_MS - 1))
+        assertEquals(MediaCard.Mode.CHIP, MediaCard.mode(true, true, MediaCard.OPEN_MS))
+        assertEquals(0.25f, MediaCard.progress(30_000, 120_000)!!, 0.001f)
+        assertNull(MediaCard.progress(30_000, 0))
+        assertEquals("1:05", MediaCard.callTime(65_000))
+        assertEquals("1:01:05", MediaCard.callTime(3_665_000))
     }
 }

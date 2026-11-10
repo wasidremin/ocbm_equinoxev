@@ -1238,6 +1238,8 @@ class OcbmProbe(context: Context) {
                 viewAreaAnimMs = wasidremin.gmccpa.pane.SplitPane.TRANSITION_MS,
                 cluster = cluster,
                 clusterSafe = cluster?.let { wasidremin.gmccpa.nav.DriverDisplay.safeArea(ctx, it) },
+                // Lanes are drawn on the driver display only, so the larger Identify is asked for only with it.
+                metadataTier = if (cluster != null) wasidremin.gmccpa.nav.ClusterLayout.metadataTier else "proven",
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)

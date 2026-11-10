@@ -54,6 +54,16 @@ class DriverDisplayConfigTest {
         assertTrue("\n  - videoStreamID: VideoStream.Alt1\n" !in VehicleConfigYaml.render(VehicleConfigSpec()))
     }
 
+    /** Lane guidance asks for the extended tier; everything else leaves the proven one. */
+    @Test fun laneGuidanceRaisesTheTier() {
+        val proven = VehicleConfigYaml.render(VehicleConfigSpec())
+        val extended = VehicleConfigYaml.render(VehicleConfigSpec(metadataTier = "extended"))
+        assertTrue(proven.contains("\nmetadata:\n  tier: proven\n"))
+        assertTrue(extended.contains("\nmetadata:\n  tier: extended\n"))
+        assertTrue("tier: proven" !in extended)
+        assertNotNull(runCatching { VehicleConfigSpec(metadataTier = "rx-only") }.exceptionOrNull())
+    }
+
     @Test fun anOddOrHugeClusterIsRefusedBeforeTheWire() {
         assertNotNull(runCatching { VehicleConfigSpec(cluster = PixelSize(2001, 810)) }.exceptionOrNull())
         assertNotNull(runCatching { VehicleConfigSpec(cluster = PixelSize(2000, 1700)) }.exceptionOrNull())

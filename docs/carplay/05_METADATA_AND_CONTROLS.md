@@ -1167,8 +1167,12 @@ JunctionType(9), ExitInfo(13). Wire-verified live values in `WIRED_NAV_METADATA.
   PresentLaneGuidance(18) next to the existing VisibleInApp(15): iOS sends every 0x5204 block of a
   route at once and says here which one it is presenting.
 - `lane_guidance()` adds `laneCount` and `laneAngles` (every direction a lane leads) to each record.
-  0x5204 itself arrives only at the `extended` tier, which the GM app does not push (lanes cannot show
-  on the Equinox's cluster, `docs/host/02_GM_AAOS_FIELD_REFERENCE.md`).
+  0x5204 itself arrives only at the `extended` tier. The GM app pushes `proven` unless Settings ▸
+  Driver display ▸ Lane guidance is on (default off, 2026-11-10), when it pushes `extended` and draws
+  the lanes itself under its turn card on the driver display (`nav/TurnCard`); GM's own cluster
+  cannot show them (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`). Not yet run against a phone from the
+  app, and the sign of `laneAngle` is not recorded anywhere on disk: the app draws positive to the
+  right and logs the numbers to check it.
 The GM app uses the exit label: the cluster's road text reads "Exit 273 · Wade Green Rd".
 
 **Extra offer gate for nav** [E — `WIRED_NAV_METADATA.md` §"offer gate"]: beyond declaring 0x5201/0x5202

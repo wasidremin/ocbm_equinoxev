@@ -72,6 +72,11 @@ import wasidremin.gmccpa.ocbm.Ocbm
  * Serialising on one thread also makes the last write win, which is what we want when a gear change
  * and a theme change land together.
  */
+/** The car's day/night state as [VehicleStateWatcher] last resolved it, for drawing that follows CarPlay's. */
+object CarNight {
+    @Volatile var night = false
+}
+
 class VehicleStateWatcher(private val ctx: Context) {
     private val log = ProbeLog.sub("vhcl")
     private val io = Executors.newSingleThreadScheduledExecutor { r ->
@@ -141,6 +146,7 @@ class VehicleStateWatcher(private val ctx: Context) {
     private fun applyNightProp(on: Boolean) {
         if (propNight != on) {
             propNight = on
+            CarNight.night = on
             log.i("NIGHT_MODE property -> $on")
             reassert("night-prop")
         }
@@ -169,6 +175,7 @@ class VehicleStateWatcher(private val ctx: Context) {
     fun start() {
         if (car != null) return
         uiNight = isNight(ctx.resources.configuration)
+        desiredNight()
         log.i("night(uiMode)=$uiNight at start")
         var gearOk = false
         var nightOk = false
@@ -247,6 +254,7 @@ class VehicleStateWatcher(private val ctx: Context) {
         val n = isNight(cfg)
         if (n != uiNight) {
             uiNight = n
+            desiredNight()
             log.i("night(uiMode) -> $n${if (propNight != null) " (ignored: NIGHT_MODE property wins)" else ""}")
             reassert("uiMode")
         }
@@ -287,7 +295,7 @@ class VehicleStateWatcher(private val ctx: Context) {
      * `uiMode` is kept as the fallback rather than deleted: it costs nothing, needs no permission,
      * and is the right answer on a head unit that DOES wire it.
      */
-    private fun desiredNight(): Boolean = propNight ?: uiNight
+    private fun desiredNight(): Boolean = (propNight ?: uiNight).also { CarNight.night = it }
 
     private fun reassert(why: String, attempt: Int = 0) {
         if (!sessionUp) return

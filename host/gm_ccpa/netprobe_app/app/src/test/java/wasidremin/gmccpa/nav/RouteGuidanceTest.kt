@@ -137,4 +137,28 @@ class RouteGuidanceTest {
         assertEquals("Exit 273", RouteGuidance.exitCue("273", "273"))
         assertNull(RouteGuidance.exitCue(null, null))
     }
+
+    private fun RouteGuidance.lane(json: String) = onRecord(RouteGuidance.KIND_LANES, JSONObject("""{"kind":"laneGuidance",$json}"""))
+
+    @Test fun lanesFollowTheBlockThePhonePresents() {
+        val r = RouteGuidance()
+        r.turn(""""index":0,"maneuverType":2""")
+        r.lane(""""guidanceIndex":4,"index":1,"laneStatus":2,"laneAngles":[0,90],"laneAngleHighlight":90""")
+        r.lane(""""guidanceIndex":4,"index":0,"laneStatus":0,"laneAngle":-90""")
+        r.lane(""""guidanceIndex":5,"index":0,"laneStatus":1,"laneAngle":0""")
+        r.route(""""routeGuidanceState":1,"currentManeuverIndex":0""")
+        // Sent, but not presented yet.
+        assertNull(r.snapshot.lanes)
+        r.route(""""routeGuidanceState":1,"laneGuidanceCurrentIndex":4,"presentLaneGuidance":1""")
+        assertEquals(
+            listOf(RouteGuidance.Lane(0, 0, listOf(-90)), RouteGuidance.Lane(1, 2, listOf(0, 90), 90)),
+            r.snapshot.lanes,
+        )
+        r.route(""""routeGuidanceState":1,"presentLaneGuidance":0""")
+        assertNull(r.snapshot.lanes)
+        r.route(""""routeGuidanceState":1,"laneGuidanceCurrentIndex":4,"presentLaneGuidance":1""")
+        r.route(""""routeGuidanceState":0""")
+        r.route(""""routeGuidanceState":1,"laneGuidanceCurrentIndex":4,"presentLaneGuidance":1""")
+        assertNull(r.snapshot.lanes)
+    }
 }

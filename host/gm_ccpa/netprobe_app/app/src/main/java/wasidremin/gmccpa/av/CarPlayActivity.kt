@@ -405,6 +405,7 @@ class CarPlayActivity : Activity() {
             // path already clears this object, so hooking the clear covers all of them.
             onNavRecord = { kind, json -> wasidremin.gmccpa.nav.ClusterNav.onRecord(kind, json) }
             onCleared = { why -> wasidremin.gmccpa.nav.ClusterNav.onSessionEnded(why) }
+            onSilentSession = { wasidremin.gmccpa.nav.ClusterLayout.onSilentSession() }
         }
 
         /**
