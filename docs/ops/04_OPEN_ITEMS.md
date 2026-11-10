@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 242 (`4.0+card-area`, 2026-11-10; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 243 (`4.0+cluster-layout`, 2026-11-10; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -305,7 +305,7 @@ high-water mark: versionCode 242 (`4.0+card-area`, 2026-11-10; `host/gm_ccpa/doc
      **Turn card area (owner, 2026-11-10, after the first 241 drive):** inside the directions area
      the card covered too much of the map, and the strip left of it, above the gauges (they take
      the bottom third), was empty. Play 242 gave the card an area of four edge sliders.
-     **Driver display layout (owner interview, 2026-11-10; not on Play yet):** the sliders are
+     **Driver display layout (owner interview, 2026-11-10; Play 243):** the sliders are
      replaced by Settings ▸ Driver display, a miniature on which each card is dragged and sized
      (`nav/ClusterLayout`, `ClusterLayoutEditor`). The turn card (`nav/TurnCard`) is a pill far from
      the turn and a full card inside 800 m, with a countdown bar, a green exit sign and the turn
