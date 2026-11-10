@@ -1573,6 +1573,12 @@ class MainActivity : Activity() {
                     dd.setMargins(this, wasidremin.gmccpa.nav.DriverDisplay.Margins(it[0], it[1], it[2], it[3]))
                     emit("driver_display: directions area ${dd.margins(this)}")
                 }
+                // `--es card_area l,t,r,b` (percent) or `none`: the turn card's own area.
+                i.getStringExtra("card_area")?.let { raw ->
+                    val n = raw.split(',').mapNotNull { it.trim().toIntOrNull() }
+                    dd.setCardArea(this, if (n.size == 4) wasidremin.gmccpa.nav.DriverDisplay.Margins(n[0], n[1], n[2], n[3]) else null)
+                    emit("driver_display: turn card area ${dd.cardArea(this) ?: "inside the directions area"}")
+                }
                 if (i.getBooleanExtra("reopen", false)) dd.reopen(this, "bench long-press")
                 else {
                     dd.onSubscribe(dd.declare(this))

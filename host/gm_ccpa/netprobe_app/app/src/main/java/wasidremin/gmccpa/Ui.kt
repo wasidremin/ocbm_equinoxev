@@ -632,6 +632,7 @@ class LauncherUi(private val act: Activity) {
         )
         page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow).addRow(driverRow).addRow(evRow))
         page.addView(directionsAreaCard())
+        page.addView(turnCardCard())
         page.addView(eqSectionLabel(act, "Voice"))
         val role = wasidremin.gmccpa.voice.AssistantRole
         voiceRow = EqRow(
@@ -841,7 +842,7 @@ class LauncherUi(private val act: Activity) {
         val bars = ArrayList<Pair<android.widget.SeekBar, TextView>>()
         lateinit var head: EqRow
         fun subtitle() = (if (m.isZero) "Whole display. " else "Kept clear: $m. ") +
-            "Keeps CarPlay's map controls and the turn card clear of the gauges; the map still fills the display. " +
+            "Keeps CarPlay's map controls clear of the gauges; the map still fills the display. " +
             "The outline shows on the driver display while CarPlay's map is there. Applies at the next connect."
         fun apply(to: wasidremin.gmccpa.nav.DriverDisplay.Margins) {
             m = to
@@ -857,12 +858,6 @@ class LauncherUi(private val act: Activity) {
         }
         head = EqRow(act, "Directions area on the driver display", subtitle(), trailing = buttons)
         card.addRow(head)
-        card.addRow(EqRow(
-            act, "Turn card on the driver display",
-            "During a route, the next turn, its distance, the road and your arrival time, drawn over " +
-                "CarPlay's map in the top-left corner of the directions area.",
-            trailing = EqToggle(act, dd.turnCard) { on -> dd.setTurnCard(act, on) },
-        ))
         val edges = listOf("Left", "Top", "Right", "Bottom")
         fun value(i: Int) = when (i) { 0 -> m.left; 1 -> m.top; 2 -> m.right; else -> m.bottom }
         for (i in edges.indices) {
@@ -888,6 +883,77 @@ class LauncherUi(private val act: Activity) {
             }
             row.addView(bar, LinearLayout.LayoutParams(-1, EqTheme.px(48f)))
             bars += bar to label
+            card.addRow(row)
+        }
+        return card
+    }
+
+    /**
+     * The turn card ([wasidremin.gmccpa.nav.TurnCard]) and the area it may sit in
+     * ([wasidremin.gmccpa.nav.DriverDisplay.cardArea]): inside the directions area until a slider
+     * moves or Left side is picked. Outlined in amber on the driver display for 30 s after each
+     * change; applies at once, since CarPlay is not told.
+     */
+    private fun turnCardCard(): EqCard {
+        val dd = wasidremin.gmccpa.nav.DriverDisplay
+        val card = EqCard(act)
+        var own = dd.cardArea(act)
+        fun shown() = own ?: dd.margins(act)
+        val bars = ArrayList<android.widget.SeekBar>()
+        lateinit var head: EqRow
+        fun subtitle() = (own?.let { "Kept to: $it. " } ?: "Inside the directions area. ") +
+            "The card sits in this area's top-left corner and shrinks to fit it. Outlined in amber " +
+            "on the driver display while CarPlay's map is there. Applies at once."
+        fun apply(to: wasidremin.gmccpa.nav.DriverDisplay.Margins?) {
+            own = to
+            dd.setCardArea(act, to)
+            val m = shown()
+            listOf(m.left, m.top, m.right, m.bottom).forEachIndexed { i, v -> bars.getOrNull(i)?.progress = v }
+            head.setSubtitle(subtitle())
+        }
+        card.addRow(EqRow(
+            act, "Turn card on the driver display",
+            "During a route, the next turn, its distance, the road and your arrival time, drawn over CarPlay's map.",
+            trailing = EqToggle(act, dd.turnCard) { on -> dd.setTurnCard(act, on) },
+        ))
+        val buttons = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(eqButton(act, "Left side", EqButtonStyle.SECONDARY) { apply(dd.CARD_LEFT) })
+            addView(eqButton(act, "Directions area", EqButtonStyle.SECONDARY) { apply(null) },
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(12f) })
+        }
+        head = EqRow(act, "Turn card area", subtitle(), trailing = buttons)
+        card.addRow(head)
+        val edges = listOf("Left", "Top", "Right", "Bottom")
+        fun value(m: wasidremin.gmccpa.nav.DriverDisplay.Margins, i: Int) = when (i) { 0 -> m.left; 1 -> m.top; 2 -> m.right; else -> m.bottom }
+        for (i in edges.indices) {
+            val row = LinearLayout(act).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(EqTheme.px(28f), EqTheme.px(8f), EqTheme.px(28f), EqTheme.px(8f))
+            }
+            val label = EqTheme.text(act, 18f, EqTheme.TEXT).apply { text = "${edges[i]}: ${value(shown(), i)}%" }
+            row.addView(label)
+            val bar = android.widget.SeekBar(act).apply {
+                max = dd.CARD_MAX_EDGE; progress = value(shown(), i); contentDescription = "Turn card area ${edges[i]}"
+                setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(b: android.widget.SeekBar, v: Int, user: Boolean) {
+                        if (!user) { label.text = "${edges[i]}: $v%"; return }
+                        // Opposite edges keep CARD_MIN_SPAN between them: hold this one back.
+                        val m = shown()
+                        val room = dd.CARD_MAX_EDGE - value(m, (i + 2) % 4)
+                        val kept = v.coerceAtMost(room)
+                        own = when (i) { 0 -> m.copy(left = kept); 1 -> m.copy(top = kept); 2 -> m.copy(right = kept); else -> m.copy(bottom = kept) }
+                        dd.setCardArea(act, own)
+                        label.text = "${edges[i]}: $kept%"
+                        if (kept != v) b.progress = kept
+                        head.setSubtitle(subtitle())
+                    }
+                    override fun onStartTrackingTouch(b: android.widget.SeekBar) = Unit
+                    override fun onStopTrackingTouch(b: android.widget.SeekBar) = Unit
+                })
+            }
+            row.addView(bar, LinearLayout.LayoutParams(-1, EqTheme.px(48f)))
+            bars += bar
             card.addRow(row)
         }
         return card

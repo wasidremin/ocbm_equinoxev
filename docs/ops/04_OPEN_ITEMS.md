@@ -303,6 +303,12 @@ high-water mark: versionCode 241 (`4.0+turn-card`, 2026-11-09; `host/gm_ccpa/doc
      arrival time from `ClusterNav.route`, top-left of the directions area. It needs no GM
      navigation, so on the map page the driver gets the map and the turns without losing the page.
      Emulator-checked with the preview's sample card; open: size and place on the car.
+     **Turn card area (owner, 2026-11-10, after the first 241 drive):** inside the directions area
+     the card covered too much of the map, and the strip left of it, above the gauges (they take
+     the bottom third), was empty. The card now has its own area (Settings ▸ Navigation ▸ Turn card
+     area: four edge sliders, Left side = 2/6/72/34%, or follow the directions area), applied at once
+     because CarPlay is not told of it, and it shrinks to fit (`TurnCard.box`). Emulator-checked;
+     open: whether Left side clears the Equinox's gauges.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

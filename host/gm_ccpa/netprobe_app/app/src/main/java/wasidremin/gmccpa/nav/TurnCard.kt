@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.View
+import wasidremin.gmccpa.ocbm.PixelRect
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -109,11 +110,26 @@ object TurnCard {
     /** Shown during the directions-area preview when no route is up, so the card's place can be judged parked. */
     val SAMPLE = Content("nav_turn_right", "500 ft", "Turn card", "arrival time · 12 min")
 
+    /** Where the card is drawn, in window pixels; [pad] is the inner margin its contents keep. */
+    data class Box(val left: Float, val top: Float, val width: Float, val height: Float, val pad: Float)
+
     /**
-     * Draws the card in the top-left corner of the directions area. Polls [ClusterNav.route] twice a
-     * second and redraws only on a new snapshot or a new minute.
+     * Pure: the card in the top-left corner of [area]. A quarter of the window's height at most, and
+     * smaller when the area is too short or too narrow for it, so it never spills out of the area.
      */
-    class View(ctx: Context, private val area: () -> android.graphics.Rect) : android.view.View(ctx) {
+    fun box(area: PixelRect, windowHeight: Int): Box? {
+        // The card plus its outer pad on each side: 1.24 h tall, at least 2.44 h wide (2.2 h of card).
+        val h = minOf(windowHeight * 0.25f, area.height / 1.24f, area.width / 2.44f)
+        if (h < 8f) return null
+        val pad = h * 0.12f
+        return Box(area.x + pad, area.y + pad, minOf(area.width - pad * 2, h * 2.9f), h, pad)
+    }
+
+    /**
+     * Draws the card in the top-left corner of its area ([DriverDisplay.cardRect]). Polls
+     * [ClusterNav.route] twice a second and redraws only on a new snapshot or a new minute.
+     */
+    class View(ctx: Context, private val area: () -> PixelRect) : android.view.View(ctx) {
         private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 16, 18, 22) }
         private val big = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; isFakeBoldText = true }
         private val mid = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
@@ -150,12 +166,10 @@ object TurnCard {
         override fun onDraw(canvas: Canvas) {
             val c = shown ?: return
             if (width == 0 || height == 0) return
-            val a = area()
-            val h = height * 0.25f
-            val pad = h * 0.12f
-            val w = minOf(a.width().toFloat() - pad * 2, h * 2.9f)
-            if (w <= h) return
-            val r = RectF(a.left + pad, a.top + pad, a.left + pad + w, a.top + pad + h)
+            val b = box(area(), height) ?: return
+            val h = b.height
+            val pad = b.pad
+            val r = RectF(b.left, b.top, b.left + b.width, b.top + h)
             canvas.drawRoundRect(r, h * 0.14f, h * 0.14f, bg)
             val iconSize = (h * 0.62f).toInt()
             val iconLeft = (r.left + pad).toInt()

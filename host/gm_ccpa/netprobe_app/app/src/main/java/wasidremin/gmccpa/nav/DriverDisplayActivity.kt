@@ -25,16 +25,17 @@ import java.lang.ref.WeakReference
 class DriverDisplayActivity : Activity() {
     private val log = ProbeLog.sub("cluster")
     private var outline: Outline? = null
+    private var card: TurnCard.View? = null
 
     companion object {
         @Volatile private var open: WeakReference<DriverDisplayActivity>? = null
 
         fun isOpen(): Boolean = open?.get()?.let { !it.isFinishing && !it.isDestroyed } == true
 
-        /** Settings changed the directions area: outline it now, for [DriverDisplay.PREVIEW_MS]. */
+        /** Settings changed an area: outline it and move the card now, for [DriverDisplay.PREVIEW_MS]. */
         fun refreshPreview() {
             val a = open?.get() ?: return
-            a.runOnUiThread { a.outline?.invalidate() }
+            a.runOnUiThread { a.outline?.invalidate(); a.card?.invalidate() }
         }
 
         fun closeOpen(why: String) {
@@ -54,9 +55,10 @@ class DriverDisplayActivity : Activity() {
         val root = FrameLayout(this)
         root.addView(v, FrameLayout.LayoutParams(-1, -1))
         // Above the SurfaceView's hole: a SurfaceView draws below its window by default.
-        // The turn card first, so the preview's shade and outline draw over it.
-        root.addView(TurnCard.View(this) { directionsArea(root.width, root.height) }, FrameLayout.LayoutParams(-1, -1))
+        // The turn card last, so the preview's shade does not dim it where it sits outside the
+        // directions area.
         outline = Outline(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
+        card = TurnCard.View(this) { cardArea(root.width, root.height) }.also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
         setContentView(root)
         DriverDisplay.size?.let { v.holder.setFixedSize(it.width, it.height) }
         v.holder.addCallback(object : SurfaceHolder.Callback {
@@ -87,11 +89,14 @@ class DriverDisplayActivity : Activity() {
     /**
      * The directions area being set in Settings, drawn over the map for [DriverDisplay.PREVIEW_MS]
      * after each change. What it outlines is what the next connect declares; until then CarPlay
-     * still lays out for the previous one.
+     * still lays out for the previous one. A turn card area of its own is outlined in amber.
      */
     private class Outline(ctx: Context) : View(ctx) {
         private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE; strokeWidth = 6f; color = Color.rgb(0x4C, 0xC2, 0xFF)
+        }
+        private val cardLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 6f; color = Color.rgb(0xFF, 0xB3, 0x40)
         }
         private val shade = Paint().apply { color = Color.argb(110, 0, 0, 0) }
 
@@ -107,19 +112,24 @@ class DriverDisplayActivity : Activity() {
             canvas.drawRect(r.right, r.top, width.toFloat(), r.bottom, shade)
             r.inset(3f, 3f)
             canvas.drawRect(r, line)
+            if (DriverDisplay.turnCard) DriverDisplay.cardArea(context)?.let { m ->
+                val c = DriverDisplay.cardRect(wasidremin.gmccpa.ocbm.PixelSize(width, height), m, DriverDisplay.margins(context))
+                val cr = android.graphics.RectF(c.x.toFloat(), c.y.toFloat(), c.right.toFloat(), (c.y + c.height).toFloat())
+                cr.inset(3f, 3f)
+                canvas.drawRect(cr, cardLine)
+            }
             postInvalidateDelayed(left + 50)
         }
     }
 
-    /** The directions area in this window's pixels; the whole window when none is set. */
-    private fun directionsArea(w: Int, h: Int): android.graphics.Rect {
-        val a = DriverDisplay.safeArea(wasidremin.gmccpa.ocbm.PixelSize(w and 1.inv(), h and 1.inv()), DriverDisplay.margins(this))
-            ?: return android.graphics.Rect(0, 0, w, h)
-        return android.graphics.Rect(a.x, a.y, a.right, a.y + a.height)
-    }
+    /** The turn card's area in this window's pixels: its own when set, else the directions area. */
+    private fun cardArea(w: Int, h: Int): wasidremin.gmccpa.ocbm.PixelRect =
+        DriverDisplay.cardRect(wasidremin.gmccpa.ocbm.PixelSize(w and 1.inv(), h and 1.inv()),
+            DriverDisplay.cardArea(this), DriverDisplay.margins(this))
 
     override fun onDestroy() {
         outline = null
+        card = null
         if (open?.get() === this) open = null
         AdapterSession.detachCluster("map window closed")
         log.i("map window closed")
