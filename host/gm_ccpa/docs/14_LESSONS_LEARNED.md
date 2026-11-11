@@ -378,14 +378,20 @@ odometer absent (PERF_ODOMETER is `ABSENT_FROM_PROPERTY_LIST`: CAR_MILEAGE is
 signature|privileged, denied to third-party apps — five other permissions share that fate:
 CAR_TIRES, CAR_DYNAMICS_STATE, READ_CAR_STEERING, CAR_DRIVING_STATE, CAR_IDENTIFICATION).
 EV_BATTERY_LEVEL is energy in Wh against INFO_EV_BATTERY_CAPACITY 84,590 Wh (SoC% is derived,
-never sensed); EV_BATTERY_INSTANTANEOUS_CHARGE_RATE is signed mW (negative = discharge) and
-integrates to gross discharge/regen Wh; RANGE_REMAINING is the GOM in meters. The car reports
+never sensed); EV_BATTERY_INSTANTANEOUS_CHARGE_RATE is declared as signed mW (negative =
+discharge) but **reads 0 on this car**: it was 0 in every sample of the four weeks of probe data
+checked 2026-11-10 (2026-10-13 → 11-10), so nothing may be integrated from it. Power and gross
+discharge/regen come from the change in EV_BATTERY_LEVEL instead (10 Wh steps; §13.4).
+RANGE_REMAINING is the GOM in meters. The car reports
 DISTANCE_DISPLAY_UNITS=36 (MILES), so US Imperial is the default unit system with a Metric
 toggle. `report.json` already embeds `rawLiveEvents`, so the loader accepts segments with or
 without `events.ndjson` — the 106-segment emulator seed set is straight server files renamed to
 segment directories (no conversion step to rot).
 
 ### 13.2 Four sub-tabs, one persisted unit switch
+
+*(2026-11-11: these four views are now the inner views of the **Diagnostics** tab — Vehicle state,
+Sessions, Signals, Segments. The page's first four tabs are the trip views of §13.4.)*
 
 Overview (SoC gauge with 80 % target tick from EV_CHARGE_PERCENT_LIMIT, live state KPIs, fleet
 rollup, speed-band distribution bar, distance-source cross-validation card, SoC%/range trend),
@@ -409,6 +415,57 @@ from the test run); the structural cause is other tenants' dev stacks (evinsight
 suite (daemons linger), or `--no-daemon` the test run, and treat screenshots as perishable
 evidence — this v209 went out with JVM-green tests and a clean kotlinc compile but no fresh
 screenshots, which is recorded here rather than implied otherwise.
+
+### 13.4 2026-11-11: a permanent drive log, and four tabs built on it
+
+**Why.** The workbench of §13.2 could only describe the newest 48 one-minute segments, so it had
+nothing to say about yesterday, let alone "how did today compare". It was a signal viewer, not
+something to come back to.
+
+**The log (`telemetry/TripLog.kt`).** `TripRecorder` is fed the property and GPS callbacks
+`VehicleProbe` already receives and reduces each drive and each charge to one `Trip`; `TripStore`
+appends it to `insights/trips.ndjson` beside (not inside) the pruned `telemetry` directory, and
+keeps the drive in progress in `insights/open.json` (rewritten every 20 s, because the head unit
+is usually killed minutes after parking). Four weeks of the owner's driving replay to 114 drives
+and 26 charge records in 34 KB, so a year is well under 1 MB. The file is **never uploaded and
+never pruned**; it holds each drive's start and end coordinates (that is how repeated routes are
+found), which is why it stays on the head unit. It is written only while the probe captures, i.e.
+with "EV Insights auto-upload" on, and has coordinates only with "Include route GPS" on.
+
+Recorder rules, all constants in `TripRecorder`: moving is |speed| > 0.3 m/s; a drive closes after
+240 s still and is kept from 500 m; distance is the speed integral with steps capped at 10 s;
+energy is the battery level's change, with its rises and falls summed separately as regeneration
+and discharge; the opening 3 km is recorded separately (`warmM`/`warmWh`), as is energy used
+standing still; a charge is a rise of at least 300 Wh in CHARGING state, or any rise of 2 kWh or
+more found across a gap the head unit slept through (`gap = true`: only before and after are
+known). The probe's `location` event also gained `altitudeMeters` and `bearingDegrees`; the
+recorder turns altitude into climb and descent per drive.
+
+**The analysis (`telemetry/TripStats.kt`, pure).** A route is a start place and an end place
+(250 m radius) with lengths within 12%; labels are neutral ("Route A", "Route A back") and can be
+renamed on the head unit. Each drive is judged against the best available baseline, in order:
+this route at this temperature (a per-route Wh/km-per-°C fit), this route's median, then drives of
+similar length; within 5% is "typical". Warm-up is attributed only when the rest of the drive is
+at least as long as the opening stretch (`canSplitWarmUp`, i.e. from about 6 km) — on a 4.7 km
+drive the first version blamed 54% of the energy on warm-up with a mile of road to compare it to.
+Charge records within 20 min are joined into sessions. Cost counts 10% charger loss
+(`CHARGER_EFFICIENCY`); MPGe uses 33.705 kWh per gallon.
+
+**The page (`InsightsTripsUi.kt`, `InsightsUi.kt`).** Tabs: **Last drive** (efficiency against
+typical with the baseline named, where the energy went as one split bar, recent drives, today),
+**Routes** (best/typical/worst/last, a run-by-run trend, the temperature cost in plain words,
+rename), **Charging** (electricity rate, gas price and comparison mpg as settings that start
+blank or at 30 mpg; this month and each month; where the charge limit stops; the charge log),
+**Week** (this week against the same days of last week, daily distance for four weeks, personal
+bests), **Diagnostics** (§13.2, plus the log's size and "Clear drive history"). `refresh()` loads
+in two phases: the log is read and the trip tabs drawn first, then the segments are scanned — the
+scan took about 45 s on the emulator and the first version held the whole page behind it.
+
+**Verified:** `TripLogTest` and `TripStatsTest` in the JVM suite, plus a replay of the four weeks
+of probe data through the recorder (env `TRIP_REPLAY_TSV`/`TRIP_REPLAY_OUT`, `TRIP_STATS_LOG`;
+the data stays off the repo). All five tabs were rendered on the AAOS emulator from that replayed
+log. **Not verified:** anything on the car — the log there starts empty with the first drive after
+the update, since the head unit installs only from Play and its history is not seeded.
 
 ---
 

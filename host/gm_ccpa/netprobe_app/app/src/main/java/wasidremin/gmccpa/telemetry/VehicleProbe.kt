@@ -58,6 +58,11 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private var autoStreamMode = false
     private var sessionBootId: String? = null
     private var gpsStats = ProbeStats()
+    // The permanent drive and charge log (TripLog.kt). Fed from the same callbacks as the segment
+    // files, on this worker thread; unlike them it is never uploaded and never pruned.
+    private val tripStore = TripStore(TripStore.dirUnder(context.getExternalFilesDir(null) ?: context.filesDir))
+    private val trips = TripRecorder(tzMin = { java.util.TimeZone.getDefault().getOffset(it) / 60_000 }) { tripStore.append(it) }
+    private var tripCheckpointMs = 0L
     @Volatile var connected = false; private set
     @Volatile var parked = false; private set
     @Volatile var capturing = false; private set
@@ -72,8 +77,25 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
         try { block() } catch (t: Exception) { fail(where, t) }
         catch (t: LinkageError) { fail(where, t) }
     }
+    /** Feed the drive log; a fault there must never take the capture down with it. */
+    private inline fun tripLog(block: (Long) -> Unit) {
+        try {
+            val t = System.currentTimeMillis()
+            block(t)
+            if (SystemClock.elapsedRealtime() - tripCheckpointMs >= TRIP_CHECKPOINT_MS) saveTripCheckpoint(t)
+        } catch (t: Exception) { fail("drive log", t) }
+    }
+    /** The head unit is usually killed minutes after parking, so the open drive is written down often. */
+    private fun saveTripCheckpoint(t: Long = System.currentTimeMillis()) {
+        try {
+            trips.tick(t)
+            tripStore.saveCheckpoint(trips.checkpoint())
+            tripCheckpointMs = SystemClock.elapsedRealtime()
+        } catch (e: Exception) { fail("drive log checkpoint", e) }
+    }
     fun open() = worker.post {
         if (closed) return@post
+        attempt("restore drive log") { trips.restore(tripStore.loadCheckpoint(), System.currentTimeMillis()) }
         permissions = permissionSnapshot(context)
         if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
             beginReport(); save()
@@ -172,6 +194,9 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
                 }
                 a.put("initialRead", read)
                 areaData.put(a)
+                // Static properties (the pack's capacity) never call back: the census read is the only one.
+                if (id in TRIP_CENSUS_IDS && read.optString("result") == "READABLE" && read.optInt("status", -1) == 0)
+                    tripLog { t -> trips.onProperty(t, id, read.opt("value")) }
             }
             properties.put(JSONObject().put("id", id).put("hexId", ProbeModel.hex(id)).put("name", name)
                 .put("group", ProbeModel.group(id)).put("javaType", config.propertyType.name)
@@ -323,6 +348,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
         chunkEvents = 0
         bytes = 0
         lastFlushMs = SystemClock.elapsedRealtime()
+        saveTripCheckpoint()
         beginReport()
         try {
             events = File(directory, "events.ndjson").bufferedWriter()
@@ -355,6 +381,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
                     event("PROPERTY", JSONObject().put("id", value.propertyId).put("hexId", ProbeModel.hex(value.propertyId))
                         .put("areaId", value.areaId).put("status", value.status).put("timestampNanos", value.timestamp)
                         .put("value", ProbeModel.jsonValue(value.value)), at)
+                    if (value.status == 0 && value.value != null) tripLog { t -> trips.onProperty(t, value.propertyId, value.value) }
                     // Flush immediately on GEAR_SELECTION -> PARK transition during auto-stream so finished trips land right away
                     if (autoStreamMode && value.propertyId == 289408000 && (value.value as? Number)?.toInt() == 4 && chunkEvents >= 2) {
                         worker.postDelayed({ if (capturing && !closed && chunkEvents > 0) rotateAndEnqueueChunk("parked gear transition") }, 2500L)
@@ -375,7 +402,13 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
             event("LOCATION_RAW_PRIVACY_SENSITIVE", JSONObject().put("provider", location.provider)
                 .put("latitude", location.latitude).put("longitude", location.longitude)
                 .put("accuracyMeters", location.accuracy).put("speedMps", if (location.hasSpeed()) location.speed else JSONObject.NULL)
+                .put("altitudeMeters", if (location.hasAltitude()) location.altitude else JSONObject.NULL)
+                .put("bearingDegrees", if (location.hasBearing()) location.bearing else JSONObject.NULL)
                 .put("locationElapsedRealtimeNanos", location.elapsedRealtimeNanos).put("locationWallTimeMillis", location.time), at)
+            // Delivered on this same worker thread (the listener is registered on thread.looper).
+            tripLog { t -> trips.onLocation(t, location.latitude, location.longitude,
+                if (location.hasAccuracy()) location.accuracy.toDouble() else null,
+                if (location.hasAltitude()) location.altitude else null) }
         }
         override fun onProviderEnabled(provider: String) { if (capturing) event("LOCATION_PROVIDER_ENABLED", JSONObject().put("provider", provider)) }
         override fun onProviderDisabled(provider: String) { if (capturing) event("LOCATION_PROVIDER_DISABLED", JSONObject().put("provider", provider)) }
@@ -425,6 +458,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
         attempt("close events") { events?.close() }; events = null
         attempt("close CSV") { csv?.close() }; csv = null
         if (wasCapturing) {
+            saveTripCheckpoint()
             ended = now()
             report.put("captureEndWallTime", ended).put("captureStopReason", reason)
                 .put("captureEndElapsedRealtimeNanos", SystemClock.elapsedRealtimeNanos())
@@ -548,6 +582,8 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
         thread.quitSafely()
     }
     companion object {
+        private const val TRIP_CHECKPOINT_MS = 20_000L
+        private val TRIP_CENSUS_IDS = setOf(InsightsData.CAPACITY_WH, InsightsData.CHARGE_LIMIT_PCT, InsightsData.CHARGE_STATE)
         // API-35 PUBLIC SDK constants; literal permission strings allow undefined names to be reported.
         private val compileIds = ProbeModel.compileIds
         fun propertyName(id: Int): String = try { VehiclePropertyIds.toString(id) } catch (_: LinkageError) {

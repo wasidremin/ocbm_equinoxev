@@ -276,7 +276,7 @@ closing an idle screen destroys its bound service. Process kill may leave flushe
 raw files but an incomplete summary; no restart/resume is automatic.
 
 Speed is m/s, range m, odometer km, battery level Wh (not percent), charge rate
-mW, temperature Celsius, tire pressure kPa, dimensions mm. WHEEL_TICK's Android
+mW (declared; it reads 0 throughout on the Equinox EV, `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.1), temperature Celsius, tire pressure kPa, dimensions mm. WHEEL_TICK's Android
 contract is cumulative signed counts `[reset, FL, FR, RR, RL]`; config `[wheel mask,
 micrometers/tick FL, FR, RR, RL]`. Changed reset counts invalidate comparisons,
 and user-start reset is specified, not vehicle-proven. Observe forward/reverse,

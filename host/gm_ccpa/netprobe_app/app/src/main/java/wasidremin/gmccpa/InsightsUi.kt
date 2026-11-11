@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import wasidremin.gmccpa.telemetry.InsightsData
 import wasidremin.gmccpa.telemetry.InsightsData.UnitSystem
+import wasidremin.gmccpa.telemetry.TripStore
 import java.io.File
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -26,21 +27,19 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * The "Insights" settings page: an in-car EV telemetry workbench built from this head unit's own
- * probe captures (`report.json` + `events.ndjson`), bringing the `evinsights` analytics engine
- * directly onto the 17.7" Equinox EV display.
+ * The "Insights" settings page, on the 17.7" Equinox EV display.
  *
- * Four sub-tabs:
- *   0. Overview — live vehicle snapshot (SoC% + kWh, range, charge/regen power, speed, temp, gear),
- *      battery gauge with 80% target marker, lifetime fleet rollup, speed-band distribution bar,
- *      distance-source cross-validation (WHEEL_TICK vs PERF_VEHICLE_SPEED vs GPS), and SoC trend.
- *   1. Drives & Charging — every contiguous drive and charging session (grouped by `bootId`) with
- *      full efficiency (`Wh/km` & `mi/kWh`), regen recovery %, GOM range accuracy, and interactive
- *      session time-series charts (SoC & Range, Speed & Power, GPS route trace).
- *   2. Signals — VHAL signal health & frequency census across all 37 vehicle properties and 15
- *      automotive permissions (callbacks, observed Hz, min/max, live status).
- *   3. Segments — individual 60-second probe chunks with upload status and one-tap inspection into
- *      the segment's high-resolution time series.
+ * Four tabs are drawn from the permanent on-car drive log ([TripStore]: one small record per drive
+ * and per charge, never uploaded) by [InsightsTrips]:
+ *   0. Last drive — the report card: efficiency against what is typical for that route and
+ *      temperature, where the energy went, recent drives, today.
+ *   1. Routes — repeated routes found on the car, each with best / typical / worst and its history.
+ *   2. Charging — prices, this month's energy and cost, the charge log, where the limit stops.
+ *   3. Week — this week against last, four weeks of daily distance, personal bests.
+ *
+ * The fifth, Diagnostics, is the telemetry workbench built from the probe's own 60-second segments
+ * (`report.json` + `events.ndjson`, the newest 48 kept): latest vehicle state, the sessions those
+ * segments span, the VHAL signal census, and single segments. It also owns "Clear drive history".
  *
  * Loading runs off the UI thread ([refresh]); chart geometry math ([chartGeom], [routeGeom]) is
  * pure for JVM tests.
@@ -57,6 +56,10 @@ class InsightsPage(
     private val contentHost = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
 
     private var currentSubtab = 0
+    private var diagnosticsTab = 0
+    private val tripStore = TripStore(TripStore.dirUnder(dataRoot.parentFile ?: dataRoot))
+    private val trips = InsightsTrips(act, contentHost, tripStore, units = { units },
+        rerender = { renderCurrent() }, reload = { refresh() }, selectTab = { selectSubtab(it) })
     private var units: UnitSystem = loadSavedUnits()
     private var unitAutoInitialized = hasSavedUnits()
     private var fleet: InsightsData.FleetSummary? = null
@@ -94,7 +97,7 @@ class InsightsPage(
         // Sub-navigation segmented bar
         subtabControl = EqSegmented(
             act,
-            listOf("Overview", "Drives & Charging", "Signals", "Segments"),
+            listOf("Last drive", "Routes", "Charging", "Week", "Diagnostics"),
             currentSubtab,
         ) { idx ->
             currentSubtab = idx
@@ -109,7 +112,7 @@ class InsightsPage(
     }
 
     fun selectSubtab(index: Int) {
-        val clamped = index.coerceIn(0, 3)
+        val clamped = index.coerceIn(0, TAB_DIAGNOSTICS)
         currentSubtab = clamped
         subtabControl.setSelected(clamped, animate = false)
         renderCurrent()
@@ -118,14 +121,27 @@ class InsightsPage(
     fun refresh() {
         if (refreshing) return
         refreshing = true
-        subtitleView.text = "Scanning telemetry segments…"
+        subtitleView.text = "Reading the drive log…"
+        val knownCapWh = fleet?.takeIf { it.segments.isNotEmpty() }?.vehicle?.capacityWh?.takeIf { it > 1000.0 }
         thread(name = "insights-load", isDaemon = true) {
+            // The drive log is a few kilobytes and the four trip tabs need nothing else, so they
+            // draw first; the probe segments behind Diagnostics take far longer to parse.
+            val log = tripStore.loadWithOpen()
+            val early = TripModel(log, knownCapWh)
+            act.runOnUiThread {
+                if (act.isFinishing) return@runOnUiThread
+                trips.model = early
+                if (currentSubtab != TAB_DIAGNOSTICS) renderCurrent()
+            }
             val segs = InsightsData.loadSegments(dataRoot)
             val summary = InsightsData.summarize(segs)
+            val capWh = summary.vehicle.capacityWh.takeIf { segs.isNotEmpty() && it > 1000.0 }
+            val model = if (early.capWh == null && capWh != null) TripModel(log, capWh) else early
             act.runOnUiThread {
                 refreshing = false
                 if (act.isFinishing) return@runOnUiThread
                 fleet = summary
+                trips.model = model
                 if (!unitAutoInitialized && segs.isNotEmpty()) {
                     units = summary.vehicle.preferredUnits
                     unitControl.setSelected(if (units == UnitSystem.IMPERIAL) 0 else 1, animate = false)
@@ -146,7 +162,22 @@ class InsightsPage(
 
     private fun renderCurrent() {
         contentHost.removeAllViews()
+        if (currentSubtab != TAB_DIAGNOSTICS) {
+            subtitleView.text = trips.subtitle()
+            trips.render(currentSubtab)
+            return
+        }
+        contentHost.addView(EqSegmented(act, listOf("Vehicle state", "Sessions", "Signals", "Segments"), diagnosticsTab) { idx ->
+            diagnosticsTab = idx
+            renderCurrent()
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = EqTheme.px(4f) })
         val f = fleet
+        if (f == null && refreshing) {
+            subtitleView.text = "Scanning probe segments…"
+            contentHost.addView(EqCard(act).addRow(EqRow(act, "Scanning probe segments",
+                "This takes a little while when many segments are on disk.")))
+            return
+        }
         if (f == null || f.segments.isEmpty()) {
             subtitleView.text = "No vehicle telemetry segments captured yet"
             val emptyCard = EqCard(act)
@@ -156,6 +187,7 @@ class InsightsPage(
                 "Enable 'EV Insights auto-upload' in Advanced or run a Vehicle Telemetry Probe when parked, then tap Refresh.",
             ))
             contentHost.addView(emptyCard)
+            trips.renderHistoryCard()
             return
         }
 
@@ -164,12 +196,13 @@ class InsightsPage(
         val limitStr = v.chargeLimitPct?.let { " · ${it.roundToInt()}% charge target" } ?: ""
         subtitleView.text = "${v.displayTitle} · $capKwh$limitStr · ${f.segments.size} segments (${f.sessions.size} sessions)"
 
-        when (currentSubtab) {
+        when (diagnosticsTab) {
             0 -> renderOverview(f)
             1 -> renderDrivesAndCharging(f)
             2 -> renderSignals(f)
-            3 -> renderSegments(f)
+            else -> renderSegments(f)
         }
+        if (diagnosticsTab == 0) trips.renderHistoryCard()
     }
 
     // =============================================================================================
@@ -182,7 +215,14 @@ class InsightsPage(
         val battWh = latest.value(InsightsData.BATTERY_WH)
         val rangeM = latest.value(InsightsData.RANGE_M)
         val speedMps = latest.value(InsightsData.SPEED_MPS)
-        val chargeMw = latest.value(InsightsData.CHARGE_MW)
+        // EV_BATTERY_INSTANTANEOUS_CHARGE_RATE reads a constant 0 on this car, so power is the
+        // battery's own change across the latest segment (positive = charging or regenerating).
+        val chargeMw = run {
+            val b0 = latest.firstValues[InsightsData.BATTERY_WH]
+            val b1 = latest.lastValues[InsightsData.BATTERY_WH]
+            if (b0 != null && b1 != null && latest.durationSec >= 10.0) (b1 - b0) * 3600.0 / latest.durationSec * 1000.0
+            else latest.value(InsightsData.CHARGE_MW)
+        }
         val tempC = latest.value(InsightsData.OUTSIDE_C)
         val gearCode = latest.value(InsightsData.GEAR)?.toInt()
 
@@ -215,18 +255,18 @@ class InsightsPage(
         val sessionDistText = latestSession?.preferredDistanceM?.let { InsightsData.formatDistance(it, units) } ?: "—"
         val sessionEffText = latestSession?.whPerKm?.let { InsightsData.formatEfficiency(it, units) } ?: "—"
 
-        stateCard.addRow(kpiGrid(listOf(
+        stateCard.addRow(kpiGrid(act, listOf(
             KpiItem("STATE OF CHARGE", InsightsData.formatSoc(battWh, capWh),
                 "${InsightsData.formatEnergyKwh(battWh)} / ${"%.1f".format(Locale.US, capWh / 1000.0)} kWh", EqTheme.ACCENT),
             KpiItem("EST. RANGE (GOM)", InsightsData.formatRange(rangeM, units),
                 if (battWh != null && battWh > 1000 && rangeM != null && rangeM > 0)
                     "Implied ${InsightsData.formatEfficiency(battWh / (rangeM / 1000.0), units)}"
                 else "Vehicle estimate", EqTheme.OK),
-            KpiItem("INSTANT POWER", InsightsData.formatCharge(chargeMw),
+            KpiItem("POWER, LAST MINUTE", InsightsData.formatCharge(chargeMw),
                 when {
-                    (chargeMw ?: 0.0) > 500_000 -> "Charging / Regen (+)"
-                    (chargeMw ?: 0.0) < -500_000 -> "Discharging (-)"
-                    else -> "Idle / Standby"
+                    (chargeMw ?: 0.0) > 500_000 -> "Into the battery, from its own level"
+                    (chargeMw ?: 0.0) < -500_000 -> "Out of the battery, from its own level"
+                    else -> "Idle"
                 }, if ((chargeMw ?: 0.0) >= 0) EqTheme.OK else EqTheme.WARN),
             KpiItem("SPEED & GEAR", InsightsData.formatSpeed(speedMps, units), gearText, EqTheme.TEXT),
             KpiItem("OUTSIDE TEMP", InsightsData.formatTemp(tempC, units),
@@ -249,7 +289,7 @@ class InsightsPage(
             else "${"%.2f".format(Locale.US, 621.371 / wpk)} mi/kWh"
         } ?: "Across all drives"
 
-        rollupCard.addRow(kpiGrid(listOf(
+        rollupCard.addRow(kpiGrid(act, listOf(
             KpiItem("TOTAL DISTANCE", InsightsData.formatDistance(f.totalDistanceM, units),
                 "${f.drives.size} drive sessions · ${InsightsData.formatDuration(f.totalDrivingSec)}", EqTheme.ACCENT),
             KpiItem("AVG EFFICIENCY", InsightsData.formatEfficiency(f.overallWhPerKm, units),
@@ -445,7 +485,7 @@ class InsightsPage(
             s.regenRecoveryRatio?.let { r -> append(" (${"%.0f".format(Locale.US, r * 100.0)}%)") }
         }
 
-        detailCard.addRow(kpiGrid(listOf(
+        detailCard.addRow(kpiGrid(act, listOf(
             KpiItem("DISTANCE (${s.preferredDistanceSource})", InsightsData.formatDistance(s.preferredDistanceM, units),
                 "Duration ${InsightsData.formatDuration(s.durationSec)} · Moving ${InsightsData.formatDuration(s.movingSec)}", EqTheme.ACCENT),
             KpiItem("EFFICIENCY", InsightsData.formatEfficiency(s.whPerKm, units),
@@ -525,7 +565,7 @@ class InsightsPage(
 
         contentHost.addView(eqSectionLabel(act, "VHAL Census & Signal Health (${latest.name})"))
         val summaryCard = EqCard(act)
-        summaryCard.addRow(kpiGrid(listOf(
+        summaryCard.addRow(kpiGrid(act, listOf(
             KpiItem("VISIBLE PROPERTIES", "${signals.Count { it.changeMode != "ABSENT" }}",
                 "$readable readable · $subscribable actively streaming", EqTheme.ACCENT),
             KpiItem("GRANTED PERMISSIONS", "$grantedPerms / ${perms.size}",
@@ -599,7 +639,7 @@ class InsightsPage(
         val segCard = EqCard(act)
         val capWh = f.vehicle.capacityWh
         val battWh = activeSeg.value(InsightsData.BATTERY_WH)
-        segCard.addRow(kpiGrid(listOf(
+        segCard.addRow(kpiGrid(act, listOf(
             KpiItem("SEGMENT WINDOW", InsightsData.formatWallShort(activeSeg.startWall),
                 "Duration ${InsightsData.formatDuration(activeSeg.durationSec)} · ${activeSeg.stopReason ?: "active/completed"}", EqTheme.ACCENT),
             KpiItem("SEGMENT DISTANCE", InsightsData.formatDistance(activeSeg.preferredDistanceM, units),
@@ -670,44 +710,6 @@ class InsightsPage(
     // =============================================================================================
     // Reusable UI building blocks
     // =============================================================================================
-
-    private data class KpiItem(
-        val label: String,
-        val primary: String,
-        val secondary: String,
-        val valueColor: Int = EqTheme.TEXT,
-    )
-
-    private fun kpiGrid(items: List<KpiItem>, columns: Int = 3): LinearLayout =
-        LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(EqTheme.px(28f), EqTheme.px(16f), EqTheme.px(24f), EqTheme.px(16f))
-            for (row in items.chunked(columns)) {
-                addView(LinearLayout(act).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    for (item in row) {
-                        addView(LinearLayout(act).apply {
-                            orientation = LinearLayout.VERTICAL
-                            setPadding(0, EqTheme.px(8f), EqTheme.px(20f), EqTheme.px(8f))
-                            addView(EqTheme.text(act, 13f, EqTheme.ACCENT, EqTheme.Weight.MEDIUM).apply {
-                                text = item.label
-                                letterSpacing = 0.12f
-                            })
-                            addView(EqTheme.text(act, 25f, item.valueColor, EqTheme.Weight.LIGHT).apply {
-                                text = item.primary
-                            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(4f) })
-                            addView(EqTheme.text(act, 14f, EqTheme.TEXT_DIM, EqTheme.Weight.REGULAR).apply {
-                                text = item.secondary
-                            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(2f) })
-                        }, LinearLayout.LayoutParams(0, -2, 1f))
-                    }
-                    // Pad incomplete trailing row
-                    repeat((columns - row.size).coerceAtLeast(0)) {
-                        addView(View(act), LinearLayout.LayoutParams(0, 0, 1f))
-                    }
-                })
-            }
-        }
 
     private fun chartBlock(
         title: String,
@@ -788,8 +790,47 @@ class InsightsPage(
     companion object {
         private const val PREFS_NAME = "ev_insights_ui_prefs"
         private const val KEY_UNITS = "unit_system"
+        private const val TAB_DIAGNOSTICS = 4
     }
 }
+
+internal data class KpiItem(
+    val label: String,
+    val primary: String,
+    val secondary: String,
+    val valueColor: Int = EqTheme.TEXT,
+)
+
+/** A grid of labelled figures: small caps label, the value, one line of context. */
+internal fun kpiGrid(ctx: Context, items: List<KpiItem>, columns: Int = 3): LinearLayout =
+    LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(EqTheme.px(28f), EqTheme.px(16f), EqTheme.px(24f), EqTheme.px(16f))
+        for (row in items.chunked(columns)) {
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                for (item in row) {
+                    addView(LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(0, EqTheme.px(8f), EqTheme.px(20f), EqTheme.px(8f))
+                        addView(EqTheme.text(ctx, 13f, EqTheme.ACCENT, EqTheme.Weight.MEDIUM).apply {
+                            text = item.label
+                            letterSpacing = 0.12f
+                        })
+                        addView(EqTheme.text(ctx, 25f, item.valueColor, EqTheme.Weight.LIGHT).apply {
+                            text = item.primary
+                        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(4f) })
+                        addView(EqTheme.text(ctx, 14f, EqTheme.TEXT_DIM, EqTheme.Weight.REGULAR).apply {
+                            text = item.secondary
+                        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(2f) })
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                }
+                repeat((columns - row.size).coerceAtLeast(0)) {
+                    addView(View(ctx), LinearLayout.LayoutParams(0, 0, 1f))
+                }
+            })
+        }
+    }
 
 // =================================================================================================
 // Custom Canvas Views for Insights

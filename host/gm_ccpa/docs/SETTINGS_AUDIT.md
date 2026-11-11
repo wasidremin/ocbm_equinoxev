@@ -202,6 +202,25 @@ stays (serves Capture Current).
   session summary at clear, and `browser: bind #n` per `onGetRoot`. See doc 14
   §14.8.
 
+## 2026-11-11 deltas (drive log and trip tabs; not yet published)
+
+- **Insights tabs** are now `Last drive | Routes | Charging | Week | Diagnostics`
+  (`InsightsUi.kt`, `InsightsTripsUi.kt`). The v209 views (Vehicle state,
+  Sessions, Signals, Segments) are the inner control of Diagnostics. Deep link
+  `open_tab --ei tab 3 --ei subtab 0..4` follows the new order.
+- **New settings, all on the Charging tab** (prefs `ev_insights_ui_prefs`):
+  Electricity rate (`rate_per_kwh`, blank until set — cost figures show a dash
+  and say what to set), Gas price (`gas_per_gallon`, blank skips the dollar
+  comparison; MPGe is always shown), Comparison car (`compare_mpg`, default 30).
+  Route names from "Rename this route" are `route_name_<key>` in the same file.
+- **Clear drive history** (Diagnostics → Vehicle state, destructive confirm):
+  deletes `insights/trips.ndjson` and `insights/open.json`. Clearing probe
+  segments does not touch them, and they are never uploaded.
+- The drive log is recorded only while the probe captures ("EV Insights
+  auto-upload" on, Advanced page) and holds coordinates only with "Include
+  route GPS in EV Insights" on; without GPS, drives are still logged but no
+  routes are found. Detail: doc 14 §13.4.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

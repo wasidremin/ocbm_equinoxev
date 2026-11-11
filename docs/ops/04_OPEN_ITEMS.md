@@ -57,6 +57,12 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 245 (`4.0+pane-backdrop`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
+- **EV Insights drive log: nothing checked on the car (built 2026-11-11, not yet published).** The
+  recorder, the route and charge analysis and all five tabs are verified by JVM tests, a replay of
+  four weeks of probe data and the emulator only. On the car the log starts empty. To check after
+  the first few drives and one overnight charge: a drive appears on Last drive within minutes of
+  parking, a charge the head unit slept through is logged as one record, and the log survives an
+  app update. `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.4.
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
   replayed the same sequence. 226 (`4.0+art-hold`, published 2026-10-30) holds a card up to 500 ms
