@@ -4,15 +4,21 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -28,6 +34,9 @@ import java.util.concurrent.Executors
  * Feature set from enigy/carlink's pane (`ui/pane/MediaCard.kt`, `CardLyrics.kt`; Unlicense), drawn
  * with this app's views: cover art, title and artist, a progress line, previous / play-pause / next
  * (sent to CarPlay as media buttons), and the song's timed lyrics with the line being sung bright.
+ * Behind it all is the cover blown up, blurred and dimmed ([ArtBackdrop]), as CarPlay's own Now
+ * Playing has it; a new song's backdrop fades in over the last one's. Over a backdrop the secondary
+ * text is translucent white, which holds its contrast on any colour where the theme's greys do not.
  * Lyrics show in any gear (the pane is for the passenger) whenever Settings ▸ Playback ▸ Look up
  * lyrics is on. The button at the top hides the pane (for a split, gives CarPlay the whole panel);
  * a tap on the strip right of CarPlay brings it back.
@@ -58,6 +67,8 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         scaleType = ImageView.ScaleType.CENTER_CROP
         clipToOutline = true
         background = EqTheme.rounded(0x14FFFFFF, 14f)
+        // A hairline, so a cover as dark as the pane still has an edge.
+        foreground = EqTheme.rounded(0, 14f, stroke = 0x24FFFFFF, strokeDp = 1f)
     }
     private val title = EqTheme.text(ctx, 27f, EqTheme.TEXT, EqTheme.Weight.MEDIUM).apply { singleLine() }
     private val artist = EqTheme.text(ctx, 20f, EqTheme.TEXT_DIM).apply { singleLine() }
@@ -82,6 +93,20 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
 
     private var shown: NowPlayingState.Snapshot = NowPlayingState.Snapshot()
     private var artBytes: ByteArray? = null
+
+    /** Main thread: the decoded cover, or null, each time it changes (the strip's chip shows it too). */
+    var onArt: ((Bitmap?) -> Unit)? = null
+
+    // The backdrop: [backdrop] fades in over [oldBackdrop] as [fade] runs 0..1; either may be null.
+    private var backdrop: Bitmap? = null
+    private var oldBackdrop: Bitmap? = null
+    private var fade = 1f
+    private var fader: android.animation.ValueAnimator? = null
+    private val backdropPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val scrim = Paint()
+    private val dst = RectF()
+    /** Whether the text is coloured for a backdrop (translucent white) or for the plain pane. */
+    private var onArtColours = false
     private var shownLyricIndex = Int.MIN_VALUE
     private var shownLyricStatus: BarLyrics.Status? = null
 
@@ -96,6 +121,11 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
     init {
         orientation = VERTICAL
         setBackgroundColor(BG)
+        setWillNotDraw(false)
+        art.setImageDrawable(NoteMark())
+        // A soft shadow under the words that matter most: it costs nothing on the plain pane and
+        // keeps their edges clean where the backdrop is busy.
+        (lyricViews + title).forEach { it.setShadowLayer(EqTheme.pxf(8f), 0f, EqTheme.pxf(1f), 0x73000000) }
         isClickable = true   // touches on the pane never fall through to the CarPlay picture
         val pad = EqTheme.px(22f)
         setPadding(pad, EqTheme.px(16f), pad, EqTheme.px(16f))
@@ -149,8 +179,80 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         bind(shown)
     }
 
+    override fun onDraw(c: Canvas) {
+        super.onDraw(c)
+        val new = backdrop
+        val old = oldBackdrop
+        if (new == null && old == null) return
+        // Blown up past the pane's longer side, so no edge of the cover's blur shows.
+        val side = maxOf(width, height) * BACKDROP_ZOOM
+        dst.set((width - side) / 2f, (height - side) / 2f, (width + side) / 2f, (height + side) / 2f)
+        if (old != null) {
+            backdropPaint.alpha = if (new != null) 255 else (255 * (1f - fade)).toInt()
+            c.drawBitmap(old, null, dst, backdropPaint)
+        }
+        if (new != null) {
+            backdropPaint.alpha = (255 * fade).toInt()
+            c.drawBitmap(new, null, dst, backdropPaint)
+        }
+        // Deeper toward the bottom, where the lyrics are.
+        scrim.alpha = when {
+            new != null && old != null -> 255
+            new != null -> (255 * fade).toInt()
+            else -> (255 * (1f - fade)).toInt()
+        }
+        c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrim)
+    }
+
+    /** Main thread. The pane has just been shown: it eases in from the glass's edge. */
+    fun appear() {
+        animate().cancel()
+        alpha = 0f
+        translationX = EqTheme.pxf(20f)
+        animate().alpha(1f).translationX(0f).setDuration(APPEAR_MS).setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    /** Main thread. Fade [next] in over what shows now; null fades back to the plain pane. */
+    private fun setBackdrop(next: Bitmap?) {
+        fader?.cancel()
+        // Mid-fade, the picture on screen is mostly whichever of the two is further along.
+        oldBackdrop = if (fade >= 0.5f) backdrop else oldBackdrop
+        backdrop = next
+        colourText(next != null)
+        if (oldBackdrop == null && next == null) { fade = 1f; invalidate(); return }
+        fade = 0f
+        fader = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = BACKDROP_FADE_MS
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { fade = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    /** The secondary text for a backdrop or for the plain pane; the title and sung line are white on both. */
+    private fun colourText(onArt: Boolean) {
+        if (onArt == onArtColours) return
+        onArtColours = onArt
+        appName.setTextColor(if (onArt) 0xB3FFFFFF.toInt() else EqTheme.TEXT_DIM)
+        artist.setTextColor(if (onArt) 0xC7FFFFFF.toInt() else EqTheme.TEXT_DIM)
+        elapsed.setTextColor(if (onArt) 0x99FFFFFF.toInt() else EqTheme.TEXT_FAINT)
+        remaining.setTextColor(if (onArt) 0x99FFFFFF.toInt() else EqTheme.TEXT_FAINT)
+        lyricNote.setTextColor(if (onArt) 0xA6FFFFFF.toInt() else EqTheme.TEXT_FAINT)
+        shownLyricIndex = Int.MIN_VALUE
+        refreshLyrics()
+    }
+
+    /** A lyric row's colour: the sung line white, the rest fading with their distance from it. */
+    private fun lyricColour(row: Int, sung: Boolean): Int = when {
+        sung -> EqTheme.TEXT
+        !onArtColours -> EqTheme.TEXT_FAINT
+        else -> (LYRIC_ALPHA[minOf(kotlin.math.abs(row - CURRENT_ROW), LYRIC_ALPHA.size - 1)] shl 24) or 0xFFFFFF
+    }
+
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
+        if (h > 0) scrim.shader = LinearGradient(0f, 0f, 0f, h.toFloat(),
+            intArrayOf(BG and 0x00FFFFFF or (0x26 shl 24), BG and 0x00FFFFFF or (0x80 shl 24)), null, Shader.TileMode.CLAMP)
         // A square thumbnail: a sixth of the pane's height, never more than a third of its width.
         val side = minOf((w - paddingLeft - paddingRight) / 3, (h * 0.17f).toInt()).coerceAtLeast(0)
         val lp = art.layoutParams as LayoutParams
@@ -169,6 +271,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
 
     override fun onDetachedFromWindow() {
         main.removeCallbacks(tick)
+        fader?.cancel()
         super.onDetachedFromWindow()
     }
 
@@ -184,14 +287,25 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         val jpeg = s.artwork
         if (jpeg !== artBytes) {
             artBytes = jpeg
-            if (jpeg == null) art.setImageBitmap(null) else decoder.execute {
+            if (jpeg == null) showArt(null, null) else decoder.execute {
                 val bm = runCatching { decode(jpeg) }.getOrNull()
-                main.post { if (artBytes === jpeg) art.setImageBitmap(bm) }
+                val blurred = bm?.let { runCatching { ArtBackdrop.make(it) }.getOrNull() }
+                main.post { if (artBytes === jpeg) showArt(bm, blurred) }
             }
         }
         refreshPosition()
         shownLyricIndex = Int.MIN_VALUE
         refreshLyrics()
+    }
+
+    private fun showArt(bm: Bitmap?, blurred: Bitmap?) {
+        if (bm == null) art.setImageDrawable(NoteMark()) else {
+            art.setImageBitmap(bm)
+            art.alpha = 0f
+            art.animate().alpha(1f).setDuration(BACKDROP_FADE_MS / 2).start()
+        }
+        setBackdrop(blurred)
+        onArt?.invoke(bm)
     }
 
     private fun refreshPosition() {
@@ -226,7 +340,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         for ((row, v) in lyricViews.withIndex()) {
             val line = lyrics.lines.getOrNull(at + row - CURRENT_ROW)
             v.text = line?.text?.ifBlank { "♪" } ?: ""
-            v.setTextColor(if (row == CURRENT_ROW && at >= 0) EqTheme.TEXT else EqTheme.TEXT_FAINT)
+            v.setTextColor(lyricColour(row, sung = row == CURRENT_ROW && at >= 0))
         }
     }
 
@@ -242,6 +356,19 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
     private fun TextView.singleLine() {
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
+    }
+
+    /** What the thumbnail shows with no cover: a music note. */
+    private class NoteMark : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66FFFFFF; isFakeBoldText = true }
+        override fun draw(c: Canvas) {
+            val b = bounds
+            paint.textSize = b.height() * 0.46f
+            c.drawText("♪", b.exactCenterX() - paint.measureText("♪") / 2f, b.exactCenterY() + paint.textSize * 0.35f, paint)
+        }
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(cf: ColorFilter?) {}
+        @Deprecated("Deprecated in Java") override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
     /** The thin progress line under the title. */
@@ -336,6 +463,14 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         const val BG = 0xFF0B1220.toInt()
         private const val TICK_MS = 250L
         private const val ART_MAX_PX = 512
+        private const val BACKDROP_ZOOM = 1.2f
+        private const val BACKDROP_FADE_MS = 600L
+        private const val APPEAR_MS = 220L
+        /**
+         * Over a backdrop, a lyric row's alpha by its distance from the sung line. The furthest stays
+         * near 3.5:1 against the brightest backdrop [ArtBackdrop.tone] allows under the scrim.
+         */
+        private val LYRIC_ALPHA = intArrayOf(0xFF, 0xB8, 0x99, 0x85, 0x78, 0x73)
         /**
          * Three lines before the one being sung, then five after it. On the car's 960 px pane the nine
          * rows take about 420 of the ~510 px under the controls, leaving room for the sung line to wrap.

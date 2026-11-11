@@ -392,14 +392,14 @@ class CarPlayActivity : Activity() {
                 CarPlayMediaBrowserService.publish(snapshot)
                 wasidremin.gmccpa.BarArtwork.onArtwork(snapshot.artwork)
                 snapshot.feedLyrics()
-                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) { act.updateRailPlayback(); act.pane?.bind(snapshot) } } }
+                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) { act.updateRailPlayback(); act.pane?.bind(snapshot); act.paneStrip?.bind(snapshot) } } }
             }
             // The rail icon follows ticks too: status arrives in its own sparse frames, so
             // metadata-only refresh left the play/pause glyph stale for whole tracks.
             onPlaybackTick = {
                 CarPlayMediaBrowserService.publishPlaybackState(it)
                 it.feedLyrics()
-                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) { act.updateRailPlayback(); act.pane?.bind(it) } } }
+                live?.get()?.let { act -> act.runOnUiThread { if (!act.isDestroyed) { act.updateRailPlayback(); act.pane?.bind(it); act.paneStrip?.bind(it) } } }
             }
             // Cluster turn-by-turn rides the same seam and the same session end. Every teardown
             // path already clears this object, so hooking the clear covers all of them.
@@ -642,7 +642,10 @@ class CarPlayActivity : Activity() {
                 true
             }
             root.addView(it, android.widget.FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
+            it.bind(nowPlaying.snapshot)
         }
+        // The strip's chip shows the cover the pane decoded.
+        pane?.onArt = { bm -> paneStrip?.cover = bm }
         wasidremin.gmccpa.pane.SplitPane.listener = paneListener
         // Hardware-free look at the pane: `pane_preview` declares the chosen layout for this screen
         // only, showing (Off previews over CarPlay).
@@ -653,10 +656,15 @@ class CarPlayActivity : Activity() {
             val area = wasidremin.gmccpa.pane.SplitPane.carPlayArea(VideoFrame.width, VideoFrame.height, c.side, c.percent)
             wasidremin.gmccpa.pane.SplitPane.onSubscribe(this, c, area, startsSplit = true)
             wasidremin.gmccpa.pane.SplitPane.setShown(true, "preview")
+            // `pane_art bright|vivid|dark`: a drawn cover, to judge the backdrop under the lyrics.
             val sample = NowPlayingState.Snapshot(title = "Send Me on My Way", artist = "Rusted Root", album = "When I Woke",
-                appName = "Spotify", durationMs = 263_000, elapsedMs = 61_000, playbackStatus = NowPlayingState.PLAY)
+                appName = "Spotify", durationMs = 263_000, elapsedMs = 61_000, playbackStatus = NowPlayingState.PLAY,
+                artwork = intent.getStringExtra("pane_art")?.let { sampleCover(it) })
             sample.feedLyrics()
             pane?.bind(sample)
+            paneStrip?.bind(sample)
+            // `pane_hidden`: the pane put away, to judge the strip's chip.
+            if (intent.getBooleanExtra("pane_hidden", false)) setPane(false, "preview")
         }
         // In-call overlay pill: added once, above the picture and the rail, driven by
         // NowPlayingState.callPhase via updateCallPill. It positions itself from persisted
@@ -1792,6 +1800,23 @@ class CarPlayActivity : Activity() {
      * CarPlay it changes at once; a split asks the box for the other view area and changes when that
      * was sent.
      */
+    /** Bench only: a drawn cover as JPEG, mostly white ("bright"), saturated ("vivid") or near black ("dark"). */
+    private fun sampleCover(kind: String): ByteArray {
+        val n = 320
+        val bm = android.graphics.Bitmap.createBitmap(n, n, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bm)
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        val (bg, a, b) = when (kind) {
+            "bright" -> Triple(0xFFFFFFFF.toInt(), 0xFFFFE94A.toInt(), 0xFFFF9BC2.toInt())
+            "dark" -> Triple(0xFF0A0D18.toInt(), 0xFF1D2B4F.toInt(), 0xFF3A1730.toInt())
+            else -> Triple(0xFFFF6A00.toInt(), 0xFFE0115F.toInt(), 0xFF00B3A4.toInt())
+        }
+        c.drawColor(bg)
+        p.color = a; c.drawCircle(n * 0.30f, n * 0.35f, n * 0.34f, p)
+        p.color = b; c.drawCircle(n * 0.72f, n * 0.70f, n * 0.30f, p)
+        return java.io.ByteArrayOutputStream().also { bm.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, it) }.toByteArray()
+    }
+
     private fun setPane(on: Boolean, why: String) {
         val split = wasidremin.gmccpa.pane.SplitPane
         when (split.mode) {
@@ -1852,6 +1877,7 @@ class CarPlayActivity : Activity() {
             p.setPadding(p.paddingLeft, p.paddingTop, wasidremin.gmccpa.EqTheme.px(22f) + cutout, p.paddingBottom)
         }
         if (p.visibility != View.VISIBLE || changed) {
+            if (p.visibility != View.VISIBLE) p.appear()
             p.visibility = View.VISIBLE
             log.i("pane: shown ${width}x${lp.height}@$left,${lp.topMargin} (" +
                 (area?.let { "CarPlay area ${it.width}x${it.height}@${it.x},${it.y}" } ?: "over CarPlay") + ", cutout pad $cutout)")
@@ -1890,7 +1916,7 @@ class CarPlayActivity : Activity() {
                 }
             }
             val glass = minOf(bestRight, root.width.toFloat()) - x0
-            if (glass >= wasidremin.gmccpa.pane.PaneStrip.minGlassPx()) s.handleAt(glass / 2f, (bestY - lp.topMargin).toFloat())
+            if (glass >= wasidremin.gmccpa.pane.PaneStrip.minGlassPx()) s.handleAt(glass / 2f, (bestY - lp.topMargin).toFloat(), glass)
             else s.handleAt(-1f, -1f)
             log.i("pane: strip ${w}x${lp.height}@$x0,${lp.topMargin}, glass ${glass.roundToInt()}px wide at y $bestY" +
                 if (outline == null) " (no traced outline)" else "")

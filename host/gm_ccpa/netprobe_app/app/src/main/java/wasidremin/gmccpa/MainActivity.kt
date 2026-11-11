@@ -1526,6 +1526,8 @@ class MainActivity : Activity() {
                     // without the car; absent means the live cutout decides, as in production.
                     i.getStringExtra("call_preview")?.let { preview.putExtra("call_preview", it) }
                     if (i.getBooleanExtra("pane_preview", false)) preview.putExtra("pane_preview", true)
+                    i.getStringExtra("pane_art")?.let { preview.putExtra("pane_art", it) }
+                    if (i.getBooleanExtra("pane_hidden", false)) preview.putExtra("pane_hidden", true)
                     if (i.hasExtra("slope_m")) preview.putExtra("slope_test_m",
                         i.getFloatExtra("slope_m", 0f))
                     startActivity(preview)

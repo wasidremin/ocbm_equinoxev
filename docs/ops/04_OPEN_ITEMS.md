@@ -199,6 +199,12 @@ high-water mark: versionCode 244 (`4.0+turn-dock`, 2026-11-11; `host/gm_ccpa/doc
     black, and put its own area toggle at the top of the dock. The pane's full-screen button
     (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one bench run that sent them
     recorded no picture after the switch; the car answered it on 2026-11-08 (above): the video carries on.
+    At the owner's request (2026-11-11, not yet published or seen on the car) the pane has the cover
+    blown up, blurred and dimmed behind it, as CarPlay's own Now Playing does, with the lyrics in
+    translucent white over it; and while the pane is hidden the strip shows the driver display's round
+    now-playing chip (cover in a progress ring) in place of the faint handle. Emulator only so far,
+    with drawn covers (white, saturated, near black). To check on the car: the lyrics against real
+    covers in daylight, and that the chip sits whole on the glass right of the picture.
   - *Settings ▸ Playback ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
     *Lyrics in the top bar* shows the current line there, in Park only.
   - Connection time on the new adapter firmware (startup fixes 5389084/749f72c), bench only: when the
