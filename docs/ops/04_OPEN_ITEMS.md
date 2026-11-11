@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 244 (`4.0+turn-dock`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 245 (`4.0+pane-backdrop`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -199,7 +199,7 @@ high-water mark: versionCode 244 (`4.0+turn-dock`, 2026-11-11; `host/gm_ccpa/doc
     black, and put its own area toggle at the top of the dock. The pane's full-screen button
     (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one bench run that sent them
     recorded no picture after the switch; the car answered it on 2026-11-08 (above): the video carries on.
-    At the owner's request (2026-11-11, not yet published or seen on the car) the pane has the cover
+    At the owner's request (2026-11-11, Play 245, not yet seen on the car) the pane has the cover
     blown up, blurred and dimmed behind it, as CarPlay's own Now Playing does, with the lyrics in
     translucent white over it; and while the pane is hidden the strip shows the driver display's round
     now-playing chip (cover in a progress ring) in place of the faint handle. Emulator only so far,
