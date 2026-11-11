@@ -20,8 +20,8 @@ import wasidremin.gmccpa.av.NowPlayingState
  * Now playing on the driver display, and the call that takes its place ([ClusterLayout.Slot.MEDIA]).
  *
  * With no route the card stays open: cover, title, artist and a progress line. During a route it
- * opens for [OPEN_MS] when the song changes and then folds to the cover alone inside a progress
- * ring, so the map keeps its room. A ringing or active call shows in the card's place, with who it
+ * opens for [OPEN_MS] when the song changes and then folds to a pill: the cover inside a progress
+ * ring with the title small beside it, so the map keeps its room. A ringing or active call shows in the card's place, with who it
  * is and how long it has run. The driver display takes no touch, so there are no buttons: the
  * steering-wheel keys and the centre screen do that.
  *
@@ -31,6 +31,9 @@ object MediaCard {
     enum class Mode { HIDDEN, CHIP, OPEN }
 
     /** How long the card stays open after the song changes, during a route. */
+    /** Bench only (`--ez folded true`): the Settings sample drawn folded, to judge the pill. */
+    @Volatile var benchFolded = false
+
     const val OPEN_MS = 8_000L
 
     /** Pure: what the now-playing card is at this moment. */
@@ -126,7 +129,7 @@ object MediaCard {
 
         override fun onDraw(canvas: Canvas) {
             if (width == 0 || height == 0) return
-            val b = ClusterLayout.rect(width, height, ClusterLayout.Slot.MEDIA, ClusterLayout.place(context, ClusterLayout.Slot.MEDIA))
+            val b = ClusterLayout.box(context, width, height, ClusterLayout.Slot.MEDIA)
             val pal = ClusterLayout.palette(night)
             call?.let { drawCall(canvas, it, b, pal); return }
             // Parked in Settings with nothing playing: a sample, so the place can be judged.
@@ -135,7 +138,7 @@ object MediaCard {
             val h = b.height
 
             val now = SystemClock.uptimeMillis()
-            val target = if (mode == Mode.CHIP) 0f else 1f
+            val target = if (mode == Mode.CHIP || (sample && benchFolded)) 0f else 1f
             if (open != target) {
                 val step = ((now - lastFrame).coerceIn(0, 50)) / 380f
                 open = if (open < target) minOf(target, open + step) else maxOf(target, open - step)
@@ -147,7 +150,13 @@ object MediaCard {
             // The chip hugs whichever side of the display the card sits on.
             val chip = h * 0.74f
             val rightSide = b.left + b.width / 2f > width / 2f
-            val cw = chip + (b.width - chip) * t
+            // Folded, the title stays beside the cover, small and on one line.
+            val pad = h * 0.13f
+            plain.textSize = h * 0.17f
+            val folded = (if (sample) "Now playing" else title)?.trim()?.takeIf { it.isNotEmpty() }
+                ?.let { ellipsized(it, plain, b.width - chip - pad * 1.4f) } ?: ""
+            val chipW = if (folded.isEmpty()) chip else chip + pad * 0.2f + plain.measureText(folded) + pad * 1.2f
+            val cw = chipW + (b.width - chipW) * t
             val ch = chip + (h - chip) * t
             val left = if (rightSide) b.left + b.width - cw else b.left
             val radius = chip / 2f + (h * 0.18f - chip / 2f) * t
@@ -156,7 +165,6 @@ object MediaCard {
             canvas.drawRoundRect(r, radius, radius, fill)
 
             // The cover: a disc inside the ring when folded, a rounded square when open.
-            val pad = h * 0.13f
             val side = chip * 0.80f + (h - pad * 2 - chip * 0.80f) * t
             val inset = (chip - chip * 0.80f) / 2f + (pad - (chip - chip * 0.80f) / 2f) * t
             val ax = left + inset
@@ -187,6 +195,10 @@ object MediaCard {
                     canvas.drawOval(r, ring)
                     ring.color = pal.accent
                     canvas.drawArc(r, -90f, 360f * p, false, ring)
+                }
+                if (folded.isNotEmpty()) {
+                    plain.color = pal.text; plain.alpha = (255 * (1f - 2f * t)).toInt().coerceIn(0, 255)
+                    canvas.drawText(folded, left + chip + pad * 0.2f, b.top + chip / 2f + plain.textSize * 0.35f, plain)
                 }
                 return
             }

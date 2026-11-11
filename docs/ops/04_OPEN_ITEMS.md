@@ -318,6 +318,11 @@ high-water mark: versionCode 243 (`4.0+cluster-layout`, 2026-11-10; `host/gm_ccp
      default places clear the gauges and Apple's speed-limit sign; the drag in the editor (the bench
      has no touch); whether this phone accepts `extended` on the wired arm; and the sign of a lane
      angle (drawn positive = right; the `cluster` log line `lanes: … highlight=` settles it).
+     **After 243 (2026-11-11, owner's photo of the car; not published):** Dock the turn card puts
+     it in the bottom-right corner as a panel in the look of GM's gauges (`TurnCard.drawDocked`,
+     `ClusterLayout.dock`), and the folded now-playing pill keeps the title beside the cover. Open
+     on the car: whether the docked default (corner at 70%, 54%, taken from that one photo) lines
+     up with the gauges' top edge and clears Apple's arrival strip.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

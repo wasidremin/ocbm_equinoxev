@@ -109,6 +109,16 @@ class TurnCardTest {
         assertEquals(ClusterLayout.Place(0, 100, ClusterLayout.MIN_SCALE), ClusterLayout.Place(-5, 140, 10).clamped())
     }
 
+    @Test fun theDockedCardKeepsItsCornerOnTheDisplay() {
+        val b = ClusterLayout.dockRect(2000, 810, ClusterLayout.DOCK_DEFAULT)
+        assertEquals(1400f, b.left, 0.01f)
+        assertEquals(437.4f, b.top, 0.01f)
+        assertEquals(178.2f, b.height, 0.01f)
+        val off = ClusterLayout.dockRect(2000, 810, ClusterLayout.Place(100, 0))
+        assertEquals(1900f, off.left, 0.01f)
+        assertEquals(81f, off.top, 0.01f)
+    }
+
     @Test fun nowPlayingOpensOnANewSongAndFoldsDuringARoute() {
         assertEquals(MediaCard.Mode.HIDDEN, MediaCard.mode(false, false, 0))
         assertEquals(MediaCard.Mode.OPEN, MediaCard.mode(true, false, 60_000))

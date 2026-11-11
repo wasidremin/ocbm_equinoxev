@@ -118,8 +118,8 @@ class DriverDisplayActivity : Activity() {
             for (slot in ClusterLayout.Slot.values()) {
                 if (slot == ClusterLayout.Slot.TURN && !DriverDisplay.turnCard) continue
                 if (slot == ClusterLayout.Slot.MEDIA && !ClusterLayout.media && !ClusterLayout.call) continue
-                val c = ClusterLayout.rect(width, height, slot, ClusterLayout.place(context, slot))
-                val cr = android.graphics.RectF(c.left, c.top, c.left + c.width, c.top + c.height * slot.stack)
+                val c = ClusterLayout.footprint(context, width, height, slot)
+                val cr = android.graphics.RectF(c.left, c.top, c.left + c.width, c.top + c.height)
                 cr.inset(-3f, -3f)
                 canvas.drawRoundRect(cr, 12f, 12f, cardLine)
             }

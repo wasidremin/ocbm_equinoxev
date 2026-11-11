@@ -43,8 +43,8 @@ class ClusterLayoutEditor(ctx: Context, private val onPick: (ClusterLayout.Slot)
 
     /** [slot]'s card and what hangs under it, in this view's pixels. */
     private fun footprint(slot: ClusterLayout.Slot, out: RectF) {
-        val b = ClusterLayout.rect(width, height, slot, ClusterLayout.place(context, slot))
-        out.set(b.left, b.top, b.left + b.width, b.top + b.height * slot.stack)
+        val b = ClusterLayout.footprint(context, width, height, slot)
+        out.set(b.left, b.top, b.left + b.width, b.top + b.height)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -81,7 +81,7 @@ class ClusterLayoutEditor(ctx: Context, private val onPick: (ClusterLayout.Slot)
             line.strokeWidth = if (on) u * 1.2f else u * 0.7f
             canvas.drawRoundRect(r, u * 3, u * 3, line)
             text.color = Color.WHITE; text.isFakeBoldText = true
-            text.textSize = minOf(u * 8f, r.height() * 0.4f)
+            text.textSize = minOf(u * 6f, r.height() * 0.4f)
             canvas.drawText(slot.label, r.centerX(), r.centerY() + text.textSize * 0.35f, text)
         }
     }
@@ -105,7 +105,7 @@ class ClusterLayoutEditor(ctx: Context, private val onPick: (ClusterLayout.Slot)
                 val old = ClusterLayout.place(context, picked)
                 // Through rect(), so the saved corner is where the card really ends up.
                 val want = ClusterLayout.Place(((e.x - grabX) / width * 100).roundToInt(), ((e.y - grabY) / height * 100).roundToInt(), old.scale)
-                val b = ClusterLayout.rect(width, height, picked, want)
+                val b = ClusterLayout.boxAt(width, height, picked, want)
                 val p = ClusterLayout.Place((b.left / width * 100).roundToInt(), (b.top / height * 100).roundToInt(), old.scale)
                 if (p != old) { ClusterLayout.setPlace(context, picked, p); invalidate() }
             }

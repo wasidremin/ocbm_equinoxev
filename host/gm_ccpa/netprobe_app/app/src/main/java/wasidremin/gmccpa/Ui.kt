@@ -936,9 +936,15 @@ class LauncherUi(private val act: Activity) {
             trailing = EqToggle(act, dd.turnCard) { on -> dd.setTurnCard(act, on); editor.invalidate() },
         ))
         card.addRow(EqRow(
+            act, "Dock the turn card",
+            "The turn card as a panel in the bottom-right corner, in the look of the gauges on the left. Drag its " +
+                "corner above: it runs off the right and bottom edges as the gauges do.",
+            trailing = EqToggle(act, cl.dock) { on -> cl.setDock(act, on); sizeRow.setSubtitle(sizeText()); editor.invalidate() },
+        ))
+        card.addRow(EqRow(
             act, "Now playing",
             "Cover, title, artist and progress. Stays open with no route; during a route it opens for 8 s on a " +
-                "new song, then folds to the cover.",
+                "new song, then folds to the cover with the title beside it.",
             trailing = EqToggle(act, cl.media) { on -> cl.setMedia(act, on); editor.invalidate() },
         ))
         card.addRow(EqRow(

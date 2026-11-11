@@ -1575,11 +1575,14 @@ class MainActivity : Activity() {
                 }
                 // `--es turn x,y,scale` / `--es media x,y,scale` (percent) or `reset`: a card's place.
                 val cl = wasidremin.gmccpa.nav.ClusterLayout
+                // `--ez dock true|false` first: the turn card's place below is the docked or the free one.
+                if (i.hasExtra("dock")) cl.setDock(this, i.getBooleanExtra("dock", false))
                 for (slot in wasidremin.gmccpa.nav.ClusterLayout.Slot.values()) i.getStringExtra(slot.name.lowercase())?.let { raw ->
                     val n = raw.split(',').mapNotNull { it.trim().toIntOrNull() }
                     cl.setPlace(this, slot, if (n.size == 3) wasidremin.gmccpa.nav.ClusterLayout.Place(n[0], n[1], n[2]) else null)
                     emit("driver_display: ${slot.label} card at ${cl.place(this, slot)}")
                 }
+                if (i.hasExtra("folded")) { wasidremin.gmccpa.nav.MediaCard.benchFolded = i.getBooleanExtra("folded", false); dd.preview() }
                 if (i.hasExtra("lanes")) cl.setLanes(this, i.getBooleanExtra("lanes", false))
                 // `--ez night true|false`: the cards' day or night look, until the car next reports its own.
                 if (i.hasExtra("night")) wasidremin.gmccpa.av.CarNight.night = i.getBooleanExtra("night", false)

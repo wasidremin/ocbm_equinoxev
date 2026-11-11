@@ -227,7 +227,8 @@ object TurnCard {
         override fun onDraw(canvas: Canvas) {
             val c = shown ?: return
             if (width == 0 || height == 0) return
-            val b = ClusterLayout.rect(width, height, ClusterLayout.Slot.TURN, ClusterLayout.place(context, ClusterLayout.Slot.TURN))
+            if (ClusterLayout.dock) { drawDocked(canvas, c); return }
+            val b = ClusterLayout.box(context, width, height, ClusterLayout.Slot.TURN)
             val pal = ClusterLayout.palette(night)
             val h = b.height
 
@@ -304,6 +305,72 @@ object TurnCard {
                 canvas.drawText(dist, x, base, bold)
                 if (road.isNotEmpty()) canvas.drawText(road, x + distW + gap, base, plain)
             }
+        }
+
+        /**
+         * Docked: a panel running off the bottom-right corner with the gauges' slanted inner edge,
+         * black with white figures as they are. The lanes, or else the turn after, sit inside it under the bar.
+         */
+        private fun drawDocked(canvas: Canvas, c: Content) {
+            val b = ClusterLayout.box(context, width, height, ClusterLayout.Slot.TURN)
+            val pal = ClusterLayout.GAUGE
+            val h = b.height
+            val x0 = b.left; val y0 = b.top
+            val w = width.toFloat(); val bottom = height.toFloat()
+            val rad = h * 0.14f
+            path.rewind()
+            path.moveTo(x0 + rad, y0)
+            path.lineTo(w, y0); path.lineTo(w, bottom)
+            path.lineTo(x0 - ClusterLayout.DOCK_SLANT * (bottom - y0), bottom)
+            path.lineTo(x0 - ClusterLayout.DOCK_SLANT * rad, y0 + rad)
+            path.quadTo(x0, y0, x0 + rad, y0)
+            path.close()
+            fill.color = pal.card
+            canvas.drawPath(path, fill)
+
+            val pad = h * 0.14f
+            val iconSize = h * 0.50f
+            icon(canvas, c.icon, x0 + pad, y0 + h * 0.10f, iconSize, pal.text)
+            val textLeft = x0 + pad + iconSize + pad * 0.7f
+            val textWidth = b.width - (textLeft - x0) - pad
+            // The figure large and the unit small beside it, as the speed reads on the left.
+            val d = c.distance ?: ""
+            val cut = d.lastIndexOf(' ')
+            val figure = if (cut > 0) d.substring(0, cut) else d
+            bold.color = pal.text; bold.textSize = h * 0.40f
+            var y = y0 + h * 0.47f
+            canvas.drawText(figure, textLeft, y, bold)
+            if (cut > 0) {
+                plain.color = ClusterLayout.GAUGE_UNIT; plain.textSize = h * 0.18f
+                canvas.drawText(d.substring(cut + 1), textLeft + bold.measureText(figure) + h * 0.06f, y, plain)
+            }
+            y += h * 0.27f
+            var x = textLeft
+            c.exit?.let { exit ->
+                bold.textSize = h * 0.15f; bold.color = Color.WHITE
+                val label = "EXIT $exit"
+                val lw = bold.measureText(label) + h * 0.12f
+                fill.color = ClusterLayout.GREEN
+                r.set(x, y - h * 0.17f, x + lw, y + h * 0.06f)
+                canvas.drawRoundRect(r, h * 0.05f, h * 0.05f, fill)
+                canvas.drawText(label, x + h * 0.06f, y, bold)
+                x += lw + h * 0.07f
+            }
+            plain.color = pal.dim; plain.textSize = h * 0.18f
+            c.road?.let { canvas.drawText(ellipsized(it, plain, textLeft + textWidth - x), x, y, plain) }
+            c.approach?.let { a ->
+                val top = y0 + h * 0.86f
+                fill.color = pal.track
+                r.set(textLeft, top, textLeft + textWidth, top + h * 0.045f)
+                canvas.drawRect(r, fill)
+                fill.color = pal.accent
+                r.right = textLeft + textWidth * a.coerceIn(0f, 1f)
+                canvas.drawRect(r, fill)
+            }
+            // One row under the bar, inside the panel: the lanes when there are any, else the turn after.
+            val lanes = c.lanes
+            if (lanes != null) drawLanes(canvas, lanes, x0, y0 + h * 0.98f, b.width, h, pal)
+            else if (c.thenIcon != null) drawThen(canvas, c, x0, y0 + h * 1.0f, b.width, h, pal)
         }
 
         /** "Then" and the turn after, on a tab under the card. Returns where the next thing starts. */

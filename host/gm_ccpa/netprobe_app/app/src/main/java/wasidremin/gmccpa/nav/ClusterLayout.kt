@@ -20,6 +20,8 @@ object ClusterLayout {
     private const val KEY_CALL = "call_card"
     private const val KEY_LANES = "lane_guidance"
     private const val KEY_OLD_TURN_AREA = "turn_card_area"
+    private const val KEY_DOCK = "turn_dock"
+    private const val KEY_DOCK_PLACE = "slot_turn_dock"
 
     /** A card's top-left corner in percent of the driver display, and its size in percent of the default. */
     data class Place(val x: Int, val y: Int, val scale: Int = 100) {
@@ -37,7 +39,7 @@ object ClusterLayout {
         /** Left of GM's directions area and above the Equinox's gauges, which take the bottom third. */
         TURN("slot_turn", "Turn", 0.22f, 2.9f, 1.82f, Place(2, 6)),
         /** The right side, under the speed-limit sign Apple's map draws in its top-right corner. */
-        MEDIA("slot_media", "Now playing", 0.22f, 2.6f, 1f, Place(74, 30)),
+        MEDIA("slot_media", "Now playing", 0.22f, 2.6f, 1f, Place(70, 30)),
     }
 
     /** A card in window pixels. What hangs under it reaches to [top] + [height] * [Slot.stack]. */
@@ -58,8 +60,40 @@ object ClusterLayout {
         return Box(left, top, cw, ch)
     }
 
+    /**
+     * The docked turn card's top-left corner. The panel runs from it off the right and bottom edges
+     * of the display, as the Equinox's gauges do on the left, so GM's mask trims it the same way.
+     * From a photo of the car (2026-11-11) the glass shows roughly 3..95% of the window across and
+     * 7..88% down, and the gauges' top edge sits 54% down: this mirrors them.
+     */
+    val DOCK_DEFAULT = Place(70, 54)
+    /** How far the docked panel's left edge leans out per pixel down, measured off the gauges. */
+    const val DOCK_SLANT = 0.43f
+
+    /** Pure: the docked card's content box at [p]; the panel behind it reaches the window's edges. */
+    fun dockRect(w: Int, h: Int, p: Place): Box {
+        val c = p.clamped()
+        val ch = h * Slot.TURN.base * c.scale / 100f
+        return Box((w * c.x / 100f).coerceIn(w * 0.10f, w * 0.95f), (h * c.y / 100f).coerceIn(h * 0.10f, h * 0.95f), ch * Slot.TURN.aspect, ch)
+    }
+
+    /** [slot]'s card at [p], docked or free as Settings has it. */
+    fun boxAt(w: Int, h: Int, slot: Slot, p: Place): Box =
+        if (slot == Slot.TURN && dock) dockRect(w, h, p) else rect(w, h, slot, p)
+
+    fun box(ctx: Context, w: Int, h: Int, slot: Slot): Box = boxAt(w, h, slot, place(ctx, slot))
+
+    /** Everything [slot] can cover: the card and its stack, or the docked panel out to the edges. */
+    fun footprint(ctx: Context, w: Int, h: Int, slot: Slot): Box {
+        val b = box(ctx, w, h, slot)
+        return if (slot == Slot.TURN && dock) Box(b.left, b.top, w - b.left, h - b.top) else Box(b.left, b.top, b.width, b.height * slot.stack)
+    }
+
     fun place(ctx: Context, slot: Slot): Place {
         val prefs = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (slot == Slot.TURN && dock) {
+            return parse(prefs.getString(KEY_DOCK_PLACE, null), 3)?.let { Place(it[0], it[1], it[2]).clamped() } ?: DOCK_DEFAULT
+        }
         parse(prefs.getString(slot.key, null), 3)?.let { return Place(it[0], it[1], it[2]).clamped() }
         // Before 2026-11-10 the turn card had an area of four edge margins; its corner is kept.
         if (slot == Slot.TURN) parse(prefs.getString(KEY_OLD_TURN_AREA, null), 4)?.let { return Place(it[0], it[1]).clamped() }
@@ -68,8 +102,10 @@ object ClusterLayout {
 
     fun setPlace(ctx: Context, slot: Slot, p: Place?) {
         val e = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        if (p == null) e.remove(slot.key).remove(KEY_OLD_TURN_AREA)
-        else p.clamped().let { e.putString(slot.key, "${it.x},${it.y},${it.scale}") }
+        val docked = slot == Slot.TURN && dock
+        val key = if (docked) KEY_DOCK_PLACE else slot.key
+        if (p == null) { e.remove(key); if (!docked) e.remove(KEY_OLD_TURN_AREA) }
+        else p.clamped().let { e.putString(key, "${it.x},${it.y},${it.scale}") }
         e.apply()
         DriverDisplay.preview()
     }
@@ -90,6 +126,9 @@ object ClusterLayout {
      */
     @Volatile var lanes = false
         private set
+    /** The turn card as a panel in the bottom-right corner, in the look of the car's gauges. Off by default. */
+    @Volatile var dock = false
+        private set
     @Volatile private var app: Context? = null
 
     fun load(ctx: Context) {
@@ -99,6 +138,7 @@ object ClusterLayout {
         media = p.getBoolean(KEY_MEDIA, true)
         call = p.getBoolean(KEY_CALL, true)
         lanes = p.getBoolean(KEY_LANES, false)
+        dock = p.getBoolean(KEY_DOCK, false)
         app = a
     }
 
@@ -111,6 +151,12 @@ object ClusterLayout {
         save(ctx, KEY_MEDIA, on); media = on
         log.i("now playing on the driver display ${if (on) "ON" else "off"} (Settings)")
         if (on) DriverDisplay.preview() else DriverDisplayActivity.refreshPreview()
+    }
+
+    fun setDock(ctx: Context, on: Boolean) {
+        save(ctx, KEY_DOCK, on); dock = on
+        log.i("turn card ${if (on) "DOCKED bottom right" else "free"} (Settings)")
+        DriverDisplay.preview()
     }
 
     fun setCall(ctx: Context, on: Boolean) {
@@ -155,6 +201,13 @@ object ClusterLayout {
         faint = Color.argb(80, 255, 255, 255), track = Color.argb(60, 255, 255, 255), accent = Color.rgb(0x0A, 0x84, 0xFF),
     ) }
     fun palette(night: Boolean): Palette = if (night) NIGHT else DAY
+
+    /** The docked turn card: the gauges' own black, white figures, blue-grey units and orange bar, day and night. */
+    val GAUGE = Palette(
+        card = 0xFF0B0C0F.toInt(), text = 0xFFFFFFFF.toInt(), dim = 0xFFD0D4DA.toInt(),
+        faint = 0x50FFFFFF, track = 0xFF1E2A44.toInt(), accent = 0xFFF26A21.toInt(),
+    )
+    const val GAUGE_UNIT = 0xFF6F8FB8.toInt()
 
     /** The green of a highway exit sign and of an answered call. */
     const val GREEN = 0xFF2B8A3E.toInt()
