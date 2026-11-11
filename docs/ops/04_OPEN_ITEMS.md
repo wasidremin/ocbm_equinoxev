@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 243 (`4.0+cluster-layout`, 2026-11-10; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 244 (`4.0+turn-dock`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
@@ -318,7 +318,7 @@ high-water mark: versionCode 243 (`4.0+cluster-layout`, 2026-11-10; `host/gm_ccp
      default places clear the gauges and Apple's speed-limit sign; the drag in the editor (the bench
      has no touch); whether this phone accepts `extended` on the wired arm; and the sign of a lane
      angle (drawn positive = right; the `cluster` log line `lanes: … highlight=` settles it).
-     **After 243 (2026-11-11, owner's photo of the car; not published):** Dock the turn card puts
+     **Play 244 (2026-11-11, from the owner's photo of the car):** Dock the turn card puts
      it in the bottom-right corner as a panel in the look of GM's gauges (`TurnCard.drawDocked`,
      `ClusterLayout.dock`), and the folded now-playing pill keeps the title beside the cover. Open
      on the car: whether the docked default (corner at 70%, 54%, taken from that one photo) lines
