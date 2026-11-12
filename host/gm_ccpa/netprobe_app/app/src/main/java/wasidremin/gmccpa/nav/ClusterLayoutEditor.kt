@@ -39,6 +39,7 @@ class ClusterLayoutEditor(ctx: Context, private val onPick: (ClusterLayout.Slot)
     private fun shown(slot: ClusterLayout.Slot) = when (slot) {
         ClusterLayout.Slot.TURN -> DriverDisplay.turnCard
         ClusterLayout.Slot.MEDIA -> ClusterLayout.media || ClusterLayout.call
+        ClusterLayout.Slot.DRIVE -> ClusterLayout.drive
     }
 
     /** [slot]'s card and what hangs under it, in this view's pixels. */

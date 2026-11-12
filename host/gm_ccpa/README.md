@@ -101,6 +101,7 @@ heartbeat while parked, counted against a monthly limit when the car is not on W
 |---|---|---|
 | **Upload Logs** (launcher) | `POST https://wasidremin.ddnsgeek.com/cloudbridge/logs` (`{device: gmccpa, lines: [...]}`, gzipped) | `/opt/stacks/cloudbridge-log/logs.txt` |
 | **EV Insights telemetry** (automatic, or "Upload latest report" in the probe activity) | `POST .../cloudbridge/probe` (gzipped report without its static part, which is sent once and named by `staticId`; headers `X-Device`/`X-Report-Name`; 409 `need_static` asks for it again) | rebuilt full report in `/opt/stacks/cloudbridge-log/probes/`, static parts in `probe_static/` |
+| **Drive history import** (once, after a telemetry upload succeeds; `telemetry/HistoryImport.kt`) | `GET .../cloudbridge/history?car=<staticId>` (ndjson, one drive or charge a line, no coordinates; 404 unless the id names a static part the receiver holds) | `/opt/stacks/cloudbridge-log/history/trips.ndjson`, written by `HistoryReplayTest` |
 | **Capture CarPlay Home/Current Screen** (launcher) | `POST .../cloudbridge/api/captures` (multipart `metadata` JSON + `image` PNG) | `/opt/stacks/cloudbridge-log/captures/` |
 | **Icon-tap launch record** (`CarPlayLauncher.uploadLaunch`) | `POST .../cloudbridge/api/launches` (record JSON with `id`) | `/opt/stacks/cloudbridge-log/launches/` |
 

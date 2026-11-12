@@ -534,6 +534,84 @@ back on, so the live arrival of Wi-Fi (the network callback) was not exercised. 
 car's modem and a phone hotspot each present to Android (the meter logs
 `uploads now go over <network>` once per change, so the first uploaded log answers it).
 
+### 13.6 2026-11-12: the Drive card, and what a month of replayed drives said about estimating
+
+**Why.** The drive log of §13.4 was only read after the drive, on the centre screen. The owner asked
+for a third card on the driver display, in the now-playing card's size and style, showing whatever
+EV Insights knows that matters to the drive under way. Of four proposals the owner took a combined
+one: the battery on arrival while Apple Maps has a route, this drive against the usual otherwise.
+
+**What the phone says about the road ahead.** Not speed. iAP2 route guidance carries, per route:
+distance and time remaining about once a second (`0x5201`), and the whole maneuver list at route
+start (`0x5202`; 22 to 31 entries per route in the owner's log), each with its type, the road it
+leads onto and a distance. There is no speed, speed limit, traffic, elevation or geometry in the
+interface. Two things can be derived. Distance remaining over time remaining is the average speed
+Apple expects for the rest of the route, traffic included; the estimate uses it. And each leg's
+length with its road name (which `RouteShield` already classifies) would split the route into
+motorway and other, which matters because energy rises with the square of speed; that is **not
+built**, because which leg a `0x5202` distance describes is still unconfirmed on this car (Play
+246 logs `gap=`/`nextGap=` to settle it).
+
+**The estimate was wrong first, and the replay is what showed it.** `HistoryReplayTest` (a tool,
+run only with `DRIVE_HISTORY_PROBES` set) feeds the receiver's stored reports through the car's own
+`TripRecorder`: 7,071 reports from 2026-10-13 to 11-12 gave 120 drives, 29 charges, 1,863 km. It
+then scores `DriveOutlook` on every drive of 8 km or more with only earlier drives as history, the
+rest of the drive's own distance and moving time standing in for the phone. The first model
+(steady-speed physics scaled by a per-drive factor, blended with the drive so far) did no better
+than a flat average at the start and overestimated by 26 to 37% mid-drive. The data said why:
+
+| Finding in the replayed drives | Consequence in `DriveOutlook` |
+|---|---|
+| The first 3 km cost a median 232 Wh/km against 143 for the rest, warm day or cold | The warm-up is a fixed cost per drive (`WARMUP_WH`, about 230 Wh), not part of a rate |
+| After it, Wh/km fits `95 + 0.138 v² + 3.55 x (degrees below 18 °C)` with a median miss of 16 against 27 for one flat figure | `cruise(v, temp)`; the speed term is the air drag a car of this shape should have |
+| Mid-drive estimates stayed 18% high until the moving car's own energy was credited | `kineticWh` x `REGEN` (0.7) is subtracted from what is ahead |
+| Weighting in the drive so far made every estimate worse at these lengths | It counts slowly: a quarter after 100 km past the warm-up, never more than half |
+
+With that, forward-chained on the same drives: at the start the energy ahead is off by a median of
+7.3% (0.5 points of the pack, 2.3 at worst) against 10.1% for a flat average; a quarter in, 10%
+against 16%; three quarters in, 21% of the little that is left against 38%. **Limits:** the
+constants were fitted on the same month they are scored on (only the per-car factor `k` is
+forward-chained); only six of the drives were 40 km or longer, so a long motorway trip, where an
+arrival figure matters most, is the least tested case; hills and wind are invisible. The card logs
+each estimate and what the battery really was when the route ended (`drive card: route over …`), so
+the car's own log will say how it does.
+
+**The card** (`nav/DriveCard.kt`, `ClusterLayout.Slot.DRIVE`, Settings ▸ Driver display ▸ Drive,
+default on). A ring where now playing has its cover, two lines and a bar; it opens for 8 s when
+what it says changes (a new kind, a tone, or an arrival figure 3 points from the one last shown
+open, at most every 90 s) and then folds to the ring with two words beside it.
+
+| When | Ring | Lines | Bar |
+|---|---|---|---|
+| Apple Maps has a route | arrival % | "Arrive with 62%" / "9.4 kWh · 31 mi left" | the pack now, faint, and on arrival, solid |
+| …and arrival is under 10% | amber, stays open | the same; at or below zero "Charge on the way" / "3.1 kWh short · 62 mi left" | |
+| No route, 5 km or more driven, history exists | "+8%", "−12%" or "≈" | "3.4 mi/kWh" / "8% better than usual" (`usual` for a recognised route, `similar` for drives of that length, `average`) | worst to best for such drives, a tick at normal, a dot for now |
+| Otherwise, once 500 m is driven | mi/kWh | "12 mi · 24 min" / "3.6 kWh · 3.4 mi/kWh" | none |
+
+"Against the usual" compares `k`, not Wh/km, so a motorway day is not called worse than a town
+day, nor a cold one worse than a mild one. The live figures come from the recorder
+(`DriveLive`, published about once a second from the probe's worker thread); the drive log is read
+off the main thread and re-read when the file grows. Default place: under now playing; in the turn
+card's free corner while that card is docked bottom right.
+
+**History import.** The car's log began with Play 245, so the card's "usual" would have been thin
+for weeks. The replay's output is offered by the receiver at `GET …/history?car=<id>`
+(`history/trips.ndjson`, 149 records, 27 KB, 7.5 KB gzipped) and `HistoryImport` fetches it once,
+after a telemetry upload succeeds, and appends the records that overlap nothing the car recorded
+itself. The receiver has no login, so the file carries **no coordinates** (imported drives count
+for the Week page, charging costs and the card's normal, and stay off the Routes page) and is
+served only to a caller that names the id of a static report part the receiver holds
+(`ProbeSlim.staticId`, never listed), so only a car that has uploaded there can ask. A replay
+with places (`DRIVE_HISTORY_PLACES=1`) found 16 repeated routes; getting those onto the car needs
+a private channel and was not done.
+
+**Verified:** 473 JVM tests (25 new: `DriveOutlookTest`, `DriveCardTest`, `HistoryImportTest`), the
+replay above, and the receiver route with `curl` (404 with no id, a wrong id or a path in the id;
+the file, byte for byte, with the car's). **Not verified:** the card has never been drawn on a
+screen. The emulator was not started: the machine was at a load of 50 to 65 from the EV Insights
+worker's restart loop, the condition under which it crashed on 2026-11-11. The fetch from the car
+is likewise untested. Not published.
+
 ---
 
 ## 14. 2026-10-21: now-playing sync — what the 2026-10-20 drive (v209) actually shows

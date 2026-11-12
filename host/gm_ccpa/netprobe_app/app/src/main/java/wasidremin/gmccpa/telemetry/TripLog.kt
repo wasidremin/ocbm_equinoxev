@@ -185,6 +185,7 @@ class TripRecorder(
     private var limitPct: Double? = null
     private var capWh: Double? = null
     private var chargeState: Int? = null
+    private var distUnits: Int? = null
     private var fixT = 0L
     private var fixLat = 0.0
     private var fixLon = 0.0
@@ -203,6 +204,7 @@ class TripRecorder(
             InsightsData.OUTSIDE_C -> { tempC = n; drive?.live?.let { it.tempSum += n; it.tempN++ } }
             InsightsData.CHARGE_LIMIT_PCT -> limitPct = n
             InsightsData.CAPACITY_WH -> if (n > 1000.0) capWh = n
+            InsightsData.DISTANCE_UNITS -> distUnits = n.toInt()
             InsightsData.CHARGE_STATE -> {
                 chargeState = n.toInt()
                 charge?.let {
@@ -367,6 +369,10 @@ class TripRecorder(
     /** The drive in progress as it would be recorded if it ended now, or null. */
     fun openDrive(): Trip? = drive?.let { driveTrip(it, open = true) }
 
+    /** What the car reads right now, with the drive in progress, for [DriveLive]. */
+    fun live(t: Long): DriveLive.State = DriveLive.State(openDrive(), b.takeIf { it.isFinite() }, capWh, tempC,
+        speedMps = abs(speed), metric = distUnits == KILOMETERS, atMs = t)
+
     /** Everything needed to pick up after the process is killed, as one small JSON document. */
     fun checkpoint(): String {
         val o = JSONObject().put("v", 1).put("bT", bT).putOpt("b", b.takeIf { it.isFinite() }).put("speed", speed)
@@ -449,6 +455,8 @@ class TripRecorder(
         /** EV_CHARGE_STATE values. */
         const val CHARGING = 1
         const val CHARGE_COMPLETE = 2
+        /** DISTANCE_DISPLAY_UNITS: VehicleUnit.KILOMETER. Anything else is shown in miles. */
+        const val KILOMETERS = 35
 
         private fun num(o: JSONObject, key: String): Double? =
             if (o.has(key) && !o.isNull(key)) o.optDouble(key).takeIf { it.isFinite() } else null
@@ -460,6 +468,31 @@ class TripRecorder(
             return Trip.fromJson(trip)?.copy(open = true)
         }
     }
+}
+
+/**
+ * The recorder's latest reading, published from the probe's worker thread about once a second for
+ * the driver display's Drive card, which runs on the main thread. Null while nothing records.
+ */
+object DriveLive {
+    class State(
+        /** The drive in progress; null until it has gone [TripRecorder.MIN_DRIVE_M]. */
+        val drive: Trip?,
+        val batteryWh: Double?,
+        val capWh: Double?,
+        val tempC: Double?,
+        val speedMps: Double,
+        val metric: Boolean,
+        /** Epoch milliseconds of the reading. */
+        val atMs: Long,
+    )
+
+    /** A reading older than this is the past: on-change properties go quiet at a long stop, not for this long. */
+    const val STALE_MS = 6 * 60_000L
+
+    @Volatile var state: State? = null
+
+    fun fresh(nowMs: Long): State? = state?.takeIf { nowMs - it.atMs in 0..STALE_MS }
 }
 
 /** The permanent file and the recorder's checkpoint, both under one directory. */

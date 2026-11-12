@@ -44,7 +44,8 @@ object ProbeUpload {
     private val UNSAFE = Regex("[^A-Za-z0-9._-]+")
 
     /** @param bytes what went on the wire (gzipped), not the size of `report.json` */
-    data class UploadResult(val endpoint: String, val file: String, val bytes: Long)
+    /** [staticId] names the capture's unchanging part, which the receiver now holds ([ProbeSlim]). */
+    data class UploadResult(val endpoint: String, val file: String, val bytes: Long, val staticId: String? = null)
 
     /**
      * The directory [VehicleProbe] is writing into, if any. Drains and pruning are started from
@@ -203,7 +204,7 @@ object ProbeUpload {
                 )
             }
             split?.let { knownStatic.add(it.staticId) }
-            UploadResult(endpoint, name, body.size.toLong())
+            UploadResult(endpoint, name, body.size.toLong(), split?.staticId)
         }
     }
 
@@ -343,6 +344,9 @@ object ProbeUpload {
                 try {
                     val res = uploadSync(reportFile, dir.name, base, onState)
                     markReportUploaded(dir, res.file)
+                    // The receiver is reachable and knows this car: ask it once for the drives from
+                    // before the car kept a log (a few kilobytes).
+                    res.staticId?.let { HistoryImport.runOnce(appCtx, base, it) }
                     onState?.let {
                         wasidremin.gmccpa.upload.UploadCenter.emitState(
                             it,

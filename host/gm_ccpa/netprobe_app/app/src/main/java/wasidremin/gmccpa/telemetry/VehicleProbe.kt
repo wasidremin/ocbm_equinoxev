@@ -69,6 +69,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private val tripStore = TripStore(TripStore.dirUnder(context.getExternalFilesDir(null) ?: context.filesDir))
     private val trips = TripRecorder(tzMin = { java.util.TimeZone.getDefault().getOffset(it) / 60_000 }) { tripStore.append(it) }
     private var tripCheckpointMs = 0L
+    private var livePublishedMs = 0L
     @Volatile var connected = false; private set
     @Volatile var parked = false; private set
     @Volatile var capturing = false; private set
@@ -88,6 +89,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
         try {
             val t = System.currentTimeMillis()
             block(t)
+            if (t - livePublishedMs !in 0 until LIVE_PUBLISH_MS) { DriveLive.state = trips.live(t); livePublishedMs = t }
             if (SystemClock.elapsedRealtime() - tripCheckpointMs >= TRIP_CHECKPOINT_MS) saveTripCheckpoint(t)
         } catch (t: Exception) { fail("drive log", t) }
     }
@@ -95,6 +97,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private fun saveTripCheckpoint(t: Long = System.currentTimeMillis()) {
         try {
             trips.tick(t)
+            DriveLive.state = trips.live(t)
             tripStore.saveCheckpoint(trips.checkpoint())
             tripCheckpointMs = SystemClock.elapsedRealtime()
         } catch (e: Exception) { fail("drive log checkpoint", e) }
@@ -627,7 +630,9 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     }
     companion object {
         private const val TRIP_CHECKPOINT_MS = 20_000L
-        private val TRIP_CENSUS_IDS = setOf(InsightsData.CAPACITY_WH, InsightsData.CHARGE_LIMIT_PCT, InsightsData.CHARGE_STATE)
+        private const val LIVE_PUBLISH_MS = 1000L
+        private val TRIP_CENSUS_IDS = setOf(InsightsData.CAPACITY_WH, InsightsData.CHARGE_LIMIT_PCT, InsightsData.CHARGE_STATE,
+            InsightsData.DISTANCE_UNITS)
         // API-35 PUBLIC SDK constants; literal permission strings allow undefined names to be reported.
         private val compileIds = ProbeModel.compileIds
         fun propertyName(id: Int): String = try { VehiclePropertyIds.toString(id) } catch (_: LinkageError) {

@@ -160,7 +160,7 @@ object TripStats {
         return TempFit(slope, my - slope * mx, minC, maxC, pts.size)
     }
 
-    private fun lengthBucket(distM: Double): Int = when {
+    internal fun lengthBucket(distM: Double): Int = when {
         distM < 5_000 -> 0
         distM < 15_000 -> 1
         distM < 40_000 -> 2

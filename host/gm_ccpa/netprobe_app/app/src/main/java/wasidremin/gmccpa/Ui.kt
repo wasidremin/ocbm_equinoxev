@@ -953,6 +953,13 @@ class LauncherUi(private val act: Activity) {
             "A ringing or active call takes the now-playing card's place, with who it is and how long it has run.",
             trailing = EqToggle(act, cl.call) { on -> cl.setCall(act, on); editor.invalidate() },
         ))
+        card.addRow(EqRow(
+            act, "Drive",
+            "With an Apple Maps route: the battery you will arrive with, in amber under 10%. Without one: this " +
+                "drive's efficiency against your usual. Opens for 8 s when the figure changes, then folds to a ring. " +
+                "Worked out on the car from EV Insights' drive log.",
+            trailing = EqToggle(act, cl.drive) { on -> cl.setDrive(act, on); editor.invalidate() },
+        ))
         lateinit var lanesRow: EqRow
         lanesRow = EqRow(
             act, "Lane guidance", cl.lanesText(),

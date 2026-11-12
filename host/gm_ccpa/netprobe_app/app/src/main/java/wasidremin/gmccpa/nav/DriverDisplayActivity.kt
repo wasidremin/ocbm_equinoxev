@@ -27,6 +27,7 @@ class DriverDisplayActivity : Activity() {
     private var outline: Outline? = null
     private var card: TurnCard.View? = null
     private var media: MediaCard.View? = null
+    private var drive: DriveCard.View? = null
 
     companion object {
         @Volatile private var open: WeakReference<DriverDisplayActivity>? = null
@@ -36,7 +37,7 @@ class DriverDisplayActivity : Activity() {
         /** Settings changed an area: outline it and move the card now, for [DriverDisplay.PREVIEW_MS]. */
         fun refreshPreview() {
             val a = open?.get() ?: return
-            a.runOnUiThread { a.outline?.invalidate(); a.card?.invalidate(); a.media?.invalidate() }
+            a.runOnUiThread { a.outline?.invalidate(); a.card?.invalidate(); a.media?.invalidate(); a.drive?.invalidate() }
         }
 
         fun closeOpen(why: String) {
@@ -59,6 +60,7 @@ class DriverDisplayActivity : Activity() {
         // The cards last, so the preview's shade does not dim them where they sit outside the
         // directions area.
         outline = Outline(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
+        drive = DriveCard.View(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
         media = MediaCard.View(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
         card = TurnCard.View(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
         setContentView(root)
@@ -118,6 +120,7 @@ class DriverDisplayActivity : Activity() {
             for (slot in ClusterLayout.Slot.values()) {
                 if (slot == ClusterLayout.Slot.TURN && !DriverDisplay.turnCard) continue
                 if (slot == ClusterLayout.Slot.MEDIA && !ClusterLayout.media && !ClusterLayout.call) continue
+                if (slot == ClusterLayout.Slot.DRIVE && !ClusterLayout.drive) continue
                 val c = ClusterLayout.footprint(context, width, height, slot)
                 val cr = android.graphics.RectF(c.left, c.top, c.left + c.width, c.top + c.height)
                 cr.inset(-3f, -3f)
@@ -131,6 +134,7 @@ class DriverDisplayActivity : Activity() {
         outline = null
         card = null
         media = null
+        drive = null
         if (open?.get() === this) open = null
         AdapterSession.detachCluster("map window closed")
         log.i("map window closed")

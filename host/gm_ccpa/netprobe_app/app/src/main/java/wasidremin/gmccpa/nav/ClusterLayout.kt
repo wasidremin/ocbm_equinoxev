@@ -7,8 +7,9 @@ import wasidremin.gmccpa.ProbeLog
 /**
  * What the app draws over CarPlay's map on the driver display, and where (Settings ▸ Driver display).
  *
- * Two places, each dragged and sized in Settings: the turn card (with the "then" turn and the lane
- * strip stacked under it) and the now-playing card (which a call takes over while it lasts). Both are
+ * Three places, each dragged and sized in Settings: the turn card (with the "then" turn and the lane
+ * strip stacked under it), the now-playing card (which a call takes over while it lasts) and the
+ * drive card ([DriveCard]: arrival battery, or this drive against the usual). All are
  * the app's own drawing, so nothing here is declared to CarPlay and every change applies at once.
  * The driver display takes no touch; the cards only show.
  */
@@ -22,6 +23,7 @@ object ClusterLayout {
     private const val KEY_OLD_TURN_AREA = "turn_card_area"
     private const val KEY_DOCK = "turn_dock"
     private const val KEY_DOCK_PLACE = "slot_turn_dock"
+    private const val KEY_DRIVE = "drive_card"
 
     /** A card's top-left corner in percent of the driver display, and its size in percent of the default. */
     data class Place(val x: Int, val y: Int, val scale: Int = 100) {
@@ -40,6 +42,8 @@ object ClusterLayout {
         TURN("slot_turn", "Turn", 0.22f, 2.9f, 1.82f, Place(2, 6)),
         /** The right side, under the speed-limit sign Apple's map draws in its top-right corner. */
         MEDIA("slot_media", "Now playing", 0.22f, 2.6f, 1f, Place(70, 30)),
+        /** Under now playing. A little wider than it: its lines are sentences, not a title. */
+        DRIVE("slot_drive", "Drive", 0.22f, 3.0f, 1f, Place(68, 54)),
     }
 
     /** A card in window pixels. What hangs under it reaches to [top] + [height] * [Slot.stack]. */
@@ -67,6 +71,8 @@ object ClusterLayout {
      * 7..88% down, and the gauges' top edge sits 54% down: this mirrors them.
      */
     val DOCK_DEFAULT = Place(70, 54)
+    /** The drive card while the turn card is docked where it would sit: the turn card's free corner. */
+    val DRIVE_DOCKED_DEFAULT = Place(2, 6)
     /** How far the docked panel's left edge leans out per pixel down, measured off the gauges. */
     const val DOCK_SLANT = 0.43f
 
@@ -97,6 +103,7 @@ object ClusterLayout {
         parse(prefs.getString(slot.key, null), 3)?.let { return Place(it[0], it[1], it[2]).clamped() }
         // Before 2026-11-10 the turn card had an area of four edge margins; its corner is kept.
         if (slot == Slot.TURN) parse(prefs.getString(KEY_OLD_TURN_AREA, null), 4)?.let { return Place(it[0], it[1]).clamped() }
+        if (slot == Slot.DRIVE && dock) return DRIVE_DOCKED_DEFAULT
         return slot.default
     }
 
@@ -129,6 +136,9 @@ object ClusterLayout {
     /** The turn card as a panel in the bottom-right corner, in the look of the car's gauges. Off by default. */
     @Volatile var dock = false
         private set
+    /** The drive card: arrival battery during a route, else this drive against the usual. On by default. */
+    @Volatile var drive = true
+        private set
     @Volatile private var app: Context? = null
 
     fun load(ctx: Context) {
@@ -139,6 +149,7 @@ object ClusterLayout {
         call = p.getBoolean(KEY_CALL, true)
         lanes = p.getBoolean(KEY_LANES, false)
         dock = p.getBoolean(KEY_DOCK, false)
+        drive = p.getBoolean(KEY_DRIVE, true)
         app = a
     }
 
@@ -150,6 +161,12 @@ object ClusterLayout {
     fun setMedia(ctx: Context, on: Boolean) {
         save(ctx, KEY_MEDIA, on); media = on
         log.i("now playing on the driver display ${if (on) "ON" else "off"} (Settings)")
+        if (on) DriverDisplay.preview() else DriverDisplayActivity.refreshPreview()
+    }
+
+    fun setDrive(ctx: Context, on: Boolean) {
+        save(ctx, KEY_DRIVE, on); drive = on
+        log.i("drive card on the driver display ${if (on) "ON" else "off"} (Settings)")
         if (on) DriverDisplay.preview() else DriverDisplayActivity.refreshPreview()
     }
 
@@ -211,4 +228,8 @@ object ClusterLayout {
 
     /** The green of a highway exit sign and of an answered call. */
     const val GREEN = 0xFF2B8A3E.toInt()
+    /** The same green and a warning amber, as they read on the night card and on the day card. */
+    const val GREEN_NIGHT = 0xFF30D158.toInt()
+    const val AMBER = 0xFFD9760A.toInt()
+    const val AMBER_NIGHT = 0xFFFF9F0A.toInt()
 }

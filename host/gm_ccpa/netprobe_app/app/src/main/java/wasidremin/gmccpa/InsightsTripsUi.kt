@@ -608,7 +608,9 @@ internal class InsightsTrips(
             if (first == null) "Nothing recorded yet. Drives are recorded while 'EV Insights auto-upload' is on."
             else "${m.closed.size} drives and ${m.trips.count { it.kind == Trip.Kind.CHARGE }} charge records since " +
                 "${day(first.t0, first.tzMin)} · ${"%.0f".format(Locale.US, store.bytes() / 1024.0)} KB · never uploaded, " +
-                "and kept when probe segments are cleared"))
+                "and kept when probe segments are cleared" +
+                (wasidremin.gmccpa.telemetry.HistoryImport.added(act)?.takeIf { it > 0 }
+                    ?.let { " · $it of the records are from before this log began, rebuilt from the car's uploaded reports" } ?: "")))
         if (first != null) {
             card.addRow(EqRow(act, "Clear drive history",
                 "Removes every recorded drive and charge. Routes, bests and charging totals start over.",
