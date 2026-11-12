@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 247 (`4.0+drive-card`, 2026-11-12; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 248 (`4.0+settings-tabs`, 2026-11-12; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Data budget: nothing checked on the car (Play 246).** The app
   used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
@@ -65,7 +65,7 @@ high-water mark: versionCode 247 (`4.0+drive-card`, 2026-11-12; `host/gm_ccpa/do
   `uploads now go over <network>` line that says how the car's modem and a phone hotspot each
   present; a parked car sends a heartbeat and not a report a minute; a large log upload offered
   "Send on Wi-Fi" goes out by itself on home Wi-Fi or the phone hotspot.
-- **Settings tabs and Capture driver display: built 2026-11-12, not published.** The Settings page
+- **Settings tabs and Capture driver display: nothing checked on the car (Play 248).** The Settings page
   is split into CarPlay, Screen & Sound and Cluster tabs (call tests moved to Troubleshooting), and
   a "Capture driver display" button (Cluster and Troubleshooting ▸ Capture) saves CarPlay's map
   with the app's cards over it and uploads it like the other captures
