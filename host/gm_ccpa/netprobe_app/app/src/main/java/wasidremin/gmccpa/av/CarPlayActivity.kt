@@ -1866,15 +1866,20 @@ class CarPlayActivity : Activity() {
         val left = if (onRight) lp.marginStart + lp.width - width else lp.marginStart
         val cutout = if (onRight) (VideoFrame.safeRightPx * sx).roundToInt() else 0
         p.split = area != null
+        // A tile inset from the picture's edges, with rounded corners ([MediaPaneView.CORNER_PX]).
+        val g = wasidremin.gmccpa.pane.MediaPaneView.INSET_PX
         val plp = p.layoutParams as android.widget.FrameLayout.LayoutParams
-        val changed = plp.width != width || plp.height != lp.height || plp.marginStart != left || plp.topMargin != lp.topMargin
+        val w = width - g * 2
+        val ht = lp.height - g * 2
+        val changed = plp.width != w || plp.height != ht || plp.marginStart != left + g || plp.topMargin != lp.topMargin + g
         if (changed) {
-            plp.width = width
-            plp.height = lp.height
-            plp.marginStart = left
-            plp.topMargin = lp.topMargin
+            plp.width = w
+            plp.height = ht
+            plp.marginStart = left + g
+            plp.topMargin = lp.topMargin + g
             p.layoutParams = plp
-            p.setPadding(p.paddingLeft, p.paddingTop, wasidremin.gmccpa.EqTheme.px(22f) + cutout, p.paddingBottom)
+            p.setPadding(p.paddingLeft, p.paddingTop, wasidremin.gmccpa.EqTheme.px(22f) + maxOf(0, cutout - g), p.paddingBottom)
+            p.invalidateOutline()
         }
         if (p.visibility != View.VISIBLE || changed) {
             if (p.visibility != View.VISIBLE) p.appear()

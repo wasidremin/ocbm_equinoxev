@@ -297,4 +297,18 @@ class TripLogTest {
             "${"%.1f".format(drives.sumOf { it.netWh } / 1000)} kWh net, " +
             "${trips.size - drives.size} charges")
     }
+
+    @Test fun theLiveReadingCarriesTheBatteryEveryHundredMetres() {
+        val r = recorder()
+        r.onBattery(1_000, 60_000.0)
+        val end = cruise(r, 10_000, 300, 20.0, 60_000.0, 5.0)   // 6 km
+        val marks = r.live(end).marks
+        assertTrue(marks.size in 55..62)
+        assertTrue(marks.zipWithNext().all { (a, b) -> b.distM - a.distM >= RollingEfficiency.STEP_M - 1e-6 })
+        assertTrue(marks.first().wh > marks.last().wh)
+        // 5 Wh a second at 20 m/s is 250 Wh/km; the battery moves in the test's own steps, so roughly.
+        assertEquals(250.0, RollingEfficiency.span(marks, 1000.0)!!.whPerKm, 15.0)
+        r.tick(end + 300_000)
+        assertTrue(r.live(end + 300_000).marks.isEmpty())
+    }
 }

@@ -622,6 +622,35 @@ boots; the folded ring by day and the docked placement were not captured. **Not 
 anything with live data (the samples are fixed text), the fetch from the car, and everything on
 the car.
 
+**Redesign the same evening (owner, after the first drive with it, Play 248).** The arrival figure
+held at 46% the whole drive because the battery fell as fast as the estimate expected: correct, and
+nothing to look at. So it moved to the turn card (`TurnCard.drawArrival`, `DriveCard.arrival`): a
+small battery and "45% on arrival" at the right end of the row under the docked panel (the panel has
+no height left under it before the glass ends), or on the row under the free card; amber under 10%,
+"Charge needed" at zero. The card itself now shows something that moves:
+
+| Part | What it is |
+|---|---|
+| Ring | A gauge from 0 to 5 mi/kWh (0–8 km/kWh); the arc is the last mile, green when it beats the last ten by over 5%, amber when 5% worse, blue between |
+| Ticks | Folded: the last ten (text colour). Open: also this month (purple) and lifetime (grey), with a legend line |
+| Bars | One per mile of the last ten, on the ring's scale, with the last ten's level drawn across |
+| Folded text | "▲12% vs 10 mi", "▼8% …", "≈ 10 mi avg", "first mi…" |
+
+The recorder notes the battery every 100 m of the drive (`RollingEfficiency.Mark`, a little over
+ten miles kept, not checkpointed); the 10 Wh battery steps make a mile good to about 3%. Month and
+lifetime are whole drives from the drive log over their distance (`DriveOutlook.average`). It opens
+while the car stands 3 s, with no route, and for 8 s when the trend flips between better and worse
+(at most every 3 minutes); folded otherwise. It logs one line per completed mile, numbers only
+(`drive card: last mi …`). The vs-usual verdict went with the old faces, which also ends the
+2026-11-12 flicker between "about usual" and "5% worse" at the band's edge. Fixed with it: a
+reroute passes through "no route" for a moment, which the card took for the route's end (`route
+over` logged 34.7 km from the end); a route now has to be gone 15 s.
+
+**The 2026-11-12 drive (Play 248, 22:19–22:57 UTC).** The import added 119 drives and 28 charges
+(`drive history: 149 records offered … 147 added`), after which the card compared against 35 drives
+of similar length. Arrival 46% at route start; the upload ended before the route did, so the
+estimate's error is still unmeasured. The driver display ran 41,400 frames with no hide.
+
 ---
 
 ## 14. 2026-10-21: now-playing sync — what the 2026-10-20 drive (v209) actually shows

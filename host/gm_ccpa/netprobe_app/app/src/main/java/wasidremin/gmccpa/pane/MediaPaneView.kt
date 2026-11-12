@@ -122,6 +122,14 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         orientation = VERTICAL
         setBackgroundColor(BG)
         setWillNotDraw(false)
+        // A tile with CarPlay's rounded corners (owner, 2026-11-12), not a square cut out of the
+        // picture. The outline clips the backdrop and the scrim too, which are drawn edge to edge.
+        outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
+                outline.setRoundRect(0, 0, view.width, view.height, CORNER_PX)
+            }
+        }
+        clipToOutline = true
         art.setImageDrawable(NoteMark())
         // A soft shadow under the words that matter most: it costs nothing on the plain pane and
         // keeps their edges clean where the backdrop is busy.
@@ -461,6 +469,9 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
 
     companion object {
         const val BG = 0xFF0B1220.toInt()
+        /** The tile's corner radius and its gap from the picture's edges, in the settings' scaled pixels. */
+        val CORNER_PX: Float get() = wasidremin.gmccpa.EqTheme.pxf(26f)
+        val INSET_PX: Int get() = wasidremin.gmccpa.EqTheme.px(10f)
         private const val TICK_MS = 250L
         private const val ART_MAX_PX = 512
         private const val BACKDROP_ZOOM = 1.2f

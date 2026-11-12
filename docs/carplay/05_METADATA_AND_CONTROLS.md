@@ -1175,9 +1175,9 @@ JunctionType(9), ExitInfo(13). Wire-verified live values in `WIRED_NAV_METADATA.
   app's log of one junction read `status=[0, 0, 2] highlight=[null, null, 45]`. So
   `laneAngleHighlight` carries the direction the route takes and is **not repeated in `laneAngles`**,
   which lists the lane's other directions; a consumer has to draw the two together
-  (`TurnCard.laneArrows`, Play 246). LaneStatus 2 = preferred, 0 = do not take. The preferred lane
-  was the rightmost of three with highlight 45, which fits positive = right; the app draws it that
-  way and the sign is still to be confirmed by eye.
+  (`TurnCard.laneArrows`, Play 246). LaneStatus 2 = preferred, 0 = do not take. **Sign confirmed
+  2026-11-12 (Play 248 drive): negative = left.** A left turn (ManeuverType 1) had its preferred lane
+  leftmost with highlight −90; a lane to the right carried +45 and +90 elsewhere.
 The GM app uses the exit label: the cluster's road text reads "Exit 273 · Wade Green Rd".
 
 **What route guidance does not carry (checked 2026-11-12 for the Drive card).** No speed, speed
@@ -1186,7 +1186,10 @@ remaining over time remaining (params 7 and 6) is the average speed Apple expect
 the route, traffic included, and the maneuver list (22 to 31 entries per route in the owner's log,
 streamed at route start) gives each step's road and a DistanceBetweenManeuver. Which leg that
 distance describes (to this maneuver, or from it to the next) is **not confirmed on this car**; the
-app logs `gap=`/`nextGap=` per turn from Play 246 to settle it. Only the first element of
+app logs `gap=`/`nextGap=` per turn from Play 246 to settle it. The first such drive (2026-11-12, one
+route of 22 maneuvers) leans to *the leg leading into this maneuver*: the entry carrying 19.3 km was
+current for the 18 minutes before it was reached. One leg did not fit (1.1 km in 27 s), so one more
+drive before relying on it. Only the first element of
 RouteGuidanceManeuverCurrentList(13) is forwarded (`currentManeuverIndex`).
 
 **Extra offer gate for nav** [E — `WIRED_NAV_METADATA.md` §"offer gate"]: beyond declaring 0x5201/0x5202

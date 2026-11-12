@@ -102,8 +102,25 @@ object DriveOutlook {
         )
     }
 
+    /**
+     * Pure: net Wh/km over the finished drives of [drives] that ended at or after [fromMs], whole
+     * drives as recorded (warm-up and stops included). Null under 5 km in all.
+     */
+    fun average(drives: List<Trip>, fromMs: Long = Long.MIN_VALUE): Double? {
+        val use = drives.filter { it.kind == Trip.Kind.DRIVE && !it.open && it.t1 >= fromMs && it.distM >= TripRecorder.MIN_DRIVE_M }
+        val dist = use.sumOf { it.distM }
+        if (dist < 5000.0) return null
+        return use.sumOf { it.netWh } / (dist / 1000.0)
+    }
+
+    /** Pure: epoch milliseconds at which the local calendar month holding [nowMs] began, at UTC offset [tzMin]. */
+    fun monthStart(nowMs: Long, tzMin: Int): Long {
+        val local = java.time.Instant.ofEpochMilli(nowMs).atOffset(java.time.ZoneOffset.ofTotalSeconds(tzMin * 60))
+        return local.withDayOfMonth(1).toLocalDate().atStartOfDay().toInstant(local.offset).toEpochMilli()
+    }
+
     /** The drive log, read once: every usable drive as a [Sample], and the repeated routes. */
-    class History(drives: List<Trip>) {
+    class History(val drives: List<Trip>) {
         val index: TripStats.RouteIndex = TripStats.routes(drives)
         val samples: List<Sample> = drives.mapNotNull { sample(it) }
         private val byRoute: Map<String, List<Sample>> =

@@ -1599,7 +1599,7 @@ class MainActivity : Activity() {
                 if (i.hasExtra("lanes")) cl.setLanes(this, i.getBooleanExtra("lanes", false))
                 if (i.hasExtra("road")) { wasidremin.gmccpa.nav.TurnCard.benchRoad = i.getStringExtra("road"); dd.preview() }
                 if (i.hasExtra("then")) { wasidremin.gmccpa.nav.TurnCard.benchThen = i.getStringExtra("then"); dd.preview() }
-                // `--es drive_face arrive|low|short|better|worse|usual|trip`: which sample the drive card previews.
+                // `--es drive_face good|worse|first|low|short`: the drive card's sample; low/short set the turn card's arrival sample.
                 if (i.hasExtra("drive_face")) { wasidremin.gmccpa.nav.DriveCard.benchFace = i.getStringExtra("drive_face"); dd.preview() }
                 // `--ez night true|false`: the cards' day or night look, until the car next reports its own.
                 if (i.hasExtra("night")) wasidremin.gmccpa.av.CarNight.night = i.getBooleanExtra("night", false)

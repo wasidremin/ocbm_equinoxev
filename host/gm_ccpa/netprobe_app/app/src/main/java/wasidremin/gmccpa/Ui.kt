@@ -978,9 +978,9 @@ class LauncherUi(private val act: Activity) {
         ))
         card.addRow(EqRow(
             act, "Drive",
-            "With an Apple Maps route: the battery you will arrive with, in amber under 10%. Without one: this " +
-                "drive's efficiency against your usual. Opens for 8 s when the figure changes, then folds to a ring. " +
-                "Worked out on the car from EV Insights' drive log.",
+            "Energy over the last mile as a ring, with ticks for the last 10 miles, this month and lifetime, and a " +
+                "bar per mile. Opens while you are stopped, with no route, and when the trend flips; folded otherwise. " +
+                "During a route the turn card shows the battery you will arrive with. From EV Insights' drive log.",
             trailing = EqToggle(act, cl.drive) { on -> cl.setDrive(act, on); editor.invalidate() },
         ))
         page.addView(eqSectionLabel(act, "Cards"))

@@ -145,4 +145,21 @@ class DriveOutlookTest {
         val gone = DriveOutlook.outlook(DriveOutlook.Input(null, 3_000.0, 85_000.0, 10.0, aheadM = 40_000.0, aheadS = 1600.0), null)
         assertTrue(gone.arrival!!.pct < 0)
     }
+
+    @Test fun lifetimeAndMonthAveragesAreWholeDrivesOverTheirDistance() {
+        val a = drive(1 * day, 10.0, 15.0, 1.0)
+        val b = drive(40 * day, 20.0, 25.0, 1.2)
+        assertEquals((a.netWh + b.netWh) / 30.0, DriveOutlook.average(listOf(a, b))!!, 1e-9)
+        assertEquals(b.netWh / 20.0, DriveOutlook.average(listOf(a, b), 30 * day)!!, 1e-9)
+        assertNull(DriveOutlook.average(listOf(drive(1 * day, 4.0, 15.0, 1.0))))
+        assertNull(DriveOutlook.average(listOf(drive(1 * day, 20.0, 15.0, 1.0, open = true))))
+    }
+
+    @Test fun theMonthStartsAtLocalMidnightOnTheFirst() {
+        // 2026-11-12 03:00 UTC is still 11 November at UTC-5, whose month began 2026-11-01 05:00 UTC.
+        val t = java.time.Instant.parse("2026-11-12T03:00:00Z").toEpochMilli()
+        assertEquals(java.time.Instant.parse("2026-11-01T05:00:00Z").toEpochMilli(), DriveOutlook.monthStart(t, -300))
+        val firstAt1am = java.time.Instant.parse("2026-11-01T04:30:00Z").toEpochMilli()
+        assertEquals(java.time.Instant.parse("2026-10-01T05:00:00Z").toEpochMilli(), DriveOutlook.monthStart(firstAt1am, -300))
+    }
 }

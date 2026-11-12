@@ -73,7 +73,16 @@ high-water mark: versionCode 248 (`4.0+settings-tabs`, 2026-11-12; `host/gm_ccpa
   and a capture saved the cards at their places (cards on black, as the bench has no map frame;
   the bench's uploads pointed at an unreachable address). Open on the car: that a capture holds the
   map behind the cards, and how the tabs read at the car's scale.
-- **Drive card: nothing checked on the car (Play 247).** A third driver-display
+- **Drive card v2 and the arrival chip: built 2026-11-12 evening, not yet on the car.** After the
+  first drive with the card (Play 248: the history import worked, 147 records; the driver display
+  ran the whole drive), the owner asked for something that moves: the card now shows the last mile's
+  mi/kWh against the last ten, this month and lifetime, with a bar per mile, and the battery on
+  arrival sits at the foot of the turn card. Also fixed: a reroute ended the route for the card, and
+  the vs-usual verdict flickered at its band's edge (the verdict is gone). `14_LESSONS_LEARNED.md`
+  §13.6 "Redesign". Open on the car: the per-mile log lines (`drive card: last mi …`) against the
+  trip computer, the fold rules while driving, and a `route over` line at a route's real end, which
+  still gives the arrival estimate's error.
+- **Drive card: first design on the car 2026-11-12 (Play 247/248), superseded above.** A third driver-display
   card (arrival battery during a route, this drive against the usual otherwise) and a one-time
   import of a month of drive history pass their tests and a replay of 120 past drives, and the
   card's sample faces were seen on the emulator; nothing has run with live data or on the car.
@@ -392,8 +401,8 @@ high-water mark: versionCode 248 (`4.0+settings-tabs`, 2026-11-12; `host/gm_ccpa
      `extended` tier on this car's session (lane records arrived; the Equinox runs the AirPlay-tunnel
      arm, not the wired one), so lane guidance needs no box change. The highlight is carried only in
      `laneAngleHighlight`, never repeated in `laneAngles` (`docs/carplay/05_METADATA_AND_CONTROLS.md`).
-     The preferred lane was the rightmost of three with highlight 45, which fits positive = right;
-     not yet confirmed by eye.
+     **Sign confirmed on the 2026-11-12 drive: negative = left** (a left turn's preferred lane at −90),
+     which is how the app draws it.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

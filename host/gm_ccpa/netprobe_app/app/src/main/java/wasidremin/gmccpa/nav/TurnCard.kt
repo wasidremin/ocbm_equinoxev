@@ -199,6 +199,8 @@ object TurnCard {
         private var grown = 0f
         private var lastFrame = 0L
         private var lanesLogged: List<RouteGuidance.Lane>? = null
+        /** The battery on arrival ([DriveCard.arrival]) as last drawn. */
+        private var shownArrival: DriveCard.Arrival? = null
 
         private val tick = object : Runnable {
             override fun run() {
@@ -207,9 +209,15 @@ object TurnCard {
                 if (s !== lastSnapshot || preview || shown != null || night != CarNight.night) {
                     lastSnapshot = s
                     val on = DriverDisplay.turnCard
-                    val next = (if (on) content(s, ClusterLayout.lanes) else null)
-                        ?: if (preview && on) sample(ClusterLayout.lanes) else null
-                    if (next != shown || night != CarNight.night) {
+                    val live = if (on) content(s, ClusterLayout.lanes) else null
+                    val next = live ?: if (preview && on) sample(ClusterLayout.lanes) else null
+                    val arr = when {
+                        next == null || !ClusterLayout.drive -> null
+                        live == null -> DriveCard.sampleArrival(DriveCard.benchFace)
+                        else -> DriveCard.arrival
+                    }
+                    if (next != shown || arr != shownArrival || night != CarNight.night) {
+                        shownArrival = arr
                         if (shown == null) grown = if (next?.near == true) 1f else 0f
                         shown = next; night = CarNight.night; invalidate()
                     }
@@ -307,7 +315,12 @@ object TurnCard {
                     canvas.drawRoundRect(r, h * 0.02f, h * 0.02f, fill)
                 }
                 var below = b.top + ch + h * 0.06f
-                if (c.thenIcon != null) below = drawThen(canvas, c, b.left, below, b.width, h, pal)
+                // The battery on arrival at the right of the row under the card, the turn after at its left.
+                val arr = shownArrival
+                val aw = arr?.let { drawArrival(null, it, 0f, 0f, b.width * 0.5f, h, pal, docked = false) } ?: 0f
+                if (arr != null) drawArrival(canvas, arr, b.left + b.width - aw, below, b.width * 0.5f, h, pal, docked = false)
+                if (c.thenIcon != null) below = drawThen(canvas, c, b.left, below, b.width - (if (aw > 0f) aw + h * 0.08f else 0f), h, pal)
+                else if (arr != null) below += h * 0.36f
                 c.lanes?.let { drawLanes(canvas, it, b.left, below, b.width, h, pal) }
             } else {
                 val ch = h * (0.52f + 0.48f * t)
@@ -330,6 +343,7 @@ object TurnCard {
                 val x = r.left + pad + iconSize + gap
                 canvas.drawText(dist, x, base, bold)
                 if (road.isNotEmpty()) drawRoad(canvas, road, x + distW + gap, base, roadW, plain)
+                shownArrival?.let { drawArrival(canvas, it, b.left, b.top + ch + h * 0.06f, b.width, h, pal, docked = false) }
             }
         }
 
@@ -399,13 +413,62 @@ object TurnCard {
             val lanes = c.lanes
             var rowLeft = x0
             var rowWidth = b.width
+            // The battery on arrival takes the right end of that row (owner, 2026-11-12: "at the bottom
+            // of the turn-by-turn area"); the panel has no height to spare under it before the glass ends.
+            shownArrival?.let { arr ->
+                val aw = drawArrival(null, arr, 0f, 0f, b.width * 0.45f, h, pal, docked = true)
+                drawArrival(canvas, arr, x0 + b.width - aw, y0 + h * 1.03f, b.width * 0.45f, h, pal, docked = true)
+                rowWidth -= aw + h * 0.08f
+            }
             if (lanes != null) {
                 val forThen = if (c.thenIcon != null) h * 0.95f else 0f
-                val used = drawLanes(canvas, lanes, x0, y0 + h * 0.98f, b.width - forThen, h, pal)
+                val used = drawLanes(canvas, lanes, x0, y0 + h * 0.98f, rowWidth - forThen, h, pal)
                 rowLeft += used + h * 0.08f
                 rowWidth -= used + h * 0.08f
             }
             if (c.thenIcon != null) drawThen(canvas, c, rowLeft, y0 + h * 1.03f, rowWidth, h, pal)
+        }
+
+        /**
+         * The battery on arrival: a small battery filled to the figure, then "62% on arrival" (the figure
+         * alone when [maxWidth] is short), amber under 10% and "Charge needed" at or below zero. With
+         * [canvas] null it only measures. Docked it sits on the panel with no tab of its own.
+         */
+        private fun drawArrival(canvas: Canvas?, a: DriveCard.Arrival, left: Float, top: Float, maxWidth: Float, h: Float,
+                                pal: ClusterLayout.Palette, docked: Boolean): Float {
+            val th = h * 0.30f
+            val pad = h * 0.10f
+            val bw = h * 0.27f
+            val bh = h * 0.14f
+            plain.textSize = h * 0.15f
+            val figure = if (a.short) "Charge needed" else "${a.pct}%"
+            val full = if (a.short) figure else "$figure on arrival"
+            val text = if (pad * 2.6f + bw + plain.measureText(full) <= maxWidth) full else figure
+            val w = pad * 2.6f + bw + plain.measureText(text)
+            if (canvas == null) return w
+            if (!docked) {
+                fill.color = pal.card
+                r.set(left, top, left + w, top + th)
+                canvas.drawRoundRect(r, th * 0.42f, th * 0.42f, fill)
+            }
+            val level = if (a.low) (if (night || docked) ClusterLayout.AMBER_NIGHT else ClusterLayout.AMBER)
+                else (if (night || docked) ClusterLayout.GREEN_NIGHT else ClusterLayout.GREEN)
+            val bx = left + pad
+            val by = top + (th - bh) / 2f
+            val nub = h * 0.03f
+            stroke.color = pal.dim; stroke.strokeWidth = h * 0.016f
+            r.set(bx, by, bx + bw - nub, by + bh)
+            canvas.drawRoundRect(r, h * 0.025f, h * 0.025f, stroke)
+            fill.color = pal.dim
+            r.set(bx + bw - nub, by + bh * 0.32f, bx + bw, by + bh * 0.68f)
+            canvas.drawRect(r, fill)
+            val inner = h * 0.022f
+            fill.color = level
+            r.set(bx + inner, by + inner, bx + inner + (bw - nub - inner * 2) * (a.pct / 100f).coerceIn(0.04f, 1f), by + bh - inner)
+            canvas.drawRect(r, fill)
+            plain.color = if (a.low) level else pal.text
+            canvas.drawText(text, bx + bw + pad * 0.6f, top + th / 2f + plain.textSize * 0.35f, plain)
+            return w
         }
 
         /** "Then" and the turn after, on a tab under the card. Returns where the next thing starts. */

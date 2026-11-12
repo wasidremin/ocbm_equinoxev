@@ -160,6 +160,8 @@ class TripRecorder(
         var altRef = Double.NaN
         var live = Acc()
         var done: Acc? = null
+        /** The battery every [RollingEfficiency.STEP_M] of this drive, for the Drive card. Not checkpointed. */
+        val marks = ArrayDeque<RollingEfficiency.Mark>()
     }
 
     private class Charge(val t0: Long, val seenB0: Double) {
@@ -240,6 +242,7 @@ class TripRecorder(
             d.pT = t
             d.pV = v
             d.live.vmax = max(d.live.vmax, abs(v))
+            if (b.isFinite()) RollingEfficiency.add(d.marks, RollingEfficiency.Mark(d.live.dist, b))
             if (d.live.warmM == 0.0 && d.live.dist >= WARM_M && d.b0.isFinite() && b.isFinite()) {
                 d.live.warmM = d.live.dist
                 d.live.warmWh = d.b0 - b
@@ -371,7 +374,7 @@ class TripRecorder(
 
     /** What the car reads right now, with the drive in progress, for [DriveLive]. */
     fun live(t: Long): DriveLive.State = DriveLive.State(openDrive(), b.takeIf { it.isFinite() }, capWh, tempC,
-        speedMps = abs(speed), metric = distUnits == KILOMETERS, atMs = t)
+        speedMps = abs(speed), metric = distUnits == KILOMETERS, atMs = t, marks = drive?.marks?.toList() ?: emptyList())
 
     /** Everything needed to pick up after the process is killed, as one small JSON document. */
     fun checkpoint(): String {
@@ -485,6 +488,8 @@ object DriveLive {
         val metric: Boolean,
         /** Epoch milliseconds of the reading. */
         val atMs: Long,
+        /** The drive under way's battery marks ([RollingEfficiency]); empty with no drive. */
+        val marks: List<RollingEfficiency.Mark> = emptyList(),
     )
 
     /** A reading older than this is the past: on-change properties go quiet at a long stop, not for this long. */
