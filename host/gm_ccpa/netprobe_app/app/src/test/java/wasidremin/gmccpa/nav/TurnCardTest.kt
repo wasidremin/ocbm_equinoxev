@@ -129,4 +129,28 @@ class TurnCardTest {
         assertEquals("1:05", MediaCard.callTime(65_000))
         assertEquals("1:01:05", MediaCard.callTime(3_665_000))
     }
+
+    @Test fun theDirectionToTakeIsDrawnEvenWhenItIsNotAmongTheOthers() {
+        // As the car received it on 2026-11-11: status 2, highlight 45, and no 45 among the angles.
+        val arrows = TurnCard.laneArrows(RouteGuidance.Lane(3, 2, listOf(0), 45))
+        assertEquals(listOf(0 to false, 45 to true), arrows)
+    }
+
+    @Test fun aLaneWithOnlyTheRoutesDirectionIsDrawnInFull() {
+        assertEquals(listOf(-90 to true), TurnCard.laneArrows(RouteGuidance.Lane(0, 2, emptyList(), -90)))
+    }
+
+    @Test fun aLaneNotToTakeIsAllFaint() {
+        assertEquals(listOf(0 to false), TurnCard.laneArrows(RouteGuidance.Lane(0, 0, emptyList(), null)))
+        assertEquals(listOf(0 to false, 90 to false), TurnCard.laneArrows(RouteGuidance.Lane(1, 0, listOf(0, 90), null)))
+    }
+
+    @Test fun aHighlightAlreadyAmongTheAnglesIsNotDrawnTwice() {
+        assertEquals(listOf(0 to false, 90 to true), TurnCard.laneArrows(RouteGuidance.Lane(2, 2, listOf(0, 90), 90)))
+    }
+
+    @Test fun theGapToTheTurnAfterFallsBackToRawMetres() {
+        assertEquals(120L, TurnCard.betweenMeters(RouteGuidance.Maneuver(4, distanceM = 120)))
+        assertEquals(152L, TurnCard.betweenMeters(RouteGuidance.Maneuver(4, distanceText = "500", distanceUnits = 4, distanceM = 9999)))
+    }
 }

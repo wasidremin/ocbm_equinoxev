@@ -70,7 +70,7 @@ object TurnCard {
             it.isNotEmpty() && !it.equals(exit, ignoreCase = true) && !it.equals("Exit $exit", ignoreCase = true)
         }
         // DistanceBetweenManeuver on the following entry is how far it lies past this turn.
-        val then = s.next?.takeIf { near && (meters(it.distanceText, it.distanceUnits) ?: Long.MAX_VALUE) <= THEN_M }
+        val then = s.next?.takeIf { near && (betweenMeters(it) ?: Long.MAX_VALUE) <= THEN_M }
         return Content(
             icon = icon(cur.type, cur.drivingSide),
             distance = distance,
@@ -82,6 +82,25 @@ object TurnCard {
             thenRoad = then?.let { RouteGuidance.exitCue(it.exitInfo, it.afterRoadName ?: it.description) },
             lanes = s.lanes?.takeIf { lanes && near && it.size in 2..MAX_LANES },
         )
+    }
+
+    /** How far [m] lies past the turn before it: the display figure, else the raw metres. */
+    fun betweenMeters(m: RouteGuidance.Maneuver): Long? =
+        meters(m.distanceText, m.distanceUnits) ?: m.distanceM?.takeIf { it >= 0 }
+
+    /**
+     * What to draw for one lane: each direction with whether it is the one to take, the ones to
+     * take last so they are drawn over the faint ones.
+     *
+     * The phone names the direction the route takes (`highlight`) apart from the lane's other
+     * directions (`angles`), and a lane that only goes the route's way can arrive with no other
+     * direction at all. The 2026-11-11 drive showed every lane faint for exactly that reason: the
+     * highlight was looked for among the others and never found.
+     */
+    fun laneArrows(lane: RouteGuidance.Lane): List<Pair<Int, Boolean>> {
+        val use = lane.status != 0
+        val all = (lane.angles + listOfNotNull(lane.highlight)).distinct().ifEmpty { listOf(0) }
+        return all.map { a -> a to (use && (lane.highlight == null || a == lane.highlight)) }.sortedBy { it.second }
     }
 
     /** "273" from "273" or "Exit 273"; null when the phone named no exit. */
@@ -147,12 +166,18 @@ object TurnCard {
     }
 
     /** Shown during a Settings preview when no route is up, so the card's place can be judged parked. */
+    /** Bench only (`driver_display --es road "I-75 N" --es then "US-23 S"`): the sample card's roads. */
+    @Volatile var benchRoad: String? = null
+    @Volatile var benchThen: String? = null
+
     fun sample(lanes: Boolean) = Content(
-        "nav_turn_right", "500 ft", "Turn card", exit = "12", near = true, approach = 0.6f,
-        thenIcon = "nav_turn_left", thenRoad = "the turn after",
+        "nav_turn_right", "500 ft", benchRoad ?: "Turn card", exit = if (benchRoad == null) "12" else null,
+        near = true, approach = 0.6f,
+        thenIcon = "nav_turn_left", thenRoad = benchThen ?: "the turn after",
         lanes = if (lanes) listOf(
             RouteGuidance.Lane(0, 0, listOf(-90)), RouteGuidance.Lane(1, 1, listOf(0)),
-            RouteGuidance.Lane(2, 2, listOf(0, 90), 90), RouteGuidance.Lane(3, 2, listOf(90), 90),
+            // As the phone sends them: the direction to take is not repeated among the others.
+            RouteGuidance.Lane(2, 2, listOf(0), 90), RouteGuidance.Lane(3, 2, emptyList(), 90),
         ) else null,
     )
 
@@ -203,7 +228,7 @@ object TurnCard {
             if (l == lanesLogged) return
             lanesLogged = l
             wasidremin.gmccpa.ProbeLog.sub("cluster").i(
-                "lanes: ${l.size} at maneuverType=${s.current?.type} status=${l.map { it.status }} highlight=${l.map { it.highlight }}")
+                "lanes: ${l.size} at maneuverType=${s.current?.type} status=${l.map { it.status }} highlight=${l.map { it.highlight }} angles=${l.map { it.angles }}")
         }
 
         override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
@@ -271,7 +296,7 @@ object TurnCard {
                     x += w + h * 0.07f
                 }
                 plain.color = pal.dim
-                c.road?.let { canvas.drawText(ellipsized(it, plain, textLeft + textWidth - x), x, y, plain) }
+                c.road?.let { drawRoad(canvas, it, x, y, textLeft + textWidth - x, plain) }
                 c.approach?.let { a ->
                     val top = b.top + ch - pad * 0.62f
                     fill.color = pal.track
@@ -294,8 +319,9 @@ object TurnCard {
                 val gap = h * 0.08f
                 val label = c.exit?.let { "Exit $it" } ?: c.road
                 val room = b.width - pad * 2 - iconSize - gap - distW - gap
-                val road = label?.let { ellipsized(it, plain, room) } ?: ""
-                val natural = pad * 2 + iconSize + gap + distW + (if (road.isEmpty()) 0f else gap + plain.measureText(road))
+                val road = label ?: ""
+                val roadW = if (road.isEmpty()) 0f else minOf(maxOf(0f, room), roadWidth(road, plain))
+                val natural = pad * 2 + iconSize + gap + distW + (if (road.isEmpty()) 0f else gap + roadW)
                 val cw = natural + (b.width - natural) * t
                 r.set(b.left, b.top, b.left + cw, b.top + ch)
                 canvas.drawRoundRect(r, h * 0.18f, h * 0.18f, fill)
@@ -303,7 +329,7 @@ object TurnCard {
                 val base = r.top + ch / 2f + bold.textSize * 0.35f
                 val x = r.left + pad + iconSize + gap
                 canvas.drawText(dist, x, base, bold)
-                if (road.isNotEmpty()) canvas.drawText(road, x + distW + gap, base, plain)
+                if (road.isNotEmpty()) drawRoad(canvas, road, x + distW + gap, base, roadW, plain)
             }
         }
 
@@ -357,7 +383,7 @@ object TurnCard {
                 x += lw + h * 0.07f
             }
             plain.color = pal.dim; plain.textSize = h * 0.18f
-            c.road?.let { canvas.drawText(ellipsized(it, plain, textLeft + textWidth - x), x, y, plain) }
+            c.road?.let { drawRoad(canvas, it, x, y, textLeft + textWidth - x, plain) }
             c.approach?.let { a ->
                 val top = y0 + h * 0.86f
                 fill.color = pal.track
@@ -367,10 +393,19 @@ object TurnCard {
                 r.right = textLeft + textWidth * a.coerceIn(0f, 1f)
                 canvas.drawRect(r, fill)
             }
-            // One row under the bar, inside the panel: the lanes when there are any, else the turn after.
+            // One row under the bar, inside the panel: the lanes, and the turn after beside them.
+            // Lanes used to replace the turn after, so two turns in quick succession on a road
+            // with lane guidance never showed the second one.
             val lanes = c.lanes
-            if (lanes != null) drawLanes(canvas, lanes, x0, y0 + h * 0.98f, b.width, h, pal)
-            else if (c.thenIcon != null) drawThen(canvas, c, x0, y0 + h * 1.0f, b.width, h, pal)
+            var rowLeft = x0
+            var rowWidth = b.width
+            if (lanes != null) {
+                val forThen = if (c.thenIcon != null) h * 0.95f else 0f
+                val used = drawLanes(canvas, lanes, x0, y0 + h * 0.98f, b.width - forThen, h, pal)
+                rowLeft += used + h * 0.08f
+                rowWidth -= used + h * 0.08f
+            }
+            if (c.thenIcon != null) drawThen(canvas, c, rowLeft, y0 + h * 1.03f, rowWidth, h, pal)
         }
 
         /** "Then" and the turn after, on a tab under the card. Returns where the next thing starts. */
@@ -381,8 +416,11 @@ object TurnCard {
             plain.textSize = h * 0.15f
             val lead = "Then"
             val leadW = plain.measureText(lead)
-            val road = c.thenRoad?.let { ellipsized(it, plain, maxWidth - pad * 3 - leadW - iconSize - pad) } ?: ""
-            val w = pad + leadW + pad * 0.6f + iconSize + (if (road.isEmpty()) 0f else pad * 0.6f + plain.measureText(road)) + pad
+            // Beside the lanes there may be room for the arrow only; a clipped stub of a name is noise.
+            val roadRoom = maxWidth - pad * 3 - leadW - iconSize - pad
+            val road = c.thenRoad?.takeIf { roadRoom >= h * 0.45f } ?: ""
+            val roadW = if (road.isEmpty()) 0f else minOf(roadRoom, roadWidth(road, plain))
+            val w = pad + leadW + pad * 0.6f + iconSize + (if (road.isEmpty()) 0f else pad * 0.6f + roadW) + pad
             fill.color = pal.card
             r.set(left, top, left + w, top + th)
             canvas.drawRoundRect(r, th * 0.42f, th * 0.42f, fill)
@@ -392,7 +430,7 @@ object TurnCard {
             val ix = left + pad + leadW + pad * 0.6f
             icon(canvas, c.thenIcon ?: return top, ix, top + (th - iconSize) / 2f, iconSize, pal.text)
             plain.color = pal.text
-            if (road.isNotEmpty()) canvas.drawText(road, ix + iconSize + pad * 0.6f, base, plain)
+            if (road.isNotEmpty()) drawRoad(canvas, road, ix + iconSize + pad * 0.6f, base, roadW, plain)
             return top + th + h * 0.06f
         }
 
@@ -401,7 +439,7 @@ object TurnCard {
          * colour on the lanes to use; every other direction, and every lane not to take, is faint.
          * A positive angle is drawn to the right ([logLanes] is how the car confirms it).
          */
-        private fun drawLanes(canvas: Canvas, lanes: List<RouteGuidance.Lane>, left: Float, top: Float, maxWidth: Float, h: Float, pal: ClusterLayout.Palette) {
+        private fun drawLanes(canvas: Canvas, lanes: List<RouteGuidance.Lane>, left: Float, top: Float, maxWidth: Float, h: Float, pal: ClusterLayout.Palette): Float {
             val sh = h * 0.40f
             val cell = minOf(h * 0.36f, maxWidth / lanes.size)
             fill.color = pal.card
@@ -413,11 +451,8 @@ object TurnCard {
                 val bottom = top + sh * 0.84f
                 val knee = top + sh * 0.52f
                 val reach = sh * 0.30f
-                val angles = lane.angles.ifEmpty { listOf(0) }
-                // Faint first, so the direction to take is drawn over the others.
-                for (pass in 0..1) for (a in angles) {
-                    val take = lane.status != 0 && (lane.highlight == null || a == lane.highlight)
-                    if (take != (pass == 1)) continue
+                // Faint first, so the direction to take is drawn over the others ([laneArrows]).
+                for ((a, take) in laneArrows(lane)) {
                     stroke.color = if (take) pal.text else pal.faint
                     val rad = Math.toRadians(a.coerceIn(-150, 150).toDouble())
                     val ex = cx + (reach * Math.sin(rad)).toFloat()
@@ -433,6 +468,35 @@ object TurnCard {
                     }
                     canvas.drawPath(path, stroke)
                 }
+            }
+            return cell * lanes.size
+        }
+
+        /** Marker height against the text it sits in. */
+        private fun shieldHeight(paint: TextPaint) = paint.textSize * 1.5f
+
+        /** Width [road] takes drawn by [drawRoad] with all the room it wants. */
+        private fun roadWidth(road: String, paint: TextPaint): Float {
+            val p = RouteShield.parse(road) ?: return paint.measureText(road)
+            val sh = shieldHeight(paint)
+            return RouteShield.width(p.shield, sh) + (if (p.rest.isEmpty()) 0f else sh * 0.22f + paint.measureText(p.rest))
+        }
+
+        /**
+         * A road name on [baseline], with its highway marker drawn as the sign when it starts with
+         * one ([RouteShield]); otherwise the text as it came.
+         */
+        private fun drawRoad(canvas: Canvas, road: String, x: Float, baseline: Float, maxWidth: Float, paint: TextPaint) {
+            val p = RouteShield.parse(road)
+            val sh = shieldHeight(paint)
+            if (p == null || RouteShield.width(p.shield, sh) > maxWidth) {
+                canvas.drawText(ellipsized(road, paint, maxWidth), x, baseline, paint)
+                return
+            }
+            val w = RouteShield.draw(canvas, p.shield, x, baseline - sh * 0.78f, sh)
+            if (p.rest.isNotEmpty()) {
+                val tx = x + w + sh * 0.22f
+                canvas.drawText(ellipsized(p.rest, paint, x + maxWidth - tx), tx, baseline, paint)
             }
         }
     }

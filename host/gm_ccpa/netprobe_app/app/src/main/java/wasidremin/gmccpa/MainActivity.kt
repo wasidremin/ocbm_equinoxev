@@ -1592,6 +1592,8 @@ class MainActivity : Activity() {
                 }
                 if (i.hasExtra("folded")) { wasidremin.gmccpa.nav.MediaCard.benchFolded = i.getBooleanExtra("folded", false); dd.preview() }
                 if (i.hasExtra("lanes")) cl.setLanes(this, i.getBooleanExtra("lanes", false))
+                if (i.hasExtra("road")) { wasidremin.gmccpa.nav.TurnCard.benchRoad = i.getStringExtra("road"); dd.preview() }
+                if (i.hasExtra("then")) { wasidremin.gmccpa.nav.TurnCard.benchThen = i.getStringExtra("then"); dd.preview() }
                 // `--ez night true|false`: the cards' day or night look, until the car next reports its own.
                 if (i.hasExtra("night")) wasidremin.gmccpa.av.CarNight.night = i.getBooleanExtra("night", false)
                 if (i.getBooleanExtra("reopen", false)) dd.reopen(this, "bench long-press")

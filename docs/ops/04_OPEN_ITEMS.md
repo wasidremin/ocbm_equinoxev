@@ -55,17 +55,17 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 245 (`4.0+pane-backdrop`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 246 (`4.0+data-budget`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
-- **Data budget: nothing checked on the car (built 2026-11-11, not yet published).** The app
+- **Data budget: nothing checked on the car (Play 246).** The app
   used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
   telemetry (about 50 MB a month by replay) under a monthly limit
   (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.5). To check on the car: Advanced ▸ "Car data
   used this month" climbs by well under 1 MB on a short drive; the first uploaded log has a
   `uploads now go over <network>` line that says how the car's modem and a phone hotspot each
-  present; a parked car sends a heartbeat and not a report a minute. Until this is published,
-  v245 on the car still sends the old way and replays its whole backlog on reconnect.
-- **EV Insights drive log: nothing checked on the car (built 2026-11-11, not yet published).** The
+  present; a parked car sends a heartbeat and not a report a minute; a large log upload offered
+  "Send on Wi-Fi" goes out by itself on home Wi-Fi or the phone hotspot.
+- **EV Insights drive log: nothing checked on the car (Play 246).** The
   recorder, the route and charge analysis and all five tabs are verified by JVM tests, a replay of
   four weeks of probe data and the emulator only. On the car the log starts empty. To check after
   the first few drives and one overnight charge: a drive appears on Last drive within minutes of
@@ -343,6 +343,20 @@ high-water mark: versionCode 245 (`4.0+pane-backdrop`, 2026-11-11; `host/gm_ccpa
      `ClusterLayout.dock`), and the folded now-playing pill keeps the title beside the cover. Open
      on the car: whether the docked default (corner at 70%, 54%, taken from that one photo) lines
      up with the gauges' top edge and clears Apple's arrival strip.
+     **Play 246 (2026-11-11, from the owner's drive on 245 and its log):** three things.
+     (1) Lanes appeared but none was marked. The log had `status=[0, 0, 2] highlight=[null, null, 45]`,
+     so the phone did mark them; the card looked for the highlight among the lane's other angles,
+     where the phone does not repeat it, and drew every arrow faint. `TurnCard.laneArrows` now
+     draws the highlight itself. The `lanes:` log line also carries `angles=` so the next drive
+     shows what the others hold. (2) The turn after was missing when two turns came close
+     together: in the docked card the lanes row replaced the "Then" row. They now share the row,
+     and the gap falls back to raw metres (`betweenMeters`). The `turn #` log line records
+     `gap=`/`nextGap=`, because which entry carries DistanceBetweenManeuver is still unconfirmed
+     on this car. (3) A road that starts with a route designator is drawn as its sign
+     (`nav/RouteShield`: Interstate, U.S., the default state circle, county), read from the text
+     the phone sends. Open on the car: all three by eye (the bench could not render them, the
+     emulator kept crashing), what the phone's road text really looks like (`marker=` in the
+     `turn #` line says whether one was recognised, never the name), and per-state markers.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so

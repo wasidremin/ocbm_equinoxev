@@ -38,6 +38,8 @@ class RouteGuidance {
         val afterRoadName: String? = null,
         val distanceText: String? = null,
         val distanceUnits: Int? = null,
+        /** DistanceBetweenManeuver in metres; some entries carry it without the display pair. */
+        val distanceM: Long? = null,
         /** 0 right-hand traffic, 1 left-hand. Decides U-turn and roundabout direction. */
         val drivingSide: Int? = null,
         val junctionType: Int? = null,
@@ -169,6 +171,7 @@ class RouteGuidance {
             afterRoadName = json.optStringOrNull("afterManeuverRoadName"),
             distanceText = json.optStringOrNull("distanceText"),
             distanceUnits = json.optIntOrNull("distanceUnits"),
+            distanceM = json.optLongOrNull("distanceM"),
             drivingSide = json.optIntOrNull("drivingSide"),
             junctionType = json.optIntOrNull("junctionType"),
             exitInfo = json.optStringOrNull("exitInfo"),

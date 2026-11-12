@@ -202,7 +202,7 @@ stays (serves Capture Current).
   session summary at clear, and `browser: bind #n` per `onGetRoot`. See doc 14
   §14.8.
 
-## 2026-11-11 deltas (drive log and trip tabs; not yet published)
+## 2026-11-11 deltas (drive log and trip tabs; Play 246)
 
 - **Insights tabs** are now `Last drive | Routes | Charging | Week | Diagnostics`
   (`InsightsUi.kt`, `InsightsTripsUi.kt`). The v209 views (Vehicle state,
@@ -220,7 +220,7 @@ stays (serves Capture Current).
   with "Include route GPS in EV Insights" on; without GPS, drives are still
   logged but no routes are found. Detail: doc 14 §13.4.
 
-## 2026-11-11 deltas (data budget; not yet published)
+## 2026-11-11 deltas (data budget; Play 246)
 
 - **EV Insights auto-upload** (Advanced ▸ Upload server & EV Insights,
   `vehicle_telemetry_auto_prefs/auto_upload_enabled`, default on) now decides

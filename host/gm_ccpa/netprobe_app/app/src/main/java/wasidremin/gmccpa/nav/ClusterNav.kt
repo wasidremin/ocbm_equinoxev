@@ -257,7 +257,10 @@ object ClusterNav {
         val cb = b.current
         if (cb != null && (ca?.index != cb.index || ca.type != cb.type)) {
             log.i("nav: turn #${cb.index}/${b.maneuverCount ?: "?"} type=${cb.type ?: "?"} side=${cb.drivingSide ?: "?"}" +
-                " next=${b.next?.type ?: "-"} bound=${bound} enabled=$enabled")
+                " next=${b.next?.type ?: "-"} bound=${bound} enabled=$enabled" +
+                // Metres only: which entry carries the gap between two turns is still to be confirmed.
+                " gap=${TurnCard.betweenMeters(cb) ?: "-"}m nextGap=${b.next?.let { TurnCard.betweenMeters(it) } ?: "-"}m" +
+                " marker=${RouteShield.parse(cb.afterRoadName ?: cb.description)?.shield?.kind?.name?.lowercase() ?: "-"}")
         }
     }
 
