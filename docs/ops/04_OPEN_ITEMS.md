@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 246 (`4.0+data-budget`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 247 (`4.0+drive-card`, 2026-11-12; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Data budget: nothing checked on the car (Play 246).** The app
   used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
@@ -65,7 +65,7 @@ high-water mark: versionCode 246 (`4.0+data-budget`, 2026-11-11; `host/gm_ccpa/d
   `uploads now go over <network>` line that says how the car's modem and a phone hotspot each
   present; a parked car sends a heartbeat and not a report a minute; a large log upload offered
   "Send on Wi-Fi" goes out by itself on home Wi-Fi or the phone hotspot.
-- **Drive card: nothing checked on the car (2026-11-12).** A third driver-display
+- **Drive card: nothing checked on the car (Play 247).** A third driver-display
   card (arrival battery during a route, this drive against the usual otherwise) and a one-time
   import of a month of drive history pass their tests and a replay of 120 past drives, and the
   card's sample faces were seen on the emulator; nothing has run with live data or on the car.
