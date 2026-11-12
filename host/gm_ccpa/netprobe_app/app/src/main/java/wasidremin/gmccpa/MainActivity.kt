@@ -1476,6 +1476,11 @@ class MainActivity : Activity() {
             "capture_whole_os" -> setCaptureScope(LogCapture.Scope.WHOLE_OS)
             "capture_own" -> setCaptureScope(LogCapture.Scope.OWN_PROCESS)
             "ocbm_selftest" -> runAsync { ocbm().selfTest() }
+            // Bench: capture the driver display as Settings ▸ Cluster does; the result goes to the log.
+            "capture_cluster" -> wasidremin.gmccpa.av.CarPlayFrameGrabber.saveDriverDisplayAsync(this) { r ->
+                emit(r.fold({ (saved, map) -> "capture_cluster: saved ${saved.id} ${saved.metadata.windowWidth}x${saved.metadata.windowHeight} mapFrame=$map" },
+                    { "capture_cluster: FAILED ${it.message}" }))
+            }
             "open_tab" -> {
                 val tab = i.getIntExtra("tab", 3)
                 val sub = i.getIntExtra("subtab", 0)

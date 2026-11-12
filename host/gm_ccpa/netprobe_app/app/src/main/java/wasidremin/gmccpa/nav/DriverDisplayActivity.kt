@@ -28,6 +28,10 @@ class DriverDisplayActivity : Activity() {
     private var card: TurnCard.View? = null
     private var media: MediaCard.View? = null
     private var drive: DriveCard.View? = null
+    private var surface: SurfaceView? = null
+
+    /** A capture of the driver display: [mapFrame] is false when CarPlay had not drawn a map frame yet. */
+    class Shot(val bitmap: android.graphics.Bitmap, val mapFrame: Boolean)
 
     companion object {
         @Volatile private var open: WeakReference<DriverDisplayActivity>? = null
@@ -38,6 +42,43 @@ class DriverDisplayActivity : Activity() {
         fun refreshPreview() {
             val a = open?.get() ?: return
             a.runOnUiThread { a.outline?.invalidate(); a.card?.invalidate(); a.media?.invalidate(); a.drive?.invalidate() }
+        }
+
+        /**
+         * What the app shows on the driver display now: CarPlay's map frame copied from the window's
+         * surface, with the app's cards drawn over it at their places. GM draws its gauges above this
+         * window, so they are not in it. Fails when the map window is not open. The result is
+         * delivered on the main thread.
+         */
+        fun capture(onResult: (Result<Shot>) -> Unit) {
+            val main = android.os.Handler(android.os.Looper.getMainLooper())
+            main.post {
+                val a = open?.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
+                val sv = a?.surface
+                if (a == null || sv == null || sv.width == 0 || sv.height == 0) {
+                    onResult(Result.failure(IllegalStateException("The CarPlay map is not on the driver display")))
+                    return@post
+                }
+                val bmp = android.graphics.Bitmap.createBitmap(sv.width, sv.height, android.graphics.Bitmap.Config.ARGB_8888)
+                android.view.PixelCopy.request(sv, bmp, { code ->
+                    main.post {
+                        if (a.isDestroyed) { bmp.recycle(); onResult(Result.failure(IllegalStateException("The map window closed"))); return@post }
+                        // No frame yet (the session is still starting): the cards on black, still worth seeing.
+                        val mapFrame = code == android.view.PixelCopy.SUCCESS
+                        val canvas = android.graphics.Canvas(bmp)
+                        if (!mapFrame) canvas.drawColor(Color.BLACK)
+                        for (v in listOfNotNull<View>(a.drive, a.media, a.card)) {
+                            canvas.save()
+                            canvas.translate((v.left - sv.left).toFloat(), (v.top - sv.top).toFloat())
+                            v.draw(canvas)
+                            canvas.restore()
+                        }
+                        a.log.i("driver display captured ${bmp.width}x${bmp.height}" +
+                            if (mapFrame) "" else " — no map frame yet (PixelCopy $code), cards only")
+                        onResult(Result.success(Shot(bmp, mapFrame)))
+                    }
+                }, main)
+            }
         }
 
         fun closeOpen(why: String) {
@@ -53,6 +94,7 @@ class DriverDisplayActivity : Activity() {
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val v = SurfaceView(this)
+        surface = v
         v.setBackgroundColor(Color.TRANSPARENT)
         val root = FrameLayout(this)
         root.addView(v, FrameLayout.LayoutParams(-1, -1))
@@ -135,6 +177,7 @@ class DriverDisplayActivity : Activity() {
         card = null
         media = null
         drive = null
+        surface = null
         if (open?.get() === this) open = null
         AdapterSession.detachCluster("map window closed")
         log.i("map window closed")

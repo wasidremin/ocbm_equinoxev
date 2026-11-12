@@ -98,6 +98,8 @@ object CarPlayFrameGrabber {
         CAPTURE_HOME("capture_home", "Capture CarPlay Home Screen"),
         CAPTURE_CURRENT("capture_current", "Capture Current Screen"),
         CAPTURE_FULL_WINDOW("capture_full_window", "Capture Full Screen"),
+        /** The driver display as the app draws it: CarPlay's map with the app's cards ([saveDriverDisplayAsync]). */
+        CAPTURE_DRIVER_DISPLAY("capture_driver_display", "Capture Driver Display"),
     }
 
     data class SavedCapture(
@@ -747,6 +749,55 @@ object CarPlayFrameGrabber {
             // An owned stable frame is a private copy: recycle it now that the PNG is written.
             // The borrowed reusable buffer must never be recycled.
             if (buttonKind == CaptureButtonKind.CAPTURE_FULL_WINDOW) finalCapture.bitmap.recycle()
+        }
+    }
+
+    /**
+     * Take the driver display ([wasidremin.gmccpa.nav.DriverDisplayActivity.capture]), save it like
+     * every other capture and queue its upload. The window size goes in `windowWidth`/`windowHeight`;
+     * the negotiated size is still the main screen's. [onResult] runs on the main thread.
+     */
+    fun saveDriverDisplayAsync(
+        ctx: Context,
+        onUploadState: ((wasidremin.gmccpa.upload.UploadState) -> Unit)? = null,
+        onResult: (Result<Pair<SavedCapture, Boolean>>) -> Unit,
+    ) {
+        val appCtx = ctx.applicationContext
+        val main = Handler(android.os.Looper.getMainLooper())
+        val started = SystemClock.elapsedRealtime()
+        onUploadState?.let { wasidremin.gmccpa.upload.UploadCenter.emitState(it, wasidremin.gmccpa.upload.UploadState.Preparing) }
+        wasidremin.gmccpa.nav.DriverDisplayActivity.capture { shot ->
+            val s = shot.getOrElse { t ->
+                onUploadState?.let {
+                    wasidremin.gmccpa.upload.UploadCenter.emitState(it,
+                        wasidremin.gmccpa.upload.UploadState.Failed(t.message ?: t.javaClass.simpleName, retryable = true))
+                }
+                onResult(Result.failure(t))
+                return@capture
+            }
+            workerPool.execute {
+                val outcome = runCatching {
+                    try {
+                        val saved = saveCaptureLocally(
+                            ctx = appCtx, bitmap = s.bitmap, buttonKind = CaptureButtonKind.CAPTURE_DRIVER_DISPLAY,
+                            classification = ScreenClassification.UNKNOWN, homePressesUsed = 0,
+                            msToStableFrame = SystemClock.elapsedRealtime() - started, framesSampled = 1, settleMad = 0f,
+                            windowWidth = s.bitmap.width, windowHeight = s.bitmap.height,
+                        )
+                        enqueueUpload(appCtx, saved, onUploadState = onUploadState)
+                        saved to s.mapFrame
+                    } finally {
+                        s.bitmap.recycle()
+                    }
+                }
+                outcome.onFailure { t ->
+                    onUploadState?.let {
+                        wasidremin.gmccpa.upload.UploadCenter.emitState(it,
+                            wasidremin.gmccpa.upload.UploadState.Failed(t.message ?: t.javaClass.simpleName, retryable = true))
+                    }
+                }
+                main.post { onResult(outcome) }
+            }
         }
     }
 

@@ -494,7 +494,7 @@ class LauncherUi(private val act: Activity) {
         val version = runCatching {
             act.packageManager.getPackageInfo(act.packageName, 0).versionName
         }.getOrNull() ?: ""
-        rail = EqNavRail(act, listOf("Settings", "Troubleshooting", "Advanced", "Insights"), { showTab(it) }, version)
+        rail = EqNavRail(act, TAB_NAMES, { showTab(it) }, version)
         settingsHost.addView(rail, LinearLayout.LayoutParams(
             EqTheme.px(300f), ViewGroup.LayoutParams.MATCH_PARENT))
 
@@ -509,15 +509,13 @@ class LauncherUi(private val act: Activity) {
         strip = EqStatusStrip(act)
         column.addView(strip, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = EqTheme.px(8f) })
 
-        val settings = page("Settings")
-        val trouble = page("Troubleshooting")
-        val advanced = page("Advanced")
-        val insights = page("Insights")
-        pages = listOf(settings, trouble, advanced, insights)
-        buildSettings(settings)
-        buildTroubleshooting(trouble)
-        buildAdvanced(advanced)
-        buildInsights(insights)
+        pages = TAB_NAMES.map { page(it) }
+        buildCarPlay(pages[TAB_CARPLAY])
+        buildScreenSound(pages[TAB_SCREEN])
+        buildCluster(pages[TAB_CLUSTER])
+        buildInsights(pages[TAB_INSIGHTS])
+        buildTroubleshooting(pages[TAB_TROUBLE])
+        buildAdvanced(pages[TAB_ADVANCED])
         for (p in pages) column.addView(p, LinearLayout.LayoutParams(-1, -2))
         this.scroller.addView(column, ViewGroup.LayoutParams(-1, -2))
         settingsHost.addView(this.scroller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -544,14 +542,44 @@ class LauncherUi(private val act: Activity) {
     }
 
     /**
-     * Everyday settings: normal, understandable preferences only. Anything numeric,
-     * probe-like, or destructive lives under Troubleshooting or Advanced.
+     * The settings tabs (2026-11-12; until then one long "Settings" page). Everyday preferences only:
+     * anything numeric, probe-like or destructive lives under Troubleshooting or Advanced.
+     *
+     * CarPlay: the phones, the voice button, the launcher and what CarPlay is told about the car.
      */
-    private fun buildSettings(page: LinearLayout) {
+    private fun buildCarPlay(page: LinearLayout) {
+        page.addView(eqSectionLabel(act, "Phones"))
+        phonesCard = EqCard(act)
+        page.addView(phonesCard)
+        // The pages are rebuilt when the settings width settles; keep what was last shown.
+        fillPhones(shownPhones, shownPhonesNote, shownCanChoose)
+        page.addView(eqSectionLabel(act, "Voice"))
+        val role = wasidremin.gmccpa.voice.AssistantRole
+        voiceRow = EqRow(
+            act, "Steering-wheel voice button", role.statusText(act),
+            // The car decides; this only opens its own picker. Absent when the car has none.
+            trailing = if (role.state(act).picker != null)
+                eqButton(act, "Choose", EqButtonStyle.SECONDARY) { role.openPicker(act) } else null,
+        )
+        page.addView(EqCard(act).addRow(voiceRow))
+        page.addView(eqSectionLabel(act, "Apple Maps"))
+        val ev = wasidremin.gmccpa.ev.CarPlayEv
+        evRow = EqRow(
+            act, "EV battery for Apple Maps", ev.statusText(act),
+            trailing = EqToggle(act, ev.enabled) { on ->
+                ev.setEnabled(act, on)
+                evRow.setSubtitle(ev.statusText(act))
+            },
+        )
+        page.addView(EqCard(act).addRow(evRow))
         page.addView(eqSectionLabel(act, "Visual app launcher"))
         launcherStatusRow = EqRow(act, "Visual app launcher", launcherStatusSubtitle())
         page.addView(EqCard(act).addRow(launcherStatusRow))
-        page.addView(eqSectionLabel(act, "Display"))
+    }
+
+    /** Screen & Sound: the picture's layout and what sits beside it, then audio and lyrics. */
+    private fun buildScreenSound(page: LinearLayout) {
+        page.addView(eqSectionLabel(act, "Screen"))
         val card = EqCard(act)
         val modes = listOf(
             ScreenMode.SYSTEM_UI, ScreenMode.STATUS_HIDDEN, ScreenMode.NAV_HIDDEN, ScreenMode.FULLSCREEN,
@@ -592,13 +620,22 @@ class LauncherUi(private val act: Activity) {
                 audioRow.setSubtitle(audioSubtitle(i == 1))
             },
         )
-        page.addView(eqSectionLabel(act, "Playback"))
+        page.addView(eqSectionLabel(act, "Sound"))
         page.addView(EqCard(act).addRow(audioRow).addRow(EqRow(
             act, "Play Spotify on connect",
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },
-        )).also { lyricsRows(it) })
-        page.addView(eqSectionLabel(act, "Navigation"))
+        )))
+        page.addView(eqSectionLabel(act, "Lyrics"))
+        page.addView(EqCard(act).also { lyricsRows(it) })
+    }
+
+    /**
+     * Cluster: GM's own cluster (turns through the Car App Library), then the app's window on the
+     * driver display, where it shows CarPlay's map and draws its own cards.
+     */
+    private fun buildCluster(page: LinearLayout) {
+        page.addView(eqSectionLabel(act, "GM cluster"))
         val nav = wasidremin.gmccpa.nav.ClusterNav
         navRow = EqRow(
             act, "Turn-by-turn in the cluster", nav.statusText(act),
@@ -623,34 +660,11 @@ class LauncherUi(private val act: Activity) {
                 driverRow.setSubtitle(driver.statusText(act))
             },
         )
-        val ev = wasidremin.gmccpa.ev.CarPlayEv
-        evRow = EqRow(
-            act, "EV battery for Apple Maps", ev.statusText(act),
-            trailing = EqToggle(act, ev.enabled) { on ->
-                ev.setEnabled(act, on)
-                evRow.setSubtitle(ev.statusText(act))
-            },
-        )
-        page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow).addRow(driverRow).addRow(evRow))
-        page.addView(directionsAreaCard())
+        page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow))
         page.addView(eqSectionLabel(act, "Driver display"))
-        page.addView(driverLayoutCard())
-        page.addView(eqSectionLabel(act, "Voice"))
-        val role = wasidremin.gmccpa.voice.AssistantRole
-        voiceRow = EqRow(
-            act, "Steering-wheel voice button", role.statusText(act),
-            // The car decides; this only opens its own picker. Absent when the car has none.
-            trailing = if (role.state(act).picker != null)
-                eqButton(act, "Choose", EqButtonStyle.SECONDARY) { role.openPicker(act) } else null,
-        )
-        page.addView(EqCard(act).addRow(voiceRow))
-        page.addView(eqSectionLabel(act, "Calls"))
-        page.addView(wasidremin.gmccpa.calltest.CallTestsCard(act).build())
-        page.addView(eqSectionLabel(act, "Phones"))
-        phonesCard = EqCard(act)
-        page.addView(phonesCard)
-        // The pages are rebuilt when the settings width settles; keep what was last shown.
-        fillPhones(shownPhones, shownPhonesNote, shownCanChoose)
+        page.addView(EqCard(act).addRow(driverRow).addRow(clusterCaptureRow()))
+        page.addView(directionsAreaCard())
+        driverLayoutCards(page)
     }
 
     /** Settings ▸ Playback: Look up lyrics (with Clear) and Lyrics in the top bar. */
@@ -896,10 +910,10 @@ class LauncherUi(private val act: Activity) {
      * card. All of it is the app's own drawing, so it applies at once; only lane guidance waits for
      * the next connect, because it changes what the adapter asks the iPhone for.
      */
-    private fun driverLayoutCard(): EqCard {
+    private fun driverLayoutCards(page: LinearLayout) {
         val dd = wasidremin.gmccpa.nav.DriverDisplay
         val cl = wasidremin.gmccpa.nav.ClusterLayout.also { it.load(act) }
-        val card = EqCard(act)
+        var card = EqCard(act)
         lateinit var sizeRow: EqRow
         lateinit var editor: wasidremin.gmccpa.nav.ClusterLayoutEditor
         fun sizeText() = cl.place(act, editor.picked).let { "${editor.picked.label} card: ${it.scale}% of its normal size. Touch a card above to pick it." }
@@ -930,6 +944,9 @@ class LauncherUi(private val act: Activity) {
             }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(12f) })
         })
         card.addRow(sizeRow)
+        page.addView(eqSectionLabel(act, "Layout"))
+        page.addView(card)
+        card = EqCard(act)
         card.addRow(EqRow(
             act, "Turn card",
             "During a route: a small pill with the next turn, growing to a full card in the last half mile, with " +
@@ -942,6 +959,12 @@ class LauncherUi(private val act: Activity) {
                 "corner above: it runs off the right and bottom edges as the gauges do.",
             trailing = EqToggle(act, cl.dock) { on -> cl.setDock(act, on); sizeRow.setSubtitle(sizeText()); editor.invalidate() },
         ))
+        lateinit var lanesRow: EqRow
+        lanesRow = EqRow(
+            act, "Lane guidance", cl.lanesText(),
+            trailing = EqToggle(act, cl.lanes) { on -> cl.setLanes(act, on); lanesRow.setSubtitle(cl.lanesText()) },
+        )
+        card.addRow(lanesRow)
         card.addRow(EqRow(
             act, "Now playing",
             "Cover, title, artist and progress. Stays open with no route; during a route it opens for 8 s on a " +
@@ -960,13 +983,8 @@ class LauncherUi(private val act: Activity) {
                 "Worked out on the car from EV Insights' drive log.",
             trailing = EqToggle(act, cl.drive) { on -> cl.setDrive(act, on); editor.invalidate() },
         ))
-        lateinit var lanesRow: EqRow
-        lanesRow = EqRow(
-            act, "Lane guidance", cl.lanesText(),
-            trailing = EqToggle(act, cl.lanes) { on -> cl.setLanes(act, on); lanesRow.setSubtitle(cl.lanesText()) },
-        )
-        card.addRow(lanesRow)
-        return card
+        page.addView(eqSectionLabel(act, "Cards"))
+        page.addView(card)
     }
 
     private var displayDraft: DisplayPrefs.Controls? = null
@@ -1140,7 +1158,7 @@ class LauncherUi(private val act: Activity) {
             trailing = captureFullButton,
         )
         page.addView(eqSectionLabel(act, "Capture"))
-        page.addView(EqCard(act).addRow(captureCurrentRow).addRow(captureFullRow))
+        page.addView(EqCard(act).addRow(captureCurrentRow).addRow(captureFullRow).addRow(clusterCaptureRow()))
 
         uploadLogsButton = wasidremin.gmccpa.upload.UploadActionButton(
             ctx = act,
@@ -1180,6 +1198,53 @@ class LauncherUi(private val act: Activity) {
             .addRow(uploadLogsRow)
             .addRow(EqRow(act, "Export logs", onClick = { onLogAction(LogAction.EXPORT) }))
             .addRow(EqRow(act, "Clear logs", titleColor = EqTheme.DANGER, onClick = { confirmClearLogs() })))
+        page.addView(eqSectionLabel(act, "Call tests"))
+        page.addView(wasidremin.gmccpa.calltest.CallTestsCard(act).build())
+    }
+
+    /**
+     * Capture the driver display: CarPlay's map with the app's cards over it, saved and uploaded like
+     * the other captures. A new row each time it is asked for, since it sits on two pages.
+     */
+    private fun clusterCaptureRow(): EqRow {
+        lateinit var row: EqRow
+        lateinit var button: wasidremin.gmccpa.upload.UploadActionButton
+        button = wasidremin.gmccpa.upload.UploadActionButton(
+            ctx = act,
+            defaultLabel = "Capture Driver Display",
+            defaultIcon = wasidremin.gmccpa.upload.UploadIcon.CAMERA,
+            onStatusAnnounce = { msg -> setDetail(msg) },
+            onTrigger = {
+                row.subtitleView.setTextColor(EqTheme.TEXT_DIM)
+                row.setSubtitle("Capturing the driver display…")
+                wasidremin.gmccpa.av.CarPlayFrameGrabber.saveDriverDisplayAsync(act, onUploadState = { st -> button.setState(st) }) { res ->
+                    res.onSuccess { (saved, mapFrame) ->
+                        val text = "Saved ${saved.id} · ${saved.metadata.windowWidth}x${saved.metadata.windowHeight}" +
+                            if (mapFrame) "" else " · no map frame yet, cards only"
+                        row.subtitleView.setTextColor(EqTheme.OK)
+                        row.setSubtitle(text)
+                        refreshUploadQueueRow()
+                        setDetail(text)
+                    }.onFailure { t ->
+                        val text = "Error: ${t.message ?: t.javaClass.simpleName}"
+                        row.subtitleView.setTextColor(EqTheme.DANGER)
+                        row.setSubtitle(text)
+                        setDetail(text)
+                    }
+                }
+            },
+        ).apply {
+            onRetry = {
+                wasidremin.gmccpa.upload.UploadCenter.drainPendingCaptures(act) { st -> button.setState(st) }
+            }
+        }
+        row = EqRow(
+            act, "Capture driver display",
+            "CarPlay's map with the app's cards, as the app draws them. GM's gauges are drawn by the car " +
+                "on top and are not in it. Needs the CarPlay map on the driver display.",
+            trailing = button,
+        )
+        return row
     }
 
     fun setUploadLogsState(state: wasidremin.gmccpa.upload.UploadState) = act.runOnUiThread {
@@ -1308,7 +1373,7 @@ class LauncherUi(private val act: Activity) {
         page.addView(EqCard(act)
             .addRow(scopeRow)
             .addRow(EqRow(act, "USB probe", onClick = { onLogAction(LogAction.USB_PROBE) }))
-            .addRow(EqRow(act, "Vehicle Telemetry Probe", "Temporary read-only diagnostics · parked only", onClick = { onLogAction(LogAction.VEHICLE_PROBE) })))
+            .addRow(EqRow(act, "Vehicle Telemetry Probe", "Read-only census of the car's properties · parked only", onClick = { onLogAction(LogAction.VEHICLE_PROBE) })))
 
         baseUrlRow = EqRow(
             act,
@@ -1429,11 +1494,11 @@ class LauncherUi(private val act: Activity) {
             pages.forEachIndexed { i, p -> p.visibility = if (i == index) View.VISIBLE else View.GONE }
         }
         if (::rail.isInitialized) rail.select(index)
-        settingsBar?.selected = if (index == 3) BarTarget.INSIGHTS else BarTarget.APP_SETTINGS
+        settingsBar?.selected = if (index == TAB_INSIGHTS) BarTarget.INSIGHTS else BarTarget.APP_SETTINGS
         if (::scroller.isInitialized) scroller.scrollTo(0, 0)
-        if (index == 0) onPhonesWanted()
-        if (index == 2) onAdvancedOpened()
-        if (index == 3 && ::insightsPage.isInitialized) insightsPage.refresh()
+        if (index == TAB_CARPLAY) onPhonesWanted()
+        if (index == TAB_ADVANCED) onAdvancedOpened()
+        if (index == TAB_INSIGHTS && ::insightsPage.isInitialized) insightsPage.refresh()
         auditLayout(index)
     }
 
@@ -1512,8 +1577,8 @@ class LauncherUi(private val act: Activity) {
         settingsTouchedAt = android.os.SystemClock.elapsedRealtime()
         introRestore?.let { intro.removeCallbacks(it) }
         hideIntroLayer()
-        showTab(index.coerceIn(0, 3))
-        if (index == 3 && ::insightsPage.isInitialized) {
+        showTab(index.coerceIn(0, TAB_NAMES.size - 1))
+        if (index == TAB_INSIGHTS && ::insightsPage.isInitialized) {
             insightsPage.selectSubtab(subtab)
         }
         // Bench only: a section far down a page, for a layout check without touch.
@@ -1982,3 +2047,15 @@ internal class IntroRestartButton(
         canvas.drawLine(tx, ty, tx - head * 0.25f, ty - head, ink)
     }
 }
+
+/**
+ * The settings rail (2026-11-12). Insights stays at index 3 and CarPlay (with the phones) at 0,
+ * because the CarPlay screen's bar and the `open_tab` bench action ask for those numbers.
+ */
+private val TAB_NAMES = listOf("CarPlay", "Screen & Sound", "Cluster", "Insights", "Troubleshooting", "Advanced")
+private const val TAB_CARPLAY = 0
+private const val TAB_SCREEN = 1
+private const val TAB_CLUSTER = 2
+private const val TAB_INSIGHTS = 3
+private const val TAB_TROUBLE = 4
+private const val TAB_ADVANCED = 5

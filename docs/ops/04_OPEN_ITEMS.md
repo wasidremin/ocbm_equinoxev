@@ -65,6 +65,14 @@ high-water mark: versionCode 247 (`4.0+drive-card`, 2026-11-12; `host/gm_ccpa/do
   `uploads now go over <network>` line that says how the car's modem and a phone hotspot each
   present; a parked car sends a heartbeat and not a report a minute; a large log upload offered
   "Send on Wi-Fi" goes out by itself on home Wi-Fi or the phone hotspot.
+- **Settings tabs and Capture driver display: built 2026-11-12, not published.** The Settings page
+  is split into CarPlay, Screen & Sound and Cluster tabs (call tests moved to Troubleshooting), and
+  a "Capture driver display" button (Cluster and Troubleshooting ▸ Capture) saves CarPlay's map
+  with the app's cards over it and uploads it like the other captures
+  (`host/gm_ccpa/docs/SETTINGS_AUDIT.md` "2026-11-12 deltas"). Emulator-checked: every tab renders,
+  and a capture saved the cards at their places (cards on black, as the bench has no map frame;
+  the bench's uploads pointed at an unreachable address). Open on the car: that a capture holds the
+  map behind the cards, and how the tabs read at the car's scale.
 - **Drive card: nothing checked on the car (Play 247).** A third driver-display
   card (arrival battery during a route, this drive against the usual otherwise) and a one-time
   import of a month of drive history pass their tests and a replay of 120 past drives, and the
