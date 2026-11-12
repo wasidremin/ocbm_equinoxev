@@ -120,6 +120,20 @@ PostgreSQL is the durable dirty-vehicle queue, so restarts lose no pending work.
 Multiple workers serialize per vehicle. Every 15 seconds it rebuilds dirty
 vehicles and stores a cheap summary, avoiding analysis on a car request.
 
+A rebuild reads the vehicle's whole history in time order through a server-side
+cursor (`derive_stream`), holding only the trip and charge in progress. Until
+2026-11-12 it loaded the history into one list; at 3.3 million samples that was
+more memory than the host had, the kernel killed the worker on every pass (160
+restarts, the database pinned at 100% CPU) and nothing was ever derived for the
+real car. Streamed, the same pass peaked at 445 MB and took 18 minutes. Because a
+driving car adds samples every minute and each rebuild is of everything, a
+vehicle is rebuilt at most once per `DERIVE_MIN_INTERVAL_S` (default 3600 s,
+counted from the end of the previous pass); a first build and an algorithm
+version change are not held back. While a long pass runs the health check reads
+unhealthy (the heartbeat is written between passes); nothing restarts on it.
+Open: that first pass produced 6,574 trips for the real car and none complete,
+so the web app's figures for it are not yet meaningful.
+
 A trip starts on observed speed, valid wheel/GPS displacement or an explicit
 client marker, never UX or preparation alone.
 Gear/UX/GPS corroborate; short stops are preserved and merged; gaps, insufficient

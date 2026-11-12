@@ -212,29 +212,42 @@ def trip_metrics(events, config):
 
 
 def derive(events, config=None):
-    config=DerivationConfig.model_validate(config or {}).model_dump(); events=ordered(events)
-    trips=[]; charges=[]; issues=[]; frames=defaultdict(list)
-    # Never combine simultaneous observations from different device/boot epochs.
-    for e in events: frames[(ts(e), e['device_id'], e['meta']['boot_id'])].append(e)
+    """Derive from a list in any order. Sorted by time here; ties are settled per instant in derive_stream."""
+    return derive_stream(sorted(events, key=ts), config)
+
+
+def instants(events):
+    """Consecutive events that share a timestamp, from a stream already in time order."""
+    group=[]; at=None
+    for e in events:
+        t=ts(e)
+        if group and t!=at:
+            yield group; group=[]
+        at=t; group.append(e)
+    if group: yield group
+
+
+def derive_stream(events, config=None):
+    """Derive from an iterable in time order, holding only the trip and charge in progress.
+
+    The worker used to load a vehicle's whole history into one list, sort it and index it by
+    frame. At 3.3 million samples that took more memory than the host had and the kernel killed
+    it on every pass (2026-11-12). The state machine below only ever looked at one frame and
+    what it had accumulated, so the stream is consumed an instant at a time instead.
+    """
+    config=DerivationConfig.model_validate(config or {}).model_dump()
+    trips=[]; charges=[]; issues=[]; drift=[]; drift_ids=set()
     last={}; previous_wheel=None; previous_gps=None; previous_frame=[]; prior_epoch=None
     active=[]; segments=[]; stop_at=None; prior_t=None; state='UNKNOWN'; evidence=set()
     preparation=[]; uncertainty=False; motion_seen=False
     charge=[]; charge_start=None; charge_evidence=set()
     boot_clocks={}
-    for e in events:
-        boot=(e['device_id'],e['meta']['boot_id']); t=ts(e); mono=e['source_elapsed_ns']/1e9
-        if boot in boot_clocks:
-            oldt,oldmono=boot_clocks[boot]
-            if abs((t-oldt)-(mono-oldmono))>5:
-                issues.append({'code':'CLOCK_DRIFT','event_id':str(e['event_id'])})
-        boot_clocks[boot]=(t,mono)
 
     def finish(reason, review=False):
         nonlocal active,segments,stop_at,evidence,state,uncertainty,motion_seen,preparation
         if not active: return
         m=trip_metrics(active,config)
         d=m['distance_m']['value']; reasons=sorted(evidence|{reason})
-        drift_ids={i['event_id'] for i in issues if i['code']=='CLOCK_DRIFT'}
         clock_drift=any(str(e['event_id']) in drift_ids for e in active)
         if clock_drift: reasons.append('CLOCK_DRIFT')
         if uncertainty: reasons.append('UNKNOWN_MOTION_INTERVAL')
@@ -277,126 +290,138 @@ def derive(events, config=None):
                         'metadata':{'boundary_reason':reason,'evidence':sorted(charge_evidence),'needs_review':len(charge_evidence)<2 or reason!='PORT_DISCONNECTED'}})
         charge=[]; charge_start=None; charge_evidence=set()
 
-    for (t,device,boot),frame in sorted(frames.items()):
-        epoch=(device,boot)
-        if prior_epoch is not None and epoch != prior_epoch:
-            if active: finish('DEVICE_OR_BOOT_BOUNDARY',True)
-            if charge: finish_charge('DEVICE_OR_BOOT_BOUNDARY')
-            last={}; previous_wheel=None; previous_gps=None; previous_frame=[]; state='UNKNOWN'; preparation=[]
-            issues.append({'code':'DEVICE_OR_BOOT_BOUNDARY','event_id':str(frame[0]['event_id'])})
-        prior_epoch=epoch
-        if prior_t is not None and t-prior_t>config['max_gap_s']:
-            if active: finish('DROPPED_INTERVAL',True)
-            if charge: finish_charge('DROPPED_INTERVAL')
-            last={}; previous_wheel=None; previous_gps=None; previous_frame=[]; state='UNKNOWN'; preparation=[]
-            issues.append({'code':'DROPPED_INTERVAL','start_ts':frame[0]['source_ts'],'gap_s':t-prior_t})
-        prior_t=t
-        for e in frame:
-            # An unavailable observation invalidates prior evidence immediately.
-            last[(e['property_name'],e['area_id'])]=(value(e),t)
-        def current(name):
-            items=[item for (prop,area),item in last.items() if prop==name and t-item[1]<=config['max_gap_s']]
-            return items[0][0] if len(items)==1 else None
-        def number(v):
-            return isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v)
-        speed=current('PERF_VEHICLE_SPEED'); speed=speed if number(speed) else current('GPS_SPEED')
-        speed_motion=number(speed) and abs(speed)>.5
-        stationary=number(speed) and abs(speed)<=.5
-        wheel_motion=False; gps_motion=False; boundary_anchor=None
-        wheels=[e for e in frame if e['property_name']=='WHEEL_TICK']
-        if wheels:
-            wheel=wheels[0] if len(wheels)==1 else None
-            if wheel is not None and previous_wheel is not None:
-                distance=wheel_distance([previous_wheel,wheel],config['max_gap_s'])['value']
-                dt=t-ts(previous_wheel)
-                if distance is not None and dt>0:
-                    wheel_motion=distance/dt>.5
-                    stationary=stationary or distance==0
-                    if wheel_motion: boundary_anchor=previous_wheel
-            previous_wheel=wheel
-        if previous_gps is not None and any(e['property_name']==previous_gps['property_name'] and
-                                               e['status']!='available' for e in frame):
-            previous_gps=None
-        fixes=[e for e in frame if e.get('lat') is not None]
-        if fixes:
-            # Duplicate signals may carry one fix; conflicting fixes are not fused.
-            unique={(e['lat'],e['lon'],e.get('accuracy_m'),e['status']) for e in fixes}
-            fix=fixes[0] if len(unique)==1 else None
-            valid_fix=fix is not None and fix['status']=='available' and fix.get('accuracy_m') is not None and fix['accuracy_m']<=50
-            if valid_fix and previous_gps is not None and list(pairs([previous_gps,fix],config['max_gap_s'])):
-                distance=haversine(previous_gps,fix); dt=t-ts(previous_gps)
-                gps_motion=distance>max(1,previous_gps['accuracy_m']+fix['accuracy_m']) and distance/dt>.5
-                if gps_motion and boundary_anchor is None: boundary_anchor=previous_gps
-            previous_gps=fix if valid_fix else None
-        motion=speed_motion or wheel_motion or gps_motion
-        if motion: stationary=False
-        marker=next((value(e) for e in frame if e['property_name']=='CLIENT_MARKER'), None); gear=current('GEAR_SELECTION'); ux=current('UX_RESTRICTIONS')
-        sources=set()
-        if speed_motion: sources.add('SPEED_MOTION')
-        if wheel_motion: sources.add('WHEEL_MOTION')
-        if gps_motion: sources.add('GPS_POSITION_MOTION')
-        if gear in ('DRIVE','REVERSE'): sources.add('GEAR_DRIVING')
-        if ux is True: sources.add('UX_RESTRICTED_INDIRECT')
-        if marker=='TRIP_START': sources.add('CLIENT_START')
-        ignition=current('IGNITION_STATE')
-        ready=stationary and (gear in ('DRIVE','REVERSE') or ignition in ('ON','RUN'))
-        # Preparation is bounded and never emits a trip without motion or a marker.
-        if not active and not motion and marker!='TRIP_START':
-            if ready:
-                preparation.extend(frame)
-                preparation=[e for e in preparation if t-ts(e)<=config['max_gap_s']]
-                state='PREPARING'
-            else:
-                preparation=[]; state='PARKED' if stationary and gear=='PARK' else 'UNKNOWN'
-        # GPS speed corroborates but is not counted twice as independent evidence.
-        if motion or marker=='TRIP_START':
-            if not active:
-                state='DRIVING' if motion else 'PREPARING'
-                preparation=[e for e in preparation if t-ts(e)<=config['max_gap_s']]
-                if preparation:
-                    active.extend(preparation)
-                    segments.append({'start_ts':active[0]['source_ts'],'end_ts':active[-1]['source_ts'],'state':'PREPARING'})
-                    evidence.add('OBSERVED_PREPARATION')
-                if boundary_anchor is not None:
-                    anchors=previous_frame if boundary_anchor in previous_frame else [boundary_anchor]
-                    ids={str(e['event_id']) for e in active}
-                    active.extend(e for e in anchors if str(e['event_id']) not in ids)
-                    active=ordered(active)
-                segments.append({'start_ts':frame[0]['source_ts'] if preparation else active[0]['source_ts'] if active else frame[0]['source_ts'],
-                                 'end_ts':frame[0]['source_ts'],'state':state})
-                preparation=[]
-            elif state!='DRIVING':
-                segments.append({'start_ts':frame[0]['source_ts'],'end_ts':frame[0]['source_ts'],'state':'DRIVING'}); state='DRIVING'
-            stop_at=None; evidence|=sources; motion_seen=motion_seen or motion
-        elif active:
-            next_state='PREPARING' if not motion_seen and ready else 'SHORT_STOP' if stationary else 'UNKNOWN'
-            if next_state=='UNKNOWN': uncertainty=True
-            if next_state!=state:
-                state=next_state; segments.append({'start_ts':frame[0]['source_ts'],'end_ts':frame[0]['source_ts'],'state':state})
-            if stationary:
-                if stop_at is None: stop_at=t
-            else:
-                stop_at=None
-        if active or motion or marker=='TRIP_START':
-            active.extend(frame); segments[-1]['end_ts']=frame[-1]['source_ts']
-            if marker=='TRIP_END' or (stop_at is not None and t-stop_at>=config['stop_timeout_s']):
-                # Completion is an observed decision point, not an invented tail interval.
-                segments.append({'start_ts':frame[0]['source_ts'],'end_ts':frame[-1]['source_ts'],'state':'COMPLETING'})
-                contradictory_end=marker=='TRIP_END' and motion
-                if contradictory_end: evidence.add('END_MARKER_WHILE_MOVING')
-                finish('CLIENT_END' if marker=='TRIP_END' else 'STOP_TIMEOUT',
-                       review=contradictory_end or (marker!='TRIP_END' and gear!='PARK'))
-        port=current('EV_CHARGE_PORT_CONNECTED'); cp=current('EV_BATTERY_INSTANTANEOUS_CHARGE_RATE')
-        charging=(isinstance(cp,(int,float)) and cp>0 and not motion) or current('EV_CHARGE_STATE')=='CHARGING'
-        if port is True or charging or marker=='CHARGE_START':
-            if charge_start is None: charge_start=t
-            if port is True: charge_evidence.add('PORT_CONNECTED')
-            if charging: charge_evidence.add('CHARGE_POWER_OR_STATE')
-            if marker=='CHARGE_START': charge_evidence.add('CLIENT_START')
-        if charge_start is not None:
-            charge.extend(frame)
-            if port is False or marker=='CHARGE_END': finish_charge('PORT_DISCONNECTED' if port is False else 'CLIENT_END')
-        previous_frame=frame
+    for group in instants(events):
+        group=ordered(group)
+        for e in group:
+            boot=(e['device_id'],e['meta']['boot_id']); t=ts(e); mono=e['source_elapsed_ns']/1e9
+            if boot in boot_clocks:
+                oldt,oldmono=boot_clocks[boot]
+                if abs((t-oldt)-(mono-oldmono))>5:
+                    drift.append({'code':'CLOCK_DRIFT','event_id':str(e['event_id'])}); drift_ids.add(str(e['event_id']))
+            boot_clocks[boot]=(t,mono)
+        # Never combine simultaneous observations from different device/boot epochs.
+        frames=defaultdict(list)
+        for e in group: frames[(ts(e), e['device_id'], e['meta']['boot_id'])].append(e)
+        for (t,device,boot),frame in sorted(frames.items()):
+            epoch=(device,boot)
+            if prior_epoch is not None and epoch != prior_epoch:
+                if active: finish('DEVICE_OR_BOOT_BOUNDARY',True)
+                if charge: finish_charge('DEVICE_OR_BOOT_BOUNDARY')
+                last={}; previous_wheel=None; previous_gps=None; previous_frame=[]; state='UNKNOWN'; preparation=[]
+                issues.append({'code':'DEVICE_OR_BOOT_BOUNDARY','event_id':str(frame[0]['event_id'])})
+            prior_epoch=epoch
+            if prior_t is not None and t-prior_t>config['max_gap_s']:
+                if active: finish('DROPPED_INTERVAL',True)
+                if charge: finish_charge('DROPPED_INTERVAL')
+                last={}; previous_wheel=None; previous_gps=None; previous_frame=[]; state='UNKNOWN'; preparation=[]
+                issues.append({'code':'DROPPED_INTERVAL','start_ts':frame[0]['source_ts'],'gap_s':t-prior_t})
+            prior_t=t
+            for e in frame:
+                # An unavailable observation invalidates prior evidence immediately.
+                last[(e['property_name'],e['area_id'])]=(value(e),t)
+            def current(name):
+                items=[item for (prop,area),item in last.items() if prop==name and t-item[1]<=config['max_gap_s']]
+                return items[0][0] if len(items)==1 else None
+            def number(v):
+                return isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v)
+            speed=current('PERF_VEHICLE_SPEED'); speed=speed if number(speed) else current('GPS_SPEED')
+            speed_motion=number(speed) and abs(speed)>.5
+            stationary=number(speed) and abs(speed)<=.5
+            wheel_motion=False; gps_motion=False; boundary_anchor=None
+            wheels=[e for e in frame if e['property_name']=='WHEEL_TICK']
+            if wheels:
+                wheel=wheels[0] if len(wheels)==1 else None
+                if wheel is not None and previous_wheel is not None:
+                    distance=wheel_distance([previous_wheel,wheel],config['max_gap_s'])['value']
+                    dt=t-ts(previous_wheel)
+                    if distance is not None and dt>0:
+                        wheel_motion=distance/dt>.5
+                        stationary=stationary or distance==0
+                        if wheel_motion: boundary_anchor=previous_wheel
+                previous_wheel=wheel
+            if previous_gps is not None and any(e['property_name']==previous_gps['property_name'] and
+                                                   e['status']!='available' for e in frame):
+                previous_gps=None
+            fixes=[e for e in frame if e.get('lat') is not None]
+            if fixes:
+                # Duplicate signals may carry one fix; conflicting fixes are not fused.
+                unique={(e['lat'],e['lon'],e.get('accuracy_m'),e['status']) for e in fixes}
+                fix=fixes[0] if len(unique)==1 else None
+                valid_fix=fix is not None and fix['status']=='available' and fix.get('accuracy_m') is not None and fix['accuracy_m']<=50
+                if valid_fix and previous_gps is not None and list(pairs([previous_gps,fix],config['max_gap_s'])):
+                    distance=haversine(previous_gps,fix); dt=t-ts(previous_gps)
+                    gps_motion=distance>max(1,previous_gps['accuracy_m']+fix['accuracy_m']) and distance/dt>.5
+                    if gps_motion and boundary_anchor is None: boundary_anchor=previous_gps
+                previous_gps=fix if valid_fix else None
+            motion=speed_motion or wheel_motion or gps_motion
+            if motion: stationary=False
+            marker=next((value(e) for e in frame if e['property_name']=='CLIENT_MARKER'), None); gear=current('GEAR_SELECTION'); ux=current('UX_RESTRICTIONS')
+            sources=set()
+            if speed_motion: sources.add('SPEED_MOTION')
+            if wheel_motion: sources.add('WHEEL_MOTION')
+            if gps_motion: sources.add('GPS_POSITION_MOTION')
+            if gear in ('DRIVE','REVERSE'): sources.add('GEAR_DRIVING')
+            if ux is True: sources.add('UX_RESTRICTED_INDIRECT')
+            if marker=='TRIP_START': sources.add('CLIENT_START')
+            ignition=current('IGNITION_STATE')
+            ready=stationary and (gear in ('DRIVE','REVERSE') or ignition in ('ON','RUN'))
+            # Preparation is bounded and never emits a trip without motion or a marker.
+            if not active and not motion and marker!='TRIP_START':
+                if ready:
+                    preparation.extend(frame)
+                    preparation=[e for e in preparation if t-ts(e)<=config['max_gap_s']]
+                    state='PREPARING'
+                else:
+                    preparation=[]; state='PARKED' if stationary and gear=='PARK' else 'UNKNOWN'
+            # GPS speed corroborates but is not counted twice as independent evidence.
+            if motion or marker=='TRIP_START':
+                if not active:
+                    state='DRIVING' if motion else 'PREPARING'
+                    preparation=[e for e in preparation if t-ts(e)<=config['max_gap_s']]
+                    if preparation:
+                        active.extend(preparation)
+                        segments.append({'start_ts':active[0]['source_ts'],'end_ts':active[-1]['source_ts'],'state':'PREPARING'})
+                        evidence.add('OBSERVED_PREPARATION')
+                    if boundary_anchor is not None:
+                        anchors=previous_frame if boundary_anchor in previous_frame else [boundary_anchor]
+                        ids={str(e['event_id']) for e in active}
+                        active.extend(e for e in anchors if str(e['event_id']) not in ids)
+                        active=ordered(active)
+                    segments.append({'start_ts':frame[0]['source_ts'] if preparation else active[0]['source_ts'] if active else frame[0]['source_ts'],
+                                     'end_ts':frame[0]['source_ts'],'state':state})
+                    preparation=[]
+                elif state!='DRIVING':
+                    segments.append({'start_ts':frame[0]['source_ts'],'end_ts':frame[0]['source_ts'],'state':'DRIVING'}); state='DRIVING'
+                stop_at=None; evidence|=sources; motion_seen=motion_seen or motion
+            elif active:
+                next_state='PREPARING' if not motion_seen and ready else 'SHORT_STOP' if stationary else 'UNKNOWN'
+                if next_state=='UNKNOWN': uncertainty=True
+                if next_state!=state:
+                    state=next_state; segments.append({'start_ts':frame[0]['source_ts'],'end_ts':frame[0]['source_ts'],'state':state})
+                if stationary:
+                    if stop_at is None: stop_at=t
+                else:
+                    stop_at=None
+            if active or motion or marker=='TRIP_START':
+                active.extend(frame); segments[-1]['end_ts']=frame[-1]['source_ts']
+                if marker=='TRIP_END' or (stop_at is not None and t-stop_at>=config['stop_timeout_s']):
+                    # Completion is an observed decision point, not an invented tail interval.
+                    segments.append({'start_ts':frame[0]['source_ts'],'end_ts':frame[-1]['source_ts'],'state':'COMPLETING'})
+                    contradictory_end=marker=='TRIP_END' and motion
+                    if contradictory_end: evidence.add('END_MARKER_WHILE_MOVING')
+                    finish('CLIENT_END' if marker=='TRIP_END' else 'STOP_TIMEOUT',
+                           review=contradictory_end or (marker!='TRIP_END' and gear!='PARK'))
+            port=current('EV_CHARGE_PORT_CONNECTED'); cp=current('EV_BATTERY_INSTANTANEOUS_CHARGE_RATE')
+            charging=(isinstance(cp,(int,float)) and cp>0 and not motion) or current('EV_CHARGE_STATE')=='CHARGING'
+            if port is True or charging or marker=='CHARGE_START':
+                if charge_start is None: charge_start=t
+                if port is True: charge_evidence.add('PORT_CONNECTED')
+                if charging: charge_evidence.add('CHARGE_POWER_OR_STATE')
+                if marker=='CHARGE_START': charge_evidence.add('CLIENT_START')
+            if charge_start is not None:
+                charge.extend(frame)
+                if port is False or marker=='CHARGE_END': finish_charge('PORT_DISCONNECTED' if port is False else 'CLIENT_END')
+            previous_frame=frame
     finish('CAPTURE_END_PARTIAL',True)
     finish_charge('CAPTURE_END_PARTIAL')
-    return {'trips':trips,'charging_sessions':charges,'issues':issues,'algorithm_version':VERSION,'config':config}
+    return {'trips':trips,'charging_sessions':charges,'issues':drift+issues,'algorithm_version':VERSION,'config':config}

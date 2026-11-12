@@ -1,11 +1,12 @@
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import text
 from app.db import engine, rows, one
-from app.derive import derive, VERSION, metric
+from app.derive import derive_stream, VERSION, metric
 
 
 def process(vehicle_id, force=False):
@@ -15,8 +16,16 @@ def process(vehicle_id, force=False):
         state=one(c,lock_query,{'v':vehicle_id})
         if not state or (not force and state['generation']==state['processed_generation'] and
                           (state['summary'] or {}).get('algorithm_version')==VERSION): return None
-        events=[r['payload'] for r in rows(c,'SELECT payload FROM telemetry_samples WHERE vehicle_id=:v ORDER BY source_ts,event_id',{'v':vehicle_id})]
-        result=derive(events,state['config'])
+        # Streamed through a server-side cursor: the history is never held in memory at once.
+        latest=[None]
+        def samples():
+            # The option is set on the statement: set on the connection it would stay for the writes below.
+            cursor=c.execute(text('SELECT payload FROM telemetry_samples WHERE vehicle_id=:v ORDER BY source_ts,event_id')
+                             .execution_options(yield_per=5000),{'v':vehicle_id})
+            for (payload,) in cursor:
+                latest[0]=payload['source_ts']
+                yield payload
+        result=derive_stream(samples(),state['config'])
         synthetic=one(c,'SELECT synthetic FROM vehicles WHERE id=:v',{'v':vehicle_id})['synthetic']
         c.execute(text('DELETE FROM trips WHERE vehicle_id=:v'),{'v':vehicle_id})
         c.execute(text('DELETE FROM charging_sessions WHERE vehicle_id=:v'),{'v':vehicle_id})
@@ -41,7 +50,7 @@ def process(vehicle_id, force=False):
         for issue in result['issues']:
             c.execute(text('INSERT INTO data_quality_issues(vehicle_id,algorithm_version,definition) VALUES (:v,:a,CAST(:d AS jsonb))'),{'v':vehicle_id,'a':VERSION,'d':json.dumps(issue)})
         # Latest observation anchors rolling windows; no synthetic clock or invented freshness.
-        anchor=max((datetime.fromisoformat(e['source_ts'].replace('Z','+00:00')) for e in events),default=None)
+        anchor=datetime.fromisoformat(latest[0].replace('Z','+00:00')) if latest[0] else None
         complete=[t for t in result['trips'] if t['state']=='COMPLETE']
         recent=[t for t in complete if anchor and datetime.fromisoformat(t['start_ts'].replace('Z','+00:00'))>=anchor-timedelta(days=30)]
         def efficiency(data):
@@ -61,13 +70,22 @@ def process(vehicle_id, force=False):
                      'metrics':{k:t['metrics'][k] for k in ('distance_m','energy_per_distance_j_m','temp_mean_k','duration_s')}}
                      for t in result['trips'][-10:][::-1]],
                  'quality_issue_count':len(result['issues'])}
-        c.execute(text('''UPDATE derivation_state SET processed_generation=:g,updated_at=now(),summary=CAST(:s AS jsonb) WHERE vehicle_id=:v'''),{'g':state['generation'],'s':json.dumps(summary),'v':vehicle_id})
+        c.execute(text('''UPDATE derivation_state SET processed_generation=:g,updated_at=clock_timestamp(),summary=CAST(:s AS jsonb) WHERE vehicle_id=:v'''),{'g':state['generation'],'s':json.dumps(summary),'v':vehicle_id})
         return result
+
+
+# Counted from the end of the last pass (updated_at is set with clock_timestamp()). A pass over
+# a month of one car took 18 minutes on 2026-11-12, so the floor is an hour.
+MIN_INTERVAL_S=float(os.environ.get('DERIVE_MIN_INTERVAL_S','3600'))
 
 
 def tick():
     with engine.begin() as c:
-        pending=rows(c,"SELECT vehicle_id FROM derivation_state WHERE generation<>processed_generation OR summary->>'algorithm_version' IS DISTINCT FROM :version",{'version':VERSION})
+        # A pass rereads the vehicle's whole history, and a driving car adds samples every minute:
+        # without a floor between passes the worker would recompute without pause.
+        pending=rows(c,"""SELECT vehicle_id FROM derivation_state WHERE summary->>'algorithm_version' IS DISTINCT FROM :version
+            OR (generation<>processed_generation AND (processed_generation<0 OR updated_at IS NULL OR updated_at<now()-make_interval(secs=>:floor)))""",
+            {'version':VERSION,'floor':MIN_INTERVAL_S})
     for row in pending: process(row['vehicle_id'])
     with engine.begin() as c:
         c.execute(text('INSERT INTO worker_heartbeat VALUES (1,now()) ON CONFLICT(id) DO UPDATE SET updated_at=now()'))
