@@ -1,21 +1,39 @@
 # SESSION HANDOFF — gm_ccpa (resume here)
 
-**Last updated: 2026-09-15.** This is the "where we left off" doc, kept short on purpose (see
-[Document policy](#document-policy) below). For what the system **is**, read
-[`04_SYSTEM_MODEL.md`](04_SYSTEM_MODEL.md) — canonical, outranks every architecture blurb elsewhere.
-Then [`05_SESSION_FLOW.md`](05_SESSION_FLOW.md) (wire-level session buildup, read §8 before writing any
-protocol code), then `evidence/session_2026-08-05/WORKING_SESSION.md`
-(the working proof — in the standalone archive, not this tree; see §9), `01_FINDINGS.md` (what's proven), `06_BRINGUP_RUNBOOK.md` (how to run it),
-`11_HARDENING_PLAN.md` (live landed-vs-deferred ledger — more current than this file for the hardening
-queue) and `13_AUDIO_ROUTING.md` (audio design + build status).
+**Last updated: 2026-11-12.** Kept short on purpose (see [Document policy](#4-document-policy)).
 
-Project root: `host/gm_ccpa` in this repo (merged in on 2026-09-08 — see §9). The `evidence/` archive
-is NOT in this repo: it lived in upstream's standalone checkout on the upstream owner's Mac
-(`~/Documents/carlink/old/gm_ccpa/evidence/`) and is not available in the Equinox fork. Bare
-`evidence/...` paths in this doc set point there.
+## START HERE (2026-11-12): the Equinox EV, Play 247
 
+**What this is now.** One host: this app, `wasidremin.gmccpa`, on a Chevrolet Equinox EV (GM VCU,
+AAOS 14), installed only through Play's `automotive:internal` track; the car has no adb. The adapter
+runs its own Wi-Fi access point and the CarPlay receiver, and forwards encrypted A/V to the app
+([`04_SYSTEM_MODEL.md`](04_SYSTEM_MODEL.md) §1 correction and §4a). Everything below this section
+was written for upstream's Silverado and is history.
 
-## START HERE (2026-09-21): the uDisk composite WORKS on the Equinox EV — USB is solved, pairing is next
+**Where to pick up.** The open items, car checks and their evidence are in
+[`../../../docs/ops/04_OPEN_ITEMS.md`](../../../docs/ops/04_OPEN_ITEMS.md) ("GM app and the car").
+The release-by-release record and the Play high-water mark are in
+[`14_LESSONS_LEARNED.md`](14_LESSONS_LEARNED.md) (§6, §13 onward). Settings and their keys:
+[`SETTINGS_AUDIT.md`](SETTINGS_AUDIT.md). Planned work: `../../../docs/ops/08_FUTURE_TASKS.md`.
+
+**State on 2026-11-12.**
+- Working on the car: full wireless CarPlay, now playing (media card and cluster), calls, cluster
+  turn-by-turn, the voice button, EV status to CarPlay, the media pane, and CarPlay's map on the
+  driver display with the app's turn, now-playing and call cards.
+- Published, not yet seen on the car: 246 (lane highlight, the turn after beside the lanes, route
+  signs, the data budget, Send on Wi-Fi) and 247 (the Drive card and the drive-history import).
+- The receiver at `/opt/stacks/cloudbridge-log` takes logs, telemetry and the history file
+  ([`../README.md`](../README.md) "Logs"). The EV Insights server's worker was fixed on 2026-11-12;
+  its trips for the real car are not usable yet.
+
+**Rules that bite.** Publish only when the owner asks, and record each publish in doc 14 §6 and the
+open items. The car takes nothing but Play. The emulator crashes about a minute after the
+driver-display window opens, so bench screenshots come a few per boot. Logs carry numbers only:
+no song, road, destination or caller names.
+
+---
+
+## HISTORICAL — START HERE (2026-09-21): the uDisk composite WORKS on the Equinox EV — USB is solved, pairing is next
 
 The Silverado proof (`12_OBSERVED_FLOW.md`) is unchanged. The Equinox EV (`burmese_orange`, Android 14,
 user 12) is a **GM VCU** radio: it refuses a *pure* accessory gadget (stock `1520` or OCBM `2d00`) but
@@ -33,7 +51,7 @@ Do not treat Equinox USB as the Silverado dangling-handler bug.
 
 ---
 
-## START HERE (2026-09-10): a full session was captured, and the truck is running OLD code
+## HISTORICAL — START HERE (2026-09-10): a full session was captured, and the truck is running OLD code
 
 **1. The 2026-09-09 capture is the new reference session.** Bundle
 `gmccpa_probe_20260909_225421` (+ `logcat.log`) carries the whole stack end to end with GM's own
@@ -266,7 +284,7 @@ deliberate edit here. Consequences for anyone working here:
   blocked by the link and are unblocked by the fork; they are a separate decision and were NOT folded
   into it, so the fork commit is reviewable as a pure move.
 
-## 0. What this is
+## 0. What this is (Silverado, historical)
 
 A **wireless-only CarPlay receiver** running as an unprivileged Android app (`wasidremin.gmccpa`)
 on a **2024 Silverado GM Info 3.7 head unit** (`gminfo37`, Y181, Android 12 / API 32, x86_64). The
@@ -275,7 +293,7 @@ hotspot** to the app — the iPhone is never wired to anything. A **Carlinkit CP
 USB and speaking the **OCBM** protocol, is **only the Bluetooth radio and the MFi coprocessor**: it
 raises no access point, terminates no AirPlay traffic, and carries no media.
 
-## 1. Current status
+## 1. Status as of 2026-09-15 (Silverado, historical)
 
 - **A full session — HEVC video, AAC-LC audio, touch — ran on the truck 2026-08-05**, from an
   unprivileged app, with 0 access units dropped. See the working-session evidence link above.
@@ -316,7 +334,7 @@ edge cleared `pausedForAssistant` at `ASSISTANT_HOLD_MS` (4 s) but focus was aba
 now `ASSISTANT_HOLD_MS + 1` sweep period. `reclaimFocus()` covers the separate *permanent*
 `AUDIOFOCUS_LOSS` hang. Details in `13_AUDIO_ROUTING.md` §3a.
 
-## 2. Immediate next actions
+## 2. Next actions as of 2026-09-15 (Silverado, historical)
 
 1. **Re-assert box-side rig invariants**: checksum patched `/script/session_supervisor.sh`, confirm
    `/etc/hostapd.conf`, **re-assert `/tmp/no_escalate`** (tmpfs, self-clears on reboot — the first flap

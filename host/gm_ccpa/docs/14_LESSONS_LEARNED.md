@@ -416,6 +416,12 @@ suite (daemons linger), or `--no-daemon` the test run, and treat screenshots as 
 evidence — this v209 went out with JVM-green tests and a clean kotlinc compile but no fresh
 screenshots, which is recorded here rather than implied otherwise.
 
+**Corrected 2026-11-12: memory is not the only killer.** The emulator also segfaults (`exit 139`)
+within about a minute of the app's driver-display window opening, on an idle machine with 7 GB
+free, and whenever its Wi-Fi is switched on (`svc wifi enable`). Bench checks of the
+driver-display cards are collected two or three screenshots per boot, restarting it in between
+(§13.6). Tracked in `docs/ops/04_OPEN_ITEMS.md` "Tests, tooling & install".
+
 ### 13.4 2026-11-11: a permanent drive log, and four tabs built on it
 
 **Why.** The workbench of §13.2 could only describe the newest 48 one-minute segments, so it had

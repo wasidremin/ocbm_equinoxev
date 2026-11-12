@@ -177,8 +177,11 @@ the app.
 > `CarAppFocusManager` and a permission-free `CarUxRestrictionsManager` listener instead; cluster
 > video through `ClusterHomeManager` is consequently out of reach for it. Since 2026-11-08 it tries the
 > route openautolink proved on a Blazer EV instead: an ordinary Activity on the driver display, if the
-> car exposes it as a public Android display, decoding `CH_ALT_VIDEO` (`nav/DriverDisplay`; unverified
-> on the Equinox).
+> car exposes it as a public Android display, decoding `CH_ALT_VIDEO` (`nav/DriverDisplay`). **Works
+> on the Equinox since Play 237 (2026-11-08)**: display 2, 2000x810, the map up through whole routes.
+> The app draws its own cards over that window (turn, now playing, call, lanes, Drive), since the
+> stream carries the map only. Detail and open items: `../ops/04_OPEN_ITEMS.md` "CarPlay map on the
+> driver display".
 > Full detail: [`../host/01_ANDROID_AND_AAOS.md`](../host/01_ANDROID_AND_AAOS.md) and
 > `host/CarlinkAndroid/OCBMANDROID.md`.
 

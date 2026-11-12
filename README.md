@@ -92,8 +92,11 @@ record: [`host/gm_ccpa/docs/14_LESSONS_LEARNED.md`](host/gm_ccpa/docs/14_LESSONS
 and reconnect, iAP2 and MFi on the adapter's coprocessor, the Wi-Fi handoff, HEVC video at the
 panel's native size, AAC media audio, AAC-ELD voice (calls, Siri, navigation prompts) on GM's own
 volume groups, the car mic for Siri and calls, touch, now-playing metadata and artwork on the AAOS
-media card, CarPlay turn-by-turn in the instrument cluster, and the steering-wheel voice button for
-Siri.
+media card, CarPlay turn-by-turn in the instrument cluster, the steering-wheel voice button for
+Siri, a media pane with lyrics beside CarPlay, and CarPlay's own map on the driver display with the
+app's turn, now-playing and call cards over it. On the head unit, EV Insights keeps a permanent
+drive and charge log, and a Drive card shows the battery on arrival (Play 247, 2026-11-12; not yet
+seen on the car). Item-by-item status: [docs/ops/04_OPEN_ITEMS.md](docs/ops/04_OPEN_ITEMS.md).
 
 **Why the adapter runs the Wi-Fi.** Upstream's Silverado design has the iPhone stream over the
 *vehicle's* hotspot straight to the app, with the adapter as Bluetooth radio and MFi chip only. The

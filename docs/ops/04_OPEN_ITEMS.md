@@ -81,6 +81,17 @@ high-water mark: versionCode 247 (`4.0+drive-card`, 2026-11-12; `host/gm_ccpa/do
   the first few drives and one overnight charge: a drive appears on Last drive within minutes of
   parking, a charge the head unit slept through is logged as one record, and the log survives an
   app update. `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.4.
+- **EV Insights server (`host/evinsights`): the worker runs, the real car's trips are not usable
+  yet.** Fixed 2026-11-12 (`1fc20f3`): the worker loaded a vehicle's whole history into memory, and
+  at 3.3 million samples the kernel killed it on every pass (160 restarts in a day, the database at
+  100% CPU). It now streams the history and rebuilds a vehicle at most once an hour
+  (`host/evinsights/README.md` "Derivation and evidence rules"). Still open: its first full pass over
+  `equinox-ev-real` produced 6,574 trips, none COMPLETE, and 0 total distance, so the web app's
+  figures for the car mean nothing yet; not investigated. The car's own drive log
+  (`14_LESSONS_LEARNED.md` §13.4) does not depend on it. Also open, waiting on the owner: about
+  1,084 emulator reports were imported as the car before the importer learned to skip them
+  (2026-11-11); removing their rows has not been approved. The emulator's report files themselves
+  were deleted from the receiver with the owner's approval.
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
   replayed the same sequence. 226 (`4.0+art-hold`, published 2026-10-30) holds a card up to 500 ms
@@ -246,7 +257,9 @@ high-water mark: versionCode 247 (`4.0+drive-card`, 2026-11-12; `host/gm_ccpa/do
     was 3.1 s), the first-paged iPhone answered 1.5 s after that (no page timeout), the handoff took the
     usual 3.0 s, and the picture came 4.5 s after the handoff (median 3.7 s). One session; not a trend.
   - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
-- **CarPlay map on the driver display: in Play 236 (2026-11-08), not yet tried in the car.** The idea is openautolink's
+- **CarPlay map on the driver display: works on the car since Play 237 (2026-11-08); the app's own
+  cards over it (turn, now playing, call, lanes, Drive) are emulator-checked, partly seen on the car.**
+  (Heading corrected 2026-11-12; it read "in Play 236, not yet tried in the car".) The idea is openautolink's
   ("driver-display maps", validated on a 2024 Blazer EV: GM VCU on AAOS 12L), re-implemented here
   without their GPL-3.0 code. Settings ▸ Navigation ▸ CarPlay map on the driver display (off by
   default): at subscribe the config declares Apple's cluster pair (`altDisplayPanels` +
@@ -367,6 +380,12 @@ high-water mark: versionCode 247 (`4.0+drive-card`, 2026-11-12; `host/gm_ccpa/do
      the phone sends. Open on the car: all three by eye (the bench could not render them, the
      emulator kept crashing), what the phone's road text really looks like (`marker=` in the
      `turn #` line says whether one was recognised, never the name), and per-state markers.
+     **What the 245 drive already answered (recorded 2026-11-12):** the phone accepts the pushed
+     `extended` tier on this car's session (lane records arrived; the Equinox runs the AirPlay-tunnel
+     arm, not the wired one), so lane guidance needs no box change. The highlight is carried only in
+     `laneAngleHighlight`, never repeated in `laneAngles` (`docs/carplay/05_METADATA_AND_CONTROLS.md`).
+     The preferred lane was the rightmost of three with highlight 45, which fits positive = right;
+     not yet confirmed by eye.
   2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
      speedometer and gauges stay visible over the window (they must), and whether GM's own turn
      icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
@@ -878,6 +897,14 @@ app as the only host.
 ---
 
 ### Tests, tooling & install
+
+- **The AAOS emulator segfaults within about a minute of the driver-display window opening.** Seen
+  2026-11-11 and 2026-11-12 (`emulator exit 139`), on an idle machine with 7 GB free as well as
+  under load, so it is not only the memory pressure `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.3
+  describes. Rendering checks of the driver-display cards therefore come two or three screenshots
+  per boot (the 2026-11-12 Drive card check took nine boots). Switching Wi-Fi on in the emulator
+  (`svc wifi enable`) also crashes it, so the live arrival of Wi-Fi has never run on the bench.
+  Not investigated: the emulator build, the `swiftshader_indirect` GPU mode, the second display.
 
 - **`skip_list_narrows_the_declaration` is still tautological, and `file_setting()` has no test.** The
   skip lever itself now has genuine coverage via `active_with_skip`, but the named test is unchanged

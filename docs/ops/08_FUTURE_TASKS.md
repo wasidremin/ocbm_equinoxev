@@ -449,10 +449,20 @@ logged as `card: no picture 1000 ms after "<title>"`.
   GM's own glyph, so the `_WITH_ANGLE` roundabout angles have no consumer here.
 - Add `0x5200` selectors 4–5 so the time zone and EV fields arrive (doc 03 selector gap).
 - `0x5204` lane guidance is Extended-tier only. Moving it into Proven changes a proven Identify and
-  risks an unrecoverable `0x1D03`, so prove it at the Extended tier first.
+  risks an unrecoverable `0x1D03`, so prove it at the Extended tier first. **Done that way
+  (2026-11-11):** the app pushes `extended` when Settings ▸ Driver display ▸ Lane guidance is on,
+  the phone accepted it on the car, and the app draws the lanes under its own turn card on the
+  driver display. Proven stays unchanged.
 
 **Done means.** On the Equinox, a CarPlay route shows its next turn with the right GM arrow,
 distance counting down, and the ETA. The cluster clears when the route ends.
+
+**The driver display route (Play 236–247, 2026-11-08 to 11-12).** Besides GM's cluster, the app
+now opens its own window on the driver display, shows CarPlay's cluster map there, and draws its own
+turn card (with lanes, the turn after and route signs), now-playing and call card, and the Drive card
+over it. When that window holds the display, the Car App Library turns stand down. The record,
+drive by drive, is `04_OPEN_ITEMS.md` "CarPlay map on the driver display"; the settings are in
+`host/gm_ccpa/docs/SETTINGS_AUDIT.md` (Driver display rows).
 
 ## T14. GM app: the steering-wheel voice button starts Siri (raised 2026-10-26; WORKS on the car 2026-10-27, versionCode 221)
 
@@ -559,6 +569,8 @@ Kept here so a later session does not promote them into tasks.
   turn icons, lane guidance (both the lane strip image and asking the iPhone for lanes, which needs the
   `extended` tier) and the flashing turn alert all work by sending icons, which the Equinox's VCU
   cluster ignores (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`). The exit label was taken instead.
+  (2026-11-10: lane guidance did arrive later by another route, drawn by the app on its own
+  driver-display window rather than in GM's cluster; see T13.)
 - **enigy's per-iPhone settings, adapter updates over OCBM, stock conversion.** Not asked for; per-phone
   settings matter little with this app's few per-phone choices, and the adapter is updated on the server.
 - **New enigy commits are reviewed weekly (from 2026-11-09).** A scheduled check on the owner's Claude

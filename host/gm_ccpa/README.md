@@ -1,66 +1,95 @@
 # gm_ccpa
 
-**Wireless CarPlay on a 2024 Silverado, as an ordinary non-privileged Android app.**
+**Wireless CarPlay on a Chevrolet Equinox EV, as an ordinary Play app** (`wasidremin.gmccpa`).
 
-The iPhone streams CarPlay to this app directly over the **vehicle's own 5 GHz hotspot**. A Carlinkit
-CPC200-CCPA adapter on USB — speaking [OCBM](../../docs/README.md) — is reduced to two jobs: **it is the
-Bluetooth radio, and it is the MFi coprocessor.** It is not the AirPlay endpoint, it hosts no access
-point, and no media crosses it. The iPhone is never wired to the CCPA.
+On the Equinox the Carlinkit CPC200-CCPA adapter raises its own Wi-Fi access point and runs the
+CarPlay receiver (`carplayd`). After the Bluetooth / iAP2 handoff the iPhone joins that access point,
+and the adapter forwards the still-encrypted video and audio to this app over USB
+([OCBM](../../docs/README.md)). The app decrypts, decodes and renders, sends touch and the car's
+microphone back, and owns the session's configuration. The adapter is also the Bluetooth radio and
+the MFi coprocessor.
 
 ```
-iPhone ──5 GHz vehicle hotspot──▶ this app (AirPlay accessory on br0, :7011)
-   └────Bluetooth / iAP2 / MFi──▶ CCPA adapter ──USB/OCBM──▶ this app
+iPhone ──Wi-Fi, the adapter's own AP──▶ CCPA adapter (carplayd) ──USB / OCBM, encrypted A/V──▶ this app
+   └────Bluetooth / iAP2 / MFi────────▶ CCPA adapter
 ```
 
-The app claims the box over OCBM, wakes its Bluetooth stack, reconnects the known iPhone, lets the box
-do iAP2 + MFi over BT, then hands the phone the **vehicle's** hotspot credentials (`0x5703`). Once the
-phone switches networks the app speaks the Apple protocols to it directly; any MFi the session still
-needs is relayed back over OCBM.
+Why the adapter runs the Wi-Fi: the Equinox's GM firewall drops the phone's inbound connection to the
+head unit (measured September 2026, [`docs/14_LESSONS_LEARNED.md`](docs/14_LESSONS_LEARNED.md) §7). The
+app still carries upstream's Silverado design, in which the iPhone streams over the vehicle's own
+hotspot straight to the app and the adapter is only the Bluetooth radio and MFi chip; it sits behind
+Advanced ▸ Adapter Wi-Fi (on for the Equinox). Docs 01, 03–06, 11 and 12 below describe that design
+and its truck bring-up.
 
 | | |
 |---|---|
-| **Head unit** | GM Info 3.7, Y181, AAOS API 32, x86_64, 2400x960 |
-| **Package** | `wasidremin.gmccpa` — unprivileged, `/data/app`, debug-signed |
-| **Video** | HEVC 2400x960, hardware `OMX.Intel.hw_vd.h265`, HWC `composition=DEVICE` |
-| **Audio** | AAC-LC 48 kHz out, AAC-ELD voice, mic uplink |
-| **Core** | Rust receiver/pairing/MFi via JNI, cross-built `x86_64-linux-android` |
+| **Head unit** | Equinox EV, GM VCU, AAOS 14 (`burmese_orange`), user 12. No adb: the app reaches the car only through Play |
+| **Package** | `wasidremin.gmccpa`, Play `automotive:internal`. High-water mark: doc 14 §6 |
+| **Video** | HEVC; CarPlay negotiates 2400x960 on the main screen, and Apple's cluster map 2000x810 on the driver display |
+| **Audio** | AAC-LC media, AAC-ELD voice, the car's microphone for Siri and calls |
+| **Core** | Rust receiver / pairing / MFi via JNI, built from this tree's crates |
 
-## Status — working, device-proven
+## Status (Play 247, 2026-11-12)
 
-Full sessions run on the truck against a real iPhone: OCBM claim, MFi relay, BT/iAP2, the `0x5703`
-handoff, Bonjour, pair-setup **and** pair-verify, `/auth-setup`, RECORD, and both A/V streams — video,
-audio and touch. API 32's missing X25519/Ed25519 primitives are not a gate; the JNI'd Rust core supplies
-them.
+On the car: wireless CarPlay end to end (pairing and reconnect, the Wi-Fi handoff, video, media and
+voice audio on GM's volume groups, touch); now playing on the AAOS media card and in the cluster;
+calls; CarPlay turn-by-turn in GM's cluster (Car App Library); the steering-wheel voice button for
+Siri; EV range and charge sent to CarPlay; the media pane with lyrics beside CarPlay; and CarPlay's
+own map on the driver display, with the app's turn, now-playing and call cards over it.
 
-Recent work, all owner-verified on the vehicle:
+Built, not yet confirmed on the car: the lane highlight, the turn after beside the lanes and route
+signs (246); the data budget and Send on Wi-Fi (246); the Drive card and the drive-history import
+(247). EV Insights keeps a permanent drive log on the head unit (245) that has not yet been checked
+over several drives.
 
-| Date | |
-|---|---|
-| 2026-09-08 | Vehicle state → CarPlay: **drive-restricted UI** (Park/Drive) and **day/night**, from `GEAR_SELECTION` + `NIGHT_MODE` |
-| 2026-09-08 | **CarPlay dynamic resize** — two view areas, cropped on the hardware composer, GM system UI revealed when shrunk |
-| 2026-09-08 | **Now-playing metadata** published to the AAOS media card; app auto-selects as the media source |
-| 2026-09-08 | **OCBM migration** to current box firmware, with box log passthrough over `CH_LOG` |
-
-Known-open work is tracked in [`docs/11_HARDENING_PLAN.md`](docs/11_HARDENING_PLAN.md), which carries the
-live landed-vs-deferred ledger. A 2026-08-09 review found the defects clustered in lifecycle, failure
-surfacing and build reproducibility — **not** in protocol correctness.
+What is verified where, item by item: [`../../docs/ops/04_OPEN_ITEMS.md`](../../docs/ops/04_OPEN_ITEMS.md)
+("GM app and the car"). Every setting with its key, default and state:
+[`docs/SETTINGS_AUDIT.md`](docs/SETTINGS_AUDIT.md).
 
 ## Documentation
 
-Start at **[`docs/00_HANDOFF.md`](docs/00_HANDOFF.md)** — it is the resume point and names the reading
-order.
+Start at **[`docs/00_HANDOFF.md`](docs/00_HANDOFF.md)**, then the open items above.
 
 | Doc | |
 |---|---|
-| [`04_SYSTEM_MODEL.md`](docs/04_SYSTEM_MODEL.md) | **Canonical architecture.** Outranks every other description |
-| [`05_SESSION_FLOW.md`](docs/05_SESSION_FLOW.md) | Wire-level buildup + the ordering rules that kill sessions (read §8) |
-| [`06_BRINGUP_RUNBOOK.md`](docs/06_BRINGUP_RUNBOOK.md) | Device-proven commands and the gotchas that cost time |
-| [`12_OBSERVED_FLOW.md`](docs/12_OBSERVED_FLOW.md) | What the stack actually does, phase by phase |
+| [`14_LESSONS_LEARNED.md`](docs/14_LESSONS_LEARNED.md) | **The Equinox line's record**: USB and Wi-Fi bring-up, every Play release's findings, EV Insights (§13: drive log, data budget, Drive card), the Play high-water mark (§6) |
+| [`SETTINGS_AUDIT.md`](docs/SETTINGS_AUDIT.md) | Every control: where it lives, its preference key and default, how far it is verified |
+| [`04_SYSTEM_MODEL.md`](docs/04_SYSTEM_MODEL.md) | Architecture and the app/box state machine. Written for the Silverado; its Equinox exceptions are marked |
+| [`05_SESSION_FLOW.md`](docs/05_SESSION_FLOW.md) | Wire-level buildup + the ordering rules that kill sessions (read §8); §9 has the Equinox startup timings |
 | [`13_AUDIO_ROUTING.md`](docs/13_AUDIO_ROUTING.md) | Audio routing, volume groups, mic uplink |
-| [`01_FINDINGS.md`](docs/01_FINDINGS.md) · [`03_BUILD_PLAN.md`](docs/03_BUILD_PLAN.md) · [`11_HARDENING_PLAN.md`](docs/11_HARDENING_PLAN.md) | Feasibility analysis · build map · work queue |
-| [`14_LESSONS_LEARNED.md`](docs/14_LESSONS_LEARNED.md) | Equinox EV / Play-app bring-up (2026-09-15). USB24915P, IW416 radio, no uDisk |
+| [`06_BRINGUP_RUNBOOK.md`](docs/06_BRINGUP_RUNBOOK.md) · [`12_OBSERVED_FLOW.md`](docs/12_OBSERVED_FLOW.md) | Device-proven commands and phase-by-phase flow, from the Silverado |
+| [`01_FINDINGS.md`](docs/01_FINDINGS.md) · [`03_BUILD_PLAN.md`](docs/03_BUILD_PLAN.md) · [`11_HARDENING_PLAN.md`](docs/11_HARDENING_PLAN.md) | Silverado feasibility, build map and hardening ledger (historical; open work now lives in `docs/ops/04_OPEN_ITEMS.md`) |
 
 ## Build and run
+
+**To the car (the only route):** from the repository root, on a clean tree,
+
+```bash
+AAB_VERSION_CODE=<next> AAB_VERSION_NAME=4.0+<tag> bash host/gm_ccpa/tools/build_aab.sh --publish
+```
+
+builds the `playRelease` bundle and commits it to `automotive:internal`. Use a versionCode above the
+high-water mark in doc 14 §6, and record the new one there and in `docs/ops/04_OPEN_ITEMS.md`.
+The script stamps a dirty tree `-dirty` rather than refusing it, and shares the Gradle build
+directory with bench builds, so do not edit sources while it runs.
+
+**Bench (tests and the AAOS emulator):**
+
+```bash
+cd host/gm_ccpa/netprobe_app
+GM_BUILD_DIR=$HOME/.cache/carlink-artifacts/gm_ccpa/gradle gradle :app:testPlayDebugUnitTest :app:assembleSideloadDebug
+adb install -r --user 10 $HOME/.cache/carlink-artifacts/gm_ccpa/gradle/app/outputs/apk/sideload/debug/app-sideload-debug.apk
+adb shell am start --user 10 -n wasidremin.gmccpa/.MainActivity --es run driver_display --ez enabled true
+```
+
+`MainActivity` takes `--es run <action>` bench actions (`driver_display`, `upload_log`, …; see
+`MainActivity.kt` and `SETTINGS_AUDIT.md`). The emulator crashes about a minute after the
+driver-display window opens; see `docs/ops/04_OPEN_ITEMS.md` "Tests, tooling & install".
+`tools/test.sh` is the Tier-0 gate (host cargo tests + OCBM proto conformance).
+`tools/build_apk.sh` is the older Gradle-free path (`kotlinc → d8 → aapt2`); it has no AndroidX, so
+it cannot build the Car App Library service.
+
+### On upstream's Silverado (vehicle-hotspot mode, adb available)
 
 Gradle-free: `kotlinc → d8 → aapt2 → zipalign → apksigner`, plus a cargo cross-build for the JNI core.
 Needs the Android SDK + NDK. Build output goes to `~/.cache`, never into this tree.
@@ -145,7 +174,10 @@ Calibrate-from-capture now only creates optional overrides — a user-saved temp
 ## Layout
 
 ```
-netprobe_app/     the Kotlin app — ocbm/ · pair/ · av/ · CarPlayRx · MainActivity (instrument)
+netprobe_app/     the Kotlin app — ocbm/ (adapter link) · pair/ · av/ (decode, audio, now playing) ·
+                  nav/ (route guidance, cluster turns, driver display and its cards) · pane/ (media pane) ·
+                  telemetry/ (EV Insights recording, drive log, Drive card estimate) · upload/ (uploads,
+                  data meter) · match/ (vision launcher) · Ui.kt (settings) · MainActivity
 native/           the Rust core: JNI over ccpa_custom's receiver/pairing/mfi crates
 tools/            build_apk.sh · test.sh · info_plist_*.py · ADB recon · capture
 docs/             see above

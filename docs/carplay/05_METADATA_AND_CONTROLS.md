@@ -1170,10 +1170,24 @@ JunctionType(9), ExitInfo(13). Wire-verified live values in `WIRED_NAV_METADATA.
   0x5204 itself arrives only at the `extended` tier. The GM app pushes `proven` unless Settings ▸
   Driver display ▸ Lane guidance is on (default off, 2026-11-10), when it pushes `extended` and draws
   the lanes itself under its turn card on the driver display (`nav/TurnCard`); GM's own cluster
-  cannot show them (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`). Not yet run against a phone from the
-  app, and the sign of `laneAngle` is not recorded anywhere on disk: the app draws positive to the
-  right and logs the numbers to check it.
+  cannot show them (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`). **Seen on the car 2026-11-11 (Play
+  245, iOS on the AirPlay-tunnel arm at the pushed `extended` tier):** lane records arrived, and the
+  app's log of one junction read `status=[0, 0, 2] highlight=[null, null, 45]`. So
+  `laneAngleHighlight` carries the direction the route takes and is **not repeated in `laneAngles`**,
+  which lists the lane's other directions; a consumer has to draw the two together
+  (`TurnCard.laneArrows`, Play 246). LaneStatus 2 = preferred, 0 = do not take. The preferred lane
+  was the rightmost of three with highlight 45, which fits positive = right; the app draws it that
+  way and the sign is still to be confirmed by eye.
 The GM app uses the exit label: the cluster's road text reads "Exit 273 · Wade Green Rd".
+
+**What route guidance does not carry (checked 2026-11-12 for the Drive card).** No speed, speed
+limit, traffic, elevation or road geometry, in any of 0x5200–0x5204. What can be derived: distance
+remaining over time remaining (params 7 and 6) is the average speed Apple expects for the rest of
+the route, traffic included, and the maneuver list (22 to 31 entries per route in the owner's log,
+streamed at route start) gives each step's road and a DistanceBetweenManeuver. Which leg that
+distance describes (to this maneuver, or from it to the next) is **not confirmed on this car**; the
+app logs `gap=`/`nextGap=` per turn from Play 246 to settle it. Only the first element of
+RouteGuidanceManeuverCurrentList(13) is forwarded (`currentManeuverIndex`).
 
 **Extra offer gate for nav** [E — `WIRED_NAV_METADATA.md` §"offer gate"]: beyond declaring 0x5201/0x5202
 receivable + subscribing, iOS withholds route guidance unless the accessory declares a

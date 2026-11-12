@@ -159,9 +159,20 @@ APK: `host/gm_ccpa/apk/gmccpa-debug-7532873-dirty.apk` (versionCode 85).
 Hardware-free preview: `adb -s emulator-5554 shell am start --user 10 -n
 wasidremin.gmccpa/.MainActivity --es run topbar_preview --ez enabled true`.
 
-## Temporary GM vehicle telemetry capability probe
+## GM vehicle telemetry: from capability probe to EV Insights
 
-**Real Equinox EV results: PENDING.** Nothing here establishes that a property or
+> **Corrected 2026-11-12: this is no longer temporary, and the car's results are in.** The probe
+> below became EV Insights. It records on the car whenever the app runs, and with "EV Insights
+> auto-upload" on (the default) it sends slim, thinned segments under a monthly data limit; the
+> receiver holds about 7,000 of the car's reports since 2026-10-13, which is the evidence for what
+> the Equinox exposes (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.1). The same recorder feeds a
+> permanent drive log on the head unit (§13.4), the Insights tabs, and the Drive card on the driver
+> display (§13.6); uploads are metered (§13.5). The "Removal" paragraph at the end of this section
+> no longer applies: `telemetry/` is part of the app. `host/CarlinkAndroid`, named below, was
+> removed from the fork on 2026-10-27. The rest of the section is the probe's original design
+> record (2026-10).
+
+**Real Equinox EV results (original text, superseded above): PENDING.** Nothing here establishes that a property or
 permission works on the Chevrolet Equinox EV / Bosch VCUNH1 / `burmese_orange`
 AAOS 14. Emulator observations are bench evidence only.
 
@@ -359,7 +370,12 @@ a public Android display (`ActivityOptions.setLaunchDisplayId` after
 decoding `CH_ALT_VIDEO`. The Equinox's VCU on AAOS 14 (`burmese_orange` VCUUL-13.1) exposes its
 driver display that way too: display 2, 2000x810, 220 dpi, flags `0x4083`, start allowed, and the
 first map frames rendered there on 2026-11-08 (`docs/ops/04_OPEN_ITEMS.md`). Every connect logs the
-displays Android shows the app (`[cluster] display …` lines).
+displays Android shows the app (`[cluster] display …` lines). Since Play 237 the map stays up through
+whole routes; GM's page events reach the app through a service in GM's cluster category
+(`nav/GmClusterPageService`, Play 238), so the map comes back when its page is picked again. CarPlay's
+cluster stream carries the map only, so the app draws its own cards over the window: the turn (with
+lanes, the turn after and route signs), now playing or a call, and the Drive card (Play 241–247,
+Settings ▸ Driver display; `host/gm_ccpa/docs/SETTINGS_AUDIT.md`).
 
 This finding is orthogonal to, and does not upgrade, the USB-handler squat below: squatting as
 `android.car.usb.handler` buys silent USB device-permission arbitration only (confirmed narrow in

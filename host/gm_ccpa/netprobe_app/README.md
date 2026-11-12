@@ -1,5 +1,10 @@
 # NetProbe — non-privileged AAOS network capability prober
 
+> **HISTORICAL (note added 2026-11-12).** This module began as the prober described below and grew
+> into the whole CarPlay app, `wasidremin.gmccpa`; the directory name stayed. For what it is now,
+> how to build it and how it reaches the car, read [`../README.md`](../README.md). The prober's
+> screens still exist inside the app, but the description below is the 2026-07-31 feasibility tool.
+
 A single-screen Android app that answers one question empirically: **with only an ordinary app UID
 (10xxx), what can this app see and reach on the Wi-Fi segment the vehicle hotspot puts it on?**
 

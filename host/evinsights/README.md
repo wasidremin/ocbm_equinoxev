@@ -83,8 +83,21 @@ container only). Main endpoints:
 
 ### Current Android probe integration
 
-The Play app currently EXPORTS reports. It does not upload automatically and
-this work does not republish it. Transform an actual exported report:
+**Updated 2026-11-12.** The Play app uploads its telemetry segments by itself
+("EV Insights auto-upload", on by default) to the log receiver
+(`POST …/cloudbridge/probe`, slim and gzipped; `host/gm_ccpa/README.md` "Logs"),
+which stores each as a report under `/opt/stacks/cloudbridge-log/probes/`.
+`tools/sync_probes.py --watch 300` converts each new report with the bridge below
+and posts it through the device ingest API as vehicle `equinox-ev-real`. On this
+server it runs as the systemd user unit `evinsights-probe-sync.service` (a
+`docker run --rm --network host` container, `Restart=on-failure`, lingering
+enabled so it starts at boot); its state file and device key live outside the
+repo. Reports from a bench emulator (`sdk_gcar`/`emulator` in the build
+fingerprint) are skipped (2026-11-11); about 1,084 imported before that are still
+in the database (`docs/ops/04_OPEN_ITEMS.md`). The database container is
+`restart: always`.
+
+To transform one report by hand instead:
 
 ```sh
 docker compose run --rm -v /private/reports:/reports:ro api \
@@ -220,7 +233,11 @@ AnyIO deprecation and optional Compose buildx warnings remain.
 This is a working vertical slice across the requested phases, **not every
 advanced feature in the supplied specification**. In particular:
 
-- No app batch uploader, on-car summary consumer or actual vehicle validation.
+- The car's data now arrives (above), but the derivation is not validated on it:
+  the first full pass over `equinox-ev-real` (3.3 million samples, 2026-11-12) gave
+  6,574 trips, none COMPLETE, and 0 total distance. Not investigated yet. The app
+  does its own drive and charge analysis on the car (its drive log) and consumes no
+  server summary.
 - No manual split/merge UI or annotation/tag editing.
 - Preconditioning classification and vehicle-specific ignition/gear normalization
   remain unfinished. Lifecycle segments include UNKNOWN, PREPARING, DRIVING,

@@ -9,6 +9,15 @@ authoritative on session sequencing) → [`01_FINDINGS.md`](01_FINDINGS.md) (pro
 
 ## 1. What this is
 
+> **Corrected 2026-11-12: the car this runs in is now a Chevrolet Equinox EV, and there the
+> adapter is the CarPlay endpoint.** Since the 2026-10-27 scope cut the only host is this app on
+> the Equinox's GM VCU (AAOS 14, `burmese_orange`). Its firewall drops the phone's inbound
+> connection to the head unit, so the adapter raises its own access point, runs `carplayd`, and
+> forwards the still-encrypted A/V to the app over OCBM (§4a "Equinox exception"; the switch is
+> on in the car). The rest of this section, and §2–§3, describe the Silverado design this started
+> as. It is still in the app, and it is still how pairing, MFi and the handoff work, but it is not
+> the path the car's sessions take. Current state: `../../../docs/ops/04_OPEN_ITEMS.md`.
+
 A **wireless-only** CarPlay receiver running as an **unprivileged Android app** on a 2024 Silverado
 head unit (GM Info 3.7 / `gminfo37`, Android 12 / API 32, x86_64). The iPhone streams CarPlay to the
 app **over the vehicle's own 5 GHz hotspot** (`myChevrolet 32D4`, bridge `br0`, head unit at
