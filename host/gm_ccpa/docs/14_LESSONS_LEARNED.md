@@ -513,16 +513,24 @@ budget.**
   measured first; "All", or anything estimated above 2 MB on the wire, shows the size and which
   connection it will use and waits for a yes. The estimate's count is reused by the upload for
   two minutes so the capture directory is not read twice.
+- **Logs wait for Wi-Fi by default (`upload/LogsOnWifi.kt`).** Off Wi-Fi that dialog's main button
+  is "Send on Wi-Fi" ("Send now" is the quieter one). The request — range and the moment of the
+  tap — is kept in `upload_center_prefs` and sent when the default network becomes validated
+  Wi-Fi (home or a phone hotspot), from `ProbeService` if the app is not open. The range stays
+  anchored to the tap. A second tap widens the waiting request; it is dropped after 3 days,
+  because the capture it names has been pruned by then.
 
 **Receiver.** `log_server.py` (outside this repo, `/opt/stacks/cloudbridge-log/`) accepts gzip on
 `/probe` and `/logs`, merges the cached static part, and answers with `bytes` (stored) and
 `wire_bytes` (received). Plain uploads from v245 and earlier still work.
 
 **Verified:** `SegmentThinnerTest`, `ProbeSlimTest`, `DataMeterTest`, `ProbeUploadTest` in the JVM
-suite (429 tests); on the emulator, slim uploads rebuilt on the receiver with every earlier key
+suite (434 tests, with `LogsOnWifiTest`); on the emulator, slim uploads rebuilt on the receiver with every earlier key
 present and accepted by the importer's converter, uploads stopping on a cellular default network
 with the month's limit reached and the Settings row saying so, segments marked skipped with the
-switch off, and the log confirmation. **Not verified:** anything on the car, including how the
+switch off, the log confirmation, and a log upload queued on cellular surviving a restart and
+going out by itself once the app was on Wi-Fi. The emulator crashes when its Wi-Fi is switched
+back on, so the live arrival of Wi-Fi (the network callback) was not exercised. **Not verified:** anything on the car, including how the
 car's modem and a phone hotspot each present to Android (the meter logs
 `uploads now go over <network>` once per change, so the first uploaded log answers it).
 

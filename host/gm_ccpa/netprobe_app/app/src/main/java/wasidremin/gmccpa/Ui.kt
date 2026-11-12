@@ -1197,7 +1197,9 @@ class LauncherUi(private val act: Activity) {
         val n = wasidremin.gmccpa.upload.UploadCenter.pendingCaptureCount(act)
         val probePending = wasidremin.gmccpa.telemetry.ProbeUpload.pendingReportCount(act)
         val totalSaved = wasidremin.gmccpa.av.CarPlayFrameGrabber.listSavedCaptures(act).size
-        return "$n queued ($probePending telemetry) · $totalSaved screen captures saved (max ${wasidremin.gmccpa.av.CarPlayFrameGrabber.MAX_STORED_CAPTURES})"
+        val logs = wasidremin.gmccpa.upload.LogsOnWifi.pending(act)
+            ?.let { " · " + wasidremin.gmccpa.upload.LogsOnWifi.describe(it) }.orEmpty()
+        return "$n queued ($probePending telemetry) · $totalSaved screen captures saved (max ${wasidremin.gmccpa.av.CarPlayFrameGrabber.MAX_STORED_CAPTURES})$logs"
     }
 
     private fun triggerCalibrationCapture(
@@ -1486,8 +1488,8 @@ class LauncherUi(private val act: Activity) {
             "CarPlay disconnects for about 30 seconds.",
             "Restart",
             false,
-            onCancel,
-            onConfirm,
+            onCancel = onCancel,
+            onConfirm = onConfirm,
         )
     }
 

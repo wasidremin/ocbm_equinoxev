@@ -541,6 +541,9 @@ object EqDialog {
         confirmLabel: String,
         destructive: Boolean,
         onCancel: (() -> Unit)? = null,
+        /** A second, quieter choice between Cancel and the confirm button. */
+        alternateLabel: String? = null,
+        onAlternate: (() -> Unit)? = null,
         onConfirm: () -> Unit,
     ) {
         val dialog = Dialog(act)
@@ -565,6 +568,16 @@ object EqDialog {
                 dialog.dismiss()
                 onCancel?.invoke()
             })
+            if (alternateLabel != null) {
+                buttons.addView(
+                    eqButton(act, alternateLabel, EqButtonStyle.SECONDARY) {
+                        dialog.setOnCancelListener(null)
+                        dialog.dismiss()
+                        onAlternate?.invoke()
+                    },
+                    LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(16f) },
+                )
+            }
             buttons.addView(
                 eqButton(act, confirmLabel, if (destructive) EqButtonStyle.DANGER else EqButtonStyle.PRIMARY) {
                     dialog.dismiss()

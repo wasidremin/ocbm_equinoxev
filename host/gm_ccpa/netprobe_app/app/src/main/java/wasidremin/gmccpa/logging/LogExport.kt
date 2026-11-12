@@ -212,12 +212,14 @@ object LogExport {
         baseUrl: String = wasidremin.gmccpa.upload.UploadCenter.baseUrl(context),
         window: UploadWindow = UploadWindow.DEFAULT,
         onState: ((wasidremin.gmccpa.upload.UploadState) -> Unit)? = null,
+        /** When the range is counted back from: now, or the tap of an upload that waited for Wi-Fi. */
+        anchorMs: Long? = null,
         callback: (Result<UploadResult>) -> Unit,
     ) {
         val appCtx = context.applicationContext
         onState?.let { wasidremin.gmccpa.upload.UploadCenter.emitState(it, wasidremin.gmccpa.upload.UploadState.Preparing) }
         ioExecutor.execute {
-            val res = runCatching { uploadNow(appCtx, baseUrl, window, onState) }
+            val res = runCatching { uploadNow(appCtx, baseUrl, window, onState, anchorMs) }
             res.onSuccess { r ->
                 onState?.let {
                     wasidremin.gmccpa.upload.UploadCenter.emitState(
@@ -255,6 +257,7 @@ object LogExport {
         baseUrl: String,
         window: UploadWindow,
         onState: ((wasidremin.gmccpa.upload.UploadState) -> Unit)? = null,
+        anchorMs: Long? = null,
     ): UploadResult {
         val normalized = baseUrl.trim().trimEnd('/')
         require(normalized.startsWith("https://", ignoreCase = true)) {
@@ -265,12 +268,12 @@ object LogExport {
         LogCapture.flush()
         val endpoint = "$normalized/logs"
         val files = LogCapture.logFiles(context)
-        val filter = LogTimeFilter.forCutoff(uploadCutoffMs(window, System.currentTimeMillis()))
+        val filter = LogTimeFilter.forCutoff(uploadCutoffMs(window, anchorMs ?: System.currentTimeMillis()))
 
         // Pass 1 — what survives the window. A count taken moments ago for the size estimate is
         // good enough: it only feeds the progress bar and the "nothing in this range" check.
         val recent = lastMeasured?.takeIf {
-            it.window == window && android.os.SystemClock.elapsedRealtime() - it.atMs < MEASURE_REUSE_MS
+            anchorMs == null && it.window == window && android.os.SystemClock.elapsedRealtime() - it.atMs < MEASURE_REUSE_MS
         }
         lastMeasured = null
         val measured = recent?.measure ?: measure(files, filter)

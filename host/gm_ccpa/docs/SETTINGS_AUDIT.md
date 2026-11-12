@@ -235,8 +235,11 @@ stays (serves Capture Current).
   the driver taps are not blocked. Wi-Fi bytes are shown but not counted.
 - **Upload Logs** measures first and asks before sending when the range is
   "All" or the estimate is above 2 MB on the wire; the dialog names the size
-  and the connection. Batches are gzipped. Scripted run:
-  `--es run upload_log` (asks) or `--es run upload_log --ez yes true` (sends).
+  and the connection. Batches are gzipped. Off Wi-Fi the dialog's main button
+  is **Send on Wi-Fi**: the request waits (`upload_center_prefs/deferred_log_window`,
+  `deferred_log_at`; `upload/LogsOnWifi.kt`) and goes out when the car next has
+  Wi-Fi; "Pending uploads" shows it. Scripted run: `--es run upload_log` (asks),
+  `--ez yes true` (sends now), `--ez wifi true` (waits for Wi-Fi).
 - Detail and measurements: doc 14 §13.5.
 
 ## Version high-water

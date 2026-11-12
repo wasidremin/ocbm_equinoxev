@@ -13,6 +13,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+    # Every other service waits on this one; without a policy it stayed down after a host reboot.
+    restart: always
   migrate:
     build: ./backend
     environment: &backend-env

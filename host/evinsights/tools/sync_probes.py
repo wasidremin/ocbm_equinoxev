@@ -21,6 +21,11 @@ def tz_minutes(wall):
     return int(offset.total_seconds() // 60)
 
 
+def is_emulator(report):
+    fingerprint = str(report.get('fingerprint', report.get('buildFingerprint', '')))
+    return 'sdk_gcar' in fingerprint or 'emulator' in fingerprint
+
+
 def post_batch(url, key, batch, retries=3):
     body = gzip.compress(json.dumps(batch).encode())
     for attempt in range(retries + 1):
@@ -41,12 +46,20 @@ def sync_once(a, state):
     url = a.api.rstrip('/') + '/ingest/batch'
     totals = {'accepted': 0, 'duplicate': 0, 'rejected': 0}
     for path in sorted(Path(a.probes_dir).glob('*.json')):
-        raw = path.read_bytes()
+        try:
+            raw = path.read_bytes()
+        except OSError:  # removed since the listing was taken; one missing file must not end the pass
+            continue
         digest = hashlib.sha256(raw).hexdigest()
         if state.get(path.name) == digest:
             continue
         try:
             report = json.loads(raw)
+            if is_emulator(report):
+                # A bench emulator posts to the same receiver. Its reports are not this vehicle's.
+                state[path.name] = digest
+                print(f'skipped {path.name}: emulator build')
+                continue
             batches = convert(report, a.device_id, a.vehicle_id, path.stem, tz_minutes(report['startWallTime']))
             for batch in batches:
                 result = post_batch(url, key, batch)

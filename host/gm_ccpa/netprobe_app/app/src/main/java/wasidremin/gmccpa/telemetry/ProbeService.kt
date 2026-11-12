@@ -127,6 +127,9 @@ class ProbeService : Service() {
         fun ensureAutoStarted(ctx: Context) {
             val appCtx = ctx.applicationContext
             wasidremin.gmccpa.upload.DataMeter.attach(appCtx)
+            // The service outlives the activity, so a log upload waiting for Wi-Fi goes out from a
+            // parked car in the garage without the app being opened.
+            wasidremin.gmccpa.upload.LogsOnWifi.attach(appCtx)
             ProbeUpload.enqueueAndDrain(appCtx)
             runCatching {
                 appCtx.startForegroundService(

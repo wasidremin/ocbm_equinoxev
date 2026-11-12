@@ -776,6 +776,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         AndroidUser.noteProcess(applicationContext)
         wasidremin.gmccpa.upload.DataMeter.attach(applicationContext)
+        wasidremin.gmccpa.upload.LogsOnWifi.attach(applicationContext)
         // Early, so its front-screen tracker sees this Activity resume (cluster turn-by-turn).
         wasidremin.gmccpa.nav.ClusterNav.load(applicationContext)
         wasidremin.gmccpa.ev.CarPlayEv.load(applicationContext)
@@ -1449,7 +1450,10 @@ class MainActivity : Activity() {
         when (what) {
             "export_log" -> exportLogs(redact = true)
             // `--ez yes true` answers the size confirmation, for a bench with no touch input.
-            "upload_log" -> uploadLogs(confirmed = i.getBooleanExtra("yes", false))
+            "upload_log" -> uploadLogs(
+                confirmed = i.getBooleanExtra("yes", false),
+                onWifiOnly = i.getBooleanExtra("wifi", false),
+            )
             // Deep USB dump + 60 s replug window. The car-side discriminator for the "USB not
             // supported / looking for adapter" failure: press, replug the dongle, wait, Upload Logs.
             "usb_probe" -> runAsync {
@@ -1987,8 +1991,16 @@ class MainActivity : Activity() {
      * shortest useful range rather than everything on disk. The chosen range is logged with the
      * result so an upload artifact can be told apart from a later one.
      */
-    private fun uploadLogs(confirmed: Boolean = false) {
+    private fun deferLogs(window: wasidremin.gmccpa.logging.UploadWindow) {
+        wasidremin.gmccpa.upload.LogsOnWifi.defer(this, window)
+        ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Idle)
+        ui.setDetail("logs will be sent the next time the car is on Wi-Fi")
+        ui.refreshUploadQueueRow()
+    }
+
+    private fun uploadLogs(confirmed: Boolean = false, onWifiOnly: Boolean = false) {
         val window = wasidremin.gmccpa.upload.UploadCenter.logWindow(this)
+        if (onWifiOnly) { deferLogs(window); return }
         if (confirmed) { sendLogs(window); return }
         // Measure first. The car's data is a monthly allowance and a whole-OS capture is large, so
         // a big upload says what it will cost and waits for a yes; a small one just goes.
@@ -2000,17 +2012,26 @@ class MainActivity : Activity() {
             val size = "about ${meter.formatMb(est.wireBytes)} (${meter.formatMb(est.rawBytes)} of logs, compressed)"
             emit("log upload estimate: range=${window.label} raw=${est.rawBytes}B wire~${est.wireBytes}B confirm=${est.needsConfirm}")
             if (!est.needsConfirm) { sendLogs(window); return@estimate }
-            val via = if (meter.onWifi(this)) "over Wi-Fi, which does not count against the car's data"
-                else "over the car's data connection"
-            EqDialog.confirm(
-                this, "Upload ${window.phrase}?",
-                "This sends $size $via. Pick a shorter range under Upload range to send less.",
-                "Upload", false,
-                onCancel = {
-                    ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Idle)
-                    ui.setDetail("log upload cancelled")
-                },
-            ) { sendLogs(window) }
+            val cancelled = {
+                ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Idle)
+                ui.setDetail("log upload cancelled")
+            }
+            if (meter.onWifi(this)) {
+                EqDialog.confirm(
+                    this, "Upload ${window.phrase}?",
+                    "This sends $size over Wi-Fi, which does not count against the car's data.",
+                    "Upload", false, onCancel = cancelled,
+                ) { sendLogs(window) }
+            } else {
+                // Off Wi-Fi the default is to wait: this much is a real share of a month's car data.
+                EqDialog.confirm(
+                    this, "Upload ${window.phrase}?",
+                    "This is $size. It can wait and go out by itself the next time the car is on " +
+                        "Wi-Fi, or go now over the car's data connection.",
+                    "Send on Wi-Fi", false, onCancel = cancelled,
+                    alternateLabel = "Send now", onAlternate = { sendLogs(window) },
+                ) { deferLogs(window) }
+            }
         }
     }
 
