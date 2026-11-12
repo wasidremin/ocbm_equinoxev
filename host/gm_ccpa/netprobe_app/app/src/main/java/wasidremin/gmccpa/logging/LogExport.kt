@@ -132,7 +132,68 @@ object LogExport {
         val window: UploadWindow,
         /** Lines older than the window that were deliberately NOT sent. 0 for [UploadWindow.ALL]. */
         val skippedLines: Long,
+        /** What actually went on the wire: the gzipped batches. */
+        val wireBytes: Long = 0L,
     )
+
+    /** What an upload of [window] would cost, measured before anything is sent. */
+    data class UploadEstimate(val window: UploadWindow, val lines: Long, val rawBytes: Long) {
+        /** Redacted logcat gzips about sixfold in 500-line batches (measured 6.2); 5 keeps the estimate on the high side. */
+        val wireBytes: Long get() = estimateWireBytes(rawBytes)
+        /** Worth stopping to ask: the whole directory, or more than a couple of megabytes. */
+        val needsConfirm: Boolean get() = window == UploadWindow.ALL || wireBytes > CONFIRM_ABOVE_WIRE_BYTES
+    }
+
+    const val CONFIRM_ABOVE_WIRE_BYTES = 2L * 1024 * 1024
+    fun estimateWireBytes(rawBytes: Long): Long = rawBytes / 5
+
+    private class Measure(val kept: Long, val skipped: Long, val rawBytes: Long)
+
+    /**
+     * The estimate's pass over the capture, kept briefly so the upload that follows a "yes" does not
+     * read a multi-hundred-megabyte directory a second time just to count it again.
+     */
+    private class Measured(val window: UploadWindow, val atMs: Long, val measure: Measure)
+    @Volatile private var lastMeasured: Measured? = null
+    private const val MEASURE_REUSE_MS = 120_000L
+
+    /** Pass 1 of an upload: what survives the window. For "All" the line count is not known (-1). */
+    private fun measure(files: List<java.io.File>, filter: LogTimeFilter?): Measure {
+        if (filter == null) return Measure(-1L, 0L, files.sumOf { it.length() })
+        var kept = 0L
+        var skipped = 0L
+        var raw = 0L
+        for (file in files) {
+            file.bufferedReader(Charsets.UTF_8).useLines { source ->
+                source.forEach { line ->
+                    if (filter.accepts(line)) {
+                        kept++
+                        raw += line.length.toLong() + 1L
+                    } else skipped++
+                }
+            }
+        }
+        return Measure(kept, skipped, raw)
+    }
+
+    /**
+     * Measure an upload without sending it, so the launcher can show its size first. A whole-OS
+     * capture is hundreds of megabytes an hour and the car's data plan is a monthly allowance; the
+     * tap that spends it should say how much.
+     */
+    fun estimate(context: Context, window: UploadWindow, callback: (UploadEstimate) -> Unit) {
+        val appCtx = context.applicationContext
+        ioExecutor.execute {
+            val estimate = runCatching {
+                LogCapture.flush()
+                val filter = LogTimeFilter.forCutoff(uploadCutoffMs(window, System.currentTimeMillis()))
+                val m = measure(LogCapture.logFiles(appCtx), filter)
+                lastMeasured = Measured(window, android.os.SystemClock.elapsedRealtime(), m)
+                UploadEstimate(window, m.kept, m.rawBytes)
+            }.getOrDefault(UploadEstimate(window, 0L, 0L))
+            mainHandler.post { callback(estimate) }
+        }
+    }
 
     /**
      * Upload the current rotated capture to the shared Cloud Bridge receiver.
@@ -206,24 +267,16 @@ object LogExport {
         val files = LogCapture.logFiles(context)
         val filter = LogTimeFilter.forCutoff(uploadCutoffMs(window, System.currentTimeMillis()))
 
-        // Pass 1 — what survives the window.
-        var kept = 0L
-        var skipped = 0L
-        var totalBytes = 0L
-        if (filter == null) {
-            totalBytes = files.sumOf { it.length() }
-        } else {
-            for (file in files) {
-                file.bufferedReader(Charsets.UTF_8).useLines { source ->
-                    source.forEach { line ->
-                        if (filter.accepts(line)) {
-                            kept++
-                            totalBytes += line.length.toLong() + 1L
-                        } else skipped++
-                    }
-                }
-            }
+        // Pass 1 — what survives the window. A count taken moments ago for the size estimate is
+        // good enough: it only feeds the progress bar and the "nothing in this range" check.
+        val recent = lastMeasured?.takeIf {
+            it.window == window && android.os.SystemClock.elapsedRealtime() - it.atMs < MEASURE_REUSE_MS
         }
+        lastMeasured = null
+        val measured = recent?.measure ?: measure(files, filter)
+        val kept = measured.kept
+        val skipped = measured.skipped
+        val totalBytes = measured.rawBytes
 
         if (files.isEmpty()) {
             // Nothing captured at all. Still tell the receiver a button was pressed, exactly as
@@ -243,7 +296,9 @@ object LogExport {
         val batch = ArrayList<String>(MAX_UPLOAD_BATCH)
         var lines = 0L
         var batches = 0
-        var postedBytes = 0L
+        var postedBytes = 0L   // raw characters of the lines sent so far: the progress numerator
+        var batchRaw = 0L
+        var wireBytes = 0L     // gzipped bytes actually written to the socket
 
         onState?.let {
             wasidremin.gmccpa.upload.UploadCenter.emitState(
@@ -254,9 +309,9 @@ object LogExport {
 
         fun postBatch() {
             if (batch.isEmpty()) return
-            val payload = encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8)
+            // Gzipped: redacted logcat text shrinks about sixfold, and the receiver inflates it.
+            val payload = wasidremin.gmccpa.telemetry.ProbeSlim.gzip(encodeBatch(batch, "gmccpa").toByteArray(Charsets.UTF_8))
             batch.clear()
-            val baseOffset = postedBytes
             val index = batches + 1
             wasidremin.gmccpa.upload.UploadCenter.executeWithOneRetry {
                 val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
@@ -266,23 +321,14 @@ object LogExport {
                     doOutput = true
                     setFixedLengthStreamingMode(payload.size.toLong())
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Content-Encoding", "gzip")
                     setRequestProperty("Accept", "application/json")
                 }
                 try {
-                    wasidremin.gmccpa.upload.CountingRequestOutputStream(
-                        delegate = connection.outputStream,
-                        bytesTotal = totalBytes,
-                    ) { batchSent, _ ->
-                        onState?.let {
-                            wasidremin.gmccpa.upload.UploadCenter.emitState(
-                                it,
-                                wasidremin.gmccpa.upload.UploadState.InProgress(
-                                    (baseOffset + batchSent).coerceAtMost(totalBytes),
-                                    totalBytes,
-                                ),
-                            )
-                        }
-                    }.use { out ->
+                    wasidremin.gmccpa.upload.DataMeter.record(
+                        wasidremin.gmccpa.upload.DataMeter.Stream.LOGS, payload.size.toLong())
+                    wireBytes += payload.size.toLong()
+                    connection.outputStream.use { out ->
                         out.write(payload)
                         out.flush()
                     }
@@ -298,8 +344,17 @@ object LogExport {
                     connection.disconnect()
                 }
             }
-            postedBytes += payload.size.toLong()
+            // Progress is counted in the capture's own characters, a batch at a time: the bar's
+            // total is the size of the logs, and what crosses the wire is a tenth of that.
+            postedBytes += batchRaw
+            batchRaw = 0L
             batches++
+            onState?.let {
+                wasidremin.gmccpa.upload.UploadCenter.emitState(
+                    it,
+                    wasidremin.gmccpa.upload.UploadState.InProgress(postedBytes.coerceAtMost(totalBytes), totalBytes),
+                )
+            }
         }
 
         if (files.isEmpty()) {
@@ -312,6 +367,7 @@ object LogExport {
                     source.forEach { line ->
                         if (filter != null && !filter.accepts(line)) return@forEach
                         batch += redactor.redactLine(line)
+                        batchRaw += line.length.toLong() + 1L
                         lines++
                         if (batch.size == MAX_UPLOAD_BATCH) postBatch()
                     }
@@ -327,9 +383,9 @@ object LogExport {
         }
         log.i(
             "uploaded redacted logs to $endpoint: $lines lines in $batches batches " +
-                "(range=${window.label}, skipped=$skipped older line(s), ${totalBytes}B)"
+                "(range=${window.label}, skipped=$skipped older line(s), ${totalBytes}B of logs, ${wireBytes}B sent)"
         )
-        return UploadResult(endpoint, batches, lines.toInt(), window, skipped)
+        return UploadResult(endpoint, batches, lines.toInt(), window, skipped, wireBytes)
     }
 
     /** Which rung of the local export ladder produced an artifact. */

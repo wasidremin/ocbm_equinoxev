@@ -67,12 +67,12 @@ class ProbeActivity : Activity() {
         }
         page.addView(rawLocation)
         autoStream = CheckBox(this).apply {
-            text = "Continuous EV Insights auto-upload (streams 60s chunks & drains offline queue automatically)"
+            text = "EV Insights auto-upload (sends driven minutes and a parked heartbeat; recording continues either way)"
             isChecked = ProbeUpload.isAutoUploadEnabled(this@ProbeActivity)
             setOnCheckedChangeListener { _, checked ->
                 ProbeUpload.setAutoUploadEnabled(this@ProbeActivity, checked)
-                if (checked) ProbeService.ensureAutoStarted(this@ProbeActivity) else ProbeService.stopAuto(this@ProbeActivity)
-                note = if (checked) "Continuous EV Insights auto-upload enabled" else "Continuous EV Insights auto-upload paused"
+                ProbeService.ensureAutoStarted(this@ProbeActivity)
+                note = if (checked) "EV Insights auto-upload enabled" else "EV Insights auto-upload off; drives are still logged on the car"
                 refresh()
             }
         }

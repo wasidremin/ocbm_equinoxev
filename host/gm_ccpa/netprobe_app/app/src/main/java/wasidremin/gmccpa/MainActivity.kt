@@ -775,6 +775,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AndroidUser.noteProcess(applicationContext)
+        wasidremin.gmccpa.upload.DataMeter.attach(applicationContext)
         // Early, so its front-screen tracker sees this Activity resume (cluster turn-by-turn).
         wasidremin.gmccpa.nav.ClusterNav.load(applicationContext)
         wasidremin.gmccpa.ev.CarPlayEv.load(applicationContext)
@@ -1447,7 +1448,8 @@ class MainActivity : Activity() {
         emit(">>> scripted run: $what")
         when (what) {
             "export_log" -> exportLogs(redact = true)
-            "upload_log" -> uploadLogs()
+            // `--ez yes true` answers the size confirmation, for a bench with no touch input.
+            "upload_log" -> uploadLogs(confirmed = i.getBooleanExtra("yes", false))
             // Deep USB dump + 60 s replug window. The car-side discriminator for the "USB not
             // supported / looking for adapter" failure: press, replug the dongle, wait, Upload Logs.
             "usb_probe" -> runAsync {
@@ -1985,9 +1987,35 @@ class MainActivity : Activity() {
      * shortest useful range rather than everything on disk. The chosen range is logged with the
      * result so an upload artifact can be told apart from a later one.
      */
-    private fun uploadLogs() {
-        val base = wasidremin.gmccpa.upload.UploadCenter.baseUrl(this)
+    private fun uploadLogs(confirmed: Boolean = false) {
         val window = wasidremin.gmccpa.upload.UploadCenter.logWindow(this)
+        if (confirmed) { sendLogs(window); return }
+        // Measure first. The car's data is a monthly allowance and a whole-OS capture is large, so
+        // a big upload says what it will cost and waits for a yes; a small one just goes.
+        ui.setDetail("measuring ${window.phrase} of logs…")
+        ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Preparing)
+        LogExport.estimate(this, window) { est ->
+            if (!uiAlive()) return@estimate
+            val meter = wasidremin.gmccpa.upload.DataMeter
+            val size = "about ${meter.formatMb(est.wireBytes)} (${meter.formatMb(est.rawBytes)} of logs, compressed)"
+            emit("log upload estimate: range=${window.label} raw=${est.rawBytes}B wire~${est.wireBytes}B confirm=${est.needsConfirm}")
+            if (!est.needsConfirm) { sendLogs(window); return@estimate }
+            val via = if (meter.onWifi(this)) "over Wi-Fi, which does not count against the car's data"
+                else "over the car's data connection"
+            EqDialog.confirm(
+                this, "Upload ${window.phrase}?",
+                "This sends $size $via. Pick a shorter range under Upload range to send less.",
+                "Upload", false,
+                onCancel = {
+                    ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Idle)
+                    ui.setDetail("log upload cancelled")
+                },
+            ) { sendLogs(window) }
+        }
+    }
+
+    private fun sendLogs(window: wasidremin.gmccpa.logging.UploadWindow) {
+        val base = wasidremin.gmccpa.upload.UploadCenter.baseUrl(this)
         emit(">>> uploading logs (always redacted, range=${window.label}) to $base/logs")
         ui.setDetail("uploading ${window.phrase} of redacted logs…")
         ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Preparing)
@@ -1998,8 +2026,12 @@ class MainActivity : Activity() {
         ) { result ->
             result.onSuccess {
                 val older = if (it.skippedLines > 0) ", ${it.skippedLines} older lines not sent" else ""
-                emit("upload OK: ${it.lines} lines in ${it.batches} batches (${it.window.label}$older) -> ${it.endpoint}")
-                if (uiAlive()) ui.setDetail("uploaded ${it.lines} redacted log lines (${it.window.label})")
+                val sent = wasidremin.gmccpa.upload.DataMeter.formatMb(it.wireBytes)
+                emit("upload OK: ${it.lines} lines in ${it.batches} batches, $sent sent (${it.window.label}$older) -> ${it.endpoint}")
+                if (uiAlive()) {
+                    ui.setDetail("uploaded ${it.lines} redacted log lines (${it.window.label}, $sent)")
+                    ui.refreshUploadQueueRow()
+                }
             }.onFailure {
                 emit("upload FAILED: ${it.message}")
                 if (uiAlive()) ui.setDetail("log upload failed: ${it.message}")

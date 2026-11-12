@@ -216,10 +216,28 @@ stays (serves Capture Current).
 - **Clear drive history** (Diagnostics → Vehicle state, destructive confirm):
   deletes `insights/trips.ndjson` and `insights/open.json`. Clearing probe
   segments does not touch them, and they are never uploaded.
-- The drive log is recorded only while the probe captures ("EV Insights
-  auto-upload" on, Advanced page) and holds coordinates only with "Include
-  route GPS in EV Insights" on; without GPS, drives are still logged but no
-  routes are found. Detail: doc 14 §13.4.
+- The drive log is recorded whenever the app runs and holds coordinates only
+  with "Include route GPS in EV Insights" on; without GPS, drives are still
+  logged but no routes are found. Detail: doc 14 §13.4.
+
+## 2026-11-11 deltas (data budget; not yet published)
+
+- **EV Insights auto-upload** (Advanced ▸ Upload server & EV Insights,
+  `vehicle_telemetry_auto_prefs/auto_upload_enabled`, default on) now decides
+  only whether telemetry leaves the car. Recording, and with it the drive log,
+  runs either way. On, it sends each driven minute and a heartbeat while parked
+  or charging; off, segments are marked `.skipped` and pruned.
+- **Car data used this month** (new row under it, `Ui.kt dataUsedRow`,
+  `upload/DataMeter.kt`, prefs `data_meter_prefs`): month-to-date bytes the app
+  sent off Wi-Fi, by stream, with an `EqSegmented` limit
+  `50 MB | 100 MB | 250 MB | No limit` (`limit_mb`, default 100, 0 = none).
+  At the limit background telemetry pauses until next month or Wi-Fi; uploads
+  the driver taps are not blocked. Wi-Fi bytes are shown but not counted.
+- **Upload Logs** measures first and asks before sending when the range is
+  "All" or the estimate is above 2 MB on the wire; the dialog names the size
+  and the connection. Batches are gzipped. Scripted run:
+  `--es run upload_log` (asks) or `--es run upload_log --ez yes true` (sends).
+- Detail and measurements: doc 14 §13.5.
 
 ## Version high-water
 

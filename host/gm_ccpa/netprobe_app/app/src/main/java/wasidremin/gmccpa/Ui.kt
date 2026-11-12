@@ -277,6 +277,7 @@ class LauncherUi(private val act: Activity) {
     private lateinit var testConnectionButton: wasidremin.gmccpa.upload.UploadActionButton
     private lateinit var baseUrlRow: EqRow
     private lateinit var queueStatusRow: EqRow
+    private lateinit var dataUsedRow: EqRow
     private lateinit var drainQueueButton: wasidremin.gmccpa.upload.UploadActionButton
     private val calib by lazy { CalibrationUi(act, { safeDialogWidth(it) }) { setDetail(it) } }
     private lateinit var wifiToggle: EqToggle
@@ -1185,6 +1186,11 @@ class LauncherUi(private val act: Activity) {
         if (::queueStatusRow.isInitialized) {
             queueStatusRow.setSubtitle(queueStatusSubtitle())
         }
+        if (::dataUsedRow.isInitialized) dataUsedRow.setSubtitle(dataUsedSubtitle())
+    }
+
+    private fun dataUsedSubtitle(): String = wasidremin.gmccpa.upload.DataMeter.let {
+        it.describe(it.ledger(act), it.limitMb(act))
     }
 
     private fun queueStatusSubtitle(): String {
@@ -1342,20 +1348,31 @@ class LauncherUi(private val act: Activity) {
         )
         val autoTelemetryToggle = EqToggle(act, wasidremin.gmccpa.telemetry.ProbeUpload.isAutoUploadEnabled(act)) { on ->
             wasidremin.gmccpa.telemetry.ProbeUpload.setAutoUploadEnabled(act, on)
-            if (on) {
-                wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(act)
-                setDetail("EV Insights continuous telemetry & auto-upload ON")
-            } else {
-                wasidremin.gmccpa.telemetry.ProbeService.stopAuto(act)
-                setDetail("EV Insights continuous telemetry & auto-upload paused")
-            }
+            // Recording carries on either way; this only decides whether segments leave the car.
+            wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(act)
+            setDetail(if (on) "EV Insights auto-upload on" else "EV Insights auto-upload off. Drives are still logged on the car.")
             refreshUploadQueueRow()
         }
+        val meter = wasidremin.gmccpa.upload.DataMeter
+        val limits = meter.LIMIT_CHOICES_MB
+        dataUsedRow = EqRow(
+            act,
+            "Car data used this month",
+            dataUsedSubtitle(),
+            trailing = EqSegmented(
+                act,
+                limits.map { if (it > 0) "$it MB" else "No limit" },
+                limits.indexOf(meter.limitMb(act)).let { if (it < 0) limits.indexOf(meter.DEFAULT_LIMIT_MB) else it },
+            ) { i ->
+                meter.setLimitMb(act, limits[i])
+                dataUsedRow.setSubtitle(dataUsedSubtitle())
+                // A raised limit lets a paused queue go at once.
+                wasidremin.gmccpa.telemetry.ProbeUpload.enqueueAndDrain(act)
+            },
+        )
         val autoGpsToggle = EqToggle(act, wasidremin.gmccpa.telemetry.ProbeUpload.isAutoRawLocationEnabled(act)) { on ->
             wasidremin.gmccpa.telemetry.ProbeUpload.setAutoRawLocationEnabled(act, on)
-            if (wasidremin.gmccpa.telemetry.ProbeUpload.isAutoUploadEnabled(act)) {
-                wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(act)
-            }
+            wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(act)
             setDetail(if (on) "EV Insights route GPS included in stream" else "EV Insights route GPS off")
         }
         wasidremin.gmccpa.upload.UploadCenter.removeQueueListener(queueListener)
@@ -1365,9 +1382,10 @@ class LauncherUi(private val act: Activity) {
             .addRow(EqRow(
                 act,
                 "EV Insights auto-upload",
-                "Continuously streams vehicle telemetry chunks and drains offline queue automatically",
+                "Sends each driven minute and a heartbeat while parked or charging. Off keeps everything on the car; the drive log still records.",
                 trailing = autoTelemetryToggle,
             ))
+            .addRow(dataUsedRow)
             .addRow(EqRow(
                 act,
                 "Include route GPS in EV Insights",

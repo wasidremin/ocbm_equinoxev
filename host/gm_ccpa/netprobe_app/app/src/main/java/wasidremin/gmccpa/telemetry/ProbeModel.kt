@@ -92,14 +92,18 @@ object ProbeModel {
     const val AUTO_FLUSH_MIN_EVENTS = 10
     const val MAX_PENDING_REPORTS = 48
 
+    /**
+     * Is it time to close the running segment and open the next? This used to depend on the upload
+     * switch as well; it no longer does, because the capture now runs whether or not anything is
+     * uploaded (the on-car drive log is fed from it) and an unrotated segment would grow all day.
+     */
     fun shouldFlushChunk(
-        autoEnabled: Boolean,
         capturing: Boolean,
         eventCount: Int,
         elapsedSinceFlushMs: Long,
         forceFlush: Boolean = false,
     ): Boolean {
-        if (!autoEnabled || !capturing) return false
+        if (!capturing) return false
         if (forceFlush) return true
         return elapsedSinceFlushMs >= AUTO_FLUSH_INTERVAL_MS && eventCount >= AUTO_FLUSH_MIN_EVENTS
     }

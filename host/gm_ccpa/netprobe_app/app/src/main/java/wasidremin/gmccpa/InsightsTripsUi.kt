@@ -22,7 +22,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import wasidremin.gmccpa.telemetry.InsightsData
 import wasidremin.gmccpa.telemetry.InsightsData.UnitSystem
-import wasidremin.gmccpa.telemetry.ProbeUpload
 import wasidremin.gmccpa.telemetry.Trip
 import wasidremin.gmccpa.telemetry.TripStats
 import wasidremin.gmccpa.telemetry.TripStore
@@ -274,13 +273,9 @@ internal class InsightsTrips(
         card.addRow(EqRow(act, "Your drive history starts now",
             "From this version on, each drive and each charge is kept as one small record on this head unit. " +
                 "A year of them takes under 1 MB, and the log is never uploaded."))
-        if (ProbeUpload.isAutoUploadEnabled(act)) {
-            card.addRow(EqRow(act, "Recording is on", "The first report card appears here after your next drive."))
-        } else {
-            card.addRow(EqRow(act, "Recording is off",
-                "Drives are recorded while 'EV Insights auto-upload' is on. Turn it on in Advanced.",
-                titleColor = EqTheme.WARN))
-        }
+        card.addRow(EqRow(act, "Recording is on",
+            "The first report card appears here after your next drive. It records whether or not " +
+                "'EV Insights auto-upload' is on."))
         host.addView(card)
     }
 

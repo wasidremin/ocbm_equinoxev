@@ -429,8 +429,9 @@ keeps the drive in progress in `insights/open.json` (rewritten every 20 s, becau
 is usually killed minutes after parking). Four weeks of the owner's driving replay to 114 drives
 and 26 charge records in 34 KB, so a year is well under 1 MB. The file is **never uploaded and
 never pruned**; it holds each drive's start and end coordinates (that is how repeated routes are
-found), which is why it stays on the head unit. It is written only while the probe captures, i.e.
-with "EV Insights auto-upload" on, and has coordinates only with "Include route GPS" on.
+found), which is why it stays on the head unit. It is written whenever the app runs — since
+§13.5 the capture no longer follows "EV Insights auto-upload" — and has coordinates only with
+"Include route GPS" on.
 
 Recorder rules, all constants in `TripRecorder`: moving is |speed| > 0.3 m/s; a drive closes after
 240 s still and is kept from 500 m; distance is the speed integral with steps capped at 10 s;
@@ -466,6 +467,64 @@ of probe data through the recorder (env `TRIP_REPLAY_TSV`/`TRIP_REPLAY_OUT`, `TR
 the data stays off the repo). All five tabs were rendered on the AAOS emulator from that replayed
 log. **Not verified:** anything on the car — the log there starts empty with the first drive after
 the update, since the head unit installs only from Play and its history is not seeded.
+
+### 13.5 2026-11-11: the app used the car's whole data allowance; uploads are now metered
+
+**What happened.** The car's connection stopped mid-month and asked for a higher OnStar tier.
+The cause was this app's own telemetry: the auto-upload sent one `report.json` a minute, about
+147 KB each as pretty-printed, uncompressed JSON, whether or not the car was moving — roughly
+1.25 GB a month. About 45% of each report was the same property catalogue as the report before,
+and 71% of November's segments were recorded standing still. Nothing in the app counted any of it.
+
+**The rule now: every byte that leaves the head unit is counted, and background traffic has a
+budget.**
+
+- **Slim telemetry (`telemetry/ProbeSlim.kt`, `ProbeUpload.uploadSync`).** A report is split into
+  its static part (`permissions`, `properties`, `subscriptions`, `propertyListCaveat`,
+  `wheelTickContract`, `confirmedFacts`, `notTestedOrInconclusive`) and the rest. The static part
+  is named by `staticId` (first 8 bytes of its SHA-256) and sent once; later bodies carry only
+  the id. Bodies are compact JSON, gzipped (`Content-Encoding: gzip`). The receiver caches the
+  static part under `probe_static/<id>.json`, rebuilds the full report and stores it, so
+  everything downstream (the importer, the web app) sees the same shape as before plus
+  `staticId`. A receiver that does not know the id answers 409 `{"need_static": id}` and the app
+  resends with the static part. Measured on the emulator: about 10 KB on the wire per segment.
+- **Parked minutes are thinned (`telemetry/SegmentThinner.kt`, pure).** A segment is sent when
+  the car moved, for 240 s after it stopped, when the battery changed by 300 Wh or more, and
+  otherwise as a heartbeat: every 5 min while the battery is changing, every 15 min idle.
+  Replaying November's car data keeps 1,367 of 2,977 segments; with the slim body that is about
+  50 MB per 30 days instead of 1.25 GB.
+- **The capture no longer follows the upload switch (`ProbeService`, `VehicleProbe.finishSegment`).**
+  Recording always runs, because the drive log of §13.4 is fed by it; "EV Insights auto-upload"
+  only decides whether segments leave the car. A segment is in exactly one state, by marker file:
+  `.pending_upload`, `.uploaded`, `.skipped`, or none (being written, or orphaned by a kill).
+  Only pending is sent; everything else but the live directory is prunable down to the newest 48.
+- **A backlog is not replayed (`ProbeUpload.selectBacklog`).** After time offline only pending
+  segments younger than 24 h, and at most the newest 60, are sent; the rest are marked skipped.
+  v245 and earlier keep every rotated segment pending and send all of it on reconnect, over
+  whatever network that is — including a phone hotspot.
+- **The meter (`upload/DataMeter.kt`).** The app adds up its own request bodies plus 1,500 B per
+  request, per calendar month, split by stream (telemetry, logs, screenshots, other) and by
+  "Wi-Fi or not". It counts its own traffic and not `TrafficStats`, because the adapter's USB
+  network would be counted with it. Off Wi-Fi, background telemetry stops at the limit
+  (Advanced ▸ "Car data used this month": 50 / 100 default / 250 MB / No limit) and resumes next
+  month or on Wi-Fi. Things the driver taps are not blocked; they say what they cost.
+- **Log uploads (`logging/LogExport.kt`, `MainActivity.uploadLogs`).** Batches are gzipped
+  (measured 6.2× on redacted logcat: 357 KB of the last hour went out as 58 KB). The upload is
+  measured first; "All", or anything estimated above 2 MB on the wire, shows the size and which
+  connection it will use and waits for a yes. The estimate's count is reused by the upload for
+  two minutes so the capture directory is not read twice.
+
+**Receiver.** `log_server.py` (outside this repo, `/opt/stacks/cloudbridge-log/`) accepts gzip on
+`/probe` and `/logs`, merges the cached static part, and answers with `bytes` (stored) and
+`wire_bytes` (received). Plain uploads from v245 and earlier still work.
+
+**Verified:** `SegmentThinnerTest`, `ProbeSlimTest`, `DataMeterTest`, `ProbeUploadTest` in the JVM
+suite (429 tests); on the emulator, slim uploads rebuilt on the receiver with every earlier key
+present and accepted by the importer's converter, uploads stopping on a cellular default network
+with the month's limit reached and the Settings row saying so, segments marked skipped with the
+switch off, and the log confirmation. **Not verified:** anything on the car, including how the
+car's modem and a phone hotspot each present to Android (the meter logs
+`uploads now go over <network>` once per change, so the first uploaded log answers it).
 
 ---
 

@@ -405,6 +405,7 @@ object CarPlayLauncher {
                 setRequestProperty("Accept", "application/json")
             }
             try {
+                wasidremin.gmccpa.upload.DataMeter.record(wasidremin.gmccpa.upload.DataMeter.Stream.OTHER, total)
                 wasidremin.gmccpa.upload.CountingRequestOutputStream(
                     delegate = conn.outputStream,
                     bytesTotal = total,

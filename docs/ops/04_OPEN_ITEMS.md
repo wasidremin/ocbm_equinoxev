@@ -57,6 +57,14 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 245 (`4.0+pane-backdrop`, 2026-11-11; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
+- **Data budget: nothing checked on the car (built 2026-11-11, not yet published).** The app
+  used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
+  telemetry (about 50 MB a month by replay) under a monthly limit
+  (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.5). To check on the car: Advanced ▸ "Car data
+  used this month" climbs by well under 1 MB on a short drive; the first uploaded log has a
+  `uploads now go over <network>` line that says how the car's modem and a phone hotspot each
+  present; a parked car sends a heartbeat and not a report a minute. Until this is published,
+  v245 on the car still sends the old way and replays its whole backlog on reconnect.
 - **EV Insights drive log: nothing checked on the car (built 2026-11-11, not yet published).** The
   recorder, the route and charge analysis and all five tabs are verified by JVM tests, a replay of
   four weeks of probe data and the emulator only. On the car the log starts empty. To check after

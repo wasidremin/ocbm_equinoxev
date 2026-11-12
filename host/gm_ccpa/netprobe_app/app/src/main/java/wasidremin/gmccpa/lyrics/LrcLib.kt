@@ -156,7 +156,11 @@ object LrcLib {
                 // LRCLIB asks every client to name itself.
                 conn.setRequestProperty("User-Agent", "GM-CCPA (https://github.com/wasidremin/ocbm_equinoxev)")
                 return when (val code = conn.responseCode) {
-                    HttpURLConnection.HTTP_OK -> conn.inputStream.bufferedReader().use { it.readText() }
+                    HttpURLConnection.HTTP_OK -> conn.inputStream.bufferedReader().use { it.readText() }.also {
+                        // A lyrics lookup is a download; it counts against the car's data all the same.
+                        wasidremin.gmccpa.upload.DataMeter.record(
+                            wasidremin.gmccpa.upload.DataMeter.Stream.OTHER, it.length.toLong())
+                    }
                     HttpURLConnection.HTTP_NOT_FOUND -> null
                     else -> throw HttpError(code, path)
                 }

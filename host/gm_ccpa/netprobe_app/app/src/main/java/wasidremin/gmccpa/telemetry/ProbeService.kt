@@ -15,7 +15,14 @@ import android.os.IBinder
 import android.os.Looper
 import wasidremin.gmccpa.ProbeLog
 
-/** Bound by the diagnostic Activity or started automatically for continuous EV Insights telemetry. */
+/**
+ * Bound by the diagnostic Activity, or started automatically to record the car.
+ *
+ * The automatic capture runs whether or not "EV Insights auto-upload" is on. It used to stop with
+ * the switch, which meant the only way to stop spending mobile data was to stop the on-car drive
+ * log too. Now the switch decides one thing - whether segments leave the car - and the recording
+ * that feeds the Insights tab carries on.
+ */
 class ProbeService : Service() {
     inner class LocalBinder : Binder() { val service: ProbeService get() = this@ProbeService }
     private val log = ProbeLog.sub("probe")
@@ -63,17 +70,17 @@ class ProbeService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        if (isAuto && !ProbeUpload.isAutoUploadEnabled(applicationContext)) {
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
         try {
             val notifications = getSystemService(NotificationManager::class.java)
             notifications.createNotificationChannel(NotificationChannel(CHANNEL, "Vehicle telemetry capture", NotificationManager.IMPORTANCE_LOW))
             val open = PendingIntent.getActivity(this, 0, Intent(this, ProbeActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
             val notification = Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.ic_menu_info_details)
-                .setContentTitle(if (isAuto) "EV Insights live telemetry active" else "Vehicle telemetry capture active")
-                .setContentText(if (isAuto) "Streaming & auto-uploading vehicle telemetry to EV Insights" else "Return to Vehicle Telemetry Probe while parked to stop/export.")
+                .setContentTitle(if (isAuto) "EV Insights is recording" else "Vehicle telemetry capture active")
+                .setContentText(when {
+                    !isAuto -> "Return to Vehicle Telemetry Probe while parked to stop/export."
+                    ProbeUpload.isAutoUploadEnabled(applicationContext) -> "Drives are logged on the car and sent to EV Insights"
+                    else -> "Drives are logged on the car only; uploads are off"
+                })
                 .setContentIntent(open).setOngoing(true).build()
             if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             else startForeground(NOTIFICATION_ID, notification)
@@ -81,7 +88,7 @@ class ProbeService : Service() {
                 val rawLoc = intent?.getBooleanExtra("raw_location", ProbeUpload.isAutoRawLocationEnabled(applicationContext))
                     ?: ProbeUpload.isAutoRawLocationEnabled(applicationContext)
                 p.startAutoCapture(rawLoc)
-                log.i("automatic EV Insights telemetry stream armed (rawLocation=$rawLoc)")
+                log.i("automatic EV Insights recording armed (rawLocation=$rawLoc uploads=${ProbeUpload.isAutoUploadEnabled(applicationContext)})")
             } else {
                 p.startCapture(intent?.getIntExtra("seconds", 60) ?: 60,
                     intent?.getBooleanExtra("raw_location", false) ?: false)
@@ -113,10 +120,14 @@ class ProbeService : Service() {
         private const val CHANNEL = "vehicle_telemetry_probe"
         private const val NOTIFICATION_ID = 7612
 
+        /**
+         * Start (or refresh) the automatic recording. Safe to call repeatedly, and called again
+         * whenever the upload switch changes so the notification says what is happening.
+         */
         fun ensureAutoStarted(ctx: Context) {
             val appCtx = ctx.applicationContext
+            wasidremin.gmccpa.upload.DataMeter.attach(appCtx)
             ProbeUpload.enqueueAndDrain(appCtx)
-            if (!ProbeUpload.isAutoUploadEnabled(appCtx)) return
             runCatching {
                 appCtx.startForegroundService(
                     Intent(appCtx, ProbeService::class.java)

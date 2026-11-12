@@ -92,12 +92,15 @@ Full procedure, expected log lines and the troubleshooting table:
 
 ## Logs — where uploads land and how to read them
 
-Vehicle logs leave the head unit only on an explicit tap (no background upload):
+Logs and screenshots leave the head unit only on an explicit tap. EV Insights telemetry is the
+one background upload: with "EV Insights auto-upload" on it sends each driven minute and a
+heartbeat while parked, counted against a monthly limit when the car is not on Wi-Fi
+(`docs/14_LESSONS_LEARNED.md` §13.5).
 
 | Action | Endpoint | Server location |
 |---|---|---|
-| **Upload Logs** (launcher) | `POST https://wasidremin.ddnsgeek.com/cloudbridge/logs` (`{device: gmccpa, lines: [...]}`) | `/opt/stacks/cloudbridge-log/logs.txt` |
-| **Upload latest report to log server** (probe activity) | `POST .../cloudbridge/probe` (`report.json`, headers `X-Device`/`X-Report-Name`) | `/opt/stacks/cloudbridge-log/probes/` |
+| **Upload Logs** (launcher) | `POST https://wasidremin.ddnsgeek.com/cloudbridge/logs` (`{device: gmccpa, lines: [...]}`, gzipped) | `/opt/stacks/cloudbridge-log/logs.txt` |
+| **EV Insights telemetry** (automatic, or "Upload latest report" in the probe activity) | `POST .../cloudbridge/probe` (gzipped report without its static part, which is sent once and named by `staticId`; headers `X-Device`/`X-Report-Name`; 409 `need_static` asks for it again) | rebuilt full report in `/opt/stacks/cloudbridge-log/probes/`, static parts in `probe_static/` |
 | **Capture CarPlay Home/Current Screen** (launcher) | `POST .../cloudbridge/api/captures` (multipart `metadata` JSON + `image` PNG) | `/opt/stacks/cloudbridge-log/captures/` |
 | **Icon-tap launch record** (`CarPlayLauncher.uploadLaunch`) | `POST .../cloudbridge/api/launches` (record JSON with `id`) | `/opt/stacks/cloudbridge-log/launches/` |
 

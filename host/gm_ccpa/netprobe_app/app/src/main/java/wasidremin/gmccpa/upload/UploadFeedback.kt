@@ -754,6 +754,7 @@ object UploadCenter {
                         setRequestProperty("Accept", "application/json")
                     }
                     try {
+                        DataMeter.record(DataMeter.Stream.OTHER, total)
                         CountingRequestOutputStream(
                             delegate = conn.outputStream,
                             bytesTotal = total,
@@ -878,6 +879,7 @@ object UploadCenter {
                 setRequestProperty("Accept", "application/json")
             }
             try {
+                DataMeter.record(DataMeter.Stream.SCREENSHOTS, totalBytes)
                 CountingRequestOutputStream(
                     delegate = conn.outputStream,
                     bytesTotal = totalBytes,

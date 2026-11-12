@@ -57,6 +57,12 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private var chunkEvents = 0
     private var autoStreamMode = false
     private var sessionBootId: String? = null
+    // What the thinning rule needs to know about the running segment (SegmentThinner.kt).
+    private val thinner = SegmentThinner()
+    private var chunkMoved = false
+    private var lastBatteryWh: Double? = null
+    private var lastSegmentFate: String? = null
+    private val segmentLog = wasidremin.gmccpa.ProbeLog.sub("probe")
     private var gpsStats = ProbeStats()
     // The permanent drive and charge log (TripLog.kt). Fed from the same callbacks as the segment
     // files, on this worker thread; unlike them it is never uploaded and never pruned.
@@ -232,6 +238,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
         val base = File(context.getExternalFilesDir(null) ?: context.filesDir, "telemetry").apply { mkdirs() }
         directory = File(base, SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ROOT).format(Date())).apply { mkdirs() }
         latestDirectory = directory
+        ProbeUpload.activeDir = directory
         val pi = context.packageManager.getPackageInfo(context.packageName, 0)
         val boot = sessionBootId ?: directory!!.name.also { sessionBootId = it }
         report = JSONObject().put("schemaVersion", 1).put("package", context.packageName)
@@ -322,7 +329,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private val flushTick = Runnable {
         if (!capturing || closed || !autoStreamMode) return@Runnable
         val elapsed = SystemClock.elapsedRealtime() - lastFlushMs
-        if (ProbeModel.shouldFlushChunk(ProbeUpload.isAutoUploadEnabled(context), capturing, chunkEvents, elapsed)) {
+        if (ProbeModel.shouldFlushChunk(capturing, chunkEvents, elapsed)) {
             rotateAndEnqueueChunk("periodic auto-upload flush")
         }
         scheduleFlushTick()
@@ -363,7 +370,36 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
         } catch (t: Exception) {
             fail("rotate chunk", t)
         }
-        ProbeUpload.enqueueAndDrain(context, reportDir = completedDir, activeDir = directory)
+        finishSegment(completedDir, live = directory)
+    }
+    /**
+     * Send a closed segment, or close it unsent. A continuous-stream segment goes out only when
+     * uploads are on AND the thinning rule keeps it (the car moved, the pack's energy is changing,
+     * or a heartbeat is due); a capture the driver started by hand is queued as it always was.
+     */
+    private fun finishSegment(completedDir: File, live: File?) {
+        if (!autoStreamMode) {
+            ProbeUpload.enqueueAndDrain(context, reportDir = completedDir, activeDir = live)
+            return
+        }
+        val uploads = ProbeUpload.isAutoUploadEnabled(context)
+        val decision = thinner.decide(SystemClock.elapsedRealtime(), chunkMoved, lastBatteryWh)
+        chunkMoved = false
+        val fate = if (!uploads) "uploads off" else decision.name
+        if (fate != lastSegmentFate) {
+            // Logged on change only: one line when the car parks, not one a minute.
+            lastSegmentFate = fate
+            segmentLog.i("telemetry segments: " + when {
+                !uploads -> "kept on the car, uploads are switched off"
+                decision == SegmentThinner.Decision.PARKED_SKIP -> "parked, sending a heartbeat only"
+                else -> "sending (${decision.name.lowercase(Locale.ROOT)})"
+            })
+        }
+        if (uploads && decision.keep) {
+            ProbeUpload.enqueueAndDrain(context, reportDir = completedDir, activeDir = live)
+        } else {
+            ProbeUpload.skipAndPrune(context, completedDir, if (uploads) "parked" else "uploads off")
+        }
     }
     private val stopTimer = Runnable { stopInternal("60-second timer completed") }
     private val callback = object : CarPropertyManager.CarPropertyEventCallback {
@@ -382,6 +418,10 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
                         .put("areaId", value.areaId).put("status", value.status).put("timestampNanos", value.timestamp)
                         .put("value", ProbeModel.jsonValue(value.value)), at)
                     if (value.status == 0 && value.value != null) tripLog { t -> trips.onProperty(t, value.propertyId, value.value) }
+                    if (value.status == 0) (value.value as? Number)?.toDouble()?.let { v ->
+                        if (value.propertyId == InsightsData.SPEED_MPS && kotlin.math.abs(v) > SegmentThinner.MOVING_MPS) chunkMoved = true
+                        if (value.propertyId == InsightsData.BATTERY_WH) lastBatteryWh = v
+                    }
                     // Flush immediately on GEAR_SELECTION -> PARK transition during auto-stream so finished trips land right away
                     if (autoStreamMode && value.propertyId == 289408000 && (value.value as? Number)?.toInt() == 4 && chunkEvents >= 2) {
                         worker.postDelayed({ if (capturing && !closed && chunkEvents > 0) rotateAndEnqueueChunk("parked gear transition") }, 2500L)
@@ -399,6 +439,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
             if (!capturing) return
             val at = SystemClock.elapsedRealtimeNanos()
             gpsStats.add(at, location.speed.takeIf { location.hasSpeed() }, 0)
+            if (location.hasSpeed() && location.speed > SegmentThinner.MOVING_MPS) chunkMoved = true
             event("LOCATION_RAW_PRIVACY_SENSITIVE", JSONObject().put("provider", location.provider)
                 .put("latitude", location.latitude).put("longitude", location.longitude)
                 .put("accuracyMeters", location.accuracy).put("speedMps", if (location.hasSpeed()) location.speed else JSONObject.NULL)
@@ -464,7 +505,9 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
                 .put("captureEndElapsedRealtimeNanos", SystemClock.elapsedRealtimeNanos())
             save()
             directory?.let { completed ->
-                ProbeUpload.enqueueAndDrain(context, reportDir = completed, activeDir = null)
+                // Closed for good: no longer the live segment, so it may be sent and pruned.
+                if (ProbeUpload.activeDir?.absolutePath == completed.absolutePath) ProbeUpload.activeDir = null
+                finishSegment(completed, live = null)
             }
             publishSummary(); captureEnded()
         }
@@ -563,6 +606,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
             val base = File(context.getExternalFilesDir(null) ?: context.filesDir, "telemetry")
             if (base.exists() && !base.deleteRecursively()) throw java.io.IOException("Could not delete all probe reports")
             directory = null; latestDirectory = null; report = JSONObject()
+            ProbeUpload.activeDir = null
             stats.clear(); ended = null
             while (errors.length() > 0) errors.remove(0)
             while (subscriptions.length() > 0) subscriptions.remove(0)
