@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 248 (`4.0+settings-tabs`, 2026-11-12; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Data budget: nothing checked on the car (Play 246).** The app
   used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
@@ -73,7 +73,7 @@ high-water mark: versionCode 248 (`4.0+settings-tabs`, 2026-11-12; `host/gm_ccpa
   and a capture saved the cards at their places (cards on black, as the bench has no map frame;
   the bench's uploads pointed at an unreachable address). Open on the car: that a capture holds the
   map behind the cards, and how the tabs read at the car's scale.
-- **Drive card v2 and the arrival chip: built 2026-11-12 evening, not yet on the car.** After the
+- **Drive card v2 and the arrival chip: nothing checked on the car (Play 249).** After the
   first drive with the card (Play 248: the history import worked, 147 records; the driver display
   ran the whole drive), the owner asked for something that moves: the card now shows the last mile's
   mi/kWh against the last ten, this month and lifetime, with a bar per mile, and the battery on
@@ -397,7 +397,7 @@ high-water mark: versionCode 248 (`4.0+settings-tabs`, 2026-11-12; `host/gm_ccpa
      the phone sends. Open on the car: all three by eye (the bench could not render them, the
      emulator kept crashing), what the phone's road text really looks like (`marker=` in the
      `turn #` line says whether one was recognised, never the name), and per-state markers.
-     **Black driver display after a quick walk-away (Play 248, 2026-11-12 23:12–23:15 UTC), fixed for 249:**
+     **Black driver display after a quick walk-away (Play 248, 2026-11-12 23:12–23:15 UTC), fixed in 249, not yet seen on the car:**
      GM left its map page as the car went off (`FULL_MAP_SELECTED state=0`, the window closed), the
      phone dropped 17 s later, GM selected the map page again 17 s after that, and CarPlay came back
      at 23:13:45 — but the map never opened, then or at the next reconnect (23:15:23), and GM's
