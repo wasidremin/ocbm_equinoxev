@@ -65,13 +65,11 @@ high-water mark: versionCode 246 (`4.0+data-budget`, 2026-11-11; `host/gm_ccpa/d
   `uploads now go over <network>` line that says how the car's modem and a phone hotspot each
   present; a parked car sends a heartbeat and not a report a minute; a large log upload offered
   "Send on Wi-Fi" goes out by itself on home Wi-Fi or the phone hotspot.
-- **Drive card: never drawn on a screen, not published (2026-11-12).** A third driver-display
+- **Drive card: nothing checked on the car (2026-11-12).** A third driver-display
   card (arrival battery during a route, this drive against the usual otherwise) and a one-time
-  import of a month of drive history are built and pass their tests and a replay of 120 past
-  drives, but the emulator could not be started (machine overloaded by the EV Insights worker's
-  restart loop) and nothing has run on the car. Before publishing: see the card on the emulator
-  (`run driver_display --es drive_face arrive|low|short|better|worse|usual|trip`). On the car
-  after publishing: the log has `drive history: … added`; Insights ▸ Week shows October; the card
+  import of a month of drive history pass their tests and a replay of 120 past drives, and the
+  card's sample faces were seen on the emulator; nothing has run with live data or on the car.
+  On the car: the log has `drive history: … added`; Insights ▸ Week shows October; the card
   appears under now playing; with a route the log has `drive card: arrival …` and, at the end,
   `drive card: route over …`, which gives the estimate's real error. Still open by design: the
   route's legs by road class (waiting on Play 246's `gap=` lines) and getting the 16 repeated

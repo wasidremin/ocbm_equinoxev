@@ -607,10 +607,14 @@ a private channel and was not done.
 
 **Verified:** 473 JVM tests (25 new: `DriveOutlookTest`, `DriveCardTest`, `HistoryImportTest`), the
 replay above, and the receiver route with `curl` (404 with no id, a wrong id or a path in the id;
-the file, byte for byte, with the car's). **Not verified:** the card has never been drawn on a
-screen. The emulator was not started: the machine was at a load of 50 to 65 from the EV Insights
-worker's restart loop, the condition under which it crashed on 2026-11-11. The fetch from the car
-is likewise untested. Not published.
+the file, byte for byte, with the car's). On the emulator, with the Settings preview's samples
+(`--es drive_face …`): the open card in all seven faces by day and two by night, and the folded
+ring at night, each with its text inside the card and matching now playing above it. The emulator
+segfaults within a minute of the driver-display window opening even on an idle machine (it is not
+the memory pressure §13.3 blamed), so the captures were collected two or three per boot over nine
+boots; the folded ring by day and the docked placement were not captured. **Not verified:**
+anything with live data (the samples are fixed text), the fetch from the car, and everything on
+the car.
 
 ---
 
