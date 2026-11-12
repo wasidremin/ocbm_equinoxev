@@ -397,6 +397,18 @@ high-water mark: versionCode 248 (`4.0+settings-tabs`, 2026-11-12; `host/gm_ccpa
      the phone sends. Open on the car: all three by eye (the bench could not render them, the
      emulator kept crashing), what the phone's road text really looks like (`marker=` in the
      `turn #` line says whether one was recognised, never the name), and per-state markers.
+     **Black driver display after a quick walk-away (Play 248, 2026-11-12 23:12–23:15 UTC), fixed for 249:**
+     GM left its map page as the car went off (`FULL_MAP_SELECTED state=0`, the window closed), the
+     phone dropped 17 s later, GM selected the map page again 17 s after that, and CarPlay came back
+     at 23:13:45 — but the map never opened, then or at the next reconnect (23:15:23), and GM's
+     cluster turns took the display instead. Cause: the session's end called `DriverDisplay.close`,
+     which forgets the declared display and size; only a subscribe sets them, and a walk-away
+     reconnects on the same adapter link without one, so every `show` returned at once. Now a
+     session end only closes the window (`endSession`) and the declaration lives as long as the
+     adapter link; the map page picked while CarPlay is down waits for the session's first picture;
+     at that picture the map opens unless GM last reported another page (`showAtSessionStart`);
+     GM's `SERVICE_READY` resets that. To check on the car: after a walk-away the log has
+     `opening the map window … (CarPlay's picture is up …)`.
      **What the 245 drive already answered (recorded 2026-11-12):** the phone accepts the pushed
      `extended` tier on this car's session (lane records arrived; the Equinox runs the AirPlay-tunnel
      arm, not the wired one), so lane guidance needs no box change. The highlight is carried only in

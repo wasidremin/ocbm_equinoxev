@@ -379,7 +379,7 @@ object AdapterSession {
         }
         detachCluster("A/V lanes retired")
         if (notify) {
-            wasidremin.gmccpa.nav.DriverDisplay.close("CarPlay session ended")
+            wasidremin.gmccpa.nav.DriverDisplay.endSession("CarPlay session ended")
             clearResourceLog()
             CarPlayMediaBrowserService.onSessionDown()
             CarPlayActivity.nowPlaying.clear("A/V lanes retired")

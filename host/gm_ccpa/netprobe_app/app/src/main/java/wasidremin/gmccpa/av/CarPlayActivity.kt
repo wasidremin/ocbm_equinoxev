@@ -1238,7 +1238,7 @@ class CarPlayActivity : Activity() {
         if (isFinishing || isDestroyed) return
         finishIntro(late = false)
         // The app is in front, which Android needs to open a window on another display.
-        wasidremin.gmccpa.nav.DriverDisplay.show(this, "CarPlay's picture is up")
+        wasidremin.gmccpa.nav.DriverDisplay.showAtSessionStart(this)
     }
 
     private fun finishIntro(late: Boolean) {

@@ -336,6 +336,7 @@ object DriverDisplay {
      */
     internal val RETURN_ACTIONS = setOf("gm.cluster.action.FULL_MAP_SELECTED", "gm.cluster.action.APP_SELECTED")
     private const val FULL_MAP = "gm.cluster.action.FULL_MAP_SELECTED"
+    private const val SERVICE_READY = "gm.cluster.action.SERVICE_READY"
 
     /**
      * GM reported the driver leaving the map page (`FULL_MAP_SELECTED state=0`) and not coming back
@@ -353,6 +354,19 @@ object DriverDisplay {
     }
 
     /**
+     * Main thread. A session's first picture: open the map, unless the last thing GM said is that the
+     * driver is on another of its pages; then the map page ([onGmPage]) or the long-press brings it.
+     */
+    fun showAtSessionStart(from: Context) {
+        if (offMapPage) {
+            if (display != null && size != null)
+                log.i("CarPlay is up, but GM last reported another page — the map waits for its page or the long-press")
+            return
+        }
+        show(from, "CarPlay's picture is up")
+    }
+
+    /**
      * GM's driver display reported a page change ([GmClusterPageService]). Selecting the full-map
      * page again brings CarPlay's map back, the return openautolink built for the same problem:
      * GM covers our window when the driver leaves the map page, and we close it then, so a map
@@ -360,6 +374,8 @@ object DriverDisplay {
      * [AUTO_RETURNS_PER_MINUTE] a minute; never when the page left is reported.
      */
     fun onGmPage(ctx: Context, action: String?, selected: Int?, type: String?) {
+        // GM's cluster service (re)started, as at every head-unit start: whatever page was left before is history.
+        if (action == SERVICE_READY) offMapPage = false
         if (action == FULL_MAP && selected == 0) {
             // Leaving the map page is the driver's answer: the turns come back with the next cover.
             offMapPage = true
@@ -369,6 +385,12 @@ object DriverDisplay {
         if (selected == 1) offMapPage = false
         if (selected != 1 || !enabled || display == null || size == null) return
         if (DriverDisplayActivity.isOpen()) return
+        // The page came back while CarPlay is down (2026-11-12 23:13:30, between a walk-away and the
+        // phone's return): a window now would hold no stream. The session's first picture opens it.
+        if (!wasidremin.gmccpa.ocbm.AdapterSession.sessionUp) {
+            log.i("GM's map page selected with no CarPlay session — the map opens when CarPlay is back")
+            return
+        }
         val now = android.os.SystemClock.elapsedRealtime()
         synchronized(autoReturns) {
             while (autoReturns.isNotEmpty() && now - autoReturns.first() > 60_000L) autoReturns.removeFirst()
@@ -389,7 +411,20 @@ object DriverDisplay {
         log.i("first map frame on the driver display")
     }
 
-    /** Session over: close the window, which also closes its decoder. Any thread. */
+    /**
+     * A CarPlay session ended with the adapter link still up: close the window, keep the declaration.
+     * The box carries the declared cluster screen into the next session on the same link, and a
+     * walk-away reconnects without a new subscribe. Until 2026-11-12 this cleared [display] and
+     * [size], which only a subscribe sets, so after a quick walk-away the map never opened again
+     * and the driver display stayed black (23:13:45 and 23:15:23 that evening). Any thread.
+     */
+    fun endSession(why: String) {
+        launches = 0
+        firstFrameLogged = false
+        DriverDisplayActivity.closeOpen(why)
+    }
+
+    /** The adapter link is gone: close the window and forget the declaration; the next subscribe makes a new one. Any thread. */
     fun close(why: String) {
         size = null
         display = null
