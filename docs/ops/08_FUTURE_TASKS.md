@@ -8,7 +8,7 @@ Owner-directed work items that are neither an open defect nor a verification gap
 state it starts from and what "done" means. When a task lands, replace its body with a one-line
 pointer to the doc that now owns the result — do not leave a stale plan beside a shipped feature.
 
-**Where each task stands (2026-11-12),** by what it takes to ship. "App only" is a Play update;
+**Where each task stands (2026-11-13),** by what it takes to ship. "App only" is a Play update;
 "needs adapter firmware" also needs a bench reflash of the adapter (`tools/ocbm_install.sh --full`)
 until T20 exists.
 
@@ -17,7 +17,6 @@ until T20 exists.
 | Task | State |
 |---|---|
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing. The next step, reading the iPhone's own log, needs nothing new; what follows may need the adapter (path forward in T7) |
-| T15 No Allow tap (USB bridge) | Built; **blocked**: the Equinox cannot install a sideloaded app |
 | T16 Battery health | New, not started |
 | T17 Arrival estimate by road type | New; waits for one more drive's `gap=` lines |
 | T18 "Will I make it" at route start | New, not started |
@@ -34,6 +33,7 @@ until T20 exists.
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
+| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). A second route, the adapter link over the car's hotspot, is recorded in T15 (2026-11-13) and not started; its first step is app only |
 | T20 Update the adapter from the app | New; would remove the bench reflash from every task in this table |
 | T21 The car's name in Apple Maps | New (openautolink; held since 2026-11-08) |
 | T22 CarPlay's status bar on the driver's side | New (openautolink; held since 2026-11-08) |
@@ -353,7 +353,7 @@ open from it, tracked in `04_OPEN_ITEMS.md`: whether calls echo for the far end 
 the assistant role, and the voice button answering a ringing call (built in 233, never yet seen in a
 car log).
 
-## T15. GM app: no Allow tap for the adapter, through a sideloaded USB bridge (raised 2026-11-06; BUILT; BLOCKED on the stock Equinox)
+## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; a second route over the car's hotspot recorded 2026-11-13, not started)
 
 **The ask.** The driver taps Allow for the adapter on every drive. The owner found the XDA post
 (enigy's Carlink thread, page 28) saying a sideloaded bridge removes it for a Play app.
@@ -389,6 +389,87 @@ USB bridge would show the change. Items 2 and 3 cannot be reached until then.
 2. Whether the adapter attaches while user 12 is in front. An attach under another user gets no grant
    for the bridge, and the app falls back to its own dialog.
 3. The relay has not carried a session. The emulator has no adapter.
+
+### Second route: the adapter link over the car's hotspot, with no USB claim (raised 2026-11-13; recorded, not started)
+
+The owner asked for this to be recorded and not built (2026-11-13). Everything below is what was
+known that day.
+
+**The idea.** From metheos on the XDA thread. The adapter joins the car's hotspot as a client and
+keeps its own access point for the phone, both on one channel. The app reaches the adapter over the
+network and never asks for the USB device, so there is no Allow dialog; USB only powers the
+adapter. His proof of concept for stock firmware is
+[configure_sta_uplink.sh](https://github.com/metheos/CPC200-CCPA-Firmware-Dump/blob/96caaa1359b5499c9334fa82200f244cc9d08a4c/configure_sta_uplink.sh)
+(MIT). It scans for the car's network, moves the adapter's access point to that channel, joins, and
+takes a DHCP lease. He saw both links up together and never measured throughput. The script cannot
+be dropped in (item 1 below).
+
+**What this tree's own logs already settle.**
+
+- The Equinox hosts its hotspot on the head unit (`ap_br_swlan0`, members `swlan0`/`swlan1`), so the
+  app sits on the hotspot's host side. `CarPlayRx.hotspotInterface()` and `hotspotIpv4()` still
+  find it.
+- The app can open TCP connections to a hotspot client. In September 2026 (from 2026-09-21) it made
+  20+ `GET /ctrl-int/1/connect` → `200 OK` calls to the phone, on IPv4 and on IPv6 link-local.
+  Connections from a client *into* the app are dropped by GM's `netfilterd`. That ended the design
+  where the phone joined the car's hotspot (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md`, versionCodes
+  21–32; `host/gm_ccpa/docs/01_FINDINGS.md` §2). On this route the app dials out, so that wall is
+  not in the way. Not shown: a sustained stream at video rates on such a connection.
+- The adapter in the car has the radio the script targets: `RADIO_CHIP=nxp_iw416` (SDIO
+  `0x02df:0x9159`), `moal` loaded with `nxp/wifi_mod_para.conf`.
+- The app's link sits behind `ocbm/Transport.kt` `RawBulkTransport` (four methods;
+  `UsbBulkTransport` and the bridge relay implement it), so a network transport slots in beside
+  USB.
+- The app still has the car hotspot's name, passphrase and channel from the hotspot design
+  (Settings ▸ Advanced ▸ Vehicle hotspot, prefs `hotspot_credentials`). They can tell the adapter
+  which network to join.
+
+**What it does not settle.**
+
+1. *Interface roles.* Stock firmware runs the access point through `wpa_supplicant` (as a P2P group
+   owner) on `wlan0` and leaves `sta0` for the client link. This tree runs `hostapd` on `sta0`
+   (`[radio] hostapd starting on sta0` at every boot in the car logs), which leaves `wlan0`.
+   Whether `moal` accepts a client link on `wlan0` beside an access point on `sta0` is the first
+   bench question. Whatever is built goes through the radio seam (`radio_hal.sh`), names no chip,
+   and reports `unsupported` where it is not proven (`docs/wireless/01_BT_AND_RADIO.md`).
+2. *Throughput and delay.* The IW416 is single-stream 802.11n, and every byte crosses the same
+   channel twice (phone → adapter, adapter → car). An estimate, not a measurement: 20–45 Mbps usable
+   for video, against CarPlay's 8–30 Mbps (`docs/carplay/00_ARCHITECTURE.md`) plus the
+   driver-display stream. USB measured 339 Mbps adapter → host. This is the risk that could end the
+   route.
+3. *Channel.* The adapter's access point must sit on the car's channel. It is on 149 today. The
+   car's channel has never been measured (the "36" in the September logs is what the app sent, not a
+   reading), and it may move when the car's own Wi-Fi client joins home Wi-Fi or a phone hotspot.
+   The adapter's `hostapd` has no automatic channel selection (`radio_ap_up.sh`), and a channel
+   move drops the phone for seconds.
+4. *The car's hotspot.* It must be on at every start. How soon after the car wakes it comes up is
+   unknown, and so is whether it stays on without a data plan (asked of the owner 2026-11-13, not
+   yet answered). The logs last show it on 2026-09-27, in the last build that looked.
+5. *The adapter's side of the link.* `ocbmd` owns `/dev/usb_accessory` and nothing else
+   (`ccpa/ocbmd/src/main.rs`, `ACC_DEV`). It needs a TCP listener on the client interface, a way
+   for the app to find it on the hotspot's subnet, and a key shared once over USB, because this
+   link carries the video keys and any hotspot client could otherwise connect.
+6. *Time to CarPlay.* Today the median is 10.7 s from the app starting the adapter to the first
+   picture, and that clock starts after the Allow tap (3.4 s in the one logged case, 2026-11-05).
+   This route trades the tap for the adapter's scan, join and lease.
+
+**Plan when resumed, with a stop at each step.**
+
+1. *App only.* Log at every start whether the hotspot interface is up, how long after the car woke,
+   and how long the Allow tap took. Stop if the hotspot is not dependably up.
+2. *Bench, adapter out of the car.* Bring up the client link beside the access point, with home
+   Wi-Fi standing in for the car's hotspot, and push 30 Mbps through both hops with a phone
+   connected. Stop if it stalls.
+3. *Car.* A network transport in the app with USB kept as the fallback, one-time setup over USB,
+   then a week compared with today's time to CarPlay and stall count.
+
+**Ruled out.** The reverse arrangement, where the car joins the adapter's network. The car has one
+Wi-Fi client link (`wlan0`), which would be taken from home Wi-Fi and the phone hotspot that
+uploads use, and Android does not dependably stay on a network with no internet.
+
+**Done means (this route).** A drive starts CarPlay with no Allow tap and no USB claim, the time to
+the first picture is no worse than today's including the tap, and video stalls are no more frequent
+than over USB.
 
 ## App only: T16–T19 (raised 2026-11-12)
 

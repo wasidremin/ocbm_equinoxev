@@ -454,7 +454,9 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
 - **USB bridge, for no Allow tap: blocked on the stock Equinox (2026-11-12).** The car's
   unknown-sources screen is the same "not supported" stub as the emulator's: every connect since 232
   logs `usb bridge: not installed, unknown-sources screen …Stubs$ManageExternalSourcesActivityStub`,
-  so Files cannot install the bridge. It waits on GM shipping a real install screen. A sideloaded app named
+  so Files cannot install the bridge. It waits on GM shipping a real install screen. A second
+  route that installs nothing on the car, the adapter link over the car's hotspot, is recorded in
+  `08_FUTURE_TASKS.md` T15 (2026-11-13) and not started. A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
   the Equinox lets Files install an app (the AAOS 14 emulator does not: its unknown-sources screen is a
