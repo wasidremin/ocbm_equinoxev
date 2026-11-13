@@ -661,9 +661,9 @@ pub(crate) fn build_ident_info_excluding_with_policy(
     // the tunnel and BT drivers still pass the baseline. `baseline_param20_is_byte_pinned` is the
     // golden fixture guarding the baseline path.
     //
-    // Full spec surface (see `spec::ident::vehicle_info`): OPTIONAL subs 8 MapsDisplayName and
-    // 9 SiriName are still NOT emitted; 10 VehicleColorHexCode, 11 SupportedChargingConnectors
-    // (enum, 0=CCS1..8=NACS(AC)) and 12..20 PowerForConnectorType* (uint32) are now emitted WHEN AND
+    // Full spec surface (see `spec::ident::vehicle_info`): OPTIONAL sub 9 SiriName is still NOT
+    // emitted; 8 MapsDisplayName, 10 VehicleColorHexCode, 11 SupportedChargingConnectors
+    // (enum, 0=CCS1..8=NACS(AC)) and 12..20 PowerForConnectorType* (uint32) are emitted WHEN AND
     // ONLY WHEN the app pushes them. Cardinality is not uniform and the resolver depends on it: subs
     // 2 and 11 are `[0+]` (repeatable), but each power sub 12-20 is `[optional]` = zero-or-one, which
     // is why `config::vehicle_identity` dedupes connectors before we get here.
@@ -700,6 +700,11 @@ pub(crate) fn build_ident_info_excluding_with_policy(
             g20.u8v(sub::ENGINE_TYPE, e);
         }
         g20.str(sub::DISPLAY_NAME, name); // sub 6
+        // sub 8 — the car's name for Apple Maps' Vehicles list (T7), emitted only when the app
+        // pushed one. Subs 1 and 6 stay the box's own name; T21 owns changing those.
+        if let Some(maps_name) = identity.maps_display_name.as_deref() {
+            g20.str(sub::MAPS_DISPLAY_NAME, maps_name);
+        }
         // sub 10 — optional colour, emitted only when configured.
         if let Some(hex) = identity.color_hex.as_deref() {
             g20.str(sub::VEHICLE_COLOR_HEX_CODE, hex);
@@ -1706,8 +1711,8 @@ mod tests {
         None
     }
 
-    /// A maximal pushed identity: hybrid engines, two connectors with power, a colour, and a param-21
-    /// block. Deliberately exercises every field C6 added at once.
+    /// A maximal pushed identity: hybrid engines, two connectors with power, a colour, a Maps name and
+    /// a param-21 block. Deliberately exercises every pushed field at once.
     fn maximal_ev_identity() -> crate::config::VehicleIdentity {
         use crate::spec::ident::vehicle_info as sub;
         crate::config::VehicleIdentity {
@@ -1717,6 +1722,7 @@ mod tests {
                 (sub::SUPPORTED_CHARGING_CONNECTORS_NACS_DC_, None),
             ],
             color_hex: Some("#1A2B3C".into()),
+            maps_display_name: Some("Chevrolet Equinox EV".into()),
             status_caps: Some(vec![
                 vehicle_status::RANGE,
                 vehicle_status::RANGE_ELECTRIC,
@@ -1926,12 +1932,36 @@ mod tests {
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_GASOLINE);
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_ELECTRIC);
         want.str(sub::DISPLAY_NAME, "CarLink");
+        // Sub 8 carries the car's name for Apple Maps; subs 1 and 6 stay the box's own.
+        want.str(sub::MAPS_DISPLAY_NAME, "Chevrolet Equinox EV");
         want.str(sub::VEHICLE_COLOR_HEX_CODE, "#1A2B3C");
         want.u8v(sub::SUPPORTED_CHARGING_CONNECTORS, sub::SUPPORTED_CHARGING_CONNECTORS_CCS2);
         want.u8v(sub::SUPPORTED_CHARGING_CONNECTORS, sub::SUPPORTED_CHARGING_CONNECTORS_NACS_DC_);
         want.u32v(sub::POWER_FOR_CONNECTOR_TYPE_CCS2, 150_000);
         // NACS_DC carried no powerWatts, so no sub 19 — an absent rating must not become a zero one.
         assert_eq!(g20, want.0);
+    }
+
+    /// Sub 8 `MapsDisplayName` is on the wire only when the app pushed a name: an identity without
+    /// one builds the same param 20 as before the sub existed.
+    #[test]
+    fn maps_display_name_is_emitted_only_when_pushed() {
+        use crate::spec::ident::vehicle_info as sub;
+        let transport = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
+        let mut id = maximal_ev_identity();
+        let sub_ids = |id: &crate::config::VehicleIdentity| -> Vec<u16> {
+            let body = build_ident_info_with("CarLink", transport, false, id);
+            let g20 = top_level_param_value(&body, spec::ident::VEHICLE_INFORMATION_COMPONENT)
+                .expect("param 20 present");
+            top_level_param_ids(&g20) // a group's value is the same len/id/value framing
+        };
+        let with = sub_ids(&id);
+        let at = with.iter().position(|&s| s == sub::MAPS_DISPLAY_NAME).expect("sub 8 present");
+        assert_eq!(with[at - 1], sub::DISPLAY_NAME, "sub 8 follows sub 6");
+        assert_eq!(with[at + 1], sub::VEHICLE_COLOR_HEX_CODE, "and precedes sub 10");
+
+        id.maps_display_name = None;
+        assert!(!sub_ids(&id).contains(&sub::MAPS_DISPLAY_NAME));
     }
 
     /// Param 21 is emitted ONLY when the app pushed a `vehicleStatus:` block, and its contents match
@@ -2061,6 +2091,7 @@ mod tests {
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_GASOLINE);
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_ELECTRIC);
         want.str(sub::DISPLAY_NAME, "CarLink");
+        want.str(sub::MAPS_DISPLAY_NAME, "Chevrolet Equinox EV");
         want.str(sub::VEHICLE_COLOR_HEX_CODE, "#1A2B3C");
         want.u8v(sub::SUPPORTED_CHARGING_CONNECTORS, sub::SUPPORTED_CHARGING_CONNECTORS_CCS2);
         want.u8v(sub::SUPPORTED_CHARGING_CONNECTORS, sub::SUPPORTED_CHARGING_CONNECTORS_NACS_DC_);

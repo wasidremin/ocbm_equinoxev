@@ -388,11 +388,18 @@ pub fn parse_vehicle_status_update(body: &[u8]) -> VehicleStatus {
     v
 }
 
+/// The longest EV-routing model string [`encode_vehicle_status_update`] will frame. The real ones are
+/// a few hundred bytes; this keeps one group, and the whole update, far inside the u16 group length.
+pub const MAX_MODEL_BYTES: usize = 4096;
+
 /// Encode a `VehicleStatusUpdate` (0xA101, accessory-source) body — the inverse of
 /// [`parse_vehicle_status_update`], emitting only the fields that are `Some`, in ascending param-id
-/// order. Covers the scalar and EV fields an accessory can source from a car's own sensors; the
-/// `WiperStatus` group, `Alerts`, `ActiveConnector` and the two JSON EV-routing models are not
-/// emitted (nothing here produces them).
+/// order. Covers the scalar and EV fields an accessory can source from a car's own sensors, and the
+/// two JSON EV-routing models (ids 26/27, `utf8`, NUL-terminated like every iAP2 string). The
+/// `WiperStatus` group, `Alerts` and `ActiveConnector` are not emitted (nothing here produces them).
+///
+/// A model string that could not be framed is left out rather than truncated: an interior NUL would
+/// end the string early on the phone, and a value past the u16 group length cannot be encoded at all.
 pub fn encode_vehicle_status_update(v: &VehicleStatus) -> Vec<u8> {
     fn put(out: &mut Vec<u8>, id: u16, val: &[u8]) {
         out.extend_from_slice(&((4 + val.len()) as u16).to_be_bytes());
@@ -432,6 +439,19 @@ pub fn encode_vehicle_status_update(v: &VehicleStatus) -> Vec<u8> {
     }
     if let Some(x) = v.is_charging {
         put(&mut o, pid::IS_CHARGING, &[x as u8]);
+    }
+    for (id, model) in [
+        (pid::CHARGING_PARAMETER, v.charging_parameter.as_deref()),
+        (pid::CONSUMPTION_PARAMETER, v.consumption_parameter.as_deref()),
+    ] {
+        let Some(json) = model else { continue };
+        if json.is_empty() || json.len() > MAX_MODEL_BYTES || json.bytes().any(|b| b == 0) {
+            continue;
+        }
+        let mut val = Vec::with_capacity(json.len() + 1);
+        val.extend_from_slice(json.as_bytes());
+        val.push(0);
+        put(&mut o, id, &val);
     }
     if let Some(x) = v.max_range_electric_km {
         put(&mut o, pid::MAX_RANGE_ELECTRIC, &x.to_be_bytes());
@@ -618,6 +638,57 @@ mod tests {
         let ids: Vec<u16> = parse_groups(&body).into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids, vec![pid::RANGE, pid::DISPLAYED_BATTERY_PERCENTAGE]);
         assert!(encode_vehicle_status_update(&VehicleStatus::default()).is_empty());
+    }
+
+    /// The two EV-routing models go out as NUL-terminated strings in id order, between isCharging
+    /// (25) and MaxRangeElectric (30), and read back unchanged.
+    #[test]
+    fn encode_carries_the_ev_routing_models() {
+        let charging = "{\"model_id\":12582922,\"vehicle_parameters\":{\"efficiency_factor\":0.93}}";
+        let consumption = "{\"model_id\":12582921,\"vehicle_parameters\":{}}";
+        let v = VehicleStatus {
+            min_battery_charge_wh: Some(0),
+            current_battery_charge_wh: Some(52_000),
+            max_battery_charge_wh: Some(85_000),
+            is_charging: Some(false),
+            charging_parameter: Some(charging.into()),
+            consumption_parameter: Some(consumption.into()),
+            max_range_electric_km: Some(540),
+            ..Default::default()
+        };
+        let body = encode_vehicle_status_update(&v);
+        let groups = parse_groups(&body);
+        let ids: Vec<u16> = groups.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                pid::MIN_BATTERY_CHARGE,
+                pid::CURRENT_BATTERY_CHARGE,
+                pid::MAX_BATTERY_CHARGE,
+                pid::IS_CHARGING,
+                pid::CHARGING_PARAMETER,
+                pid::CONSUMPTION_PARAMETER,
+                pid::MAX_RANGE_ELECTRIC,
+            ]
+        );
+        let model = groups.iter().find(|(id, _)| *id == pid::CHARGING_PARAMETER).unwrap().1;
+        assert_eq!(model, str_val(charging).as_slice(), "utf8 with exactly one trailing NUL");
+        assert_eq!(parse_vehicle_status_update(&body), v);
+    }
+
+    /// A model that cannot be framed is dropped whole; the rest of the update still goes out.
+    #[test]
+    fn encode_drops_a_model_it_cannot_frame() {
+        for bad in [String::new(), "{\"a\":\0}".to_string(), "x".repeat(MAX_MODEL_BYTES + 1)] {
+            let v = VehicleStatus {
+                is_charging: Some(true),
+                charging_parameter: Some(bad),
+                ..Default::default()
+            };
+            let ids: Vec<u16> =
+                parse_groups(&encode_vehicle_status_update(&v)).into_iter().map(|(id, _)| id).collect();
+            assert_eq!(ids, vec![pid::IS_CHARGING]);
+        }
     }
 
     #[test]

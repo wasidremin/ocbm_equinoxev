@@ -10,6 +10,10 @@
 //! every [`POLL`]. It sends when the encoded body changes, and once straight after every subscribe so
 //! the phone never waits for the car to change before it learns the current values. A body that
 //! comes out empty (nothing declared, selected and known) is never sent.
+//!
+//! Two updates are never closer together than [`MIN_GAP`]. With the EV-routing models in the update
+//! Apple Maps plans routes from it, and a project that sent every 5 s saw Maps recalculate the route
+//! over and over (T7 "Cause found (2026-11-13)").
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -22,6 +26,30 @@ const POLL: Duration = Duration::from_secs(2);
 /// Re-send an unchanged body this often, so a lost frame or a phone that dropped its cached values
 /// recovers without waiting for the battery to move.
 const REFRESH: Duration = Duration::from_secs(60);
+/// The shortest time between two updates. The first one after a subscribe is exempt.
+const MIN_GAP: Duration = Duration::from_secs(10);
+
+/// Whether `body` should go out now, given the last body sent and how long ago that was.
+fn due(last: Option<(&[u8], Duration)>, body: &[u8]) -> bool {
+    match last {
+        None => true,
+        Some((_, since)) if since < MIN_GAP => false,
+        Some((sent, since)) => sent != body || since >= REFRESH,
+    }
+}
+
+/// `status` for the log: the two models are a kilobyte of JSON that never changes within a drive,
+/// so they are named by length.
+fn summary(status: &vehicle_status::VehicleStatus) -> String {
+    let len = |m: &Option<String>| m.as_ref().map(|s| s.len()).unwrap_or(0);
+    let (charging, consumption) = (len(&status.charging_parameter), len(&status.consumption_parameter));
+    let scalars = vehicle_status::VehicleStatus {
+        charging_parameter: None,
+        consumption_parameter: None,
+        ..status.clone()
+    };
+    format!("{scalars:?}; models: charging {charging} B, consumption {consumption} B")
+}
 
 fn log(m: &str) {
     println!(
@@ -104,22 +132,53 @@ fn tick() {
     if body.is_empty() {
         return;
     }
-    let due = match &last {
-        None => true,
-        Some((b, at)) => *b != body || at.elapsed() >= REFRESH,
-    };
-    if !due {
+    if !due(last.as_ref().map(|(b, at)| (b.as_slice(), at.elapsed())), &body) {
         return;
     }
     let (sent, n) = crate::iap_tunnel::send_subscribe(spec::MSG_VEHICLE_STATUS_UPDATE, &body);
     if sent {
         if last.as_ref().map(|(b, _)| b != &body).unwrap_or(true) {
-            log(&format!("TX 0xA101 VehicleStatusUpdate ({n} B): {status:?}"));
+            log(&format!("TX 0xA101 VehicleStatusUpdate ({n} B): {}", summary(&status)));
         }
         if let Some(s) = crate::plock(&SUB).as_mut() {
             s.last = Some((body, Instant::now()));
         }
     } else {
         log("TX 0xA101 failed (no tunnel session) — retrying on the next poll");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: &[u8] = &[1, 2, 3];
+    const B: &[u8] = &[1, 2, 4];
+
+    /// The first update after a subscribe goes at once; after that a changed body waits out
+    /// `MIN_GAP`, and an unchanged one waits for `REFRESH`.
+    #[test]
+    fn updates_are_spaced_out() {
+        assert!(due(None, A));
+        assert!(!due(Some((A, Duration::from_secs(2))), B), "a change inside the gap waits");
+        assert!(!due(Some((A, MIN_GAP - Duration::from_millis(1))), B));
+        assert!(due(Some((A, MIN_GAP)), B), "and goes once the gap has passed");
+        assert!(!due(Some((A, Duration::from_secs(30))), A), "an unchanged body is not repeated yet");
+        assert!(due(Some((A, REFRESH)), A), "until the refresh is due");
+    }
+
+    /// The log line names the models by length and still shows the scalar fields.
+    #[test]
+    fn the_log_summary_leaves_the_models_out() {
+        let status = vehicle_status::VehicleStatus {
+            range_km: Some(312),
+            charging_parameter: Some("{\"model_id\":12582922}".into()),
+            consumption_parameter: Some("{\"model_id\":12582921}".into()),
+            ..Default::default()
+        };
+        let line = summary(&status);
+        assert!(line.contains("312"));
+        assert!(!line.contains("model_id"));
+        assert!(line.ends_with("models: charging 21 B, consumption 21 B"));
     }
 }

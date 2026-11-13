@@ -14,6 +14,11 @@
 //! was declared in Identify param 21 (`status_caps`), and — for the selectable fields 3..=20 — the
 //! phone selected it in 0xA100. The EV fields (21..=30) are not selectable; they ride the
 //! `ElectricChargeInfo` / `MaxRangeInfo` capabilities alone.
+//!
+//! EV ROUTING. Apple Maps does not count the accessory as an electric car until an update carries
+//! both JSON models, `ChargingParameter` (26) and `ConsumptionParameter` (27); see T7 "Cause found
+//! (2026-11-13)". The app builds both documents and this module relays them unparsed: what is in
+//! them is the app's to choose, and the box only refuses a string it could not frame.
 
 use carplay_metadata::vehicle::encode_vehicle_status_update;
 // Re-exported so the receiver needs no direct dependency on `carplay-metadata`.
@@ -25,8 +30,9 @@ use crate::message::vehicle_status as cap;
 /// Where the app's `CH_FILE` push lands. tmpfs.
 pub const STATUS_FILE: &str = "/tmp/vehicle_status";
 
-/// Refuse to parse an implausibly large file — the app's real one is a few hundred bytes.
-const MAX_STATUS_BYTES: u64 = 4096;
+/// Refuse to parse an implausibly large file. The app's real one is about 1 KB with both EV-routing
+/// models in it. Firmware before 2026-11-13 stopped at 4096, so the app keeps its file under that.
+const MAX_STATUS_BYTES: u64 = 16 * 1024;
 
 /// Read and parse [`STATUS_FILE`] (or a test path). `None` when it is absent, unreadable or too big.
 pub fn read_status_file(path: &str) -> Option<VehicleStatus> {
@@ -49,6 +55,10 @@ pub fn read_status_file(path: &str) -> Option<VehicleStatus> {
 /// | `max_wh` | MaxBatteryCharge (23) | Wh |
 /// | `percent_milli` | DisplayedBatteryPercentage (24) | % × 1000 |
 /// | `charging` | isCharging (25) | `0`/`1` |
+/// | `min_wh` | MinBatteryCharge (21) | Wh |
+/// | `charging_json` | ChargingParameter (26) | one line of JSON |
+/// | `consumption_json` | ConsumptionParameter (27) | one line of JSON |
+/// | `max_range_km` | MaxRangeElectric (30) | km |
 pub fn parse_status_text(text: &str) -> VehicleStatus {
     let mut v = VehicleStatus::default();
     for line in text.lines() {
@@ -76,10 +86,27 @@ pub fn parse_status_text(text: &str) -> VehicleStatus {
                 v.displayed_battery_percentage_milli = val.parse().ok().filter(|p| *p <= 100_000)
             }
             "charging" => v.is_charging = flag(),
+            "min_wh" => v.min_battery_charge_wh = val.parse().ok(),
+            "charging_json" => v.charging_parameter = model_json(val),
+            "consumption_json" => v.consumption_parameter = model_json(val),
+            // A full-charge range of 0 km is a missing reading, not a car.
+            "max_range_km" => v.max_range_electric_km = val.parse().ok().filter(|km| *km > 0),
             _ => {}
         }
     }
     v
+}
+
+/// An EV-routing model as the app wrote it: one JSON object on one line. Checked only as far as the
+/// box needs in order to put it in a NUL-terminated iAP2 string: printable ASCII, braces at both
+/// ends, bounded length. Whether Maps accepts what is inside is between the app and the phone.
+fn model_json(val: &str) -> Option<String> {
+    let ok = val.len() >= 2
+        && val.len() <= carplay_metadata::vehicle::MAX_MODEL_BYTES
+        && val.starts_with('{')
+        && val.ends_with('}')
+        && val.bytes().all(|b| (0x20..=0x7E).contains(&b));
+    ok.then(|| val.to_string())
 }
 
 /// The 0xA101 body for `status`, restricted to what was declared (`caps`, Identify param 21 sub ids)
@@ -99,10 +126,13 @@ pub fn build_update(status: &VehicleStatus, sel: &VehicleStatusSelection, caps: 
         range_warning_electric: status
             .range_warning_electric
             .filter(|_| has(cap::RANGE_WARNING_ELECTRIC) && sel.range_warning_electric),
+        min_battery_charge_wh: status.min_battery_charge_wh.filter(|_| ev),
         current_battery_charge_wh: status.current_battery_charge_wh.filter(|_| ev),
         max_battery_charge_wh: status.max_battery_charge_wh.filter(|_| ev),
         displayed_battery_percentage_milli: status.displayed_battery_percentage_milli.filter(|_| ev),
         is_charging: status.is_charging.filter(|_| ev),
+        charging_parameter: status.charging_parameter.clone().filter(|_| ev),
+        consumption_parameter: status.consumption_parameter.clone().filter(|_| ev),
         max_range_electric_km: status.max_range_electric_km.filter(|_| has(cap::MAX_RANGE_INFO)),
         ..Default::default()
     };
@@ -189,6 +219,73 @@ mod tests {
         assert_eq!(back.current_battery_charge_wh, None);
         assert_eq!(back.is_charging, None);
         assert!(build_update(&parse_status_text(SAMPLE), &all_selected(), &[]).is_empty());
+    }
+
+    const CHARGING: &str = "{\"model_id\":12582922,\"vehicle_parameters\":{\"efficiency_factor\":0.93}}";
+    const CONSUMPTION: &str =
+        "{\"model_id\":12582921,\"vehicle_parameters\":{\"vehicle_auxiliary_power_w\":500}}";
+
+    fn routing_sample() -> String {
+        format!("{SAMPLE}min_wh=0\nmax_range_km=540\ncharging_json={CHARGING}\nconsumption_json={CONSUMPTION}\n")
+    }
+
+    /// The four EV-routing keys parse, and the models arrive byte for byte.
+    #[test]
+    fn the_ev_routing_keys_parse() {
+        let v = parse_status_text(&routing_sample());
+        assert_eq!(v.min_battery_charge_wh, Some(0));
+        assert_eq!(v.max_range_electric_km, Some(540));
+        assert_eq!(v.charging_parameter.as_deref(), Some(CHARGING));
+        assert_eq!(v.consumption_parameter.as_deref(), Some(CONSUMPTION));
+        // The older keys are untouched by the new ones.
+        assert_eq!(v.current_battery_charge_wh, Some(52_000));
+    }
+
+    /// A model the box could not frame is dropped; so is a zero full-charge range.
+    #[test]
+    fn unframeable_models_are_dropped() {
+        for bad in ["", "{", "not json", "{\"a\":\"\u{e9}\"}", "{\"a\":\t1}", "[1,2]"] {
+            let v = parse_status_text(&format!("charging_json={bad}\nconsumption_json={bad}\n"));
+            assert_eq!(v.charging_parameter, None, "{bad:?}");
+            assert_eq!(v.consumption_parameter, None, "{bad:?}");
+        }
+        let long = format!("{{\"a\":\"{}\"}}", "x".repeat(carplay_metadata::vehicle::MAX_MODEL_BYTES));
+        assert_eq!(parse_status_text(&format!("charging_json={long}\n")).charging_parameter, None);
+        assert_eq!(parse_status_text("max_range_km=0\n").max_range_electric_km, None);
+    }
+
+    /// The models and the minimum ride ElectricChargeInfo; the full-charge range rides MaxRangeInfo.
+    #[test]
+    fn the_models_ride_electric_charge_info() {
+        let status = parse_status_text(&routing_sample());
+        let with_max: Vec<u16> = EV_CAPS.iter().copied().chain([cap::MAX_RANGE_INFO]).collect();
+        let back = parse_vehicle_status_update(&build_update(&status, &all_selected(), &with_max));
+        assert_eq!(back.min_battery_charge_wh, Some(0));
+        assert_eq!(back.charging_parameter.as_deref(), Some(CHARGING));
+        assert_eq!(back.consumption_parameter.as_deref(), Some(CONSUMPTION));
+        assert_eq!(back.max_range_electric_km, Some(540));
+
+        // Without MaxRangeInfo the range at full charge stays off the wire; the models still go.
+        let back = parse_vehicle_status_update(&build_update(&status, &all_selected(), EV_CAPS));
+        assert_eq!(back.max_range_electric_km, None);
+        assert_eq!(back.charging_parameter.as_deref(), Some(CHARGING));
+
+        // Without ElectricChargeInfo none of the EV-routing fields go.
+        let back =
+            parse_vehicle_status_update(&build_update(&status, &all_selected(), &[cap::RANGE_ELECTRIC]));
+        assert_eq!(back.min_battery_charge_wh, None);
+        assert_eq!(back.charging_parameter, None);
+        assert_eq!(back.consumption_parameter, None);
+    }
+
+    /// An older app's file (no routing keys) builds the same update as before.
+    #[test]
+    fn an_older_apps_file_sends_no_models() {
+        let back = parse_vehicle_status_update(&build_update(&parse_status_text(SAMPLE), &all_selected(), EV_CAPS));
+        assert_eq!(back.min_battery_charge_wh, None);
+        assert_eq!(back.charging_parameter, None);
+        assert_eq!(back.consumption_parameter, None);
+        assert_eq!(back.max_range_electric_km, None);
     }
 
     #[test]

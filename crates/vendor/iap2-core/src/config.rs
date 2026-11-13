@@ -66,6 +66,7 @@ pub struct IapConfigSection {
 ///     chargingConnectors:
 ///       - type: ccs2
 ///         powerWatts: 150000
+///     mapsDisplayName: "Chevrolet Equinox EV"   # sub 8; what Apple Maps calls the car
 /// ```
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct VehicleInfoConfig {
@@ -76,6 +77,10 @@ pub struct VehicleInfoConfig {
     /// Sub 10, `utf8`. Free extra found while dumping Apple's table for C-0.
     #[serde(rename = "vehicleColorHexCode", default)]
     pub vehicle_color_hex_code: Option<String>,
+    /// Sub 8, `utf8`: the car's name as Apple Maps lists it under Vehicles (T7, T21). Absent =
+    /// the sub is not emitted, which is every Identify before 2026-11-13.
+    #[serde(rename = "mapsDisplayName", default)]
+    pub maps_display_name: Option<String>,
 }
 
 /// One `chargingConnectors[]` entry: the connector enum (sub 11) plus its optional power rating,
@@ -133,6 +138,8 @@ pub struct VehicleIdentity {
     pub connectors: Vec<(u8, Option<u32>)>,
     /// Param 20 sub 10.
     pub color_hex: Option<String>,
+    /// Param 20 sub 8, `MapsDisplayName`. `None` = not emitted.
+    pub maps_display_name: Option<String>,
     /// Param 21 capability sub-ids. `None` = do not emit param 21 at all (the historical default).
     pub status_caps: Option<Vec<u16>>,
 }
@@ -151,6 +158,7 @@ impl VehicleIdentity {
             engine_types: vec![crate::spec::ident::vehicle_info::ENGINE_TYPE_GASOLINE],
             connectors: Vec::new(),
             color_hex: None,
+            maps_display_name: None,
             status_caps: None,
         }
     }
@@ -246,6 +254,28 @@ fn sanitize_color_hex(s: &str) -> Option<String> {
         if !s.trim().is_empty() {
             eprintln!(
                 "[iap2-config] vehicleColorHexCode {s:?} is not #RRGGBB — dropped (sub 10 omitted)"
+            );
+        }
+        None
+    }
+}
+
+/// The longest `mapsDisplayName` the box will put on the wire, in bytes.
+const MAX_MAPS_NAME_BYTES: usize = 64;
+
+/// Validate `mapsDisplayName` for the same reason as the colour above: it is free text landing in a
+/// NUL-terminated TLV. Trimmed, non-empty, no control characters (a NUL would end the string early
+/// on the phone), at most [`MAX_MAPS_NAME_BYTES`]. Anything else drops the sub; the name is never cut
+/// short, because half a name is not what the owner chose.
+fn sanitize_maps_name(s: &str) -> Option<String> {
+    let t = s.trim();
+    if !t.is_empty() && t.len() <= MAX_MAPS_NAME_BYTES && !t.chars().any(char::is_control) {
+        Some(t.to_string())
+    } else {
+        if !t.is_empty() {
+            eprintln!(
+                "[iap2-config] mapsDisplayName {s:?} is too long or has control characters — \
+                 dropped (sub 8 omitted)"
             );
         }
         None
@@ -350,6 +380,8 @@ impl Iap2Config {
                 .vehicle_color_hex_code
                 .as_ref()
                 .and_then(|s| sanitize_color_hex(s));
+            id.maps_display_name =
+                vi.maps_display_name.as_ref().and_then(|s| sanitize_maps_name(s));
         }
         if let Some(vs) = self.iap_config.vehicle_status.as_ref() {
             let mut caps: Vec<u16> = Vec::new();
@@ -624,6 +656,50 @@ iapConfig:
         );
     }
 
+    /// The block the GM app sends to an adapter that relays the EV-routing models
+    /// (`EvForCarPlayTest.routingBlock`, byte for byte): connector power, the Maps name, MaxRangeInfo.
+    const GM_APP_EV_ROUTING_IAPCONFIG: &str = "\
+iapConfig:
+  vehicleInfo:
+    engineTypes: [electric]
+    chargingConnectors:
+    - type: j1772
+      powerWatts: 11500
+    - type: ccs1
+      powerWatts: 150000
+    mapsDisplayName: \"Chevrolet Equinox EV\"
+  vehicleStatus:
+    capabilities: [range, outsideTemperature, rangeWarning, rangeElectric, electricChargeInfo, maxRangeInfo]
+";
+
+    #[test]
+    fn the_gm_apps_ev_routing_block_resolves() {
+        use crate::message::vehicle_status as vs;
+        use crate::spec::ident::vehicle_info as sub;
+        let c: Iap2Config = serde_yaml::from_slice(GM_APP_EV_ROUTING_IAPCONFIG.as_bytes()).unwrap();
+        let id = c.vehicle_identity();
+        assert_eq!(id.engine_types, vec![sub::ENGINE_TYPE_ELECTRIC]);
+        assert_eq!(
+            id.connectors,
+            vec![
+                (sub::SUPPORTED_CHARGING_CONNECTORS_CCS1, Some(150_000)),
+                (sub::SUPPORTED_CHARGING_CONNECTORS_J1772, Some(11_500)),
+            ]
+        );
+        assert_eq!(id.maps_display_name.as_deref(), Some("Chevrolet Equinox EV"));
+        assert_eq!(
+            id.status_caps,
+            Some(vec![
+                vs::RANGE,
+                vs::OUTSIDE_TEMPERATURE,
+                vs::RANGE_WARNING,
+                vs::RANGE_ELECTRIC,
+                vs::ELECTRIC_CHARGE_INFO,
+                vs::MAX_RANGE_INFO,
+            ])
+        );
+    }
+
     /// A document with no `iapConfig:` must resolve to the exact pre-C6 emission. This is what makes
     /// the whole workstream absent-off, and it is the config-level rollback path (docs/carplay/04_CAPABILITIES_AND_CONFIG.md): push a
     /// YAML without the block and the next Identify is byte-baseline, with no rebuild.
@@ -735,7 +811,27 @@ iapConfig:
     }
 
     /// Same cardinality rule for param 21's flags (all `[optional]`) and, for consistency, engines.
+     /// `mapsDisplayName` reaches the identity trimmed, and an unusable one drops the sub instead of
+    /// being cut short or put on the wire with a control character in it.
     #[test]
+    fn maps_display_name_is_sanitized() {
+        let name = |y: &str| -> Option<String> {
+            let c: Iap2Config = serde_yaml::from_slice(y.as_bytes()).unwrap();
+            c.vehicle_identity().maps_display_name
+        };
+        let block = |v: &str| format!("iapConfig:\n  vehicleInfo:\n    engineTypes: [electric]\n    mapsDisplayName: {v}\n");
+        assert_eq!(name(&block("\"  Chevrolet Equinox EV \"")).as_deref(), Some("Chevrolet Equinox EV"));
+        assert_eq!(name(&block("\"\"")), None);
+        assert_eq!(name(&block("\"Equinox\\0EV\"")), None, "a NUL would end the string early on the phone");
+        assert_eq!(name(&block(&format!("\"{}\"", "x".repeat(MAX_MAPS_NAME_BYTES + 1)))), None);
+        // Absent key: no sub 8, and the rest of the identity is unaffected.
+        let c: Iap2Config =
+            serde_yaml::from_slice(b"iapConfig:\n  vehicleInfo:\n    engineTypes: [electric]\n").unwrap();
+        assert_eq!(c.vehicle_identity().maps_display_name, None);
+        assert!(VehicleIdentity::baseline().maps_display_name.is_none());
+    }
+
+   #[test]
     fn duplicate_capabilities_and_engines_are_deduped() {
         use crate::message::vehicle_status as vs;
         use crate::spec::ident::vehicle_info as sub;

@@ -24,9 +24,13 @@ import wasidremin.gmccpa.telemetry.InsightsData as P
  *    the reading changed, pushes it to the adapter's `/tmp/vehicle_status` over `CH_FILE`. The
  *    adapter forwards it as `VehicleStatusUpdate` once the iPhone subscribes.
  *
- * Off by default. The Identify change has not yet been accepted by a phone, and a rejected Identify
- * costs that session its now-playing, cluster turn-by-turn and call metadata (CarPlay itself keeps
- * running). Turning it off takes effect at the next connect.
+ * **Charging stops in Apple Maps** need two more things in that update, the charging and
+ * consumption models ([EvRoutingModel]). Only adapter firmware from 2026-11-13 relays them, and it
+ * says so in its info (`"ev_models":true`). [iapConfigYaml] is told at each connect; with an older
+ * adapter the Identify and the status file are exactly what they were before.
+ *
+ * Off by default. A rejected Identify costs that session its now-playing, cluster turn-by-turn and
+ * call metadata (CarPlay itself keeps running). Turning it off takes effect at the next connect.
  *
  * Every Car API touch is wrapped: a missing property is left out of the file, never sent as zero, and
  * a failure here can never reach the CarPlay session.
@@ -49,6 +53,14 @@ object CarPlayEv {
     private var pushedText: String? = null
     private var lastVerdict: String? = null
 
+    /** Whether this connect's adapter relays the EV-routing models. Set by [iapConfigYaml]. */
+    @Volatile private var routing = false
+    /** How long a model input holds before it may change again; Maps re-plans when the models change. */
+    private const val HOLD_MS = 60_000L
+    private val capacityHold = EvRoutingModel.IntHold(HOLD_MS)
+    private val auxHold = EvRoutingModel.IntHold(HOLD_MS)
+    private val fullRangeHold = EvRoutingModel.IntHold(HOLD_MS)
+
     fun load(ctx: Context) {
         enabled = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
         if (enabled) start(ctx)
@@ -61,16 +73,28 @@ object CarPlayEv {
         if (on) start(ctx) else stop()
     }
 
-    fun statusText(ctx: Context): String =
-        if (enabled) "On. Tells CarPlay the car is electric and sends battery and range. Takes effect at the next connect; turn off if now-playing or cluster directions stop working."
-        else "Off. Tells CarPlay the car is electric and shares battery and range with Apple Maps. Beta; takes effect at the next connect."
+    fun statusText(ctx: Context): String = when {
+        !enabled -> "Off. Tells CarPlay the car is electric and shares battery and range with Apple Maps. Beta; takes effect at the next connect."
+        routing -> "On, with charging stops. To add the car: forget the adapter on the iPhone, pair again, then Apple Maps ▸ your picture ▸ Vehicles. Turn off if now-playing or cluster directions stop working."
+        else -> "On. Tells CarPlay the car is electric and sends battery and range. Charging stops in Apple Maps need newer adapter firmware. Turn off if now-playing or cluster directions stop working."
+    }
 
-    /** The subscribe-document block, or "" when off. Reads the car's connectors once per call. */
-    fun iapConfigYaml(ctx: Context): String {
+    /**
+     * The subscribe-document block, or "" when off. Reads the car's connectors once per call.
+     * [adapterRelaysModels] is the adapter's own word (`"ev_models":true` in its info) and decides
+     * for this whole connect whether the EV-routing fields are sent.
+     */
+    fun iapConfigYaml(ctx: Context, adapterRelaysModels: Boolean): String {
         if (!enabled) return ""
+        routing = adapterRelaysModels
         val connectors = EvForCarPlay.connectorNames(readConnectors(ctx))
-        log.i("EV identity for CarPlay: engine=electric connectors=$connectors")
-        return EvForCarPlay.iapConfigYaml(connectors)
+        if (!routing) {
+            log.i("EV identity for CarPlay: engine=electric connectors=$connectors; this adapter's firmware does not relay the EV-routing models, so Apple Maps plans no charging stops")
+            return EvForCarPlay.iapConfigYaml(connectors)
+        }
+        val name = EvRoutingModel.mapsName(readText(ctx, VehiclePropertyIds.INFO_MAKE), readText(ctx, VehiclePropertyIds.INFO_MODEL))
+        log.i("EV identity for CarPlay: engine=electric connectors=$connectors, with the EV-routing models; Apple Maps name \"$name\"")
+        return EvForCarPlay.iapConfigYaml(connectors, routing = true, mapsName = name)
     }
 
     @Synchronized fun start(ctx: Context) {
@@ -91,17 +115,32 @@ object CarPlayEv {
         // The client outlives a dead link: on 2026-11-04 the 228 process, its link aborted the night
         // before, logged 115 failed pushes in 29 min.
         val client = AdapterSession.client?.takeIf { it.subscribed } ?: return
-        val text = EvForCarPlay.statusText(sample(ctx))
+        val s = sample(ctx)
+        val text = EvForCarPlay.statusText(s, if (routing) routingFor(s) else null)
         if (text.isEmpty()) return
         if (client === pushedTo && text == pushedText) return
         val ok = runCatching { client.filePush(STATUS_PATH, text.toByteArray(Charsets.UTF_8), 420) }.getOrDefault(false)
         if (ok) {
-            if (client !== pushedTo) log.i("EV status pushed to the adapter: ${text.trim().replace('\n', ' ')}")
+            if (client !== pushedTo) log.i("EV status pushed to the adapter: ${EvForCarPlay.logLine(text)}")
             pushedTo = client
             pushedText = text
         } else {
             log.w("EV status push to $STATUS_PATH failed — retrying in ${PERIOD_S}s")
         }
+    }
+
+    /**
+     * The EV-routing half of the status file. Capacity, auxiliary power and full-charge range each
+     * hold for [HOLD_MS] once sent, so the models change at most once a minute.
+     */
+    private fun routingFor(s: EvForCarPlay.Sample): EvForCarPlay.Routing {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val capacity = capacityHold.value(EvRoutingModel.capacityFor(s.capacityWh), now)
+        val aux = auxHold.value(EvRoutingModel.auxWatts(s.outsideC), now)
+        // A pack too empty to scale from keeps the last figure it gave.
+        val full = EvRoutingModel.fullRangeKm(s.rangeMeters, s.batteryWh, s.capacityWh)
+            ?.let { fullRangeHold.value(it, now) } ?: fullRangeHold.current
+        return EvForCarPlay.Routing(EvRoutingModel.chargingJson(capacity), EvRoutingModel.consumptionJson(aux), full)
     }
 
     /** Shared by the feeder thread and the subscribe thread ([iapConfigYaml]). */
@@ -151,6 +190,10 @@ object CarPlayEv {
         v?.takeIf { it.status == 0 }?.value?.map { (it as Number).toInt() }?.toIntArray()
     }.onFailure { log.w("INFO_EV_CONNECTOR_TYPE unreadable (${it.javaClass.simpleName}) — using the Equinox EV's J1772 + CCS1") }
         .getOrNull()
+
+    private fun readText(ctx: Context, id: Int): String? = runCatching {
+        props(ctx).getProperty(String::class.java, id, 0)?.takeIf { it.status == 0 }?.value
+    }.getOrNull()
 
     /** Log a source summary once per change, not every tick. */
     private fun verdict(v: String) {

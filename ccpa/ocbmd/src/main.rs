@@ -3709,6 +3709,8 @@ impl Daemon {
         self.bt.request_ssp();
         // In btd's connect order. `phone_order` tells the app this box takes MGMT_CONNECT_DEVICE
         // and MGMT_SET_ORDER; an older box leaves it out and the app hides those controls.
+        // `ev_models` tells it this box relays the EV-routing models and the Maps display name
+        // (T7, 2026-11-13); without it the app sends the Identify and status file it always did.
         let devs = ordered_bonds(bonded_macs(), &policy_order(&read_trim(BT_POLICY_FILE)))
             .iter()
             .map(|m| format!("\"{m}\""))
@@ -3720,7 +3722,8 @@ impl Daemon {
              \"rootfs_free_kb\":{rt_free},\"ssp\":{ssp},\"hci_up\":{hci_up},\"wlan_ap\":{ap},\
              \"transport\":\"{transport}\",\"host_present\":{host},\"phone_present\":{phone},\
              \"daemons\":{{\"ocbmd\":{d0},\"iap2d\":{d1},\"airplayd\":{d2},\"carplay_wireless\":{d3}}},\
-             \"host_name\":\"{host_name}\",\"phone_order\":true,\"devices\":[{devs}]}}",
+             \"host_name\":\"{host_name}\",\"phone_order\":true,\"ev_models\":true,\
+             \"devices\":[{devs}]}}",
             ser = json_escape(&serial),
             host_name = json_escape(self.host_name.as_deref().unwrap_or("")),
             ap = procs[4],

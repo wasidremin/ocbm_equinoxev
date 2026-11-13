@@ -14,14 +14,19 @@ import kotlin.math.roundToLong
 object EvForCarPlay {
     /**
      * Apple's VehicleStatusComponent capabilities we can source from this car (Identify param 21).
-     * ElectricChargeInfo covers the battery-energy, percentage and charging fields. MaxRangeInfo is
-     * left out: the car reports range now, not range at full charge. Only the unified rangeWarning:
-     * Apple's spec forbids declaring it together with a per-engine rangeWarning*, and the box drops
-     * the per-engine one if both arrive.
+     * ElectricChargeInfo covers the battery-energy, percentage and charging fields, and the two
+     * EV-routing models. Only the unified rangeWarning: Apple's spec forbids declaring it together
+     * with a per-engine rangeWarning*, and the box drops the per-engine one if both arrive.
      */
     val CAPABILITIES = listOf(
         "range", "outsideTemperature", "rangeWarning", "rangeElectric", "electricChargeInfo",
     )
+
+    /**
+     * Added when the adapter relays the EV-routing models: range at full charge, which
+     * [EvRoutingModel.fullRangeKm] works out from the car's range and how full the pack is.
+     */
+    const val ROUTING_CAPABILITY = "maxRangeInfo"
 
     /** North-American Equinox EV ports, used when the car does not report INFO_EV_CONNECTOR_TYPE. */
     val FALLBACK_CONNECTORS = listOf("j1772", "ccs1")
@@ -51,16 +56,29 @@ object EvForCarPlay {
         return names.ifEmpty { FALLBACK_CONNECTORS }
     }
 
-    /** The `iapConfig:` block, appended to the adapter's subscribe document. Ends with a newline. */
-    fun iapConfigYaml(connectors: List<String>): String = buildString {
-        append("iapConfig:\n")
-        append("  vehicleInfo:\n")
-        append("    engineTypes: [electric]\n")
-        append("    chargingConnectors:\n")
-        for (c in connectors) append("    - type: ").append(c).append('\n')
-        append("  vehicleStatus:\n")
-        append("    capabilities: [").append(CAPABILITIES.joinToString(", ")).append("]\n")
-    }
+    /**
+     * The `iapConfig:` block, appended to the adapter's subscribe document. Ends with a newline.
+     *
+     * With [routing] off this is byte for byte the block every build since 223 has sent. With it
+     * on, for an adapter that relays the EV-routing models, each connector carries its peak power,
+     * the car gets the name Apple Maps lists it under, and range at full charge is declared.
+     * [mapsName] must already be safe inside double quotes ([EvRoutingModel.mapsName]).
+     */
+    fun iapConfigYaml(connectors: List<String>, routing: Boolean = false, mapsName: String? = null): String =
+        buildString {
+            append("iapConfig:\n")
+            append("  vehicleInfo:\n")
+            append("    engineTypes: [electric]\n")
+            append("    chargingConnectors:\n")
+            for (c in connectors) {
+                append("    - type: ").append(c).append('\n')
+                if (routing) append("      powerWatts: ").append(EvRoutingModel.connectorWatts(c)).append('\n')
+            }
+            if (routing && mapsName != null) append("    mapsDisplayName: \"").append(mapsName).append("\"\n")
+            append("  vehicleStatus:\n")
+            val caps = if (routing) CAPABILITIES + ROUTING_CAPABILITY else CAPABILITIES
+            append("    capabilities: [").append(caps.joinToString(", ")).append("]\n")
+        }
 
     /**
      * One reading of the car's own properties. Null means the car did not answer for that one; it is
@@ -76,11 +94,45 @@ object EvForCarPlay {
     )
 
     /**
+     * What Apple Maps needs on top of a [Sample] to plan charging: the two models as one line of
+     * JSON each ([EvRoutingModel]), and range at full charge when it is known.
+     */
+    data class Routing(val chargingJson: String, val consumptionJson: String, val fullRangeKm: Int?)
+
+    /**
+     * Adapter firmware before 2026-11-13 ignores a status file larger than this, so the file stays
+     * under it whatever the adapter is.
+     */
+    const val MAX_STATUS_BYTES = 4096
+
+    /**
      * The status file, `key=value` per line, in the units `iap2_core::vehicle_status` expects.
      * Percentage is rounded to 0.1 % and energy to 10 Wh so the file changes only when something
-     * the driver could notice changes.
+     * the driver could notice changes. [routing] adds the four EV-routing keys; it is left out, whole,
+     * if it would take the file past [MAX_STATUS_BYTES] or a model is not one printable line.
      */
-    fun statusText(s: Sample): String = buildString {
+    fun statusText(s: Sample, routing: Routing? = null): String {
+        val base = baseText(s)
+        if (routing == null || base.isEmpty()) return base
+        val models = listOf(routing.chargingJson, routing.consumptionJson)
+        if (models.any { m -> m.length < 2 || m.any { it !in ' '..'~' } }) return base
+        val full = buildString {
+            append(base)
+            append("min_wh=0\n")
+            routing.fullRangeKm?.takeIf { it in 1..65_535 }?.let { append("max_range_km=").append(it).append('\n') }
+            append("charging_json=").append(routing.chargingJson).append('\n')
+            append("consumption_json=").append(routing.consumptionJson).append('\n')
+        }
+        return if (full.length < MAX_STATUS_BYTES) full else base
+    }
+
+    /** [text] for the log: the models are a kilobyte that never changes in a drive, so by length. */
+    fun logLine(text: String): String = text.trim().lineSequence().joinToString(" ") { line ->
+        val key = line.substringBefore('=')
+        if (key.endsWith("_json")) "$key=<${line.length - key.length - 1} B>" else line
+    }
+
+    private fun baseText(s: Sample): String = buildString {
         s.rangeMeters?.takeIf { it.isFinite() && it >= 0f }?.let {
             val km = (it / 1000f).roundToInt()
             if (km <= 65_535) append("range_km=").append(km).append('\n')

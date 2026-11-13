@@ -26,6 +26,13 @@ exposes the driver display to an ordinary app, and how GM's cluster page events 
 back. The GM app's driver-display window, page-return handling and default directions area were
 written here from that description; none of its code is used.
 
+**egmp-carplay-ev-routing** (github.com/isaacwisdom/egmp-carplay-ev-routing, GPL-3.0-or-later) and
+**evmaps** (github.com/augard/evmaps, no licence stated) — between them showed that Apple Maps
+plans charging stops once a CarPlay accessory sends a charging and a consumption model, and
+documented the shape of those two JSON documents and the model ids Maps accepts. The adapter's
+relay and the app's models for the Equinox EV were written here from those facts; none of their
+code or vehicle data is used.
+
 **lrclib.net** — a public lyrics service the app queries at run time when "Look up lyrics" is on.
 No lyrics are stored in this repository.
 

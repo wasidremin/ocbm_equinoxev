@@ -1232,7 +1232,7 @@ class OcbmProbe(context: Context) {
                 physicalWidthMm = VideoFrame.physicalWidthMm,
                 physicalHeightMm = VideoFrame.physicalHeightMm,
                 // Not in defaultAdapterDocument: the structural fallback stays the proven document.
-                iapConfig = wasidremin.gmccpa.ev.CarPlayEv.iapConfigYaml(ctx),
+                iapConfig = wasidremin.gmccpa.ev.CarPlayEv.iapConfigYaml(ctx, evModelsOnAdapter(c)),
                 viewArea2 = splitArea,
                 viewArea2Initial = wasidremin.gmccpa.pane.SplitPane.wantShown(ctx),
                 viewAreaAnimMs = wasidremin.gmccpa.pane.SplitPane.TRANSITION_MS,
@@ -1358,6 +1358,16 @@ class OcbmProbe(context: Context) {
             sink("STEP 2 OK — the MFi relay works. This is the keystone of the whole architecture.")
         }
         return out
+    }
+
+    /**
+     * Whether this adapter relays the EV-routing models to the iPhone (firmware from 2026-11-13 says
+     * `"ev_models":true` in its info). Asked only when the EV setting is on; an adapter that does not
+     * answer counts as an older one, and the connect goes on with the Identify it always had.
+     */
+    private fun evModelsOnAdapter(c: OcbmClient): Boolean {
+        if (!wasidremin.gmccpa.ev.CarPlayEv.enabled) return false
+        return c.mgmtGetInfo(1_500)?.contains("\"ev_models\":true") == true
     }
 
     /**
