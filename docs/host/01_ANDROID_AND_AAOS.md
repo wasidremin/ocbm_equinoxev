@@ -422,6 +422,60 @@ What the app does instead (`av/WheelCall.kt`, versionCode 233):
   during a ring shows as `CarPlay screen lost window focus while a call rings`, followed by the car's
   dialer.
 
+### The steering-wheel voice button starts Siri (T14: raised 2026-10-26, works on the car since 2026-10-27)
+
+> Moved here from `docs/ops/08_FUTURE_TASKS.md` T14 on 2026-11-12, when the task was done. References
+> to "T14" elsewhere mean this section.
+
+**Why.** The owner keeps the iPhone off the car's own Bluetooth, because the car then takes the
+calls. On AAOS the wheel's push-to-talk is routed by `CarInputService`:
+- A short press goes to the selected digital assistant.
+- A long press goes to projection receivers (system-only), then a Bluetooth phone, then the
+  assistant (source.android.com automotive voice "Integration flows").
+
+With no Bluetooth phone, both presses end at the assistant, which is Google Assistant.
+
+**State.** The app declares itself an assistant candidate (`voice/SiriAssistant.kt`, ported from
+`host/CarlinkAndroid/.../voice/`, emulator-proven there). It is inert until the driver picks it under
+Settings ▸ Apps ▸ Default apps. Selected, a press reaches `SiriAssistantSession.onShow`, which sends
+the same Siri press/release pair as the sidebar button. Settings ▸ Voice shows the state and a Choose
+button when the car has a picker.
+
+At every start the app logs
+`voice: assistant role available=… heldByUs=… current=… picker=…`. That line answers whether GM
+exposes the choice at all; the VCU has no adb to set it otherwise. Cost of selecting: Google
+Assistant ("Hey Google", car voice commands) is off, and the default `SpeechRecognizer` is a stub
+that refuses.
+
+**Car result (2026-10-27, versionCode 220).**
+- **The picker exists.** The log shows
+  `picker=com.android.car.settings/…AssistantAndVoiceSettingsActivity`, `current=com.google.android.carassistant`.
+- **Selection works.** At 11:05:21 the app logged "selected as the car's assistant".
+- **The button works.** Four wheel presses each logged `wheel button (assistant session,
+  flags=0x23) -> Siri press sent=true`. Each time, iOS opened the `speechRecognition` input stream
+  and Siri spoke.
+- **Siri heard nothing.** Holding the role makes Android silence the app's `VOICE_COMMUNICATION`
+  mic: zeros, with no error. See `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
+
+The fix records with `VOICE_RECOGNITION` while the role is held.
+
+**Car result (2026-10-27 evening, versionCode 221).** Siri heard the driver. The 21:28:50 Siri turn
+logged `capture #2 heard: VOICE_RECOGNITION peak 5746 (-15 dBFS), 5/266 chunks all-zero,
+silenced=false`, and placed the call that followed. The two calls also captured real speech
+(`peak 9541 (-11 dBFS)` and `peak 12633 (-8 dBFS)`). The owner confirms the far end heard them on
+the first call.
+
+**Done means.** The `voice:` line shows a picker, GM CCPA can be selected, and a wheel press during
+CarPlay logs `voice: wheel button … -> Siri press sent=true` and brings up Siri. Siri hears the
+request: `capture #N heard: VOICE_RECOGNITION …` shows a real peak, with no all-zero `E`. All of it
+was met on 2026-10-27. One question remains open: whether calls echo for the far end while the role
+is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on that drive.
+
+**Answering calls (233, 2026-11-06).** The wheel's answer rocker cannot reach a Play app; stock AAOS
+opens the car's dialer with it (`docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key").
+So while a CarPlay call rings, this button answers it instead of starting Siri
+(`voice button (…) while a call rings -> answer sent=true`). Unverified on the car.
+
 ## GM AAOS USB permission handler
 
 <!-- absorbed: ../host/01_ANDROID_AND_AAOS.md -->

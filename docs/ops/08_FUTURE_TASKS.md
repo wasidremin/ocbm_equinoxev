@@ -8,6 +8,21 @@ Owner-directed work items that are neither an open defect nor a verification gap
 state it starts from and what "done" means. When a task lands, replace its body with a one-line
 pointer to the doc that now owns the result — do not leave a stale plan beside a shipped feature.
 
+**Where each task stands (2026-11-12).**
+
+| Task | State |
+|---|---|
+| T6 Car GPS into Maps | Open, not started |
+| T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing. Next: the iPhone's log (path forward in T7) |
+| T8 MainBuffered audio, phase B | Open, not started |
+| T9 UI context | Open, not started (the app reads the screen instead; see doc 14 §16) |
+| T10 Focus transfer | Open, not started |
+| T11 Enhanced Siri | Open, not started; needs T8 first |
+| T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
+| T13 Cluster turn-by-turn | **Done**, moved to `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16 |
+| T14 Voice button starts Siri | **Done**, moved to `docs/host/01_ANDROID_AND_AAOS.md` |
+| T15 No Allow tap (USB bridge) | Built; **blocked**: the Equinox cannot install a sideloaded app |
+
 **CarPlay SDK plan (2026-09-22):** T6–T11 are the Communication Plug-in features this tree will
 implement itself. The measured session of 2026-08-02 already negotiated `hevc`, `altScreen`,
 `viewAreas`, `cornerMasks`, `iAPChannel`, and `sessionManagement`
@@ -137,6 +152,24 @@ wrong because of it. It does not explain the missing battery reading. Confirmed 
 Still to see:
 - whether Apple Maps shows the battery or EV routing anywhere (nothing on 2026-11-03).
 
+**Path forward (agreed with the owner 2026-11-12): find out why before building more.** The phone
+accepts everything sent; only the iPhone can say what Maps does with it, and that needs no Mac.
+1. *Two-minute check.* Apple Maps on the iPhone ▸ profile ▸ Vehicles: does the car appear? In
+   DiPlay #1098 Maps listed only the genuine Mach-E, never the replayed one.
+2. *One drive with the iPhone's own log.* Install Apple's "CarPlay" and "iAP" logging profiles on
+   the iPhone from Safari (developer.apple.com/bug-reporting/profiles-and-logs, Apple ID sign-in;
+   some need a restart), drive an Apple Maps route long enough that charge on arrival matters, and
+   capture either live (`idevicesyslog` on a Linux laptop over USB while wireless CarPlay runs) or
+   afterwards (a sysdiagnose on the iPhone, shared to the server and read with Mandiant's
+   `macos-UnifiedLogs` parser, github.com/mandiant/macos-UnifiedLogs; tested mostly on older OS
+   versions, so iOS 27 logs may have gaps).
+3. *Then, by what the log says.* The car or accessory is not an approved maker: stop and move this
+   to "Closed by decision"; the app's own turn card already shows the battery on arrival. Maps wants
+   the two models (ids 26/27): get a real capture from a partner car (the same steps in a Mach-E or a
+   Porsche, asked of the XDA thread) and fill them from the drive log. A smaller field is missing
+   (`MaxRangeElectric`, `ActiveConnector`, a vehicle name): about a day's work plus an adapter
+   reflash, since `carplayd` builds the update.
+
 **Done means.** With the setting on, the box log shows `Identify carries the app-pushed vehicle
 identity`, then `RX 0xA100 StartVehicleStatusUpdates` and `TX 0xA101 VehicleStatusUpdate`, with
 no `0x1D03`; and now-playing and cluster turn-by-turn still work.
@@ -212,7 +245,7 @@ Split, when this is picked up:
 **Done means.** With the toggle on, a wake word on the car mic starts Siri, the reply plays on
 AuxOut, and media keeps running. With the toggle off, button Siri is unchanged.
 
-## T12. GM app: pick which iPhone connects, and in what order (raised 2026-10-25; BUILT 2026-11-05, needs an adapter reflash)
+## T12. GM app: pick which iPhone connects, and in what order (raised 2026-10-25; BUILT 2026-11-05; on the car since 2026-11-11, not yet used)
 
 **Why.** The Carlink app let the driver choose among paired phones (targeted
 `AutoConnect_By_BtAddress`) and set who connects first. With two iPhones in the car, the GM app
@@ -262,260 +295,28 @@ on the other one moves CarPlay to it. Both survive an adapter reboot.
   Reaching the car needs `tools/ocbm_install.sh --full` (ocbmd and btd); the app side is in 232
   (published 2026-11-06).
 
-## T13. GM app: CarPlay turn-by-turn in the instrument cluster (raised 2026-10-26; WORKS on the car 2026-10-27)
+**On the car (checked 2026-11-12).** The adapter has the firmware: from 2026-11-11 18:32 UTC every
+`MGMT_INFO` in the car's uploads carries `"phone_order":true`, two iPhones are bonded, and the app
+logs `phones: 2 paired, … choose=true`, so Settings ▸ CarPlay ▸ Phones shows ↑/↓ and Connect. No
+upload yet has an order change or a Connect, so "Done means" is still unchecked: reorder the two
+phones, then try Connect on the one not connected, with both in the car.
 
-**Why.** Apple Maps' next turn, distance and ETA belong in the Equinox cluster. The box already
-delivers them: the Proven tier declares and subscribes iAP2 route guidance (`features.rs`), and
-`metadata.rs` emits `routeGuidance` (`0x5201`) and `maneuver` (`0x5202`) JSON on `:9004`. Until
-2026-10-26 the app dropped both (`ignoredKinds=60 lastIgnored=routeGuidance`,
-`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.8).
+## T13. GM app: CarPlay turn-by-turn in the instrument cluster — DONE (works on the car since 2026-10-27)
 
-**How (app-only, no adapter change).** The only third-party route into a GM cluster is the Car App
-Library: a navigation `CarAppService` calls `NavigationManager.updateTrip()`. The Templates Host,
-which holds the privileged `CAR_NAVIGATION_MANAGER`, forwards it to CarService, GM's VMSPlugin and
-the cluster. On the VCU, VMSPlugin forwards only the maneuver TYPE enum and the cluster draws GM's
-own glyph (lvalen91 `gminfo_resources` `projection/cluster_navigation.md`, firmware-verified on a
-CT5). Ported from lvalen91/carlink (Unlicense): the maneuver table, the trip shape and the
-primary-session logic. Code: `host/gm_ccpa/netprobe_app/app/src/main/java/wasidremin/gmccpa/nav/`
-(`RouteGuidance` merge, `ClusterNav` toggle and bootstrap) and `app/src/carapp/` (Gradle builds only,
-since `tools/build_apk.sh` has no AndroidX). It is off by default, under Settings ▸ Navigation.
-The Templates Host binds only after the app launches a hidden `CarAppActivity`, so the first route
-after the app starts flashes the screen for about a second.
+Moved to `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16: the Car App Library route, the album art in
+the cluster, the car results and the cases of missing art. The driver-display route that followed
+(CarPlay's own cluster map with the app's cards, Play 236 onward) is `04_OPEN_ITEMS.md` "CarPlay map
+on the driver display". Still open from this task: `0x5200` selectors 4–5, so the time zone and EV
+fields of route guidance arrive (adapter firmware; `docs/carplay/03_SDK_GROUND_TRUTH.md` selector gap).
 
-**Verify on a drive.** Turn it on, start an Apple Maps route, then grep the capture for `nav:`.
-Expect, in order:
-1. `nav: route state - -> 1`;
-2. `nav: bootstrap — launched CarAppActivity`;
-3. `nav: session bound`;
-4. `nav: navigationStarted`;
-5. `nav: updateTrip #1 … -> TYPE n`.
+## T14. GM app: the steering-wheel voice button starts Siri — DONE (works on the car since 2026-10-27, versionCode 221)
 
-Then check the cluster's turn view.
+Moved to `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel voice button starts Siri". Still
+open from it, tracked in `04_OPEN_ITEMS.md`: whether calls echo for the far end while the app holds
+the assistant role, and the voice button answering a ringing call (built in 233, never yet seen in a
+car log).
 
-These lines mean something specific when they appear:
-- `EXPECTED-MISSING session` means the host never bound. Read the `CarApp.*` lines for the reason,
-  for example a validator rejection.
-- `host stopped navigation` means another navigation app took the cluster.
-
-The beat line now reads `nav=N`.
-
-**Car result (2026-10-27, versionCode 220).** The owner reports the cluster shows the turns. In the
-log, the toggle went on with a route already running (11:03:09). The bootstrap launched
-`CarAppActivity`, the host bound a session 0.5 s later, and `navigationStarted` and `updateTrip #1`
-followed. MainActivity was back in front at +1.1 s. `updateTrip` then ran at about 1 Hz through two
-reroutes. The owner confirms (2026-11-02) that the cluster clears when a route ends: the album art
-comes back immediately, and it shows whenever no route is running.
-
-**Album art in the cluster while full-screen Maps is in front (owner's idea 2026-11-02; built
-2026-11-04, published in 230 on 2026-11-05, works on the car 2026-11-05 with misreads, fixed in
-231 the same day).** While full-screen Maps is in front, the
-cluster shows the album art instead of the turns, and the turns come back when Maps leaves. The
-Dashboard counts as "not Maps" (it shows a turn card of its own), so turns stay in the cluster
-there. Settings ▸ Navigation ▸ "Album art while Maps is on screen" is on by default.
-- **Cluster half.** `ClusterNavSession.render` ends navigation while `ClusterNav.mapsInFront`. The
-  cluster clears at once on `navigationEnded()` (owner-confirmed 2026-11-02). When Maps leaves,
-  the next render calls `navigationStarted()` and `updateTrip`, since route records keep arriving
-  either way.
-- **Knowing Maps is in front.** No CarPlay message the app reads says which app is on screen (T9's
-  UI context is unbuilt, and doc 03 §9 lists `changeUIContext` as accessory→iPhone only). So
-  `av/MapsWatch` reads the screen every 2.5 s, only while a route is up, a cluster session is bound
-  and CarPlay is on screen. It skips a read while the vision launcher is busy, since both use the
-  same frame buffer. Each read grabs one frame and runs `ScreenModel.mapsCard`, which looks for
-  Maps' turn card: a flat dark panel top left, right of the strip, with clear left, right and top
-  edges. A read costs about 50 ms of one background thread, like a launcher frame (2026-11-02). The
-  card check itself takes under 1 ms. The cluster switches only after two reads in a row agree (`MapsAgreement`), so
-  a glance at another app does not make it flicker. A successful top-bar launch switches at once.
-  The log reads `nav: full-screen Apple Maps is in front …` or `… not in front …`, with the card
-  evidence.
-- **The rule was set on local captures** (never committed, since they show where the car was).
-  Dusk: 2026-11-03 22:46–22:48 UTC, full-screen Maps twice (once with the route panel open) and the
-  Dashboard once. Daylight: 2026-11-04 12:19 UTC, full-screen Maps and the Dashboard, which had a
-  third card (calendar), so its layout is not fixed. The card sat at x 152–788, y 16–231 of the
-  2470x960 frame at 0.951x. Its background was 0.10 at dusk and 0.24 in daylight. On the nine
-  iOS 27.2 frames at that size, the three full-screen guidance frames passed and the six others
-  (Dashboards, Spotify, Maps with no route) failed. That held for scales 0.92–0.98, with the right
-  edge searched ±5 px. No other screen scored above 0.35 on that edge; passing needs 0.7.
-  `MapsCardTest` pins the rule on synthetic frames.
-- **On the car (230, 2026-11-05 morning, daylight).** The first read (12:19:18) was the Dashboard
-  and found no card. A top-bar launch of Maps switched the cluster to the art at 12:19:26, and a
-  top-bar launch of Spotify switched it back at 12:29:12. In between, the cluster went back to the
-  turns three times while Maps stayed in front: 12:21:27–12:21:42, 12:27:14–12:27:19 and
-  12:27:24–12:27:31. Nothing could have changed the app. The adapter numbers every touch it sends
-  the phone, and the count went from #2 (the Maps launch, 12:19:24) to #3 (the Spotify launch,
-  12:29:11). Each losing read still saw the card's tone (0.25), a flat interior (0.76–0.83 against
-  0.85–0.91 when found) and its top edge. It missed one side edge: right 0.50 at 12:21:27, then left
-  0.35 and 0.00. Why that side failed is not known yet. A moved card, something drawn on the edge,
-  or a neighbour in the card's tone would each do it.
-- **Fix (231, 2026-11-05, unverified on the car).** Only input sent to the phone changes the app it shows. Every touch,
-  telephony key, command (Siri) and nav key now stamps `MapsWatch.noteInput` in `AdapterSession`.
-  While Maps is in front and nothing was sent since the card was last seen (or up to 3 s before),
-  a lost card needs 8 reads (20 s) instead of 2 (`readsToAgree`). "Hey Siri" can still change the app
-  without input and waits out the 20 s. Each read that loses the card while Maps is in front is
-  logged with `ScreenModel.mapsCardEdges`. For each side, that shows how much of the inside is off
-  the card's tone, how much of the outside is on it, and the best score within ±5 px with its
-  offset. The next misread will show which of the three it is.
-- **Not covered.** Maps with a panel over the turn card reads as "not Maps", which keeps the
-  turns: the safe side. So would a light turn card, if iOS ever drew one.
-- **A cheaper signal may exist (found 2026-11-04).** `RouteGuidanceUpdate` (0x5201) has param 15
-  `RouteGuidanceVisibleInApp` (bool). Box firmware built after 2026-11-04 forwards it
-  (`metadata::route_guidance`), and the app logs it as `nav: iOS says route guidance visible in
-  app=N`, with the screen reading next to it. It reaches the car only after the adapter is
-  reflashed on the bench (`ocbm_install.sh --full`). If iOS sends it and it agrees with the screen
-  reading, it can replace the screen reading.
-
-**Watch (2026-10-27 evening, versionCode 221): the cluster went without album art for a while.**
-The owner reports that title and artist showed the whole time, with only the artwork missing.
-The artwork came back when they switched playlists. The navigation toggle was not touched. The
-app side is unchanged. Every track still publishes a 300×300 bitmap under both `ALBUM_ART` and
-`ART` (`card: metadata "Mexico" art=300x300 …`), the same as before T13. The cluster's own process
-(`com.gm.rhmi`) is not in an `OWN_PROCESS` capture. The earlier suspect was stale navigation state
-left by the morning route, which the 11:40 update cut off before `navigationEnded`. It is unlikely
-now, since a playlist change would not clear it. One lead, unproven: each track change publishes
-twice. A first `art=none` publish goes out under the new `queueId`, then the art follows 20–80 ms
-later. A consumer that latches the first publish for a queue item would miss the art until the next
-track.
-
-**Recurred 2026-10-29 morning (versionCode 225): "the cluster image isn't always showing up".**
-Again the session's last card for every track had a 300×300 bitmap. Each of 12 track changes went
-out as `art=none` twice and then the art, 25–115 ms after the title. Three Spotify tracks were worse
-("the cure" 11:36:13, "Choosin' Texas" 11:41:11, "So Easy" 11:45:04): an identical 18,307 B stand-in
-cover came first, then a new art id about 540 ms later and the real cover 20–70 ms after that. So
-those cards went picture, none, picture within 0.6 s. The owner restarted the session from the app
-20 s after the third of these (11:45:24). The cluster's own process is still not in the capture, so
-which publish it missed is unproven.
-**Again 2026-10-30 morning, still versionCode 225** (the change below had not shipped). Every title
-change went out as `art=none` twice, then the art 25–124 ms after the title. Two were the stand-in
-kind: "Choosin' Texas" took the 18,307 B cover at 11:01:45, 0.5 s before "Angel Of My Dreams"
-replaced it, and "I Just Might" (11:05:39) showed the stand-in for 1.5 s before its real cover. The
-owner restarted the session from the app twice (11:03:18, 11:04:45). Neither restart could help: each
-replayed "Angel Of My Dreams" as none, none, picture within 56 ms. So the missing art is not stale
-cluster state that a restart clears; it follows each title that reaches the car without its picture.
-*Change (versionCode 226, 2026-10-30):* `CarPlayMediaBrowserService` holds a card with no picture for up to 500 ms
-while one may be coming (`holdForArt`): a new title ahead of its JPEG, or the same title whose art id
-moved. A track change now reaches the car as one card with its picture. The stand-in case becomes
-stand-in, then real cover, never a blank in between. A track with no art waits once, then logs
-`card: no picture 500 ms after "<title>"`. Playback state is never held.
-**First drive on 226 (2026-11-02, 12:32–13:06 UTC).** No `art=none` card at all. Each of the four
-title changes went out as one card with its picture, 86–102 ms after the title. The stand-in case
-(12:32:59) put the 18,307 B cover on the outgoing "Sinister" card, and "Mountain With A View" then
-went out once with its real cover. No `card: no picture` line, so no track waited the full 500 ms.
-The owner confirms the cluster showed the art on that drive.
-**A second mechanism, 2026-11-02 afternoon (17:13 UTC, still versionCode 226, minutes before Play
-replaced it with 227).** At session start "Landslide" went out with its picture (17:13:12.060). One
-second later the phone re-titled the same item "Landslide • The Chicks" with no artworkId, and 0.6 s
-after that back to "Landslide", again with no id. `ArtworkKeeper` read each as a new track and
-cleared the art (`np: art dropped on title change (id 129 -> -1)`). iOS never resent the JPEG, since
-for the phone the item and its art had not changed. The hold waited 500 ms twice and then published
-`art=none` (`card: no picture 500 ms after "Landslide"`). Duration went to 0 as well, because a track
-change merges onto a blank record. The art came back only with the fresh iAP2 session that 227's
-process start brought. The 2026-10-27 11:06:58 capture has the same shape (a podcast episode title,
-then the title plus ` • ` and the show name, then the title, and `art=none` from there on), so at
-least one of the 10-27 sightings was this and not the double publish.
-*Change (228, 2026-11-02):* `NowPlayingState` treats a title that is the previous one plus ` • <byline>`,
-or the reverse, as the same item (`isBylineVariant`). Picture and duration are kept, the title still
-updates, and the log reads `np: track "…" is the same item with or without its byline`.
-*If it still happens:* note the track and whether it is the stand-in kind. The original Carlink app
-also publishes the art as a granted `content://` URI, because upstream found GM's RHMI cluster
-service (`com.gm.rhmi`) reads art through its own provider. This app sends only the bitmap; that
-path is the next thing to try.
-**A third mechanism, 2026-11-05 evening (230, 22:18–22:25 UTC, no route).** The owner reported
-"cluster artwork isn't working". Spotify's first podcast episode went out with its 127,032 B cover.
-When it ended (22:19:17) the next episode arrived as a title alone: no artworkId in any later
-record, and no transfer or size-0 probe at the adapter. `ArtworkKeeper` cleared the art on the title
-change as usual. Every follow-up it waits for never came, so the card read `art=none` for the
-remaining six minutes. In every other title change on record (45 since 10-18) the phone named the
-new id 1–18 ms after the title. The likely reason it did not here: iOS sends only what changed, and
-the next episode of the same show has the same cover. The same 127,032 B cover came with that show's
-episode that morning (12:29:37).
-*Change (231, 2026-11-05, unverified on the car):* when no id or picture follows a new title within 250 ms
-(`ArtworkKeeper.CARRY_MS`, under the card's 500 ms wait), the previous picture is kept, logged as
-`np: no artwork id 250 ms after the title change — same cover, keeping id N`. A new id that comes
-later still replaces it. The cost: if a new item has a different cover the phone never names, the
-card shows the old one instead of none.
-**A fourth case, 2026-11-07 11:22 local (232).** "Believer" came as a title, then an id whose
-transfer was an empty probe (the adapter logs `size=0 probe`), then a second id with the 76,675 B
-cover 617 ms after the title. The 500 ms hold expired first, so the car got `art=none` twice and the
-picture 125 ms later. Of 140 title changes on record the picture followed in 90 ms at the median and
-178 ms at the 95th percentile. The four slower ones, 554–657 ms, all had this probe-first shape
-(10-18 17:17, 11-05 12:28 and 12:29, 11-07 16:22 UTC).
-*Change (233, 2026-11-07, unverified on the car):* `ART_WAIT_MS` is 1 s, so every title change on
-record would have gone out once with its picture. A title with no picture at all now waits 1 s,
-logged as `card: no picture 1000 ms after "<title>"`.
-
-**Later (adapter firmware, `tools/ocbm_install.sh`).**
-- Done 2026-11-07 (ported from enigy/ocbm; on the adapter, not yet seen on the car's wire): `0x5202`
-  params 10/11 (junction and exit angles) are forwarded, and selector 3 brings ExitInfo, which the
-  cluster's road text now leads with (`docs/carplay/05_METADATA_AND_CONTROLS.md`). The cluster draws
-  GM's own glyph, so the `_WITH_ANGLE` roundabout angles have no consumer here.
-- Add `0x5200` selectors 4–5 so the time zone and EV fields arrive (doc 03 selector gap).
-- `0x5204` lane guidance is Extended-tier only. Moving it into Proven changes a proven Identify and
-  risks an unrecoverable `0x1D03`, so prove it at the Extended tier first. **Done that way
-  (2026-11-11):** the app pushes `extended` when Settings ▸ Driver display ▸ Lane guidance is on,
-  the phone accepted it on the car, and the app draws the lanes under its own turn card on the
-  driver display. Proven stays unchanged.
-
-**Done means.** On the Equinox, a CarPlay route shows its next turn with the right GM arrow,
-distance counting down, and the ETA. The cluster clears when the route ends.
-
-**The driver display route (Play 236–247, 2026-11-08 to 11-12).** Besides GM's cluster, the app
-now opens its own window on the driver display, shows CarPlay's cluster map there, and draws its own
-turn card (with lanes, the turn after and route signs), now-playing and call card, and the Drive card
-over it. When that window holds the display, the Car App Library turns stand down. The record,
-drive by drive, is `04_OPEN_ITEMS.md` "CarPlay map on the driver display"; the settings are in
-`host/gm_ccpa/docs/SETTINGS_AUDIT.md` (Driver display rows).
-
-## T14. GM app: the steering-wheel voice button starts Siri (raised 2026-10-26; WORKS on the car 2026-10-27, versionCode 221)
-
-**Why.** The owner keeps the iPhone off the car's own Bluetooth, because the car then takes the
-calls. On AAOS the wheel's push-to-talk is routed by `CarInputService`:
-- A short press goes to the selected digital assistant.
-- A long press goes to projection receivers (system-only), then a Bluetooth phone, then the
-  assistant (source.android.com automotive voice "Integration flows").
-
-With no Bluetooth phone, both presses end at the assistant, which is Google Assistant.
-
-**State.** The app declares itself an assistant candidate (`voice/SiriAssistant.kt`, ported from
-`host/CarlinkAndroid/.../voice/`, emulator-proven there). It is inert until the driver picks it under
-Settings ▸ Apps ▸ Default apps. Selected, a press reaches `SiriAssistantSession.onShow`, which sends
-the same Siri press/release pair as the sidebar button. Settings ▸ Voice shows the state and a Choose
-button when the car has a picker.
-
-At every start the app logs
-`voice: assistant role available=… heldByUs=… current=… picker=…`. That line answers whether GM
-exposes the choice at all; the VCU has no adb to set it otherwise. Cost of selecting: Google
-Assistant ("Hey Google", car voice commands) is off, and the default `SpeechRecognizer` is a stub
-that refuses.
-
-**Car result (2026-10-27, versionCode 220).**
-- **The picker exists.** The log shows
-  `picker=com.android.car.settings/…AssistantAndVoiceSettingsActivity`, `current=com.google.android.carassistant`.
-- **Selection works.** At 11:05:21 the app logged "selected as the car's assistant".
-- **The button works.** Four wheel presses each logged `wheel button (assistant session,
-  flags=0x23) -> Siri press sent=true`. Each time, iOS opened the `speechRecognition` input stream
-  and Siri spoke.
-- **Siri heard nothing.** Holding the role makes Android silence the app's `VOICE_COMMUNICATION`
-  mic: zeros, with no error. See `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-
-The fix records with `VOICE_RECOGNITION` while the role is held.
-
-**Car result (2026-10-27 evening, versionCode 221).** Siri heard the driver. The 21:28:50 Siri turn
-logged `capture #2 heard: VOICE_RECOGNITION peak 5746 (-15 dBFS), 5/266 chunks all-zero,
-silenced=false`, and placed the call that followed. The two calls also captured real speech
-(`peak 9541 (-11 dBFS)` and `peak 12633 (-8 dBFS)`). The owner confirms the far end heard them on
-the first call.
-
-**Done means.** The `voice:` line shows a picker, GM CCPA can be selected, and a wheel press during
-CarPlay logs `voice: wheel button … -> Siri press sent=true` and brings up Siri. Siri hears the
-request: `capture #N heard: VOICE_RECOGNITION …` shows a real peak, with no all-zero `E`. All of it
-was met on 2026-10-27. One question remains open: whether calls echo for the far end while the role
-is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on that drive.
-
-**Answering calls (233, 2026-11-06).** The wheel's answer rocker cannot reach a Play app; stock AAOS
-opens the car's dialer with it (`docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key").
-So while a CarPlay call rings, this button answers it instead of starting Siri
-(`voice button (…) while a call rings -> answer sent=true`). Unverified on the car.
-
-## T15. GM app: no Allow tap for the adapter, through a sideloaded USB bridge (raised 2026-11-06; BUILT, not on the car)
+## T15. GM app: no Allow tap for the adapter, through a sideloaded USB bridge (raised 2026-11-06; BUILT; BLOCKED on the stock Equinox)
 
 **The ask.** The driver taps Allow for the adapter on every drive. The owner found the XDA post
 (enigy's Carlink thread, page 28) saying a sideloaded bridge removes it for a Play app.
@@ -531,6 +332,14 @@ bridge (2026-11-06)".
 
 **Done when.** On the Equinox, the bridge installs from a USB drive through Files, and a drive start
 logs `claimed … through the USB bridge … no dialog` with no Allow tap.
+
+**Answered on the car (2026-11-12).** Open item 1 below is no. Since 232 every connect logs the
+car's unknown-sources screen, and on the Equinox it is the same "not supported" stub as on the
+emulator: `usb bridge: not installed, unknown-sources screen
+com.android.car.frameworkpackagestubs/…Stubs$ManageExternalSourcesActivityStub` (256 times in the
+uploads to 11-12). Files cannot install the bridge on this car's software, so the task stops here
+unless GM ships a real install screen; the app keeps checking and Settings ▸ Advanced ▸
+USB bridge would show the change. Items 2 and 3 cannot be reached until then.
 
 **Open.**
 

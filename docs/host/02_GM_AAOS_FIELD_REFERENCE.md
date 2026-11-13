@@ -235,7 +235,7 @@ speaks OCBM.
   supplied icons and draws its own glyph from the maneuver type, so a fork gets the same picture.
 - His cluster path is the Car App Library (`NavigationManager.updateTrip()` through the Templates Host),
   bootstrapped by launching a hidden `CarAppActivity` — the one-second flash. The GM app ports it
-  (Unlicense code: maneuver table, trip shape, session); see `docs/ops/08_FUTURE_TASKS.md` T13.
+  (Unlicense code: maneuver table, trip shape, session); see `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16 (T13).
 - AA frames over a hard-coded **512 KB** were dropped → pixelation with satellite view; fixed by
   raising the cap (p.24, Jun 2026). Our pipeline should not have a similar cap.
 - USB **ZLP** stall on the stock adapter with certain metadata (album art / three specific Apple Music

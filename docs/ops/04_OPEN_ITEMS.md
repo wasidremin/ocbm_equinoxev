@@ -111,6 +111,11 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   1,084 emulator reports were imported as the car before the importer learned to skip them
   (2026-11-11); removing their rows has not been approved. The emulator's report files themselves
   were deleted from the receiver with the owner's approval.
+- **Log redaction lets a second Bluetooth address through (found 2026-11-12).** In the adapter's
+  `MGMT_INFO` JSON the first entry of `devices` is masked (`<REDACTED:MAC_ADDRESS:…>`), but the
+  second, in the same line, reaches the receiver only partly masked. It goes only to the owner's own
+  server, but the logs' rule is numbers only. Fix in the app's redactor (every MAC in a line, not the
+  first), then check the next upload's `phone_order` line.
 - **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
   earlier. Each title reached the car as two picture-less cards before its art, and an app restart
   replayed the same sequence. 226 (`4.0+art-hold`, published 2026-10-30) holds a card up to 500 ms
@@ -122,8 +127,9 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   third cause on 230 (2026-11-05 evening): the next episode of a Spotify podcast came as a title
   with no picture at all, because the cover had not changed. The card stayed blank for six minutes.
   From 231, the previous picture is kept when no new one is named within 250 ms. Next
-  step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner: `08_FUTURE_TASKS.md`
-  T13 "A second mechanism" and "A third mechanism".
+  step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner:
+  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16 (T13, moved there 2026-11-12) "A second mechanism"
+  and "A third mechanism".
 - **Vision launcher: misreads, logging-only.** iOS 27's square glyph can read UNKNOWN, so the
   Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). The VERIFY_FAILED on
   app taps that worked is explained (2026-11-03): on iOS 27 the glyph shows where the toggle leads,
@@ -166,7 +172,8 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   (`14_LESSONS_LEARNED.md` §8). The warm-start relink after the 10-minute claim abort (§7 item 2)
   worked on 2026-11-05.
 - **Calls while the app holds the assistant role:** no echo reported, not confirmed either way
-  (`08_FUTURE_TASKS.md` T14, `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). The 2026-11-02 call
+  (`docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel voice button starts Siri", formerly T14;
+  `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). The 2026-11-02 call
   (6 min 50 s, placed through Siri) peaked at -1 dBFS on the mic, against -8 to -17 dBFS before.
   That is one peak, not a level trace, so it does not tell echo from a loud voice. The same call
   logged 37 track underruns (about five a minute, as on 10-27), which the owner did not hear
@@ -186,13 +193,16 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   leaves. On the first drive both top-bar launches switched the cluster at once. Three times the
   card was lost for 5–15 s with Maps still in front and nothing touched. A lost card now needs 20 s
   unless something was sent to the phone. Why the card's side edge failed is still open; the next
-  misread logs it. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag, which needs a
-  reflash. Owner: `08_FUTURE_TASKS.md` T13.
-- **Which iPhone connects (T12): built 2026-11-05, not on the car.** Settings ▸ Phones gets ↑/↓
+  misread logs it. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag; it has
+  reached the car since 2026-11-08 but does not track Maps in front, so the screen reading stays
+  (checked 2026-11-12). Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16.
+- **Which iPhone connects (T12): on the car since 2026-11-11, not yet used.** The adapter reports
+  `"phone_order":true` in every upload from 2026-11-11 18:32 UTC, with two iPhones bonded, so the
+  controls below show; no upload has an order change or a Connect yet. Settings ▸ CarPlay ▸ Phones gets ↑/↓
   for the connect order and Connect to move CarPlay to another paired phone (a wireless restart with
   that phone first). Both need adapter firmware with `MGMT_SET_ORDER`/`MGMT_CONNECT_DEVICE`
   (`tools/ocbm_install.sh --full`); until then the app shows a note instead. The app side is in 232
-  (published 2026-11-06). Untested with two phones. Owner: `08_FUTURE_TASKS.md` T12.
+  (published 2026-11-06). Owner: `08_FUTURE_TASKS.md` T12.
 - **CarPlay stayed dead after a walk-away with the accessories on (2026-11-06 17:53–18:01).** The box
   ended the session when the phone left, but its `PROJ_MODE NONE` never reached the app. The app kept
   "CarPlay live", so the walk-away reconnect never ran, and at 17:59 the screen came back black. Only an
@@ -220,7 +230,7 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   a cover with an empty image, then sent the real one 0.62 s after the title. The card's 0.5 s wait
   ran out, so the car got two cards without art and then one with it inside 0.13 s. Four of the 140
   title changes on record look like this (554–657 ms). From 233 (published 2026-11-07) the card waits up to 1 s. Unverified
-  on the car. Owner: `08_FUTURE_TASKS.md` T13.
+  on the car. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16.
 - **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), in Play 234 (the pane's tap strip in
   235).** On the 2026-11-08 drive the lyrics lookup, the top-bar line and Now Playing by URL were used;
   the rest is not yet tried in the car.
@@ -440,7 +450,10 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
      Maps' vehicle name: param 20 subs 1/6 (and 8 `MapsDisplayName`) are the box's constant `name`
      (`message.rs` ~:695), so it needs the C-6 `accessoryName` bound wired into the tunnel Identify,
      where a rejected change costs the whole session (`0x1D03`).
-- **USB bridge, for no Allow tap: built 2026-11-06, not on the car.** A sideloaded app named
+- **USB bridge, for no Allow tap: blocked on the stock Equinox (2026-11-12).** The car's
+  unknown-sources screen is the same "not supported" stub as the emulator's: every connect since 232
+  logs `usb bridge: not installed, unknown-sources screen …Stubs$ManageExternalSourcesActivityStub`,
+  so Files cannot install the bridge. It waits on GM shipping a real install screen. A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
   the Equinox lets Files install an app (the AAOS 14 emulator does not: its unknown-sources screen is a
