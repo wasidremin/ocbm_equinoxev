@@ -16,7 +16,6 @@ until T20 exists.
 
 | Task | State |
 |---|---|
-| T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing. The next step, reading the iPhone's own log, needs nothing new; what follows may need the adapter (path forward in T7) |
 | T16 Battery health | New, not started |
 | T17 Arrival estimate by road type | New; waits for one more drive's `gap=` lines |
 | T18 "Will I make it" at route start | New, not started |
@@ -28,6 +27,7 @@ until T20 exists.
 | Task | State |
 |---|---|
 | T6 Car GPS into Maps | Open, not started (openautolink does it) |
+| T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13. The fix is planned, not built (see T7) |
 | T8 MainBuffered audio, phase B | Open, not started |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
@@ -80,7 +80,7 @@ re-validated; this arms on the wired receiver Identify only.
 `0xFFFC`, the phone subscribes, a logged `0xFFFB` carries a real fix, and `accessoryd` accepts the
 Identify (no `0x1D03`).
 
-## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28)
+## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28; why Maps shows nothing FOUND 2026-11-13; the fix is planned, not built)
 
 **Why.** The Equinox is electric. Maps will not treat it as one until Identify says so and a status
 update follows.
@@ -111,18 +111,12 @@ Maps", off by default.
   models), `MaxRangeElectric`, `ActiveConnector`, alerts. The expected gain is that Maps treats the
   car as electric (charger search, low-battery prompts, battery level), not necessarily full EV
   route planning with charging stops.
-- **Why the two models are not sent (checked 2026-10-27).** Not for lack of data: Insights already
-  has this car's consumption and charging behaviour. The blocker is the format. Apple's only
-  public description is the iPhone-side twin of these fields,
-  `INGetCarPowerLevelStatusIntentResponse.consumptionFormulaArguments` / `chargingFormulaArguments`:
-  a dictionary whose "keys … must match those of the corresponding … model", where "`model_id` is a
-  mandatory key and must be the identifier of the … model the vehicle uses". Apple publishes neither
-  the model ids nor their keys, and a third-party developer's request for them on Apple's forums
-  (thread 772132, Jan 2025) went unanswered. Ford, Porsche and Toyota ship EV routing as Apple
-  partners. A guessed `model_id` would most likely be ignored. The way to learn the real format is
-  to observe it: an iPhone iAP2 trace (`accessoryd` with Apple's CarPlay debug profile, read with
-  `idevicesyslog`) from a car that already does Apple Maps EV routing over CarPlay would show its
-  0xA101 ids 26/27 verbatim. `carplay_metadata::vehicle` already parses both fields.
+- **Why the two models were not sent in October.** Apple publishes neither the model ids nor their
+  keys. Its only public description is the iPhone-side twin of these fields,
+  `INGetCarPowerLevelStatusIntentResponse.consumptionFormulaArguments` / `chargingFormulaArguments`,
+  and a developer's request for the rest on Apple's forums (thread 772132, Jan 2025) went
+  unanswered. Two public projects have since shown both; see "Cause found (2026-11-13)".
+  `carplay_metadata::vehicle` already parses both fields and does not yet encode them.
 
 **Failure mode.** If the phone rejects the new Identify, only that session's iAP2 tunnel is lost:
 now-playing, cluster turn-by-turn and call metadata. Video, audio and touch keep running. The box
@@ -147,24 +141,19 @@ One app-side push to `/tmp/vehicle_status` collided with the session-start file 
 setting on. The phone again accepted the Identify and asked for range, outside temperature, range
 warning and electric range. The box sent 121 `TX 0xA101` updates, each also carrying battery energy
 (61,680 of 85,900 Wh), the displayed 71.8 % and `is_charging`. The owner sees nothing about the
-battery in Apple Maps (reported 2026-11-04). The likely reason, unconfirmed: Maps shows charge only
-inside EV routing (charge on arrival, charging stops), which needs the two models above. The
-iPhone's own log would settle what Maps does with the update. That needs a Linux laptop on USB in
-the car running `idevicesyslog` while wireless CarPlay is up.
+battery in Apple Maps (reported 2026-11-04). The reason was found on 2026-11-13: Maps does not
+count the car as electric until both models arrive (below).
 
-**Public prior art (searched 2026-11-04).** Nobody has published the model ids or keys. DiPlay
-(CarPlay for BYD head units, github.com/shihabal3amri/DiPlay, PR #38) sends what T7 sends, with no
-ids 26/27. Maps showed no battery there either. Its only reaction was offering to find a charger
-when the range warning was set (tested with the threshold at 30 %). DiPlay issue #1098 (closed
-2026-10-23) went further. It replayed a real Mustang Mach-E's params 20/21, captured from a SYNC 4
-unit, under DiPlay's own MFi identity, and sent 75 % every 30 s. Maps still showed no arrival
-percentage, while the real Mach-E showed one at once. Maps' vehicle enrolment listed only the real
-car. Suspected there, not proven: Maps checks the accessory's maker or certificate against the
-declared car, or needs the automaker's app and VIN. That replay did not include the Mach-E's
-0xA101 ids 26/27, so it does not show that the models alone would fail. On the iPhone side, apps
-implementing the SiriKit car intents never got Maps to call them. Apple DTS called that a bug in
-2020 (FB8760513, developer forums thread 653328), and reports through 2024 say it still did not
-work. Everything public points to Apple enabling EV routing per partner automaker.
+**Earlier prior art (searched 2026-11-04), now explained.** DiPlay (CarPlay for BYD head units,
+github.com/shihabal3amri/DiPlay, PR #38) sends what T7 sends, with no ids 26/27. Maps showed no
+battery there either. Its only reaction was offering to find a charger when the range warning was
+set (tested with the threshold at 30 %). DiPlay issue #1098 (closed 2026-10-23) replayed a real
+Mustang Mach-E's params 20/21, captured from a SYNC 4 unit, under DiPlay's own MFi identity, and
+sent 75 % every 30 s. Maps still showed no arrival percentage, and its vehicle list held only the
+real car. The author suspected a check on the accessory's maker or certificate. Neither test sent
+ids 26/27, which is enough to explain both results. On the iPhone side, apps implementing the
+SiriKit car intents never got Maps to call them (Apple DTS called it a bug in 2020, FB8760513,
+developer forums thread 653328). That is the bundle-id list described below.
 
 **Connector bug (found 2026-11-04, fixed in 229).** The phone was told J1772 + CCS2.
 CarPropertyManager returns `EvChargingConnectorType` numbers, where 5 is IEC_TYPE_1_CCS_DC (CCS1).
@@ -172,30 +161,125 @@ CarPropertyManager returns `EvChargingConnectorType` numbers, where 5 is IEC_TYP
 reports `[1, 5]`, J1772 + CCS1, in the probe of 2026-10-14. Maps' charger choices would have been
 wrong because of it. It does not explain the missing battery reading. Confirmed on the car 2026-11-04 on 229: the Identify carried `connectors=[(0, None), (2, None)]`, which is CCS1 + J1772.
 
-Still to see:
-- whether Apple Maps shows the battery or EV routing anywhere (nothing on 2026-11-03).
+**Cause found (2026-11-13): Maps wants the two models, and their format is now public.**
 
-**Path forward (agreed with the owner 2026-11-12): find out why before building more.** The phone
-accepts everything sent; only the iPhone can say what Maps does with it, and that needs no Mac.
-1. *Two-minute check.* Apple Maps on the iPhone ▸ profile ▸ Vehicles: does the car appear? In
-   DiPlay #1098 Maps listed only the genuine Mach-E, never the replayed one.
-2. *One drive with the iPhone's own log.* Install Apple's "CarPlay" and "iAP" logging profiles on
-   the iPhone from Safari (developer.apple.com/bug-reporting/profiles-and-logs, Apple ID sign-in;
-   some need a restart), drive an Apple Maps route long enough that charge on arrival matters, and
-   capture either live (`idevicesyslog` on a Linux laptop over USB while wireless CarPlay runs) or
-   afterwards (a sysdiagnose on the iPhone, shared to the server and read with Mandiant's
-   `macos-UnifiedLogs` parser, github.com/mandiant/macos-UnifiedLogs; tested mostly on older OS
-   versions, so iOS 27 logs may have gaps).
-3. *Then, by what the log says.* The car or accessory is not an approved maker: stop and move this
-   to "Closed by decision"; the app's own turn card already shows the battery on arrival. Maps wants
-   the two models (ids 26/27): get a real capture from a partner car (the same steps in a Mach-E or a
-   Porsche, asked of the XDA thread) and fill them from the drive log. A smaller field is missing
-   (`MaxRangeElectric`, `ActiveConnector`, a vehicle name): about a day's work plus an adapter
-   reflash, since `carplayd` builds the update.
+*What Apple's code does.* Maps keeps cars in a private framework, VirtualGarage. Its strings and
+method names are public in two symbol dumps (blacktop/ipsw-diffs, iOS 26.5 against 27.0, file
+`VirtualGarage.md`; hack-different/apple-knowledge, `symbols/VirtualGarage.txt`). For a CarPlay
+accessory it runs two checks.
 
-**Done means.** With the setting on, the box log shows `Identify carries the app-pushed vehicle
-identity`, then `RX 0xA100 StartVehicleStatusUpdates` and `TX 0xA101 VehicleStatusUpdate`, with
-no `0x1D03`; and now-playing and cluster turn-by-turn still work.
+1. `_isConnectedToElectricVehicle` fails with `chargingArguments is empty`,
+   `consumptionArguments is empty` or `not connected to CarPlay accessory`, and
+   `_currentStatePassesEVRoutingRequirements` then logs `not connected to electric vehicle`. Those
+   two arguments are 0xA101 ids 26 and 27. T7 sends neither, so Maps never counted the Equinox as
+   electric. The same holds for both DiPlay tests.
+2. `VGExternalAccessoryModelFilter allowsVehicleWithModelId:firmwareId:year:model:` checks the
+   `model_id` inside those arguments against a list Apple serves, with the keys `iap2_allowlist`
+   (model ids) and `iap2_denylist` (`model_id`, `firmware_id`, year, model). A third key,
+   `siri_allowlist` (`app_bundle_id`, `model_ids`), covers car makers' iPhone apps. Nothing in the
+   names checks the car maker or the accessory's certificate. That is a reading of names, not a
+   test. Apple's list itself was not read.
+
+*The format.* Both fields are UTF-8 JSON. Shapes and ids are from
+[isaacwisdom/egmp-carplay-ev-routing](https://github.com/isaacwisdom/egmp-carplay-ev-routing)
+(`docs/CONTRACTS.md`), which took the dictionaries from
+[augard/evmaps](https://github.com/augard/evmaps) (`KiaMaps/Core/Vehicle/VehicleParameters.swift`).
+
+| 0xA101 id | `model_id` | `vehicle_parameters` |
+|---|---|---|
+| 26 ChargingParameter | 12582922 (0x00C0000A) | `vehicle_energy_axis_wh` (11 numbers, Wh, rising), `vehicle_charge_axis_w` (11 numbers, W, paired by position), `energy_w_per_h` (21 numbers), `efficiency_factor` (0.95) |
+| 27 ConsumptionParameter | 12582921 (0x00C00009) | `vehicle_auxiliary_power_w`, `vehicle_consumption_values_wh_per_m` (10 numbers), `vehicle_altitude_gain_consumption_wh_per_m`, `vehicle_altitude_loss_consumption_wh_per_m` |
+
+The ids name the formula, not the car: the Hyundai and Kia profiles share them. They are the pair
+that works from a CarPlay accessory. The Porsche iPhone app's pair (12582912 and 12582916) belongs
+to the `siri_allowlist` route. Not known to anyone public: what each of the ten consumption
+positions stands for, and what `energy_w_per_h` is (it looks like the energy at each 5 % of charge).
+
+*Proof that it works without Apple's blessing.* egmp-carplay-ev-routing patches stock Hyundai
+Ioniq 5 and Kia EV6 head units to send exactly this. Apple Maps then lists the car under Vehicles
+and plans routes with charging stops and a battery figure at each stop (their screenshot: a 383
+mile route, two stops, 70 % at the start and 13 % on arrival). Several owners have it running
+(first release 2026-11-03). What they learned:
+
+- The iPhone must forget the head unit and pair again before Maps offers the car.
+- Maps recalculated routes when status arrived every 5 s with a changing auxiliary power. They now
+  send every 10 s and change auxiliary power at most once a minute, rounded to 25 W.
+- One owner reports the battery level in Maps stopped following the car after 15 minutes (their
+  issue #1, open).
+
+Ford's own instructions agree that no car maker's app is involved on this route: connect CarPlay,
+set a destination, accept the pop-up, tap Connect.
+
+**What T7 sends today against what is needed.**
+
+| Piece | Today | Needed | Side |
+|---|---|---|---|
+| 0xA101 ids 26 and 27 | Not sent; the encoder lacks them | The two JSON documents above | Adapter and app |
+| 0xA101 id 21 `MinBatteryCharge` | Encoder has it; no status-file key | 0 | Adapter and app |
+| 0xA101 id 30 `MaxRangeElectric` | Encoder has it; `maxRangeInfo` not declared | Declared and sent | App (and a status-file key on the adapter) |
+| Identify param 20 sub 8 `MapsDisplayName` | Not emitted | The car's name (T21 wants the same sub) | Adapter |
+| Identify param 20 connector power (subs 12 to 20) | Not sent | CCS1 and J1772 power; the config reader already takes `powerWatts` | App |
+| How often status goes out | When the file changes, checked every 2 s | No more often than every 10 s | Adapter |
+| The phone | Paired since October | Forgotten and paired again, then Apple Maps ▸ profile ▸ Vehicles | Owner |
+
+**The Equinox's numbers.** Battery size and level already go out from the car's own readings.
+
+- *Consumption.* Start from the published ten values (172 to 258 Wh/km). They began in Porsche's
+  app, and the Hyundai project kept them for an Ioniq 5 and reports 1 to 2 % accuracy. This car's
+  own fit (`telemetry/DriveOutlook`: 95 + 0.138 v² Wh/km above 18 °C, v in m/s) gives 181 Wh/km at
+  90 km/h, where the list has 183, and 275 at 130 km/h, where the list tops out at 258. So the upper
+  entries need raising. Since nobody knows what each position means, adjust by comparing Maps'
+  predictions with what happened.
+- *Climbing.* 2,400 kg is 6.5 Wh per metre climbed at the wheels. Gain about 7.0; loss about 4.6
+  with the app's 0.7 regeneration factor.
+- *Auxiliary power.* A base of about 500 W plus heating from the outside temperature (the fit's
+  3.55 Wh/km per °C below 18 °C), changed at most once a minute.
+- *Charging curve.* Eleven points of energy against power, 150 kW at the peak. The drive log keeps
+  one power figure per charge, so the first curve comes from published charging tests. A
+  per-level record would let the owner's own fast charges correct it.
+
+**Plan (proposed 2026-11-13; not built, waiting for the owner's go-ahead).**
+
+1. *Adapter (`crates/`; needs a reflash).* `carplay_metadata::vehicle::encode_vehicle_status_update`
+   gains ids 26 and 27. `iap2_core::vehicle_status` reads four more keys from
+   `/tmp/vehicle_status` (minimum energy, full-charge range, the two JSON documents), sends 21, 26
+   and 27 under `electricChargeInfo` and 30 under `maxRangeInfo`, and its 4096-byte limit goes up.
+   `iap2_core::message` emits `MapsDisplayName`. The sender holds to 10 s.
+2. *App.* `ev/EvForCarPlay.kt` adds `maxRangeInfo`, `powerWatts` for each connector and the car's
+   name. `ev/CarPlayEv.kt` writes the new keys. A small builder makes the two JSON documents from
+   constants and Insights data. All of it stays behind the existing setting.
+3. *Car.* Reflash the adapter, update the app, forget the adapter on the iPhone (Bluetooth and
+   CarPlay) and pair again, then open Apple Maps ▸ profile ▸ Vehicles.
+4. *Calibrate.* Compare Maps' battery-on-arrival with the app's own estimate and with what
+   happened, and adjust the ten values and the curve.
+
+**Risks.**
+
+- It is proven only on head units that carry their car maker's own identity. This adapter
+  identifies as itself. Nothing read so far says Maps cares; only step 3 settles it.
+- Apple can change its list at any time, including denying a firmware id, a model or a year.
+- A wrong model misleads Maps' charging plan. The app's own arrival estimate on the turn card stays
+  as the cross-check.
+- If the phone rejects the changed Identify, the existing fallback applies (see "Failure mode").
+
+**If step 3 fails, read the iPhone's own log.** Install Apple's "CarPlay" and "iAP" logging
+profiles from Safari (developer.apple.com/bug-reporting/profiles-and-logs), then capture with
+`idevicesyslog` on a Linux laptop over USB while wireless CarPlay runs, parked. The lines that say
+why are VirtualGarage's: `_isConnectedToElectricVehicle`, `_currentStatePassesEVRoutingRequirements`,
+`_onboardVehicle`. A sysdiagnose read with Mandiant's `macos-UnifiedLogs` parser
+(github.com/mandiant/macos-UnifiedLogs) is the route with no laptop; it may have gaps on iOS 27.
+
+**Ruled out: the iPhone-app route.** augard/evmaps gets Maps to call its own app by building it
+under an app id inside `com.porsche.*`, which is on Apple's `siri_allowlist`. That needs Xcode on a
+Mac and a paid developer account, and it borrows Porsche's identifier. This fork has no Mac.
+
+**Licences.** egmp-carplay-ev-routing is GPL-3.0-or-later and augard/evmaps states no licence. Use
+their facts and ideas only, never their code, and credit both in `NOTICE.md` when this is built.
+
+**Done means.** Apple Maps ▸ Vehicles lists the car. A route longer than the remaining range shows
+charging stops and the battery on arrival. During a drive the percentage in Maps follows the
+car's. The box log shows `TX 0xA101` carrying ids 26 and 27 with no `0x1D03`, and now-playing and
+cluster turn-by-turn still work.
 
 ## T8. MainBuffered audio, phase B (raised 2026-09-22)
 
@@ -575,8 +659,10 @@ set.
 **Why.** Apple Maps names the car after the adapter. openautolink sends the car's make, model and
 year instead.
 
-**State.** Identify param 20 subs 1/6 (and 8, `MapsDisplayName`) are the box's constant `name`
-(`message.rs` ~:695). The app's `accessoryName` bound (C-6) is not wired into the tunnel Identify,
+**State.** Identify param 20 subs 1 and 6 are the box's constant `name` (`message.rs` ~:695), and
+sub 8, `MapsDisplayName`, is not emitted at all. T7's fix needs sub 8 as well (the Hyundai project
+that got EV routing working sends the car's name in subs 6 and 8), so build the two together. The
+app's `accessoryName` bound (C-6) is not wired into the tunnel Identify,
 where a rejected change costs the whole session's metadata (`0x1D03`) until the setting is off, the
 same risk T7 took and passed. `04_OPEN_ITEMS.md` "Held for adapter firmware".
 
