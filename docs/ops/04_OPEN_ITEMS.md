@@ -449,7 +449,8 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
      parsed `statusBarEdge` on `ViewAreaEntry` and an app setting. The car's make, model and year in
      Maps' vehicle name: param 20 subs 1/6 (and 8 `MapsDisplayName`) are the box's constant `name`
      (`message.rs` ~:695), so it needs the C-6 `accessoryName` bound wired into the tunnel Identify,
-     where a rejected change costs the whole session (`0x1D03`).
+     where a rejected change costs the whole session (`0x1D03`). Both are now planned as `08_FUTURE_TASKS.md` T21 (the name)
+     and T22 (the status bar edge).
 - **USB bridge, for no Allow tap: blocked on the stock Equinox (2026-11-12).** The car's
   unknown-sources screen is the same "not supported" stub as the emulator's: every connect since 232
   logs `usb bridge: not installed, unknown-sources screen …Stubs$ManageExternalSourcesActivityStub`,

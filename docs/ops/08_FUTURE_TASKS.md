@@ -8,20 +8,43 @@ Owner-directed work items that are neither an open defect nor a verification gap
 state it starts from and what "done" means. When a task lands, replace its body with a one-line
 pointer to the doc that now owns the result — do not leave a stale plan beside a shipped feature.
 
-**Where each task stands (2026-11-12).**
+**Where each task stands (2026-11-12),** by what it takes to ship. "App only" is a Play update;
+"needs adapter firmware" also needs a bench reflash of the adapter (`tools/ocbm_install.sh --full`)
+until T20 exists.
+
+*App only*
 
 | Task | State |
 |---|---|
-| T6 Car GPS into Maps | Open, not started |
-| T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing. Next: the iPhone's log (path forward in T7) |
+| T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing. The next step, reading the iPhone's own log, needs nothing new; what follows may need the adapter (path forward in T7) |
+| T15 No Allow tap (USB bridge) | Built; **blocked**: the Equinox cannot install a sideloaded app |
+| T16 Battery health | New, not started |
+| T17 Arrival estimate by road type | New; waits for one more drive's `gap=` lines |
+| T18 "Will I make it" at route start | New, not started |
+| T19 Spotify hand-back | New, not started |
+| Log redaction lets a second Bluetooth address through | A defect, so it lives in `04_OPEN_ITEMS.md`; tiny |
+
+*Needs adapter firmware*
+
+| Task | State |
+|---|---|
+| T6 Car GPS into Maps | Open, not started (openautolink does it) |
 | T8 MainBuffered audio, phase B | Open, not started |
-| T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9); the app reads the screen instead |
+| T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
-| T13 Cluster turn-by-turn | **Done**, moved to `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16 |
-| T14 Voice button starts Siri | **Done**, moved to `docs/host/01_ANDROID_AND_AAOS.md` |
-| T15 No Allow tap (USB bridge) | Built; **blocked**: the Equinox cannot install a sideloaded app |
+| T20 Update the adapter from the app | New; would remove the bench reflash from every task in this table |
+| T21 The car's name in Apple Maps | New (openautolink; held since 2026-11-08) |
+| T22 CarPlay's status bar on the driver's side | New (openautolink; held since 2026-11-08) |
+| T23 Apple's own turn card on the driver display | New; large and uncertain |
+
+*Done*
+
+| Task | Where it went |
+|---|---|
+| T13 Cluster turn-by-turn | `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16 |
+| T14 Voice button starts Siri | `docs/host/01_ANDROID_AND_AAOS.md` |
 
 **CarPlay SDK plan (2026-09-22):** T6–T11 are the Communication Plug-in features this tree will
 implement itself. The measured session of 2026-08-02 already negotiated `hevc`, `altScreen`,
@@ -366,6 +389,149 @@ USB bridge would show the change. Items 2 and 3 cannot be reached until then.
 2. Whether the adapter attaches while user 12 is in front. An attach under another user gets no grant
    for the bridge, and the app falls back to its own dialog.
 3. The relay has not carried a session. The emulator has no adapter.
+
+## App only: T16–T19 (raised 2026-11-12)
+
+These need a Play update and nothing on the adapter.
+
+## T16. Battery health (raised 2026-11-12)
+
+**Why.** The owner would like to see how the pack ages, which is what Recurrent sells. The drive log
+already has every charge.
+
+**State.** The car's own figures can show it. Over 2026-10-13 to 11-12 the car reported its
+capacity (`INFO_EV_BATTERY_CAPACITY`) anywhere from 83.9 to 86.5 kWh, so it is a live estimate from
+the battery management system, not a constant; it probably shifts with temperature. The battery
+level (`EV_BATTERY_LEVEL`) moves in 10 Wh steps (1,497 of the steps sampled), so energy in and out
+is measured finely, not as whole percentages. Each charge record carries the capacity the car
+reported (`capWh`).
+
+**Work.** In EV Insights: the car's capacity reading over time, adjusted for the outside
+temperature at the time (a fit like `TripStats.tempFit`), against the pack's nominal 85 kWh; and a
+cross-check from charges, the energy added over the change in percentage. Months of data are needed
+before a trend means anything; the first view should say how many readings it rests on.
+
+**Done means.** Insights shows usable capacity as a figure and a trend line, with the number of
+readings and the temperature correction stated, and the figure moves with the car's own reading.
+
+## T17. Arrival estimate by road type (raised 2026-11-12)
+
+**Why.** The battery-on-arrival estimate (`telemetry/DriveOutlook`) takes one average speed for the
+rest of the route, the phone's distance over its time remaining. Energy grows with the square of
+speed, so a route that is half motorway and half town is under-costed.
+
+**State.** The phone sends the route's whole turn list at the start (22 to 31 steps in the owner's
+log), each with a distance and the road it leads onto, and `nav/RouteShield` already classes roads as
+Interstate, US, state or county. Which leg a step's distance describes is not yet settled: the
+2026-11-12 drive leans to "the leg leading into this step", with one leg that did not fit
+(`docs/carplay/05_METADATA_AND_CONTROLS.md`). One more drive's `gap=`/`nextGap=` lines settle it.
+
+**Work.** Split the distance ahead into legs; give Interstate and US legs a motorway speed and the
+rest a town speed, scaled so their times add up to the phone's time remaining; cost each leg with
+`DriveOutlook.cruise` at its own speed. Check it with `HistoryReplayTest` as the current model was.
+
+**Done means.** On replayed drives with a motorway stretch, the energy ahead is off by less than the
+current model's median (7.3% at the start), and the car's log shows the per-class split.
+
+## T18. "Will I make it" at route start (raised 2026-11-12)
+
+**Why.** The arrival estimate is on the driver display, but a low one deserves a plain answer before
+the drive, where it can still change the plan.
+
+**State.** `DriveCard.arrival` has the figure and its low and short flags. The centre screen already
+draws overlays over CarPlay (the call pill, the media pane).
+
+**Work.** When a route starts, or the estimate first drops below 10%, show one card over CarPlay on
+the centre screen for a few seconds: the arrival figure, and either how much charge is missing or
+"plan a stop". It shows once per route, and a setting turns it off.
+
+**Done means.** Starting an Apple Maps route that the estimate says ends under 10% brings the card up
+once, and the log has the line with its numbers.
+
+## T19. Spotify hand-back (raised 2026-11-12)
+
+**Why.** `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.5, still open: GM's source-change probe takes
+media focus, Spotify Connect moves playback to the car's own Spotify, and nothing the app does to the
+iPhone brings it back. Only a Connect transfer back to the iPhone does (Spotify Web API
+`PUT /v1/me/player`, which the Cloud-Bridge project used with a remembered device id).
+
+**State.** Nothing built. It needs the owner to sign in to Spotify once (OAuth); the token would stay
+on the head unit. Spotify has no setting to stop the automatic switching.
+
+**Work.** A Settings ▸ Screen & Sound row to connect Spotify; on the silence pattern §14.5 records
+(the probe pair, then focus lost while CarPlay plays), transfer playback to the iPhone's device id
+and log it.
+
+**Done means.** On a drive where the probe fires, music comes back on the iPhone within a few
+seconds without a touch, and the log shows the transfer.
+
+## Needs adapter firmware: T20–T23 (raised 2026-11-12)
+
+Each needs a firmware change on the adapter as well as the app. Until T20 exists, each also needs the
+adapter carried to the bench for `tools/ocbm_install.sh --full`.
+
+## T20. Update the adapter from the app (raised 2026-11-12)
+
+**Why.** Every task in the "needs adapter firmware" table ends with a bench reflash. enigy's
+fork of this project (github.com/enigy/ocbm) updates the adapter over the USB link instead; the
+2026-11-07 review left it out as "not asked for", and with this many adapter tasks it now pays.
+
+**State.** The pieces exist: OCBM pushes files to the box (`CH_FILE`, used for `/tmp/vehicle_status`),
+and `tools/ocbm_install.sh`'s `manifest()` is the authoritative file set. The signed boot stack is
+never touched, and `docs/ops/01_RECOVERY.md` covers a wedged box.
+
+**Work.** A firmware bundle (the manifest's files and a SHA-256 of each) built with the app or
+fetched from the owner's server; the app pushes it while parked and CarPlay is idle; the box checks
+every hash, keeps the previous set, swaps, and rolls back by itself if its health does not come back
+within a time limit. Settings ▸ Advanced shows the adapter's version and offers the update.
+
+**Done means.** From Settings, with the car parked, the adapter updates and reconnects; a bundle with
+one bad hash is refused with nothing changed; and a forced failed start rolls back to the previous
+set.
+
+## T21. The car's name in Apple Maps (raised 2026-11-12; openautolink, held since 2026-11-08)
+
+**Why.** Apple Maps names the car after the adapter. openautolink sends the car's make, model and
+year instead.
+
+**State.** Identify param 20 subs 1/6 (and 8, `MapsDisplayName`) are the box's constant `name`
+(`message.rs` ~:695). The app's `accessoryName` bound (C-6) is not wired into the tunnel Identify,
+where a rejected change costs the whole session's metadata (`0x1D03`) until the setting is off, the
+same risk T7 took and passed. `04_OPEN_ITEMS.md` "Held for adapter firmware".
+
+**Done means.** With the setting on, Maps shows "Chevrolet Equinox EV" (or the name the app pushes),
+and the Identify is accepted with no `0x1D03`.
+
+## T22. CarPlay's status bar on the driver's side (raised 2026-11-12; openautolink, held since 2026-11-08)
+
+**Why.** CarPlay can put its status bar (clock, signal, the app strip) on the edge nearest the
+driver. openautolink offers Auto, Bottom or Driver side.
+
+**State.** `info.rs::view_areas` hardcodes `viewAreaStatusBarEdge: 0` on both main view areas; it
+needs a parsed `statusBarEdge` on `ViewAreaEntry` and an app setting (Settings ▸ Screen & Sound).
+`04_OPEN_ITEMS.md` "Held for adapter firmware".
+
+**Done means.** Each choice in the setting moves CarPlay's status bar at the next connect, and the
+media pane and view-area switching still work.
+
+## T23. Apple's own turn card on the driver display (raised 2026-11-12)
+
+**Why.** The cluster stream the app shows carries the map only. Apple renders its maneuver card as a
+separate content type (`maps:/car/instrumentcluster/instructioncard`) on a second cluster stream, type
+112 (`DisplayPanel.Alt2` / `VideoStream.Alt2`), with Apple's own lane and junction graphics
+(`docs/carplay/06_AV_PIPELINE.md`, the alternate stream section).
+
+**State.** Type 112 is known only from the SDK and the Simulator; it has never been seen from a CCPA
+adapter, so whether the iPhone offers it to this accessory is unknown. OCBM has two video channels
+(`CH_VIDEO`, `CH_ALT_VIDEO`), so a third stream needs a new channel. The app's own turn card would
+stay as the fallback.
+
+**Work.** First a bench test: declare the second panel and stream in the config and see whether iOS
+sets up type 112 at all. Only if it does: the box sets it up and forwards it on a new channel, and the
+app decodes it into a region of the driver-display window.
+
+**Done means.** On the car, Apple's instruction card shows on the driver display beside or over the
+map during a route, and the app's own card steps aside while it does.
 
 ## Left off this plan
 
