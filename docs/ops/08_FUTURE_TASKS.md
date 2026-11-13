@@ -15,7 +15,7 @@ pointer to the doc that now owns the result — do not leave a stale plan beside
 | T6 Car GPS into Maps | Open, not started |
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing. Next: the iPhone's log (path forward in T7) |
 | T8 MainBuffered audio, phase B | Open, not started |
-| T9 UI context | Open, not started (the app reads the screen instead; see doc 14 §16) |
+| T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9); the app reads the screen instead |
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
@@ -203,6 +203,20 @@ token in SETUP `enabledFeatures`, then handle the command.
 
 **Done means.** A session log shows `uiContext` surviving the feature intersection, and a URL change
 reaches the host when the driver switches CarPlay apps.
+
+**Probably the wrong feature for the "why" (checked 2026-11-12).** Every piece of UI context in
+the SDK findings runs from the car to the iPhone: the two `/info` URL lists are things the car
+advertises, and `changeUIContext` is an outbound command (`docs/carplay/03_SDK_GROUND_TRUTH.md` §9,
+"Outbound (accessory→iPhone)"). None of the inbound commands carries the app the iPhone is showing,
+so building this would not tell the car Maps from Now Playing, and the second half of "Done means"
+has no wire to arrive on. Our reading, not verified against the SDK: it lets the car ask CarPlay to
+open or restore an app context, for example the app the driver last had after a reconnect, which
+the app can already do by URL on an adapter reporting `CAP_UI_URL`. The need behind this task is met
+another way: the app reads the CarPlay screen for Maps' turn card (`av/MapsWatch`,
+`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16), and iOS's RouteGuidanceVisibleInApp flag does not
+track Maps in front, so it cannot replace that. Keep T9 only if restoring the last CarPlay app on
+reconnect is wanted; it needs adapter work either way (the receiver ignores `enablesUIContext`,
+`vehicle_config.rs` `EMITTED_BUT_UNREAD`).
 
 ## T10. Focus transfer between CarPlay and the head unit (raised 2026-09-22)
 
