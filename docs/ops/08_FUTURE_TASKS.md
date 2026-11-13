@@ -20,13 +20,14 @@ until T20 exists.
 | T17 Arrival estimate by road type | New; waits for one more drive's `gap=` lines |
 | T18 "Will I make it" at route start | New, not started |
 | T19 Spotify hand-back | New, not started |
+| T23 Apple's own turn card on the driver display | Prepared 2026-11-13. The adapter can already switch the cluster stream to Apple's card; the app never asks. The first step is a setting and one drive. Map and card together would need a second stream and the adapter |
 | Log redaction lets a second Bluetooth address through | A defect, so it lives in `04_OPEN_ITEMS.md`; tiny |
 
 *Needs adapter firmware*
 
 | Task | State |
 |---|---|
-| T6 Car GPS into Maps | Open, not started (openautolink does it) |
+| T6 Car GPS into Maps | Prepared 2026-11-13: copy T7's pattern, fixes carried on a new `CH_INPUT` sub-frame. Not built (openautolink does it) |
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13, and the fix was built that day. It needs the adapter reflashed, an app update, and the iPhone paired again (see T7) |
 | T8 MainBuffered audio, phase B | Open, not started |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
@@ -37,7 +38,6 @@ until T20 exists.
 | T20 Update the adapter from the app | New; would remove the bench reflash from every task in this table |
 | T21 The car's name in Apple Maps | New (openautolink; held since 2026-11-08) |
 | T22 CarPlay's status bar on the driver's side | New (openautolink; held since 2026-11-08) |
-| T23 Apple's own turn card on the driver display | New; large and uncertain |
 
 *Done*
 
@@ -62,23 +62,56 @@ wideband HFP, non-standard display sizes, and a cluster video stream. The macOS 
 were removed from this fork on 2026-10-27, and these tasks went with them. Git history has the text.
 Later tasks keep their numbers.
 
-## T6. Car GPS into Maps — iAP2 LocationInformation (raised 2026-09-22)
+## T6. Car GPS into Maps — iAP2 LocationInformation (raised 2026-09-22; prepared 2026-11-13, not built)
 
-**Why.** Maps is using the phone's own fix. The plug-in expects the accessory to send `0xFFFB`
-LocationInformation after the phone sends `0xFFFA` / `0xFFFC`. The payload is NMEA-0183 (`GPRMC`,
-`GPGGA`, and the rest) plus Apple's `PASCD` when the car has speed.
+**Why.** Maps is using the phone's own fix. The car has a better one: a roof antenna, and wheel
+speed that keeps the position moving where satellites drop out. The phone asks for it with `0xFFFA`
+StartLocationInformation and the accessory answers with `0xFFFB` LocationInformation, which carries
+NMEA-0183 sentences (`GPGGA`, `GPRMC`, `GPHDT`) plus Apple's `PASCD` when the car has speed.
 
-**State.** `crates/vendor/metadata/src/location.rs` parses only. Identify param 22
-(`LocationInformationComponent`) has no caller (`docs/carplay/05_METADATA_AND_CONTROLS.md` §2.1).
-The direction is the opposite of Now Playing: param 6 carries `0xFFFB` and param 7 carries the
-Start/Stop pair. `features::Feature` cannot express that shape, and Mechanism B step (3) in
-`docs/carplay/04_CAPABILITIES_AND_CONFIG.md` has those ids backwards. Correct that paragraph before
-any declaration. The wireless Identify stays on its pinned id list until growth there is
-re-validated; this arms on the wired receiver Identify only.
+**State (checked 2026-11-13).**
 
-**Done means.** A receiver-path session declares param 22 together with `0xFFFB` / `0xFFFA` /
-`0xFFFC`, the phone subscribes, a logged `0xFFFB` carries a real fix, and `accessoryd` accepts the
-Identify (no `0x1D03`).
+- *Adapter.* `crates/vendor/metadata/src/location.rs` parses both messages and builds neither.
+  `message.rs` has `build_location_information_component` (Identify param 22) with no caller
+  (`docs/carplay/05_METADATA_AND_CONTROLS.md` §2.1). The direction is the opposite of Now Playing:
+  param 6 carries `0xFFFB` and param 7 carries the Start/Stop pair, which `features::Feature`
+  cannot express. T7's vehicle status has the same inverted shape and is the pattern to copy: armed
+  only on the AirPlay tunnel Identify, only when the app pushes a block, and dropped whole on a
+  `0x1D03` retry. Mechanism B step (3) in `docs/carplay/04_CAPABILITIES_AND_CONFIG.md` still has
+  those ids backwards; correct that paragraph when this is built.
+- *App.* It already holds `ACCESS_FINE_LOCATION` and `CAR_SPEED`, and `telemetry/VehicleProbe`
+  already takes a fix every second from `LocationManager`.
+- *The earlier note that this arms "on the wired receiver Identify only" is out of date.* This fork's
+  session is the AirPlay tunnel.
+
+**Plan.**
+
+1. *Carrier, app to adapter.* A fix goes out every second, which is too often for the `CH_FILE`
+   push T7 uses (open, data, close, CRC and a rename each time, and it shares one lock with every
+   other file transfer). Use a new `CH_INPUT` sub-frame, `INPUT_LOCATION`, holding the sentences as
+   text. `ocbmd` already relays every `CH_INPUT` sub-frame to `carplayd` unread, so only `carplayd`
+   changes. Check first that an older `carplayd` ignores a sub-frame it does not know.
+2. *Adapter.* `iapConfig.locationInformation.capabilities` in the config reader; param 22 with
+   `0xFFFB` in param 6 and `0xFFFA`/`0xFFFC` in param 7 on the tunnel arm; a `receiver::location`
+   module that records which sentences the phone asked for and their minimum intervals, and sends
+   `0xFFFB` as fixes arrive; a `"car_gps":true` flag in `MGMT_INFO` so the app sends nothing to an
+   adapter that would not understand it (the T7 pattern).
+3. *App.* A pure sentence builder (`GPGGA`, `GPRMC`, `GPHDT` from the Android fix; `PASCD` from
+   `PERF_VEHICLE_SPEED` and the gear), a feeder that sends while a session is up, and one setting,
+   off by default. `PASCD`'s exact field layout is Apple's and is not recorded in this tree; take it
+   from a public implementation before building, and leave that sentence undeclared if it cannot be
+   confirmed.
+4. *Privacy.* Sentences are coordinates. Neither the adapter nor the app may log one; logs carry
+   counts and ages only ("12 fixes sent, last 0.8 s old").
+
+**Risks.** The Identify grows again, so a reject costs that session its metadata until the setting
+is off (the existing fallback). Whether Maps uses the car's fix over wireless CarPlay is not known
+until it is tried; the visible test is a tunnel or a parking structure. iOS may ask for sentences
+the car cannot source (gyro, accelerometer); those stay undeclared.
+
+**Done means.** With the setting on, the Identify is accepted with param 22, the phone sends
+`0xFFFA`, the adapter's log counts `0xFFFB` updates with no coordinates in it, and Maps holds its
+position through a place where the phone alone loses it.
 
 ## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28; why Maps shows nothing FOUND 2026-11-13; the fix BUILT the same day and waiting for an adapter reflash)
 
@@ -698,24 +731,53 @@ needs a parsed `statusBarEdge` on `ViewAreaEntry` and an app setting (Settings �
 **Done means.** Each choice in the setting moves CarPlay's status bar at the next connect, and the
 media pane and view-area switching still work.
 
-## T23. Apple's own turn card on the driver display (raised 2026-11-12)
+## T23. Apple's own turn card on the driver display (raised 2026-11-12; prepared 2026-11-13, not built)
 
-**Why.** The cluster stream the app shows carries the map only. Apple renders its maneuver card as a
-separate content type (`maps:/car/instrumentcluster/instructioncard`) on a second cluster stream, type
-112 (`DisplayPanel.Alt2` / `VideoStream.Alt2`), with Apple's own lane and junction graphics
-(`docs/carplay/06_AV_PIPELINE.md`, the alternate stream section).
+**Why.** The driver display shows Apple's map with the app's own turn card over it. Apple draws
+its own maneuver card, with its lane and junction graphics, as a different kind of cluster content.
 
-**State.** Type 112 is known only from the SDK and the Simulator; it has never been seen from a CCPA
-adapter, so whether the iPhone offers it to this accessory is unknown. OCBM has two video channels
-(`CH_VIDEO`, `CH_ALT_VIDEO`), so a third stream needs a new channel. The app's own turn card would
-stay as the fallback.
+**State (checked 2026-11-13). Most of this already exists on the adapter and the app never asks
+for it.**
 
-**Work.** First a bench test: declare the second panel and stream in the config and see whether iOS
-sets up type 112 at all. Only if it does: the box sets it up and forwards it on a new channel, and the
-app decodes it into a region of the driver-display window.
+- The instruction card is not a third stream. It is a *content type* the one cluster stream can
+  show (`docs/carplay/06_AV_PIPELINE.md`, "How many video streams"). The adapter already advertises
+  all three cluster URLs in `altScreenURLs` (`receiver::info`): `maps:/car/instrumentcluster/map`,
+  `…/instructioncard` and the bare `maps:/car/instrumentcluster`.
+- `carplayd` already switches between them on the existing stream: `CMD_NAV_CARD` sends
+  `showUI(instructioncard)`, `CMD_NAV_APP` sends `showUI` for the bare cluster URL, `CMD_NAV_START`
+  goes back to the map, and `CMD_NAV_APPEARANCE` turns the speed limit, compass and ETA on the map
+  on or off (`ccpa/carplayd/src/main.rs`, `cluster_url`). The app has the constants in
+  `ocbm/OcbmProto.kt` and `AdapterSession.sendCommand`, and uses only `CMD_NAV_START` and
+  `CMD_NAV_STOP`.
+- So the first test needs no adapter change: ask for the card, or for the bare cluster view, and
+  look at what the iPhone draws at 2000×810.
+- Map and card *at the same time* is the only case that needs Apple's second cluster stream (type
+  112, `VideoStream.Alt2`). That has never been seen from a CCPA adapter, needs a new OCBM video
+  channel and a second decoder in the app, and declaring a third display is the highest teardown
+  risk in that doc.
+- Every `showUI` URL the adapter builds ends in an empty `maneuverLayout=`. Apple's Simulator
+  appends that key only when a layout is chosen; its values are not recorded. It may be how the map
+  view is told to include the maneuver.
 
-**Done means.** On the car, Apple's instruction card shows on the driver display beside or over the
-map during a route, and the app's own card steps aside while it does.
+**Plan.**
+
+1. *App only, no reflash.* Settings ▸ Cluster ▸ "Driver display shows": Map (today), Apple's turn
+   card, Apple's cluster view. The app sends the matching command once the cluster stream is up and
+   asks for a keyframe (`INPUT_KEYFRAME_ALT`). The app's own cards hide when Apple's card is
+   showing. One drive answers what each looks like.
+2. *Adapter, in the next reflash.* A command that carries the cluster URL from the app
+   (`CMD_NAV_URL`), accepted only when it starts with `maps:/car/instrumentcluster`. After that,
+   trying a `maneuverLayout` value or any other query is an app update, not a reflash.
+3. *Only if step 1 shows the card cannot share the stream with the map, and the owner wants both.*
+   The second stream: declare `DisplayPanel.Alt2` / `VideoStream.Alt2` with the instruction card as
+   its first URL, bench it first, then a new channel and a second decoder. Large.
+
+**Risks.** Step 1 has little: these are commands the adapter already implements, and Map stays the
+default. The card may be drawn for a small cluster and look lost at 2000×810; the bare cluster view
+may be the same picture as the map. Step 3's risks are in the doc cited above.
+
+**Done means.** On the car, Apple's instruction card shows on the driver display during a route,
+beside or instead of the map as the owner chooses, and the app's own card steps aside while it does.
 
 ## Left off this plan
 
