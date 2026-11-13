@@ -253,6 +253,14 @@ fn push_group_if(out: &mut Vec<u8>, exclude: &[u16], pid: u16, group: &[u8]) {
     }
 }
 
+/// Top-level params whose appearance in a 0x1D03 retry's exclude list turns the car's GPS feed (T6)
+/// off for the retry: the two message lists it grows, and its own component.
+const LOCATION_RETRY_DROP: &[u16] = &[
+    spec::ident::MESSAGES_SENT_BY_ACCESSORY,
+    spec::ident::MESSAGES_RECEIVED_FROM_DEVICE,
+    spec::ident::LOCATION_INFORMATION_COMPONENT,
+];
+
 /// Top-level params whose appearance in a 0x1D03 retry's exclude list turns vehicle status off for
 /// the retry: the two message lists it grows, and the two vehicle components.
 const VEHICLE_STATUS_RETRY_DROP: &[u16] = &[
@@ -372,6 +380,17 @@ pub(crate) fn build_ident_info_excluding_with_policy(
     let vs_caps: Option<&[u16]> = match (&identity.status_caps, transport) {
         (Some(c), TransportComponent::AirPlayTunnel { .. })
             if !exclude.iter().any(|id| VEHICLE_STATUS_RETRY_DROP.contains(id)) =>
+        {
+            Some(c.as_slice())
+        }
+        _ => None,
+    };
+
+    // The car's GPS (T6): param 22 plus 0xFFFB in param 6 and 0xFFFA/0xFFFC in param 7. Same shape,
+    // same arm and same retry rule as vehicle status above, and independent of it.
+    let loc_caps: Option<&[u16]> = match (&identity.location_caps, transport) {
+        (Some(c), TransportComponent::AirPlayTunnel { .. })
+            if !exclude.iter().any(|id| LOCATION_RETRY_DROP.contains(id)) =>
         {
             Some(c.as_slice())
         }
@@ -558,6 +577,12 @@ pub(crate) fn build_ident_info_excluding_with_policy(
             r.extend_from_slice(&spec::MSG_START_VEHICLE_STATUS_UPDATES.to_be_bytes()); // 0xA100
             r.extend_from_slice(&spec::MSG_STOP_VEHICLE_STATUS_UPDATES.to_be_bytes()); // 0xA102
         }
+        if loc_caps.is_some() {
+            // Inverted the same way: we SEND the sentences, the phone sends Start and Stop.
+            s.extend_from_slice(&spec::MSG_LOCATION_INFORMATION.to_be_bytes()); // 0xFFFB
+            r.extend_from_slice(&spec::MSG_START_LOCATION_INFORMATION.to_be_bytes()); // 0xFFFA
+            r.extend_from_slice(&spec::MSG_STOP_LOCATION_INFORMATION.to_be_bytes()); // 0xFFFC
+        }
         (s, r)
     } else {
         // The wired-proven floor, unioned with the feature table (docs/carplay/05_METADATA_AND_CONTROLS.md). The floor is kept
@@ -736,6 +761,16 @@ pub(crate) fn build_ident_info_excluding_with_policy(
             push(exclude, spec::ident::VEHICLE_STATUS_COMPONENT, &|t| {
                 t.bytes(spec::ident::VEHICLE_STATUS_COMPONENT, &g21)
             }); // param 21
+        }
+
+        // Param 22 — LocationInformationComponent (T6), emitted ONLY when the app pushed a
+        // `locationInformation:` block, on the AirPlayTunnel arm alongside its three message ids
+        // (`loc_caps`). Identifier 4 keeps it unique against params 20 and 21.
+        if let Some(caps) = loc_caps {
+            let g22 = location_information_inner(4, name, caps);
+            push(exclude, spec::ident::LOCATION_INFORMATION_COMPONENT, &|t| {
+                t.bytes(spec::ident::LOCATION_INFORMATION_COMPONENT, &g22)
+            }); // param 22
         }
     }
 
@@ -1078,13 +1113,22 @@ pub fn build_location_information_component(
     name: &str,
     capabilities: &[u16],
 ) -> Vec<u8> {
+    group_one(
+        spec::ident::LOCATION_INFORMATION_COMPONENT,
+        &location_information_inner(identifier, name, capabilities),
+    ) // param 22
+}
+
+/// The sub-TLV payload of param 22, WITHOUT the enclosing group header; shared by the standalone
+/// builder and the in-Identify emission so the two cannot drift.
+fn location_information_inner(identifier: u16, name: &str, capabilities: &[u16]) -> Vec<u8> {
     let mut g = Tlv::new();
     g.u16v(location_info::IDENTIFIER, identifier); // sub 0
     g.str(location_info::NAME, name); // sub 1
     for &cap in capabilities {
         g.none(cap); // each capability is a zero-length presence flag
     }
-    group_one(spec::ident::LOCATION_INFORMATION_COMPONENT, &g.0) // param 22
+    g.0
 }
 
 #[cfg(test)]
@@ -1723,6 +1767,7 @@ mod tests {
             ],
             color_hex: Some("#1A2B3C".into()),
             maps_display_name: Some("Chevrolet Equinox EV".into()),
+            location_caps: None,
             status_caps: Some(vec![
                 vehicle_status::RANGE,
                 vehicle_status::RANGE_ELECTRIC,
@@ -2062,6 +2107,80 @@ mod tests {
             assert!(!msg_list(&retry, spec::ident::MESSAGES_SENT_BY_ACCESSORY).contains(&0xA101));
             assert_eq!(retry, build_ident_info_with("CarLink", tunnel, false, &crate::config::VehicleIdentity::baseline()));
         }
+    }
+
+    /// The car's GPS (T6) is declared the way vehicle status is: param 22 with 0xFFFB sent and
+    /// 0xFFFA/0xFFFC received, on the tunnel only, directly after params 20 and 21.
+    #[test]
+    fn location_declares_its_component_and_messages_on_the_tunnel_only() {
+        let tunnel = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
+        let caps = vec![
+            location_info::GLOBAL_POSITIONING_SYSTEM_FIX_DATA,
+            location_info::RECOMMENDED_MINIMUM_SPECIFIC_GPS_TRANSIT_DATA,
+            location_info::VEHICLE_SPEED_DATA,
+        ];
+        let mut id = maximal_ev_identity();
+        let off = build_ident_info_with("CarLink", tunnel, false, &id);
+        assert!(!top_level_param_ids(&off).contains(&spec::ident::LOCATION_INFORMATION_COMPONENT));
+        assert!(!msg_list(&off, spec::ident::MESSAGES_SENT_BY_ACCESSORY).contains(&0xFFFB));
+
+        id.location_caps = Some(caps.clone());
+        let on = build_ident_info_with("CarLink", tunnel, false, &id);
+        let ids = top_level_param_ids(&on);
+        let p21 = ids.iter().position(|&p| p == spec::ident::VEHICLE_STATUS_COMPONENT).unwrap();
+        assert_eq!(ids[p21 + 1], spec::ident::LOCATION_INFORMATION_COMPONENT, "22 follows 21");
+        assert_eq!(
+            top_level_param_value(&on, spec::ident::LOCATION_INFORMATION_COMPONENT).unwrap(),
+            build_location_information_component(4, "CarLink", &caps)[4..].to_vec()
+        );
+        let sent = msg_list(&on, spec::ident::MESSAGES_SENT_BY_ACCESSORY);
+        let rcvd = msg_list(&on, spec::ident::MESSAGES_RECEIVED_FROM_DEVICE);
+        assert!(sent.contains(&spec::MSG_LOCATION_INFORMATION));
+        assert!(rcvd.contains(&spec::MSG_START_LOCATION_INFORMATION));
+        assert!(rcvd.contains(&spec::MSG_STOP_LOCATION_INFORMATION));
+        assert!(!sent.contains(&spec::MSG_START_LOCATION_INFORMATION), "0xFFFA is device-sourced");
+        // Vehicle status is still declared beside it, and the additions are a pure append.
+        assert!(sent.contains(&spec::MSG_VEHICLE_STATUS_UPDATE));
+        let base_sent = msg_list(&off, spec::ident::MESSAGES_SENT_BY_ACCESSORY);
+        assert_eq!(sent[..base_sent.len()], base_sent[..]);
+
+        for transport in [
+            TransportComponent::Usb { cp_iface: 1 },
+            TransportComponent::Wireless { bt_mac: [0, 1, 2, 3, 4, 5] },
+        ] {
+            let body = build_ident_info_with("CarLink", transport, false, &id);
+            assert!(!top_level_param_ids(&body).contains(&spec::ident::LOCATION_INFORMATION_COMPONENT));
+            assert!(!msg_list(&body, spec::ident::MESSAGES_SENT_BY_ACCESSORY).contains(&0xFFFB));
+        }
+    }
+
+    /// A retry that names param 22 sheds the GPS feed and keeps vehicle status; one that names a
+    /// message list sheds both, because either could have been what the phone objected to.
+    #[test]
+    fn a_retry_sheds_location_without_taking_vehicle_status_unless_the_lists_are_named() {
+        let tunnel = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
+        let mut id = crate::config::VehicleIdentity::baseline();
+        id.status_caps = Some(vec![vehicle_status::RANGE_ELECTRIC]);
+        let status_only = build_ident_info_with("CarLink", tunnel, false, &id);
+        id.location_caps = Some(vec![location_info::GLOBAL_POSITIONING_SYSTEM_FIX_DATA]);
+
+        let retry = build_ident_info_excluding_with(
+            "CarLink", tunnel, false, &[spec::ident::LOCATION_INFORMATION_COMPONENT], &id);
+        assert_eq!(retry, status_only);
+
+        let retry = build_ident_info_excluding_with(
+            "CarLink", tunnel, false, &[spec::ident::MESSAGES_SENT_BY_ACCESSORY], &id);
+        assert_eq!(
+            retry,
+            build_ident_info_with("CarLink", tunnel, false, &crate::config::VehicleIdentity::baseline())
+        );
+
+        // Naming a vehicle component leaves the GPS feed alone.
+        let retry = build_ident_info_excluding_with(
+            "CarLink", tunnel, false, &[spec::ident::VEHICLE_STATUS_COMPONENT], &id);
+        let ids = top_level_param_ids(&retry);
+        assert!(!ids.contains(&spec::ident::VEHICLE_STATUS_COMPONENT));
+        assert!(ids.contains(&spec::ident::LOCATION_INFORMATION_COMPONENT));
     }
 
     /// The byte-pin is ONE arm, not "everything that isn't USB". docs/carplay/04_CAPABILITIES_AND_CONFIG.md scopes the app-pushed

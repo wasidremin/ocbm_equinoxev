@@ -571,7 +571,16 @@ class LauncherUi(private val act: Activity) {
                 evRow.setSubtitle(ev.statusText(act))
             },
         )
-        page.addView(EqCard(act).addRow(evRow))
+        val gps = wasidremin.gmccpa.gps.CarGps
+        lateinit var gpsRow: EqRow
+        gpsRow = EqRow(
+            act, "Car GPS for Apple Maps", gps.statusText(act),
+            trailing = EqToggle(act, gps.enabled) { on ->
+                gps.setEnabled(act, on)
+                gpsRow.setSubtitle(gps.statusText(act))
+            },
+        )
+        page.addView(EqCard(act).addRow(evRow).addRow(gpsRow))
         page.addView(eqSectionLabel(act, "Visual app launcher"))
         launcherStatusRow = EqRow(act, "Visual app launcher", launcherStatusSubtitle())
         page.addView(EqCard(act).addRow(launcherStatusRow))
@@ -662,7 +671,16 @@ class LauncherUi(private val act: Activity) {
         )
         page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow))
         page.addView(eqSectionLabel(act, "Driver display"))
-        page.addView(EqCard(act).addRow(driverRow).addRow(clusterCaptureRow()))
+        val content = wasidremin.gmccpa.nav.ClusterContent.also { it.load(act) }
+        lateinit var contentRow: EqRow
+        contentRow = EqRow(
+            act, "Driver display shows", content.statusText(),
+            trailing = EqSegmented(act, wasidremin.gmccpa.nav.ClusterContent.Choice.values().map { it.short }, content.choice.ordinal) { i ->
+                content.set(act, wasidremin.gmccpa.nav.ClusterContent.Choice.values()[i])
+                contentRow.setSubtitle(content.statusText())
+            },
+        )
+        page.addView(EqCard(act).addRow(driverRow).addRow(contentRow).addRow(clusterCaptureRow()))
         page.addView(directionsAreaCard())
         driverLayoutCards(page)
     }

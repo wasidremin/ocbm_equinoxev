@@ -292,6 +292,7 @@ pub fn tick() {
 pub fn reset() {
     *crate::plock(&SESSION) = None;
     crate::vehicle_status::reset();
+    crate::location::reset();
     HANDSHAKE_REBUILDS.store(0, Ordering::Relaxed); // re-arm the budget retry cap for the next session
 }
 

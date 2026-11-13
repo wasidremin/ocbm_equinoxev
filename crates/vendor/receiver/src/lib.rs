@@ -23,6 +23,7 @@ pub mod session;
 pub mod stream;
 pub mod vehicle_config;
 pub mod vehicle_status;
+pub mod location;
 #[cfg(feature = "mic-uplink")]
 pub mod uplink;
 

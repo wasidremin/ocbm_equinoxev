@@ -1232,7 +1232,7 @@ class OcbmProbe(context: Context) {
                 physicalWidthMm = VideoFrame.physicalWidthMm,
                 physicalHeightMm = VideoFrame.physicalHeightMm,
                 // Not in defaultAdapterDocument: the structural fallback stays the proven document.
-                iapConfig = wasidremin.gmccpa.ev.CarPlayEv.iapConfigYaml(ctx, evModelsOnAdapter(c)),
+                iapConfig = iapConfigFor(c),
                 viewArea2 = splitArea,
                 viewArea2Initial = wasidremin.gmccpa.pane.SplitPane.wantShown(ctx),
                 viewAreaAnimMs = wasidremin.gmccpa.pane.SplitPane.TRANSITION_MS,
@@ -1361,13 +1361,20 @@ class OcbmProbe(context: Context) {
     }
 
     /**
-     * Whether this adapter relays the EV-routing models to the iPhone (firmware from 2026-11-13 says
-     * `"ev_models":true` in its info). Asked only when the EV setting is on; an adapter that does not
-     * answer counts as an older one, and the connect goes on with the Identify it always had.
+     * The subscribe document's `iapConfig:` block: the EV identity and the car's GPS, each only as far
+     * as this adapter's firmware goes. Firmware from 2026-11-13 says `"ev_models":true` and
+     * `"car_gps":true` in its info; an adapter that does not answer counts as an older one, and the
+     * connect goes on with the Identify it always had.
      */
-    private fun evModelsOnAdapter(c: OcbmClient): Boolean {
-        if (!wasidremin.gmccpa.ev.CarPlayEv.enabled) return false
-        return c.mgmtGetInfo(1_500)?.contains("\"ev_models\":true") == true
+    private fun iapConfigFor(c: OcbmClient): String {
+        val ev = wasidremin.gmccpa.ev.CarPlayEv
+        val gps = wasidremin.gmccpa.gps.CarGps
+        // One question to the adapter, and only when a setting needs the answer.
+        val info = if (ev.enabled || gps.enabled) c.mgmtGetInfo(1_500).orEmpty() else ""
+        return wasidremin.gmccpa.ev.EvForCarPlay.withLocation(
+            ev.iapConfigYaml(ctx, info.contains("\"ev_models\":true")),
+            gps.iapConfigLines(ctx, info.contains("\"car_gps\":true")),
+        )
     }
 
     /**

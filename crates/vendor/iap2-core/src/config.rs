@@ -55,6 +55,23 @@ pub struct IapConfigSection {
     /// capabilities and DOES arm it.
     #[serde(rename = "vehicleStatus", default)]
     pub vehicle_status: Option<VehicleStatusConfig>,
+    /// PRESENCE arms param 22 (`LocationInformationComponent`) on the AirPlay tunnel Identify, the
+    /// same way `vehicleStatus` arms param 21 (docs/ops/08_FUTURE_TASKS.md T6).
+    #[serde(rename = "locationInformation", default)]
+    pub location_information: Option<LocationInformationConfig>,
+}
+
+/// `iapConfig.locationInformation:` — which NMEA sentences the car can supply.
+///
+/// ```yaml
+/// iapConfig:
+///   locationInformation:
+///     sentences: [gpgga, gprmc, gphdt, pascd]
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LocationInformationConfig {
+    #[serde(default)]
+    pub sentences: Vec<String>,
 }
 
 /// `iapConfig.vehicleInfo:` — Identify param 20 `VehicleInformationComponent` content.
@@ -142,6 +159,8 @@ pub struct VehicleIdentity {
     pub maps_display_name: Option<String>,
     /// Param 21 capability sub-ids. `None` = do not emit param 21 at all (the historical default).
     pub status_caps: Option<Vec<u16>>,
+    /// Param 22 capability sub-ids (which NMEA sentences the car supplies). `None` = no param 22.
+    pub location_caps: Option<Vec<u16>>,
 }
 
 impl Default for VehicleIdentity {
@@ -160,6 +179,7 @@ impl VehicleIdentity {
             color_hex: None,
             maps_display_name: None,
             status_caps: None,
+            location_caps: None,
         }
     }
 
@@ -258,6 +278,24 @@ fn sanitize_color_hex(s: &str) -> Option<String> {
         }
         None
     }
+}
+
+/// `locationInformation.sentences[]` name -> param-22 presence-flag sub id. The NMEA address and
+/// Apple's own field name are both accepted.
+fn location_cap_id(name: &str) -> Option<u16> {
+    use crate::message::location_info as sub;
+    Some(match name.trim().to_ascii_lowercase().as_str() {
+        "gpgga" | "globalpositioningsystemfixdata" => sub::GLOBAL_POSITIONING_SYSTEM_FIX_DATA,
+        "gprmc" | "recommendedminimumspecificgpstransitdata" => {
+            sub::RECOMMENDED_MINIMUM_SPECIFIC_GPS_TRANSIT_DATA
+        }
+        "gpgsv" | "gpssatellitesinview" => sub::GPS_SATELLITES_IN_VIEW,
+        "pascd" | "vehiclespeeddata" => sub::VEHICLE_SPEED_DATA,
+        "pagcd" | "vehiclegyrodata" => sub::VEHICLE_GYRO_DATA,
+        "paacd" | "vehicleaccelerometerdata" => sub::VEHICLE_ACCELEROMETER_DATA,
+        "gphdt" | "vehicleheadingdata" => sub::VEHICLE_HEADING_DATA,
+        _ => return None,
+    })
 }
 
 /// The longest `mapsDisplayName` the box will put on the wire, in bytes.
@@ -443,6 +481,26 @@ impl Iap2Config {
             // component is a meaningful (if minimal) declaration, and silently dropping it would
             // hide a config mistake.
             id.status_caps = Some(caps);
+        }
+        if let Some(li) = self.iap_config.location_information.as_ref() {
+            let mut caps: Vec<u16> = Vec::new();
+            for n in &li.sentences {
+                match location_cap_id(n) {
+                    Some(v) if caps.contains(&v) => {
+                        eprintln!("[iap2-config] duplicate locationInformation sentence {n:?} — dropped")
+                    }
+                    Some(v) => caps.push(v),
+                    None => eprintln!("[iap2-config] unknown locationInformation sentence {n:?} — skipped"),
+                }
+            }
+            caps.sort_unstable(); // config order must not decide wire order
+            // Unlike vehicleStatus, a component that offers no sentence at all declares a feed with
+            // nothing in it, so it is not emitted.
+            if caps.is_empty() {
+                eprintln!("[iap2-config] locationInformation names no usable sentence — param 22 not emitted");
+            } else {
+                id.location_caps = Some(caps);
+            }
         }
         id
     }
@@ -698,6 +756,37 @@ iapConfig:
                 vs::MAX_RANGE_INFO,
             ])
         );
+    }
+
+    /// The block the GM app sends for the car's GPS (`CarGpsTest.block`, byte for byte).
+    #[test]
+    fn the_gm_apps_location_block_resolves() {
+        use crate::message::location_info as sub;
+        let y = "iapConfig:\n  locationInformation:\n    sentences: [gpgga, gprmc, gphdt, pascd]\n";
+        let c: Iap2Config = serde_yaml::from_slice(y.as_bytes()).unwrap();
+        assert_eq!(
+            c.vehicle_identity().location_caps,
+            Some(vec![
+                sub::GLOBAL_POSITIONING_SYSTEM_FIX_DATA,
+                sub::RECOMMENDED_MINIMUM_SPECIFIC_GPS_TRANSIT_DATA,
+                sub::VEHICLE_SPEED_DATA,
+                sub::VEHICLE_HEADING_DATA,
+            ])
+        );
+        // Typos only, an empty list or no block: no param 22.
+        for y in [
+            "iapConfig:\n  locationInformation:\n    sentences: [gps, speed]\n",
+            "iapConfig:\n  locationInformation:\n    sentences: []\n",
+            "iapConfig:\n  vehicleInfo:\n    engineTypes: [electric]\n",
+        ] {
+            let c: Iap2Config = serde_yaml::from_slice(y.as_bytes()).unwrap();
+            assert_eq!(c.vehicle_identity().location_caps, None, "{y}");
+        }
+        // The EV block and the location block are independent of each other.
+        let both = format!("{GM_APP_EV_ROUTING_IAPCONFIG}  locationInformation:\n    sentences: [gprmc]\n");
+        let id = serde_yaml::from_slice::<Iap2Config>(both.as_bytes()).unwrap().vehicle_identity();
+        assert!(id.status_caps.is_some());
+        assert_eq!(id.location_caps, Some(vec![sub::RECOMMENDED_MINIMUM_SPECIFIC_GPS_TRANSIT_DATA]));
     }
 
     /// A document with no `iapConfig:` must resolve to the exact pre-C6 emission. This is what makes

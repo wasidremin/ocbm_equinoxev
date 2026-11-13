@@ -34,3 +34,11 @@ pub mod state;
 /// The accessory side of iAP2 vehicle status (0xA100/0xA101/0xA102): the app-pushed status file and
 /// the 0xA101 body built from it.
 pub mod vehicle_status;
+/// The car's GPS for the iPhone (0xFFFA/0xFFFB/0xFFFC, docs/ops/08_FUTURE_TASKS.md T6): re-exported
+/// so the receiver needs no direct dependency on `carplay-metadata`.
+pub mod location {
+    pub use carplay_metadata::location::{
+        encode_location_information, is_well_formed_sentence, parse_start_location_information,
+        LocationSelection, SentenceKind, MAX_SENTENCE_BYTES,
+    };
+}

@@ -81,6 +81,17 @@ object EvForCarPlay {
         }
 
     /**
+     * The `iapConfig:` block with the car's GPS lines added ([wasidremin.gmccpa.gps.CarGps.blockLines]).
+     * Both halves sit under the one `iapConfig:` key, since a YAML document cannot repeat it. Either
+     * may be "".
+     */
+    fun withLocation(evBlock: String, locationLines: String): String = when {
+        locationLines.isEmpty() -> evBlock
+        evBlock.isEmpty() -> "iapConfig:\n$locationLines"
+        else -> evBlock + locationLines
+    }
+
+    /**
      * One reading of the car's own properties. Null means the car did not answer for that one; it is
      * then left out of the file rather than sent as zero.
      */

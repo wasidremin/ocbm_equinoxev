@@ -143,6 +143,12 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   96% of the upload. On 227 that afternoon there were five in 7.7 minutes of CarPlay, all while the
   activity and its surface were first laid out (17:13:36–17:13:48). Owner:
   `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.9 (correction).
+- **Built 2026-11-13, not yet on the car (one adapter reflash and one publish cover all three).**
+  T7's battery models for Apple Maps, T6's car GPS for the iPhone, and T23's "Driver display
+  shows" setting with the `CMD_NAV_URL` command. T7 and T6 are off or unchanged until the adapter
+  says `"ev_models":true` / `"car_gps":true`; T23's setting works on the firmware in the car now.
+  None has been tried against a phone. Turn T6 on only after T7 has been seen working, so a
+  rejected Identify can be pinned on one of them. Owner: `08_FUTURE_TASKS.md` T6, T7, T23.
 - **EV status for Apple Maps (T7): Maps shows no battery.** The phone accepts the EV Identify
   and the status (2026-10-28, 11-03), and cluster turn-by-turn works with the setting on (11-03).
   The battery percentage reaches the phone, but the owner sees nothing about it in Maps

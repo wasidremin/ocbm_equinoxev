@@ -682,6 +682,10 @@ pub(crate) fn dispatch_iap_tunnel_message(data: &[u8]) {
     if crate::vehicle_status::handle(msg_id, body) {
         return;
     }
+    // The car's GPS runs the same way round (T6).
+    if crate::location::handle(msg_id, body) {
+        return;
+    }
     // One dispatcher, shared with the wired driver (`iap2_core::metadata::dispatch`). These two
     // paths diverged once — 0x4171 ListUpdate was handled wired and silently dropped here — and the
     // shared function exists so they cannot again.

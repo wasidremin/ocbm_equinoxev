@@ -1115,6 +1115,16 @@ fn handle_input_frame(pl: &[u8]) {
         }
         return;
     }
+    // The car's GPS (T6): NMEA sentences from the app, forwarded to the iPhone if it subscribed.
+    // The text is a coordinate and is never logged, here or in `receiver::location`.
+    if pl.first() == Some(&ocbm_proto::INPUT_LOCATION) {
+        if pl.len() > 1 && pl.len() - 1 <= ocbm_proto::LOCATION_MAX {
+            if let Ok(text) = std::str::from_utf8(&pl[1..]) {
+                receiver::location::ingest(text);
+            }
+        }
+        return;
+    }
     // ALT/cluster keyframe request: the host's nav/cluster lane gapped (e.g. a Nav Card/Map/Nav App
     // view switch). A bare forceKeyFrame only re-IDRs the main console (VideoStream.Main), so the
     // cluster (VideoStream.Alt1) must be addressed by its own stream uuid or it stays frozen on
@@ -1239,6 +1249,35 @@ fn handle_input_frame(pl: &[u8]) {
                 };
                 let sent = events::send_request_ui_url(url);
                 eprintln!("[input] requestUI url={url} sent={sent}");
+                return;
+            }
+            // A cluster content URL the APP chose (2026-11-13, T23): `[cmd][url…]`. The same showUI
+            // the CMD_NAV_* arms below send, with the URL from the app instead of `cluster_url`, so a
+            // query such as `maneuverLayout=…` can be tried without a firmware change. Refused unless
+            // the alt screen is advertised and the URL is one of Maps' instrument-cluster surfaces.
+            ocbm_proto::CMD_NAV_URL => {
+                let Ok(url) = std::str::from_utf8(&pl[2..]) else {
+                    eprintln!("[input] navUrl refused — not UTF-8");
+                    return;
+                };
+                if !levers::altscreen() {
+                    eprintln!("[input] navUrl ignored — alt screen not advertised");
+                    return;
+                }
+                if !ocbm_proto::cluster_url_ok(url) {
+                    eprintln!("[input] navUrl refused — not an instrument-cluster URL ({} B)", url.len());
+                    return;
+                }
+                let path = url[ocbm_proto::CLUSTER_URL_PREFIX.len()..].split('?').next().unwrap_or("");
+                let surface = match path {
+                    "/map" => SURFACE_MAP,
+                    "/instructioncard" => SURFACE_CARD,
+                    _ => SURFACE_APP,
+                };
+                events::set_nav_forward(true);
+                NAV_SURFACE.store(surface, std::sync::atomic::Ordering::Relaxed);
+                let sent = events::send_show_ui(events::CLUSTER_STREAM_ID, url);
+                eprintln!("[input] navUrl showUI({url}) sent={sent}");
                 return;
             }
             // Deprecated bare shape (iOS ignores it — kept for A/B only; docs/carplay/05_METADATA_AND_CONTROLS.md §2.4).

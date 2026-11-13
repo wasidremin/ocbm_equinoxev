@@ -208,7 +208,7 @@ object TurnCard {
                 val preview = DriverDisplay.previewUntil > SystemClock.elapsedRealtime()
                 if (s !== lastSnapshot || preview || shown != null || night != CarNight.night) {
                     lastSnapshot = s
-                    val on = DriverDisplay.turnCard
+                    val on = DriverDisplay.turnCard && !ClusterContent.applesCardShowing
                     val live = if (on) content(s, ClusterLayout.lanes) else null
                     val next = live ?: if (preview && on) sample(ClusterLayout.lanes) else null
                     val arr = when {

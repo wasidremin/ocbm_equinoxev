@@ -349,6 +349,12 @@ object Ocbm {
 
     /** `[INPUT_TELEPHONY][buttonIndex u8]` -> uid-5 telephony HID (report then release). lib.rs:200 */
     const val INPUT_TELEPHONY: Byte = 0x08
+    /**
+     * `[INPUT_LOCATION][sentences…]`: the car's position as NMEA sentences, one per line, UTF-8, at
+     * most [LOCATION_MAX] bytes. Only for firmware whose `MGMT_INFO` says `"car_gps":true` (T6).
+     */
+    const val INPUT_LOCATION: Byte = 0x09
+    const val LOCATION_MAX: Int = 1024
 
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.
@@ -429,6 +435,13 @@ object Ocbm {
      */
     const val CMD_REQUEST_UI_URL: Byte = 0x12
     const val REQUEST_UI_URL_MAX: Int = 255
+    /**
+     * `[INPUT_COMMAND][CMD_NAV_URL][url…]` -> `showUI` of that URL on the driver-display stream. The
+     * adapter takes only Maps' instrument-cluster URLs, and only firmware whose `MGMT_INFO` says
+     * `"nav_url":true` knows the command (2026-11-13, T23).
+     */
+    const val CMD_NAV_URL: Byte = 0x13
+    const val CLUSTER_URL_PREFIX: String = "maps:/car/instrumentcluster"
 
     const val APPEARANCE_STREAM_MAIN: Byte = 0x00 // lib.rs:275
     const val APPEARANCE_STREAM_ALT: Byte = 0x01 // lib.rs:276

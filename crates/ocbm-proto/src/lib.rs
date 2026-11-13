@@ -515,6 +515,33 @@ pub const CMD_VIEW_AREA: u8 = 0x11;
 // launches use it in place of finding and tapping the icon on screen.
 pub const CMD_REQUEST_UI_URL: u8 = 0x12;
 pub const REQUEST_UI_URL_MAX: usize = 255;
+// Show a cluster content URL the APP chose on the driver-display stream (2026-11-13, T23):
+// `[INPUT_COMMAND][CMD_NAV_URL][url…]`, UTF-8, no terminator, 1..=REQUEST_UI_URL_MAX bytes. carplayd
+// sends `showUI{uuid: cluster stream, url}`. Only a URL [`cluster_url_ok`] accepts goes out, so the
+// app can try a query such as `maneuverLayout=…` without a firmware change but cannot address
+// anything except Maps' instrument-cluster surfaces. `MGMT_INFO` says `"nav_url":true`.
+pub const CMD_NAV_URL: u8 = 0x13;
+/// The three cluster content URLs `/info` advertises in `altScreenURLs` all start with this.
+pub const CLUSTER_URL_PREFIX: &str = "maps:/car/instrumentcluster";
+
+/// Whether `url` may be sent as a cluster `showUI`: one of the advertised surfaces (the bare prefix,
+/// `/map` or `/instructioncard`), optionally followed by a `?query`, printable ASCII with no spaces,
+/// at most [`REQUEST_UI_URL_MAX`] bytes.
+pub fn cluster_url_ok(url: &str) -> bool {
+    if url.len() > REQUEST_UI_URL_MAX || !url.bytes().all(|b| (0x21..=0x7E).contains(&b)) {
+        return false;
+    }
+    let Some(rest) = url.strip_prefix(CLUSTER_URL_PREFIX) else { return false };
+    let path = rest.split('?').next().unwrap_or("");
+    matches!(path, "" | "/map" | "/instructioncard")
+}
+
+// The car's GPS for the iPhone (2026-11-13, T6): `[INPUT_LOCATION][sentences…]`, NMEA-0183 sentences
+// as UTF-8 text, one per line, at most LOCATION_MAX bytes. carplayd forwards them to the iPhone as
+// `LocationInformation` (0xFFFB) when it has subscribed. The text is a coordinate: it is never
+// logged. `MGMT_INFO` says `"car_gps":true`.
+pub const INPUT_LOCATION: u8 = 0x09;
+pub const LOCATION_MAX: usize = 1024;
 pub const APPEARANCE_STREAM_MAIN: u8 = 0x00;
 pub const APPEARANCE_STREAM_ALT: u8 = 0x01;
 pub const APPEARANCE_MODE_LIGHT: u8 = 0x00;
@@ -946,6 +973,35 @@ impl Reassembler {
 
 #[cfg(test)]
 mod tests {
+    /// Only Maps' three advertised instrument-cluster surfaces pass, with or without a query.
+    #[test]
+    fn cluster_urls_are_limited_to_the_advertised_surfaces() {
+        for ok in [
+            "maps:/car/instrumentcluster",
+            "maps:/car/instrumentcluster/map",
+            "maps:/car/instrumentcluster/instructioncard",
+            "maps:/car/instrumentcluster/map?showSpeedLimit=user&showCompass=user&showETA=yes&maneuverLayout=",
+            "maps:/car/instrumentcluster?maneuverLayout=compact",
+        ] {
+            assert!(super::cluster_url_ok(ok), "{ok}");
+        }
+        let long = format!("maps:/car/instrumentcluster/map?x={}", "a".repeat(super::REQUEST_UI_URL_MAX));
+        for bad in [
+            "",
+            "maps:",
+            "music:",
+            "maps:/car/instrumentclusterX",
+            "maps:/car/instrumentcluster/other",
+            "maps:/car/instrumentcluster/map/extra",
+            "maps:/car/instrumentcluster/map?a=b c",
+            "maps:/car/instrumentcluster/map?a=\u{0}",
+            "https://example.com/maps:/car/instrumentcluster",
+            long.as_str(),
+        ] {
+            assert!(!super::cluster_url_ok(bad), "{bad:?}");
+        }
+    }
+
     use super::*;
 
     #[test]

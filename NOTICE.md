@@ -33,6 +33,9 @@ documented the shape of those two JSON documents and the model ids Maps accepts.
 relay and the app's models for the Equinox EV were written here from those facts; none of their
 code or vehicle data is used.
 
+**mib2q-carplay-rgi** (github.com/luka-dev/mib2q-carplay-rgi, GPL-3.0) — the field layout of
+Apple's `PASCD` wheel-speed sentence was taken from it as a fact. None of its code is used.
+
 **lrclib.net** — a public lyrics service the app queries at run time when "Look up lyrics" is on.
 No lyrics are stored in this repository.
 

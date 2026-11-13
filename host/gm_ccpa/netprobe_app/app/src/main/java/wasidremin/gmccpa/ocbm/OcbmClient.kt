@@ -1586,6 +1586,29 @@ class OcbmClient(
         return subscribed
     }
 
+    /**
+     * `[INPUT_COMMAND][CMD_NAV_URL][url…]` -> the box's `showUI` of [url] on the driver-display
+     * stream. False, and nothing sent, for a URL the adapter would refuse. The caller must know the
+     * adapter takes the command (`"nav_url":true` in its info).
+     */
+    fun sendNavUrl(url: String): Boolean {
+        val bytes = url.toByteArray(Charsets.UTF_8)
+        if (!url.startsWith(Ocbm.CLUSTER_URL_PREFIX) || bytes.size > Ocbm.REQUEST_UI_URL_MAX) return false
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_NAV_URL) + bytes)
+        return subscribed
+    }
+
+    /**
+     * `[INPUT_LOCATION][sentences…]` -> the box forwards the car's position to the iPhone. False, and
+     * nothing sent, when [sentences] is empty or too long. The text is a coordinate: never log it.
+     */
+    fun sendLocation(sentences: String): Boolean {
+        val bytes = sentences.toByteArray(Charsets.US_ASCII)
+        if (bytes.isEmpty() || bytes.size > Ocbm.LOCATION_MAX) return false
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_LOCATION) + bytes)
+        return subscribed
+    }
+
     /** `[INPUT_COMMAND][CMD_NIGHT_MODE][on]` -> the box's `setNightMode{nightMode}`. */
     fun sendNightMode(night: Boolean): Boolean {
         enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_NIGHT_MODE, if (night) 1 else 0))

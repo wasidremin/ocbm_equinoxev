@@ -226,9 +226,22 @@ object AdapterSession {
         l.clusterSeam.attach(pipe)
         clusterPipe = pipe
         clusterRenderer = r
-        val sent = client?.sendCommand(Ocbm.CMD_NAV_START) == true
+        val content = wasidremin.gmccpa.nav.ClusterContent.choice
+        val sent = client?.sendCommand(content.command) == true
         requestClusterKeyframe()
-        log.i("cluster epoch open ${size.width}x${size.height} — map requested sent=$sent")
+        log.i("cluster epoch open ${size.width}x${size.height} — ${content.label} requested sent=$sent")
+    }
+
+    /**
+     * Settings changed what the driver display shows: ask the phone for it now. False when the
+     * cluster stream is not up; the choice then applies the next time it opens.
+     */
+    @Synchronized
+    fun showClusterContent(): Boolean {
+        if (clusterRenderer == null) return false
+        val sent = client?.sendCommand(wasidremin.gmccpa.nav.ClusterContent.choice.command) == true
+        requestClusterKeyframe()
+        return sent
     }
 
     /** The window lost its Surface or closed: stop the decoder and ask the box to stop the map. */

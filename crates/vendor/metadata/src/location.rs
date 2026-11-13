@@ -101,6 +101,98 @@ pub struct LocationSelection {
     pub gphdt_interval_min_ms: Option<u32>,
 }
 
+/// The longest sentence [`encode_location_information`] will frame. NMEA-0183 caps a sentence at 82
+/// characters; Apple's `PASCD` can carry several samples, so allow some room.
+pub const MAX_SENTENCE_BYTES: usize = 255;
+
+/// The sentence types an accessory can send, by the address field after `$`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SentenceKind {
+    Gpgga,
+    Gprmc,
+    Gpgsv,
+    Pascd,
+    Pagcd,
+    Paacd,
+    Gphdt,
+}
+
+impl SentenceKind {
+    /// Which type a sentence is, or `None` for anything the phone has no selector for.
+    pub fn of(sentence: &str) -> Option<Self> {
+        Some(match sentence.get(1..6)? {
+            "GPGGA" => Self::Gpgga,
+            "GPRMC" => Self::Gprmc,
+            "GPGSV" => Self::Gpgsv,
+            "PASCD" => Self::Pascd,
+            "PAGCD" => Self::Pagcd,
+            "PAACD" => Self::Paacd,
+            "GPHDT" => Self::Gphdt,
+            _ => return None,
+        })
+    }
+}
+
+impl LocationSelection {
+    /// Whether the phone asked for this sentence type in `StartLocationInformation`.
+    pub fn wants(&self, kind: SentenceKind) -> bool {
+        match kind {
+            SentenceKind::Gpgga => self.gps_fix_data,
+            SentenceKind::Gprmc => self.recommended_minimum_gps_transit,
+            SentenceKind::Gpgsv => self.gps_satellites_in_view,
+            SentenceKind::Pascd => self.vehicle_speed_data,
+            SentenceKind::Pagcd => self.vehicle_gyro_data,
+            SentenceKind::Paacd => self.vehicle_accelerometer_data,
+            SentenceKind::Gphdt => self.vehicle_heading_data,
+        }
+    }
+
+    /// The shortest time the phone wants between two sentences of this type, if it said.
+    pub fn interval_min_ms(&self, kind: SentenceKind) -> Option<u32> {
+        match kind {
+            SentenceKind::Gpgga => self.gpgga_interval_min_ms,
+            SentenceKind::Gprmc => self.gprmc_interval_min_ms,
+            SentenceKind::Gpgsv => self.gpgsv_interval_min_ms,
+            SentenceKind::Pascd => self.pascd_interval_min_ms,
+            SentenceKind::Pagcd => self.pagcd_interval_min_ms,
+            SentenceKind::Paacd => self.paacd_interval_min_ms,
+            SentenceKind::Gphdt => self.gphdt_interval_min_ms,
+        }
+    }
+}
+
+/// Whether `s` is a sentence that can go on the wire: `$`, printable ASCII only, a `*HH` checksum
+/// that matches, and at most [`MAX_SENTENCE_BYTES`]. No line ending; the TLV's NUL ends it.
+pub fn is_well_formed_sentence(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() < 9 || b.len() > MAX_SENTENCE_BYTES || b[0] != b'$' {
+        return false;
+    }
+    if !b.iter().all(|c| (0x20..=0x7E).contains(c)) {
+        return false;
+    }
+    let Some(star) = s.rfind('*') else { return false };
+    if star + 3 != b.len() {
+        return false;
+    }
+    let sum = b[1..star].iter().fold(0u8, |a, c| a ^ c);
+    u8::from_str_radix(&s[star + 1..], 16).map(|want| want == sum).unwrap_or(false)
+}
+
+/// Encode a `LocationInformation` (0xFFFB, accessory-source) body: one `NMEASentence` (id 0, utf8,
+/// NUL-terminated) per sentence, in the order given. Sentences that are not well formed are left
+/// out, so nothing malformed reaches the phone's parser.
+pub fn encode_location_information<S: AsRef<str>>(sentences: &[S]) -> Vec<u8> {
+    let mut o = Vec::new();
+    for s in sentences.iter().map(AsRef::as_ref).filter(|s| is_well_formed_sentence(s)) {
+        o.extend_from_slice(&((4 + s.len() + 1) as u16).to_be_bytes());
+        o.extend_from_slice(&pid::NMEA_SENTENCE.to_be_bytes());
+        o.extend_from_slice(s.as_bytes());
+        o.push(0);
+    }
+    o
+}
+
 /// Parse a `LocationInformation` (0xFFFB, accessory-source) body: a flat sequence of `NMEASentence`
 /// (id 0, utf8) params. Any non-zero param id is ignored.
 pub fn parse_location_information(body: &[u8]) -> LocationInfo {
@@ -189,6 +281,48 @@ mod tests {
         assert_eq!(sel.gpgga_interval_min_ms, Some(1000));
         assert_eq!(sel.gprmc_interval_min_ms, Some(500));
         assert_eq!(sel.gpgsv_interval_min_ms, None);
+    }
+
+    /// The textbook sentences (invented coordinates from the NMEA examples, not a real place).
+    const GGA: &str = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47";
+    const RMC: &str = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A";
+
+    #[test]
+    fn encode_round_trips_and_drops_malformed_sentences() {
+        let body = encode_location_information(&[GGA, "$GPGGA,bad*00", "no dollar*00", RMC]);
+        assert_eq!(
+            parse_location_information(&body).sentences,
+            vec![GGA.to_string(), RMC.to_string()]
+        );
+        assert!(encode_location_information::<&str>(&[]).is_empty());
+    }
+
+    #[test]
+    fn well_formed_means_dollar_printable_and_a_matching_checksum() {
+        assert!(is_well_formed_sentence(GGA));
+        assert!(!is_well_formed_sentence("$GPGGA,123519*00"), "wrong checksum");
+        assert!(!is_well_formed_sentence(&GGA.replace('$', "")));
+        assert!(!is_well_formed_sentence(&format!("{GGA}\r\n")), "no line ending on the wire");
+        assert!(!is_well_formed_sentence(&GGA.replace("545.4", "545\u{0}4")));
+        let long = format!("$GPGGA,{}", "1".repeat(MAX_SENTENCE_BYTES));
+        assert!(!is_well_formed_sentence(&long));
+    }
+
+    #[test]
+    fn sentences_are_classified_and_matched_to_the_selection() {
+        assert_eq!(SentenceKind::of(GGA), Some(SentenceKind::Gpgga));
+        assert_eq!(SentenceKind::of(RMC), Some(SentenceKind::Gprmc));
+        assert_eq!(SentenceKind::of("$PASCD,1.0,C,D,0,1,0.00,5.2*00"), Some(SentenceKind::Pascd));
+        assert_eq!(SentenceKind::of("$GPGLL,1,2*00"), None);
+        assert_eq!(SentenceKind::of("$GP"), None);
+        let sel = LocationSelection {
+            gps_fix_data: true,
+            gpgga_interval_min_ms: Some(1000),
+            ..Default::default()
+        };
+        assert!(sel.wants(SentenceKind::Gpgga) && !sel.wants(SentenceKind::Gprmc));
+        assert_eq!(sel.interval_min_ms(SentenceKind::Gpgga), Some(1000));
+        assert_eq!(sel.interval_min_ms(SentenceKind::Pascd), None);
     }
 
     #[test]
