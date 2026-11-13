@@ -171,7 +171,7 @@ object TurnCard {
     @Volatile var benchThen: String? = null
 
     fun sample(lanes: Boolean) = Content(
-        "nav_turn_right", "500 ft", benchRoad ?: "Turn card", exit = if (benchRoad == null) "12" else null,
+        "nav_turn_right", "500 ft", benchRoad ?: "Turn card", exit = "12",
         near = true, approach = 0.6f,
         thenIcon = "nav_turn_left", thenRoad = benchThen ?: "the turn after",
         lanes = if (lanes) listOf(

@@ -1,4 +1,184 @@
-# ccpa_custom — open-source phone-projection firmware userspace + host app for the Carlinkit CPC200-CCPA
+<div align="center">
+
+# Wireless CarPlay for the Chevrolet Equinox EV
+
+**Open firmware for the Carlinkit CPC200-CCPA adapter, and an Android Automotive app that makes
+CarPlay feel built in: fast to connect, full screen, and on the driver display.**
+
+<img src="assets/readme/hero.png" alt="The driver display: CarPlay's map area with the app's turn card docked in the gauges' style, lane arrows, the battery on arrival, now playing and the Drive card" width="900">
+
+<sub>The driver display as the app draws it: turn card with lanes, exit sign and route shield, the
+battery you will arrive with, now playing, and the Drive card. In the car, CarPlay's own map fills
+the black area. (Bench screenshot, sample data.)</sub>
+
+</div>
+
+## Highlights
+
+- **About 11 seconds to CarPlay.** From the moment the app starts the adapter to the first
+  CarPlay picture: a median of 10.7 s over 44 drives, measured by the app itself.
+- **Wireless, full screen, HEVC** at the screen's native size, with media, calls, Siri and
+  navigation prompts on GM's own volume controls and the car's microphone.
+- **CarPlay on the driver display.** Apple Maps' dedicated cluster map, with turn-by-turn, lanes,
+  now playing, calls and live EV data drawn over it, in GM's look.
+- **EV Insights on the car.** A permanent drive and charge log on the head unit, efficiency by
+  route and weather, and an arrival-battery estimate fitted to your own driving.
+- **An ordinary app.** No root on the car, no changes to the phone, nothing soldered. The adapter
+  runs open firmware; the app installs through Google Play.
+
+## Features
+
+### The driver display
+
+<table><tr>
+<td width="50%"><img src="assets/readme/driver_free.png" alt="Free-floating turn card with exit sign, Interstate shield, lanes and the turn after, beside now playing and the Drive card"></td>
+<td width="50%"><img src="assets/readme/hero_night.png" alt="The docked layout in the car's night colours"></td>
+</tr><tr>
+<td><sub>The turn card floating top-left, with the turn after, the battery on arrival and lane arrows.</sub></td>
+<td><sub>Docked in the gauges' style, at night.</sub></td>
+</tr></table>
+
+The Equinox's driver display is an ordinary Android display, so the app opens its own window there
+and shows the map Apple Maps renders for instrument clusters. It stays up through whole routes,
+gets out of the way when you pick another of GM's pages, and comes back when you return to the map
+page. The cluster video carries the map only, so the app draws the rest itself from CarPlay's route
+data:
+
+- **Turn card:** the arrow, a countdown bar, the green exit sign, the road with its Interstate, US,
+  state or county shield, and the turn after it. It can float anywhere or dock bottom-right, styled
+  like GM's own gauges (top of the page).
+- **Lane guidance:** every lane's arrows, with the lane to take highlighted.
+- **Now playing and calls:** cover, title and progress, folding to a small pill during navigation;
+  a call takes its place with the caller and a timer.
+- **Day and night:** the cards follow the car's lighting, like CarPlay's map does.
+- **Your layout:** drag each card into place on a miniature of the display, and size it
+  (see [Settings](#settings-that-make-sense)).
+
+When the map isn't on the driver display, CarPlay's turns go to GM's own cluster instead, with the
+exit number, and the album art shows there between routes.
+
+### Live EV data in the cluster
+
+<table><tr>
+<td width="50%"><img src="assets/readme/drive_open.png" alt="The Drive card open: last-mile efficiency ring with ticks for the last 10 miles, this month and lifetime, and a bar per mile"><br><img src="assets/readme/drive_folded.png" alt="The Drive card and now playing folded to small pills" width="60%"></td>
+<td width="50%"><img src="assets/readme/drive_low.png" alt="Docked turn card with a low battery-on-arrival warning"></td>
+</tr><tr>
+<td><sub><b>Drive card:</b> your last mile against the last 10, this month and your lifetime
+average, with a bar for each mile. Green when you're beating your average, amber when you're
+not. It opens when you stop or the trend changes, and folds to a small ring while you drive
+(below it, folded beside now playing).</sub></td>
+<td><sub><b>Battery on arrival:</b> during an Apple Maps route, the turn card shows the charge
+you'll arrive with, worked out on the car from the route's distance and expected speed, the
+outside temperature and how this car has actually driven. Amber under 10%.</sub></td>
+</tr></table>
+
+### A media pane, with lyrics
+
+<table><tr>
+<td width="42%"><img src="assets/readme/pane.png" alt="The media pane: blurred cover backdrop, artwork, title, progress and controls"></td>
+<td>
+
+Tap the glass beside CarPlay for a media pane: the artwork over a blurred backdrop of the cover,
+the progress and the controls, and the song's **timed lyrics** with the line being sung
+highlighted. It lays over the right of CarPlay or splits the screen, in any gear, so a passenger
+can follow along. When it's hidden, a small now-playing chip sits beside CarPlay. <sub>(The
+lyrics are blurred in this screenshot; the cover is a drawn sample.)</sub>
+
+A **GM-style top bar** replaces the car's bars when you hide them: shortcuts into CarPlay's apps,
+now playing, the app's settings, the time and the outside temperature.
+
+</td></tr></table>
+
+<img src="assets/readme/topbar.png" alt="The GM-style top bar above CarPlay" width="900">
+
+### EV Insights, on the car
+
+<table><tr>
+<td width="50%"><img src="assets/readme/insights_last.png" alt="Last drive: efficiency against the usual for this route, and where the energy went"></td>
+<td width="50%"><img src="assets/readme/insights_week.png" alt="Week: distance, energy and efficiency by day"></td>
+</tr><tr>
+<td width="50%"><img src="assets/readme/insights_routes.png" alt="Routes: repeated trips found automatically, with best, typical and worst efficiency"></td>
+<td width="50%"><img src="assets/readme/insights_week_days.png" alt="Week: distance each day for four weeks, and personal bests"></td>
+</tr></table>
+
+Every drive and charge is kept on the head unit and never uploaded: how a drive compared with your
+usual for that route at that temperature, where the energy went (driving, warm-up, standing),
+routes you repeat found automatically, charging sessions and cost, and the week at a glance.
+Optional uploads to your own server feed a self-hosted web workbench
+([`host/evinsights`](host/evinsights/README.md)), under a monthly data limit that never counts
+Wi-Fi. <sub>(Screenshots use invented drives.)</sub>
+
+### Settings that make sense
+
+<table><tr>
+<td width="50%"><img src="assets/readme/settings_cluster.png" alt="Settings, Cluster tab"></td>
+<td width="50%"><img src="assets/readme/settings_layout.png" alt="Settings, the driver display layout editor"></td>
+</tr></table>
+
+Tabs for CarPlay, Screen & Sound, Cluster, Insights, Troubleshooting and Advanced. The Cluster tab
+holds GM's cluster, the driver display and a drag-and-drop editor for where each card sits.
+Troubleshooting can capture the CarPlay screen or the driver display, and upload logs, waiting for
+Wi-Fi when they're large.
+
+### And the rest
+
+- **More than one iPhone:** pair several and choose which connects first (new, needs the latest adapter firmware).
+- **Steering wheel:** the voice button starts Siri; media keys work; calls ring through GM's audio.
+- **Apple Maps knows it's an EV:** the car's battery, range and CCS1/J1772 connectors are sent to
+  CarPlay. (Apple Maps doesn't show it yet; see [T7](docs/ops/08_FUTURE_TASKS.md).)
+- **Drive-restricted UI and day/night** follow the car's gear and lights.
+- **Self-healing connection:** walk away and back, and CarPlay and the driver display reconnect
+  on their own.
+
+## Status
+
+Daily-driven on one Equinox EV with one iPhone (iOS 27). Working on the car: wireless CarPlay,
+audio, calls, Siri, cluster turn-by-turn, the driver-display map with the turn, now-playing and call
+cards, the media pane and the top bar. Newest, and not yet confirmed on the car: lane highlighting
+and route shields, the Drive card and arrival estimate, and the walk-away fix for the driver
+display (Play 246–249). Every item, with its evidence:
+[docs/ops/04_OPEN_ITEMS.md](docs/ops/04_OPEN_ITEMS.md).
+
+## How it works
+
+```
+iPhone ──Bluetooth: pairing, iAP2, MFi──▶ CCPA adapter (open firmware)
+   └────Wi-Fi: the adapter's own access point──▶ CarPlay receiver on the adapter
+                                                   │  USB, encrypted A/V (OCBM)
+                                                   ▼
+                              Android Automotive app on the head unit
+                              decrypt · decode HEVC · render · touch · mic
+                              main screen + driver display
+```
+
+The adapter keeps the parts Apple never changes: the iAP2 handshake, authentication on its genuine
+MFi chip, pairing and key derivation. The app owns everything that changes with each iOS release,
+so new CarPlay features usually land in an app update. On the Equinox, GM's firewall blocks the
+phone from reaching the head unit directly, so the adapter runs its own Wi-Fi and the CarPlay
+receiver, and forwards the still-encrypted video and audio to the app.
+
+## Getting it
+
+This is a hobby project for one car, not a product. To run it you would:
+
+1. Flash the adapter's userspace with this firmware ([`docs/ops/00_BUILD_AND_DEPLOY.md`](docs/ops/00_BUILD_AND_DEPLOY.md));
+   the signed boot stack is never touched, and [`docs/ops/01_RECOVERY.md`](docs/ops/01_RECOVERY.md)
+   covers recovery.
+2. Build the app ([`host/gm_ccpa`](host/gm_ccpa/README.md)) and install it through your own Google
+   Play Console internal test track; Equinox owners report that the car refuses sideloaded APKs.
+
+## Credits
+
+Built on [lvalen91/ocbm](https://github.com/lvalen91/ocbm) by Tachi91, the open CPC200-CCPA
+userspace this fork comes from. Ports from [enigy/carlink](https://github.com/enigy/carlink) and
+[lvalen91/carlink](https://github.com/lvalen91/carlink) (public domain); the driver-display idea
+from [openautolink](https://github.com/mossyhub/openautolink) (ideas only, our own code); lyrics
+from [lrclib.net](https://lrclib.net). The XDA CPC200-CCPA thread's GM EV owners found the
+mass-storage trick that gets the adapter recognised. Details: [NOTICE.md](NOTICE.md).
+
+---
+
+# For developers
 
 > **This is the Equinox EV fork:** [wasidremin/ocbm_equinoxev](https://github.com/wasidremin/ocbm_equinoxev).
 > The original project is [lvalen91/ocbm](https://github.com/lvalen91/ocbm), by Tachi91
@@ -13,8 +193,6 @@
 > instead of as pull requests on the original repo. Fetch from upstream to read his new commits.
 > Do not push to `lvalen91/ocbm`.
 
-CarPlay from an iPhone to a Chevrolet Equinox EV's own screen, through a Carlinkit adapter running
-open firmware and an Android Automotive app on the car.
 
 > **Documentation:** [docs/README.md](docs/README.md) is the map — four categories
 > (`carplay/`, `wireless/`, `host/`, `ops/`), capped at 10 documents each by `tools/docs_check.py`.
@@ -50,9 +228,8 @@ Everything above the kernel is rewritten open-source.
 > git history has them, and upstream [lvalen91/ocbm](https://github.com/lvalen91/ocbm) still
 > carries most of them.
 
----
 
-## Requirements
+### Requirements
 
 - A genuine **Carlinkit CPC200-CCPA** adapter (i.MX6UL, 123 MB RAM, jffs2 rootfs, on-board MFi 2.0C
   coprocessor).
@@ -61,7 +238,7 @@ Everything above the kernel is rewritten open-source.
   `rustup target add armv7-unknown-linux-musleabihf`), `cargo install cargo-zigbuild` and `zig`
   for the box binaries, plus the Android SDK and NDK for the app.
 
-## Getting started
+### Getting started
 
 | Step | Where |
 |---|---|
@@ -71,7 +248,7 @@ Everything above the kernel is rewritten open-source.
 | Recover a wedged or bricked box | [`docs/ops/01_RECOVERY.md`](docs/ops/01_RECOVERY.md) |
 | Verify a change before committing | `tools/run_tests.sh`, `tools/docs_check.py`, `tools/proto_check.py`, and the test plans in [`docs/ops/02_TESTING.md`](docs/ops/02_TESTING.md) |
 
-## The one hard constraint (the vendor floor)
+### The one hard constraint (the vendor floor)
 
 The i.MX6UL boot ROM enforces HAB signature verification and the kernel is per-chip OTPMK-encrypted,
 so **U-Boot + kernel are fixed platform firmware** — untouched here. All CCPA behavior is userspace,
@@ -82,21 +259,13 @@ which covers the architecture and the transport.
 
 ---
 
-## Status
+### Status
 
 Open work and the pick-up point: **[docs/ops/04_OPEN_ITEMS.md](docs/ops/04_OPEN_ITEMS.md)**; planned
 work: **[docs/ops/08_FUTURE_TASKS.md](docs/ops/08_FUTURE_TASKS.md)**; the app's drive-by-drive
 record: [`host/gm_ccpa/docs/14_LESSONS_LEARNED.md`](host/gm_ccpa/docs/14_LESSONS_LEARNED.md).
 
-**Working on the Equinox EV (Play internal track).** Wireless CarPlay end to end: Bluetooth pairing
-and reconnect, iAP2 and MFi on the adapter's coprocessor, the Wi-Fi handoff, HEVC video at the
-panel's native size, AAC media audio, AAC-ELD voice (calls, Siri, navigation prompts) on GM's own
-volume groups, the car mic for Siri and calls, touch, now-playing metadata and artwork on the AAOS
-media card, CarPlay turn-by-turn in the instrument cluster, the steering-wheel voice button for
-Siri, a media pane with lyrics beside CarPlay, and CarPlay's own map on the driver display with the
-app's turn, now-playing and call cards over it. On the head unit, EV Insights keeps a permanent
-drive and charge log, and a Drive card shows the battery on arrival (Play 247, 2026-11-12; not yet
-seen on the car). Item-by-item status: [docs/ops/04_OPEN_ITEMS.md](docs/ops/04_OPEN_ITEMS.md).
+What works on the car is listed at the top of this page; item by item, with evidence, in [docs/ops/04_OPEN_ITEMS.md](docs/ops/04_OPEN_ITEMS.md).
 
 **Why the adapter runs the Wi-Fi.** Upstream's Silverado design has the iPhone stream over the
 *vehicle's* hotspot straight to the app, with the adapter as Bluetooth radio and MFi chip only. The
@@ -105,7 +274,7 @@ Equinox's GM firewall drops the phone's inbound connection to the head unit (mea
 forwards the still-encrypted video and audio to the app over USB. The app decrypts and decodes.
 The app keeps the vehicle-hotspot mode; on the Equinox its adapter Wi-Fi switch is on.
 
-## Architecture in brief
+### Architecture in brief
 
 Full detail: [`docs/carplay/00_ARCHITECTURE.md`](docs/carplay/00_ARCHITECTURE.md). The governing
 doctrine is app-driven configuration ([`docs/carplay/04_CAPABILITIES_AND_CONFIG.md`](docs/carplay/04_CAPABILITIES_AND_CONFIG.md)):
@@ -155,7 +324,7 @@ Rejected alternatives and why, so they are not re-litigated:
 
 ---
 
-## Reproducibility bar
+### Reproducibility bar
 
 Install needs a root shell over USB-NCM — which the stock firmware leaves open (a telnet/SSH login with no password set, as shipped; no keys or certificates are involved), so what bounds it is the local USB link rather than a credential — or an **SPI flash programmer** for the offline recovery path
 (also the brick-proof recovery path). Lower and less invasive than any field alternative (no
@@ -163,7 +332,7 @@ phone modification, no soldered chip). See [`docs/ops/01_RECOVERY.md`](docs/ops/
 
 ---
 
-## Layout
+### Layout
 
 | Path | Contents |
 |---|---|
@@ -185,7 +354,7 @@ phone modification, no soldered chip). See [`docs/ops/01_RECOVERY.md`](docs/ops/
 
 ---
 
-## Reference material
+### Reference material
 
 [`docs/ops/03_REFERENCE_INDEX.md`](docs/ops/03_REFERENCE_INDEX.md) indexes the sources the protocol
 work was checked against. Most of them — Apple's licensed CarPlay Communication Plug-in source, the

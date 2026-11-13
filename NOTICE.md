@@ -1,8 +1,33 @@
 # Third-party material and reference points
 
-The code in this repository is original work. Nothing here is copied from another
-project. Several external sources were used as *reference* — to learn a wire format, a
-constant, or a behaviour — and are recorded here so the distinction is on the record.
+The code in this repository is original work, except the public-domain ports listed under
+"Ported from public-domain projects" below. Several external sources were used as *reference* —
+to learn a wire format, a constant, or a behaviour — and are recorded here so the distinction is
+on the record. (Corrected 2026-11-12: this said nothing was copied from another project, which
+stopped being true when the GM app took ports from the projects below.)
+
+## Ported from public-domain projects
+
+These are released under the Unlicense, like this repository, and the ported files say what they
+came from in their header comments.
+
+- **lvalen91/carlink** (github.com/lvalen91/carlink) — the CarPlay-to-GM maneuver table, the trip
+  shape and the primary-session logic behind cluster turn-by-turn (`nav/`).
+- **enigy/carlink** (github.com/enigy/carlink) — the media pane's feature set and the timed-lyrics
+  client and cache (`pane/`, `lyrics/`), the echo and voice call tests (`calltest/`),
+  navigation-focus claiming, and parts of the split-screen view-area configuration.
+- **enigy/ocbm** (github.com/enigy/ocbm) — adapter-side startup fixes and the route-guidance
+  additions (exit labels, junction and lane detail).
+
+## Ideas, no code
+
+**openautolink** (github.com/mossyhub/openautolink, GPL-3.0) — showed on a Blazer EV that GM
+exposes the driver display to an ordinary app, and how GM's cluster page events can bring a map
+back. The GM app's driver-display window, page-return handling and default directions area were
+written here from that description; none of its code is used.
+
+**lrclib.net** — a public lyrics service the app queries at run time when "Look up lyrics" is on.
+No lyrics are stored in this repository.
 
 ## Referenced, not incorporated
 

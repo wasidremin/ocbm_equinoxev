@@ -71,7 +71,9 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   with the app's cards over it and uploads it like the other captures
   (`host/gm_ccpa/docs/SETTINGS_AUDIT.md` "2026-11-12 deltas"). Emulator-checked: every tab renders,
   and a capture saved the cards at their places (cards on black, as the bench has no map frame;
-  the bench's uploads pointed at an unreachable address). Open on the car: that a capture holds the
+  the bench's uploads were meant to go to an unreachable address, but that override did not
+  take, and this test capture, cards on black, reached the receiver as `20261112-180926`; the
+  emulator's upload address has been overridden properly since, as root, 2026-11-12 20:01). Open on the car: that a capture holds the
   map behind the cards, and how the tabs read at the car's scale.
 - **Drive card v2 and the arrival chip: nothing checked on the car (Play 249).** After the
   first drive with the card (Play 248: the history import worked, 147 records; the driver display
