@@ -598,7 +598,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private fun flushHeld(gen: Int) {
         if (gen != holdGeneration) return
         val s = held ?: return
-        log.i("card: no picture ${ART_WAIT_MS} ms after \"${s.title.orEmpty()}\" — publishing without one")
+        log.i("card: no picture ${ART_WAIT_MS} ms after ${titleTag(s.title)} — publishing without one")
         publishCard(s)
     }
 
@@ -638,7 +638,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 .setDescription(s.album.orEmpty())
                 .build(), queueId)))
         val artNote = if (art != null) "${art.width}x${art.height}" else "none"
-        val cardLine = "card: metadata \"${s.title.orEmpty()}\" art=$artNote " +
+        val cardLine = "card: metadata ${titleTag(s.title)} art=$artNote " +
             "dur=${s.durationMs} status=${s.playbackStatus} queueId=$queueId (sessionUp=$sessionUp)"
         if (cardLine != cardLogLine) {
             cardLogLine = cardLine

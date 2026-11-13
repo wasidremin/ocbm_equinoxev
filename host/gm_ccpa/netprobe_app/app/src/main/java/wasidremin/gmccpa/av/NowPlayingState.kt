@@ -324,7 +324,7 @@ class NowPlayingState {
             log.i("np: sync first nowPlaying record ${(firstRecordAtMs - sessionStartMs) / 1000L}s after the seam opened")
         }
         if (titleChanged && !trackChanged) {
-            log.i("np: track \"$incomingTitle\" is the same item with or without its byline — art and duration kept")
+            log.i("np: track ${titleTag(incomingTitle)} is the same item with or without its byline — art and duration kept")
         } else if (trackChanged) {
             log.i(trackSummaryLine(
                 incomingTitle,
@@ -558,11 +558,17 @@ internal fun syncSummaryLine(
 enum class CallPhase { NONE, RINGING, ACTIVE }
 
 /**
- * One-line track-change summary for the log. Titles already surface in `mbs` card logs, so
- * naming the track here is consistent, not new exposure. Pure for unit tests.
+ * A title for the log without the title: four hex digits of its hash and its length, `#3fa2/17`.
+ * The same title always gives the same tag, so a log still shows when the track changed and when
+ * one came back, and nothing in an upload says what the owner was listening to. `?` when there is
+ * no title. (Until 2026-11-13 the `np` and `mbs` lines carried the title itself.)
  */
+internal fun titleTag(title: String?): String =
+    if (title.isNullOrEmpty()) "?" else "#%04x/%d".format(java.util.Locale.US, title.hashCode() and 0xFFFF, title.length)
+
+/** One-line track-change summary for the log. The title goes in as a [titleTag]. Pure for unit tests. */
 internal fun trackSummaryLine(title: String?, artistPresent: Boolean, status: Int?, artworkId: Int?): String =
-    "np: track \"${title ?: "?"}\" artist=${if (artistPresent) "yes" else "no"}" +
+    "np: track ${titleTag(title)} artist=${if (artistPresent) "yes" else "no"}" +
         " status=${status ?: "?"} artworkId=${artworkId ?: "?"}"
 
 /**

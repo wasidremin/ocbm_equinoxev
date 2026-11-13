@@ -143,6 +143,29 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
   96% of the upload. On 227 that afternoon there were five in 7.7 minutes of CarPlay, all while the
   activity and its surface were first laid out (17:13:36–17:13:48). Owner:
   `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.9 (correction).
+- **From the 2026-11-13 morning drive's log (app `4.0+walkaway-map`, 249).**
+  - *Open: five seconds lost at every start since a second iPhone was bonded.* The adapter pages
+    its bonds in stored order. The phone that is not in the car comes first, fails after 5 s
+    (`CONNECT_FAILED … status=0x04`, `SDP query failed: Host is down`), and only then is the owner's
+    phone tried. `bt-connected` has been 12.5 to 14.9 s after attach on every start since
+    2026-11-10, and the first picture about 21 s. Today's fix is Settings ▸ CarPlay ▸ Phones: move
+    the phone that drives to the top (T12, on the car since 2026-11-11). Proposed, not built: the
+    app puts the phone that last connected first by itself (`MGMT_SET_ORDER`, no firmware change),
+    unless the owner has arranged the order by hand.
+  - *Fixed, in the next build: a quiet screen rebuilt the video decoder.* The stall watchdog timed
+    from the last access unit queued, and the decoder often holds that one until the next arrives.
+    The first frame after a pause then looked like a stall of the pause's length (10.9 s and 6.2 s
+    today; 55 rebuilds since 2026-10-14), costing a keyframe and about a quarter of a second on the
+    first touch. `av/StallWatch` now times a run of unrendered access units and a pause ends the run.
+  - *Fixed, in the next build: track titles in the log.* `mbs card: metadata` and `np: track` wrote
+    the title (27 and 12 lines in this drive). They now write `titleTag`, a hash and a length. The
+    uploads already on the server still hold titles; nothing there has been deleted.
+  - *Seen, no action.* The arrival estimate was exact on its first measured route (`route over 13 m
+    from its end, battery 70% — last estimate 70%, first estimate 70%`). The codec error at
+    13:01:16 is the decoder losing its Surface when the driver went to the car's home screen; the
+    picture was back 189 ms after returning. The adapter's stock `/etc/udhcpd.conf` logs a parse
+    error for its option 43 line at every boot and hands out leases all the same. The adapter's
+    root filesystem has 4.3 MB free (`rootfs_pct` 67).
 - **Built 2026-11-13, not yet on the car (one adapter reflash and one publish cover all three).**
   T7's battery models for Apple Maps, T6's car GPS for the iPhone, and T23's "Driver display
   shows" setting with the `CMD_NAV_URL` command. T7 and T6 are off or unchanged until the adapter

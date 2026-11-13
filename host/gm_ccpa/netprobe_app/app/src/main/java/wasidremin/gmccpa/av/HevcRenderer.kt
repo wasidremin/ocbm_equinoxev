@@ -73,6 +73,8 @@ class HevcRenderer(
     private val lastRenderAt = AtomicLong(0)
     /** Last access unit actually queued. A stall is queued-and-never-rendered, not a quiet screen. */
     private val lastQueuedAt = AtomicLong(0)
+    /** When the present run of queued-and-unrendered access units began ([StallWatch]). */
+    private var stallRunAt = 0L
     private var stallResetAt = 0L
     /** The VPS+SPS+PPS actually baked into the live codec's csd-0, to detect a mid-session change. */
     private var configuredCsd: ByteArray? = null
@@ -175,6 +177,7 @@ class HevcRenderer(
         keyframeReqsSinceIrap = 0
         lastRenderAt.set(0)
         lastQueuedAt.set(0)
+        stallRunAt = 0L
         // Armed per connection, on the seam thread, before the first read: a connection that never
         // renders is the "black screen with a healthy session" fault, and until now it produced no
         // line at all — only the absence of one. Met in [drain] on this connection's first frame.
@@ -384,7 +387,9 @@ class HevcRenderer(
             }
             ib.put(auBytes)
             c.queueInputBuffer(idx, 0, auBytes.size, SystemClock.uptimeMillis() * 1000, 0)
-            lastQueuedAt.set(SystemClock.elapsedRealtime())
+            val queuedNow = SystemClock.elapsedRealtime()
+            stallRunAt = StallWatch.runBegan(queuedNow, stallRunAt, lastQueuedAt.get(), lastRenderAt.get())
+            lastQueuedAt.set(queuedNow)
             drain(c)
         } catch (e: IllegalStateException) {
             log.e("codec in error state: ${e.message} — resetting")
@@ -411,14 +416,11 @@ class HevcRenderer(
      */
     private fun maybeResetForStall() {
         if (!sawKeyframe) return
-        val queued = lastQueuedAt.get()
-        val rendered = lastRenderAt.get()
-        // Last event was a rendered frame. The phone went quiet; the picture on screen is current.
-        if (queued == 0L || rendered == 0L || queued <= rendered) return
         val now = SystemClock.elapsedRealtime()
-        val stuck = now - queued
+        val stuck = StallWatch.stuckMs(now, stallRunAt, lastQueuedAt.get(), lastRenderAt.get())
         if (stuck < STALL_RESET_MS || now - stallResetAt < 8_000) return
         stallResetAt = now
+        stallRunAt = 0L
         log.e("decoder held an access unit for ${stuck}ms without a frame — resetting")
         releaseCodec("render stall ${stuck}ms — output buffers released")
         sawKeyframe = false
@@ -482,4 +484,35 @@ class HevcRenderer(
             }
         }
     }
+}
+
+/**
+ * Tells a decoder that has stopped giving frames from a phone that has stopped sending them.
+ *
+ * A stall is access units going in, one after another, with no frame coming out. A quiet screen
+ * looks the same for one access unit: the decoder often keeps the last one it was given until the
+ * next arrives, and the next may be ten seconds away. Measured from that last access unit, every
+ * first frame after a quiet spell looked like a 10 s stall and rebuilt the decoder (55 times between
+ * 2026-10-14 and 2026-11-13, 2 to 7 on a driving day, each costing a keyframe and about a quarter
+ * of a second on the first touch after a pause).
+ *
+ * So the clock runs over a *run* of unrendered access units, and a gap in the input as long as
+ * [HevcRenderer.STALL_RESET_MS] ends the run: the stream was idle, not stuck.
+ */
+internal object StallWatch {
+    /**
+     * When the run that the access unit queued at [now] belongs to began. A new run starts when
+     * there was none, when a frame has been rendered since the old one began, or when the input was
+     * idle for [HevcRenderer.STALL_RESET_MS] before this access unit.
+     */
+    fun runBegan(now: Long, run: Long, lastQueued: Long, lastRender: Long): Long =
+        if (run == 0L || lastRender >= run || now - lastQueued >= HevcRenderer.STALL_RESET_MS) now else run
+
+    /**
+     * How long access units have been going in with nothing coming out, or 0 when the decoder is not
+     * stuck: no run, a frame rendered since the run began, or the input itself idle (the next access
+     * unit starts a new run).
+     */
+    fun stuckMs(now: Long, run: Long, lastQueued: Long, lastRender: Long): Long =
+        if (run == 0L || lastRender >= run || now - lastQueued >= HevcRenderer.STALL_RESET_MS) 0L else now - run
 }

@@ -40,12 +40,23 @@ class NowPlayingLogTest {
 
     @Test fun trackSummaryNamesWhatChanged() {
         val line = trackSummaryLine("Drop Dead", true, 1, 129)
-        assertEquals("np: track \"Drop Dead\" artist=yes status=1 artworkId=129", line)
+        assertEquals("np: track ${titleTag("Drop Dead")} artist=yes status=1 artworkId=129", line)
+        assertFalse(line.contains("Drop Dead"))
+    }
+
+    /** The log never names a track: a title becomes a short tag that is the same every time. */
+    @Test fun aTitleIsLoggedAsATag() {
+        val tag = titleTag("Drop Dead")
+        assertTrue(tag, Regex("#[0-9a-f]{4}/9").matches(tag))
+        assertEquals(tag, titleTag("Drop Dead"))
+        assertFalse(tag == titleTag("Drop Dead (Live)"))
+        assertEquals("?", titleTag(null))
+        assertEquals("?", titleTag(""))
     }
 
     @Test fun trackSummaryToleratesMissingFields() {
         val line = trackSummaryLine(null, false, null, null)
-        assertEquals("np: track \"?\" artist=no status=? artworkId=?", line)
+        assertEquals("np: track ? artist=no status=? artworkId=?", line)
     }
 
     /**
