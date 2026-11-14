@@ -33,7 +33,12 @@ FILES=(
   "$REPO/tools/run_supervisor.sh|/script/run_supervisor.sh|755"
 )
 
-( cd "$REPO" && sh build.sh >/dev/null ) || { echo "FATAL: adapter firmware build failed" >&2; exit 1; }
+# build_aab.sh exports the app's own FDK_AAC_PREFIX (the Android x86_64 libfdk-aac) and
+# CARGO_TARGET_DIR (the JNI build's). Inherited, the first links an x86_64 library into the ARM
+# carplayd and the second sends the box binaries away from $ARM, where this script would then pack
+# stale ones. The box build takes its own defaults for both.
+( cd "$REPO" && env -u FDK_AAC_PREFIX -u CARGO_TARGET_DIR sh build.sh >/dev/null ) \
+  || { echo "FATAL: adapter firmware build failed" >&2; exit 1; }
 
 # Every file here must also be one the bench installer ships, so the two sets cannot drift apart.
 for f in "${FILES[@]}"; do
