@@ -308,7 +308,9 @@ under Vehicles is the owner's check.
 
 **Still to do, on the car.**
 
-1. The adapter in the car was updated on the bench 2026-11-13 (`ocbm-host push`); publish the app.
+1. The adapter was updated on the bench 2026-11-13 (`ocbm-host push`) and the app published as 250.
+   On the bench Apple Maps ▸ Vehicles listed the car, as "CarLink": Maps takes the name from
+   param 20 sub 6 `DisplayName`, which is still the box's name (T21).
 2. Check the log for `EV identity for CarPlay: … with the EV-routing models` and
    `TX 0xA101 … models: charging N B, consumption N B`, with no `0x1D03`.
 3. On the iPhone: forget the adapter under Bluetooth and under CarPlay, pair again, then Apple
