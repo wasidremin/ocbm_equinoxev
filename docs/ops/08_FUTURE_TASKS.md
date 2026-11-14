@@ -30,7 +30,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 |---|---|
 | T6 Car GPS into Maps | Built 2026-11-13 on T7's pattern, off by default. Waits for the adapter reflash; not yet tried on a phone |
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13, and the fix was built that day. It needs the adapter reflashed, an app update, and the iPhone paired again (see T7) |
-| T8 MainBuffered audio, phase B | Prepared 2026-11-13: the adapter logs the shape of any stream it does not serve, and a bench switch advertises buffered audio. The probe needs the phone at the bench |
+| T8 MainBuffered audio, phase B | Probed 2026-11-14: the phone keeps `mainBuffered` but then sets up no audio stream at all (silent). Next is its own log over USB to see what it wants |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
@@ -38,7 +38,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). A second route, the adapter link over the car's hotspot, is recorded in T15 (2026-11-13) and not started; its first step is app only |
 | T20 Update the adapter from the app | Built and benched 2026-11-14 (update, confirm, manual and automatic rollback). Needs one last bench install for the boot hook; app updates after that |
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
-| T22 CarPlay's status bar on the driver's side | Built and on the adapter 2026-11-13; the setting is in the next app build. Not yet seen with a choice other than Auto |
+| T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 
 *Done*
 
@@ -305,7 +305,8 @@ CCS1), so Maps never offered Tesla stations although the owner charges at Superc
 adapter. Settings ▸ CarPlay ▸ Apple Maps ▸ "Tesla (NACS) adapter": None, Superchargers (`nacsdc`,
 150 kW) or All Tesla (adds `nacsac`, 11.5 kW). The connectors join the car's own in
 `vehicleInfo.chargingConnectors`, which every adapter firmware since 223 already reads
-(`the_gm_apps_nacs_connectors_resolve`). Maps may need the car removed and added again to see them.
+(`the_gm_apps_nacs_connectors_resolve`). The phone accepted the Identify with J1772 and NACS DC on
+the bench, 2026-11-14. Maps may need the car removed and added again to see them.
 
 **Bench, 2026-11-13 (the real app on the AAOS emulator, the adapter on its USB, the owner's
 iPhone).** Three connects, each `Identify carries the app-pushed vehicle identity … status_caps=
@@ -380,6 +381,16 @@ MainBuffered). Confirm the stream-type number and the `mainBufferedInfo` diction
   item 9), switch on, one connect, then read the `SETUP negotiated … features=` line (whether
   `mainBuffered` survived) and the stream dictionary. If the phone does not ask for the stream, the
   iPhone's own log says why (`idevicesyslog` on this server with the phone on USB; CLAUDE.md).
+
+**Probe result (2026-11-14, the owner's iPhone, iOS 27.2.1).** With buffered audio advertised the
+phone KEPT the feature: `SETUP negotiated … features=["hevc", "mainBuffered", "iAPChannel",
+"sessionManagement"]` (it had negotiated it away in the 2026-08 captures). It then set up the screen
+and the iAP channel, took `mainAudio` and played (`modesChanged`, now-playing state 3), and never
+sent a SETUP for any audio stream: no buffered stream and no 102 either. Media was silent until the
+switch went off, when the next session set up 102 and played at once. So the phone wants something
+our `/info` does not give it before it opens the buffered stream; `mainBufferedInfo` is still
+presence-only. Next: the same session with the iPhone on this server's USB and `idevicesyslog`
+running (libimobiledevice is not installed yet), to read what the phone looked for.
 
 **Done means.** With the toggle on, iOS opens a MainBuffered stream and music plays through it. With
 the toggle off, the session bytes match today.
@@ -817,6 +828,10 @@ first view area, and nothing for Auto, so the default document is unchanged. The
 (`vehicle_config::status_bar_edge_ordinal`, `DeviceConfig::main_status_bar_edge`) declares Apple's
 raw value (Auto 0, Bottom 1, Driver 2) as `viewAreaStatusBarEdge` on every main view area and never
 on the cluster. Older firmware ignores the key. On the owner's adapter since 2026-11-13.
+
+**Seen on the bench (2026-11-14, the owner's iPhone).** Auto and Driver both put CarPlay's dock on the
+left edge, the driver's side in this car. Bottom moved it to a bar along the bottom, with the media
+pane unaffected.
 
 **Done means.** Each choice in the setting moves CarPlay's status bar at the next connect, and the
 media pane and view-area switching still work.
