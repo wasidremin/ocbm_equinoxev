@@ -93,9 +93,18 @@ NMEA-0183 sentences (`GPGGA`, `GPRMC`, `GPHDT`) plus Apple's `PASCD` when the ca
 - *Tests.* Adapter suites and the app's 512 unit tests pass; both sides pin the same block
   (`CarGpsTest.block`, `the_gm_apps_location_block_resolves`).
 
-**Still to do, on the car.** Reflash, publish, turn the setting on (after T7 has been seen
-working, so a rejected Identify can be pinned on one of them), and look for
-`RX 0xFFFA StartLocationInformation` and the `TX 0xFFFB` counts with no `0x1D03`.
+**Bench, 2026-11-13 (the real app on the AAOS emulator, the adapter on its USB, the owner's
+iPhone).** The Identify with param 22 beside T7's 20/21 was accepted. The phone sent `0xFFFA`
+selecting `GPGGA`, `GPRMC`, `GPHDT` (each at most every 250 ms) and `PASCD` (every 20 ms), and the
+adapter answered `TX 0xFFFB LocationInformation: first update, 3 sentences, 195 B` from test
+fixes (`adb emu geo fix`, the NMEA textbook position). No sentence reached a log. The first run
+found a firmware defect: `carplayd`'s input reader refused any `CH_INPUT` sub-frame over 64 bytes
+as a desync and dropped the connection, so each fix (~170 B) also knocked touch input out until
+`ocbmd` reconnected (39 times in two minutes). The limit is now `ocbm_proto::INPUT_FRAME_MAX`
+(1025 B). Whether Maps prefers the car's fix is still unknown; the emulator's fix does not move.
+
+**Still to do, on the car.** Turn the setting on after T7 has been seen working, so a rejected
+Identify can be pinned on one of them, and look for the `TX 0xFFFB` counts with no `0x1D03`.
 
 **Known limits.** Android gives the app fixes while it is in front; if it withholds them when
 another app covers CarPlay, the counts in the log will show the gap. The receiver's accuracy stands
@@ -290,9 +299,16 @@ set a destination, accept the pop-up, tap Connect.
 - *Tests.* Adapter suites pass (`tools/run_tests.sh`); the app's 499 unit tests pass. Both sides pin
   the same block (`EvForCarPlayTest.routingBlock`, `the_gm_apps_ev_routing_block_resolves`).
 
+**Bench, 2026-11-13 (the real app on the AAOS emulator, the adapter on its USB, the owner's
+iPhone).** Three connects, each `Identify carries the app-pushed vehicle identity … status_caps=
+Some([3, 4, 6, 11, 21, 30])` then `IdentifyAccept`, no `0x1D03`. The phone sent `0xA100` and the
+adapter answered `TX 0xA101 VehicleStatusUpdate (780 B)` carrying both models. The emulator's car
+calls itself "Toy Vehicle Speedy Model", which is the name Maps would list. Whether Maps offers it
+under Vehicles is the owner's check.
+
 **Still to do, on the car.**
 
-1. Reflash the adapter (`tools/ocbm_install.sh --full`) and publish the app.
+1. The adapter in the car was updated on the bench 2026-11-13 (`ocbm-host push`); publish the app.
 2. Check the log for `EV identity for CarPlay: … with the EV-routing models` and
    `TX 0xA101 … models: charging N B, consumption N B`, with no `0x1D03`.
 3. On the iPhone: forget the adapter under Bluetooth and under CarPlay, pair again, then Apple
@@ -772,7 +788,12 @@ for it.**
 with the map and the owner wants both at once. Declare `DisplayPanel.Alt2` / `VideoStream.Alt2`
 with the instruction card as its first URL, bench it first, then a new channel and a second decoder.
 
-**To see on the car.** What the turn card and Apple's view each look like at 2000×810 (the
+**Bench, 2026-11-13.** With "Turn card" chosen the app logged `cluster epoch open 1600x600 —
+Apple's turn card requested sent=true` and the adapter `navCard showUI(instructioncard)`. With no
+route, Apple drew its suggested destinations (Home, Work) on a plain background, not a turn; the
+first frame came about two minutes after the request. The app's now-playing card drew over it.
+
+**To see on the car.** What the turn card and Apple's view each look like at 2000×810 during a route (the
 "Capture driver display" button saves it), and whether the log shows
 `cluster epoch open … Apple's turn card requested sent=true`.
 

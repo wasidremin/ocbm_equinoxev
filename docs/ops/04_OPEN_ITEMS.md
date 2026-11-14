@@ -166,6 +166,12 @@ high-water mark: versionCode 249 (`4.0+walkaway-map`, 2026-11-12; `host/gm_ccpa/
     picture was back 189 ms after returning. The adapter's stock `/etc/udhcpd.conf` logs a parse
     error for its option 43 line at every boot and hands out leases all the same. The adapter's
     root filesystem has 4.3 MB free (`rootfs_pct` 67).
+- **Adapter updated and benched 2026-11-13 (T6, T7, T23 firmware).** The adapter that lives in the
+  car was updated on this server and tested with the real app on the emulator and the owner's
+  iPhone (`docs/ops/00_BUILD_AND_DEPLOY.md` item 9). Found and fixed on the way: `carplayd`
+  dropped its input connection on any `CH_INPUT` sub-frame over 64 bytes, which a location fix, a
+  `CMD_NAV_URL` with a query, or a `CMD_REQUEST_UI_URL` longer than 62 bytes would have triggered,
+  taking touch input with it. The app still has to be published.
 - **Built 2026-11-13, not yet on the car (one adapter reflash and one publish cover all three).**
   T7's battery models for Apple Maps, T6's car GPS for the iPhone, and T23's "Driver display
   shows" setting with the `CMD_NAV_URL` command. T7 and T6 are off or unchanged until the adapter

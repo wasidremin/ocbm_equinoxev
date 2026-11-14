@@ -1078,7 +1078,8 @@ fn read_input(mut stream: TcpStream, gen: u32) {
             break;
         }
         let len = u16::from_le_bytes(hdr) as usize;
-        if len == 0 || len > 64 {
+        // Sized by the protocol, not by HID: location and URL frames are hundreds of bytes.
+        if len == 0 || len > ocbm_proto::INPUT_FRAME_MAX {
             // implausible sub-frame length → treat as desync and drop the connection
             eprintln!("[input] implausible sub-frame length {len} — desync, dropping the ingest connection");
             break;

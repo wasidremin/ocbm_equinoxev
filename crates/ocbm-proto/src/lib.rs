@@ -542,6 +542,11 @@ pub fn cluster_url_ok(url: &str) -> bool {
 // logged. `MGMT_INFO` says `"car_gps":true`.
 pub const INPUT_LOCATION: u8 = 0x09;
 pub const LOCATION_MAX: usize = 1024;
+/// The largest `CH_INPUT` sub-frame carplayd's `:9110` reader accepts. Until 2026-11-13 it was a
+/// hard-coded 64, sized for HID events: an `INPUT_LOCATION` (~250 B), a `CMD_NAV_URL` with a query,
+/// or a `CMD_REQUEST_UI_URL` past 62 bytes was read as a desync and the ingest connection dropped,
+/// taking touch input with it until ocbmd reconnected (39 times in a 2-minute bench session).
+pub const INPUT_FRAME_MAX: usize = 1 + LOCATION_MAX;
 pub const APPEARANCE_STREAM_MAIN: u8 = 0x00;
 pub const APPEARANCE_STREAM_ALT: u8 = 0x01;
 pub const APPEARANCE_MODE_LIGHT: u8 = 0x00;
@@ -973,6 +978,14 @@ impl Reassembler {
 
 #[cfg(test)]
 mod tests {
+    /// Every CH_INPUT sub-frame the protocol defines fits the reader's limit.
+    #[test]
+    fn the_input_frame_limit_holds_every_sub_frame() {
+        assert!(super::INPUT_FRAME_MAX >= 1 + super::LOCATION_MAX);
+        assert!(super::INPUT_FRAME_MAX >= 2 + super::REQUEST_UI_URL_MAX); // [INPUT_COMMAND][cmd][url…]
+        assert!(super::INPUT_FRAME_MAX <= u16::MAX as usize); // the seam's length prefix
+    }
+
     /// Only Maps' three advertised instrument-cluster surfaces pass, with or without a query.
     #[test]
     fn cluster_urls_are_limited_to_the_advertised_surfaces() {

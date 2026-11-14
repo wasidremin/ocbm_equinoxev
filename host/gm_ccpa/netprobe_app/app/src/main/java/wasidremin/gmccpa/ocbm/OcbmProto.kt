@@ -355,6 +355,8 @@ object Ocbm {
      */
     const val INPUT_LOCATION: Byte = 0x09
     const val LOCATION_MAX: Int = 1024
+    /** The largest CH_INPUT sub-frame the adapter reads (firmware from 2026-11-13; 64 before). */
+    const val INPUT_FRAME_MAX: Int = 1 + LOCATION_MAX
 
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.

@@ -204,6 +204,25 @@ and the GM host application was **not** part of this installation report.
    the box back to NCM. Every reboot in `tools/ocbm_install.sh` now spells `/sbin/reboot`. A telnet
    shell inherits init's PATH, so an install over telnet never showed it.
 
+8. **Updating an adapter that already runs OCBM (2026-11-13).** With the adapter on this server's
+   USB, `./build.sh`, then `ocbm-host push 1314 2d00 <local> /usr/sbin/<name> 755` for each of
+   `ocbmd`, `iap2d`, `carplayd`, `btd`; compare `md5sum` on the box (`tools/ocbmcmd.py`) with the
+   build, then `sync; reboot`. Scripts need pushing only when their md5 differs from the repo. About
+   15 s for all four binaries; the box had 4.3 MB free before and 4.0 MB after.
+9. **The real app against the real adapter on the AAOS emulator (2026-11-13).** Pass the adapter
+   through: `emulator -avd AAOS_Automotive -writable-system -gpu swangle_indirect … -qemu -device
+   qemu-xhci,id=xhci -device usb-host,bus=xhci.0,vendorid=0x1314,productid=0x2d00`. The emulator
+   image ships without `android.hardware.usb.host`, so Android ignores the device until
+   `/system/etc/permissions/android.hardware.usb.host.xml` declares it (once: `adb root`,
+   `disable-verity`, reboot, `remount`, push, reboot; it persists in the AVD). Install the APK
+   `--user 10`, approve the USB dialog, and the phone connects to the adapter as in the car, with
+   picture, sound, touch, metadata and the driver display (`overlay_display_devices
+   1600x600/160`). On this server `-gpu swiftshader_indirect` crashed the emulator's render thread
+   and `host`/`swangle` would not start; `swangle_indirect` held. `adb emu geo fix <lon> <lat>`
+   feeds the GPS. Uploads stay off the server through the `upload_center_prefs.xml` override.
+   This needs `ocbm-host` to let go of the adapter first, and the emulator to stop before the next
+   push.
+
 ### Backup artifact
 
 The verified pre-strip capture contains the individual `mtd0`, `mtd1`, and `mtd2` reads, the
