@@ -580,7 +580,17 @@ class LauncherUi(private val act: Activity) {
                 gpsRow.setSubtitle(gps.statusText(act))
             },
         )
-        page.addView(EqCard(act).addRow(evRow).addRow(gpsRow))
+        lateinit var nacsRow: EqRow
+        nacsRow = EqRow(
+            act, "Tesla (NACS) adapter", ev.nacsText(),
+            trailing = EqSegmented(
+                act, wasidremin.gmccpa.ev.EvForCarPlay.NacsAdapter.values().map { it.label }, ev.nacs.ordinal,
+            ) { i ->
+                ev.setNacs(act, wasidremin.gmccpa.ev.EvForCarPlay.NacsAdapter.values()[i])
+                nacsRow.setSubtitle(ev.nacsText())
+            },
+        )
+        page.addView(EqCard(act).addRow(evRow).addRow(nacsRow).addRow(gpsRow))
         page.addView(eqSectionLabel(act, "Visual app launcher"))
         launcherStatusRow = EqRow(act, "Visual app launcher", launcherStatusSubtitle())
         page.addView(EqCard(act).addRow(launcherStatusRow))

@@ -28,6 +28,26 @@ object EvForCarPlay {
      */
     const val ROUTING_CAPABILITY = "maxRangeInfo"
 
+    /**
+     * A charging adapter the car cannot report: it knows only its own ports. With a NACS adapter the
+     * Equinox EV charges at Tesla stations too, and Apple Maps offers them only when the connector is
+     * declared (2026-11-13, owner). DC is the Supercharger adapter; AC adds the separate adapter for
+     * Tesla Wall Connectors and destination chargers.
+     */
+    enum class NacsAdapter(val key: String, val label: String, val connectors: List<String>) {
+        NONE("none", "None", emptyList()),
+        DC("dc", "Superchargers", listOf("nacsdc")),
+        DC_AC("dc_ac", "All Tesla", listOf("nacsdc", "nacsac"));
+
+        companion object {
+            fun fromKey(key: String?): NacsAdapter = values().firstOrNull { it.key == key } ?: NONE
+        }
+    }
+
+    /** The car's own connectors plus the adapter's, each once, the car's first. */
+    fun withAdapter(connectors: List<String>, adapter: NacsAdapter): List<String> =
+        (connectors + adapter.connectors).distinct()
+
     /** North-American Equinox EV ports, used when the car does not report INFO_EV_CONNECTOR_TYPE. */
     val FALLBACK_CONNECTORS = listOf("j1772", "ccs1")
 

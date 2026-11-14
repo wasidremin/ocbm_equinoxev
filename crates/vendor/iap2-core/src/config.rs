@@ -758,6 +758,26 @@ iapConfig:
         );
     }
 
+    /// The GM app's block with a NACS adapter (`EvForCarPlayTest.aNacsAdapterAddsTeslasConnectors`):
+    /// Tesla's DC and AC connectors resolve with their power, sorted after the car's own.
+    #[test]
+    fn the_gm_apps_nacs_connectors_resolve() {
+        use crate::spec::ident::vehicle_info as sub;
+        let y = "iapConfig:\n  vehicleInfo:\n    engineTypes: [electric]\n    chargingConnectors:\n    \
+                 - type: j1772\n      powerWatts: 11500\n    - type: ccs1\n      powerWatts: 150000\n    \
+                 - type: nacsdc\n      powerWatts: 150000\n    - type: nacsac\n      powerWatts: 11500\n";
+        let c: Iap2Config = serde_yaml::from_slice(y.as_bytes()).unwrap();
+        assert_eq!(
+            c.vehicle_identity().connectors,
+            vec![
+                (sub::SUPPORTED_CHARGING_CONNECTORS_CCS1, Some(150_000)),
+                (sub::SUPPORTED_CHARGING_CONNECTORS_J1772, Some(11_500)),
+                (sub::SUPPORTED_CHARGING_CONNECTORS_NACS_DC_, Some(150_000)),
+                (sub::SUPPORTED_CHARGING_CONNECTORS_NACS_AC_, Some(11_500)),
+            ]
+        );
+    }
+
     /// The block the GM app sends for the car's GPS (`CarGpsTest.block`, byte for byte).
     #[test]
     fn the_gm_apps_location_block_resolves() {

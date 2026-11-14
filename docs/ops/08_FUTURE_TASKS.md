@@ -299,6 +299,13 @@ set a destination, accept the pop-up, tap Connect.
 - *Tests.* Adapter suites pass (`tools/run_tests.sh`); the app's 499 unit tests pass. Both sides pin
   the same block (`EvForCarPlayTest.routingBlock`, `the_gm_apps_ev_routing_block_resolves`).
 
+**Tesla (NACS) adapter (2026-11-13, app only).** The car reports only its own ports (J1772 and
+CCS1), so Maps never offered Tesla stations although the owner charges at Superchargers with an
+adapter. Settings ▸ CarPlay ▸ Apple Maps ▸ "Tesla (NACS) adapter": None, Superchargers (`nacsdc`,
+150 kW) or All Tesla (adds `nacsac`, 11.5 kW). The connectors join the car's own in
+`vehicleInfo.chargingConnectors`, which every adapter firmware since 223 already reads
+(`the_gm_apps_nacs_connectors_resolve`). Maps may need the car removed and added again to see them.
+
 **Bench, 2026-11-13 (the real app on the AAOS emulator, the adapter on its USB, the owner's
 iPhone).** Three connects, each `Identify carries the app-pushed vehicle identity … status_caps=
 Some([3, 4, 6, 11, 21, 30])` then `IdentifyAccept`, no `0x1D03`. The phone sent `0xA100` and the

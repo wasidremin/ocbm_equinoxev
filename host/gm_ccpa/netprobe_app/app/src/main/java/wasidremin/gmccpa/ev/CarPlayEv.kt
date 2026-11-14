@@ -40,10 +40,13 @@ object CarPlayEv {
 
     private const val PREFS = "carplay_ev"
     private const val KEY_ENABLED = "enabled"
+    private const val KEY_NACS = "nacs_adapter"
     const val STATUS_PATH = "/tmp/vehicle_status"
     private const val PERIOD_S = 15L
 
     @Volatile var enabled: Boolean = false
+        private set
+    @Volatile var nacs: EvForCarPlay.NacsAdapter = EvForCarPlay.NacsAdapter.NONE
         private set
 
     private var io: ScheduledExecutorService? = null
@@ -62,7 +65,9 @@ object CarPlayEv {
     private val fullRangeHold = EvRoutingModel.IntHold(HOLD_MS)
 
     fun load(ctx: Context) {
-        enabled = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
+        val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        enabled = p.getBoolean(KEY_ENABLED, false)
+        nacs = EvForCarPlay.NacsAdapter.fromKey(p.getString(KEY_NACS, null))
         if (enabled) start(ctx)
     }
 
@@ -71,6 +76,18 @@ object CarPlayEv {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, on).apply()
         log.i("EV battery for Apple Maps -> ${if (on) "ON" else "OFF"} (Identify changes at the next connect)")
         if (on) start(ctx) else stop()
+    }
+
+    fun setNacs(ctx: Context, a: EvForCarPlay.NacsAdapter) {
+        nacs = a
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_NACS, a.key).apply()
+        log.i("NACS adapter for Apple Maps -> ${a.label} (Identify changes at the next connect)")
+    }
+
+    fun nacsText(): String = when (nacs) {
+        EvForCarPlay.NacsAdapter.NONE -> "None. Apple Maps offers chargers for the car's own ports only."
+        EvForCarPlay.NacsAdapter.DC -> "Superchargers. Apple Maps may also offer Tesla Superchargers. Takes effect at the next connect; Maps may need the car removed and added again under Vehicles."
+        EvForCarPlay.NacsAdapter.DC_AC -> "All Tesla. Apple Maps may also offer Superchargers and Tesla Wall Connectors. Takes effect at the next connect; Maps may need the car removed and added again under Vehicles."
     }
 
     fun statusText(ctx: Context): String = when {
@@ -87,7 +104,7 @@ object CarPlayEv {
     fun iapConfigYaml(ctx: Context, adapterRelaysModels: Boolean): String {
         if (!enabled) return ""
         routing = adapterRelaysModels
-        val connectors = EvForCarPlay.connectorNames(readConnectors(ctx))
+        val connectors = EvForCarPlay.withAdapter(EvForCarPlay.connectorNames(readConnectors(ctx)), nacs)
         if (!routing) {
             log.i("EV identity for CarPlay: engine=electric connectors=$connectors; this adapter's firmware does not relay the EV-routing models, so Apple Maps plans no charging stops")
             return EvForCarPlay.iapConfigYaml(connectors)

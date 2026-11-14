@@ -44,6 +44,26 @@ class EvForCarPlayTest {
         assertEquals(EvForCarPlay.FALLBACK_CONNECTORS, EvForCarPlay.connectorNames(null))
     }
 
+    /** A NACS adapter adds Tesla's connectors after the car's own, with their power. */
+    @Test fun aNacsAdapterAddsTeslasConnectors() {
+        val car = listOf("j1772", "ccs1")
+        assertEquals(car, EvForCarPlay.withAdapter(car, EvForCarPlay.NacsAdapter.NONE))
+        assertEquals(car + "nacsdc", EvForCarPlay.withAdapter(car, EvForCarPlay.NacsAdapter.DC))
+        assertEquals(car + listOf("nacsdc", "nacsac"), EvForCarPlay.withAdapter(car, EvForCarPlay.NacsAdapter.DC_AC))
+        // A car that already reports NACS keeps one entry.
+        assertEquals(listOf("nacsdc"), EvForCarPlay.withAdapter(listOf("nacsdc"), EvForCarPlay.NacsAdapter.DC))
+        assertEquals(EvForCarPlay.NacsAdapter.NONE, EvForCarPlay.NacsAdapter.fromKey(null))
+        assertEquals(EvForCarPlay.NacsAdapter.DC_AC, EvForCarPlay.NacsAdapter.fromKey("dc_ac"))
+
+        val block = EvForCarPlay.iapConfigYaml(
+            EvForCarPlay.withAdapter(car, EvForCarPlay.NacsAdapter.DC_AC), routing = true, mapsName = "Chevrolet Equinox EV")
+        assertEquals(true, block.contains("    - type: nacsdc\n      powerWatts: 150000\n"))
+        assertEquals(true, block.contains("    - type: nacsac\n      powerWatts: 11500\n"))
+        val doc = VehicleConfigYaml.render(VehicleConfigSpec()) + block +
+            "wifi_ap: true\nwifi_ssid: ccpa\nwifi_pass: adapterpass1\nwifi_channel: 149\n"
+        assertNull(VehicleConfigYaml.structuralError(doc, true))
+    }
+
     @Test fun theStatusFileUsesTheBoxUnits() {
         val text = EvForCarPlay.statusText(EvForCarPlay.Sample(
             rangeMeters = 312_400f, batteryWh = 52_004f, capacityWh = 84_590f,
