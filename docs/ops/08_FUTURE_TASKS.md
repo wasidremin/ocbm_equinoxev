@@ -30,7 +30,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 |---|---|
 | T6 Car GPS into Maps | Built 2026-11-13 on T7's pattern, off by default. Waits for the adapter reflash; not yet tried on a phone |
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13, and the fix was built that day. It needs the adapter reflashed, an app update, and the iPhone paired again (see T7) |
-| T8 MainBuffered audio, phase B | Probed twice 2026-11-14: buffered audio is stream type 103; with the `103 / media` format the phone builds the stream and Apple Music asks for it (dictionary recorded, own 32-byte key `shk`). Next: the receiver's type-103 arm |
+| T8 MainBuffered audio, phase B | Probed twice 2026-11-14: buffered audio is stream type 103; with the `103 / media` format the phone builds the stream and Apple Music asks for it (dictionary recorded, own 32-byte key `shk`). Helps Apple's player (Apple Music), not Spotify; parked. Next if resumed: the receiver's type-103 arm |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
@@ -426,6 +426,14 @@ arm in `setup_phase2`: answer with the stream's `type`, a data port (and whateve
 `shk`, and hand the frames to the existing media path. What the response must hold and the packet
 framing are the open questions; the phone's airplayd errors name the check that fails, so each
 attempt can be read off its log as this one was.
+
+**Which apps it helps (2026-11-14, same log).** Buffered audio is offered by Apple's system player
+(mediaplaybackd), which can send ahead because it owns the queue. All three `Switching from Local to
+Buffered` lines came from it, for Apple Music. Spotify renders its own audio: the phone recorded an
+empty buffered format for it and it never tried the route, staying on 102. So the gain (music that
+rides out a short Wi-Fi loss) reaches Apple Music and, untested, other apps on Apple's player
+(Podcasts, Books, many podcast and audiobook apps), not Spotify. Worth building only if the owner
+listens through those apps; parked on that basis.
 
 **Done means.** With the toggle on, iOS opens a MainBuffered stream and music plays through it. With
 the toggle off, the session bytes match today.
