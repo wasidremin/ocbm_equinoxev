@@ -30,7 +30,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 |---|---|
 | T6 Car GPS into Maps | Built 2026-11-13 on T7's pattern, off by default. Waits for the adapter reflash; not yet tried on a phone |
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13, and the fix was built that day. It needs the adapter reflashed, an app update, and the iPhone paired again (see T7) |
-| T8 MainBuffered audio, phase B | Probed 2026-11-14: the phone keeps `mainBuffered` but then sets up no audio stream at all (silent). Next is its own log over USB to see what it wants |
+| T8 MainBuffered audio, phase B | Probed 2026-11-14 with the iPhone's own log: buffered audio is stream type 103 and the phone wanted a `103 / media` audio format entry, now added. Next probe shows its stream request |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
@@ -389,8 +389,19 @@ and the iAP channel, took `mainAudio` and played (`modesChanged`, now-playing st
 sent a SETUP for any audio stream: no buffered stream and no 102 either. Media was silent until the
 switch went off, when the next session set up 102 and played at once. So the phone wants something
 our `/info` does not give it before it opens the buffered stream; `mainBufferedInfo` is still
-presence-only. Next: the same session with the iPhone on this server's USB and `idevicesyslog`
-running (libimobiledevice is not installed yet), to read what the phone looked for.
+presence-only.
+
+**What the phone said (2026-11-14, `idevicesyslog` with the iPhone on this server's USB, the tools
+unpacked from `libimobiledevice-utils` without installing).** airplayd logged `CarPlay bufferedAudio:
+enabled`, then `APCarPlayAudioFormatsCopyFormatsForAudioType:572: false condition` and **`Error in
+creating formats for type 103 / media`** (kParamErr up through `APCarPlayAudioFormatsCreate`), and
+set up no audio stream. So MainBuffered is **stream type 103**, and the phone needs an `audioFormats`
+entry for `103 / media`. `info.rs` now adds one, with the `102 / media` formats, whenever the
+mainBuffered lever is on (`buffered_audio_adds_a_type_103_media_entry`); without the lever the
+bytes are unchanged. Not yet on the adapter or probed: the next session should show the phone's
+type-103 SETUP dictionary in full. The same log also said `viewAreas … found but feature not
+declared in setup response` for a session with the split pane off (the main view area is still
+described); harmless today.
 
 **Done means.** With the toggle on, iOS opens a MainBuffered stream and music plays through it. With
 the toggle off, the session bytes match today.

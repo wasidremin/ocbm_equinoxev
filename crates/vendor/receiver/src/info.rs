@@ -825,7 +825,10 @@ fn build_info_with_view_area_2(cfg: &DeviceConfig, second: Option<ViewArea2>) ->
     let mut d = Dictionary::new();
 
     // audioFormats — the 8 wireless-CarPlay entries (C `_BuildAudioFormatsArray`).
-    d.insert("audioFormats".into(), Value::Array(audio_formats(cfg)));
+    d.insert(
+        "audioFormats".into(),
+        Value::Array(audio_formats_plist(&audio_formats(cfg, crate::levers::mainbuffered()))),
+    );
 
     // modes — the InitialMode. iOS reads this at endpoint activation; without it the screen resource
     // is type=N/A → StartupFailed -17483 → teardown right after RECORD/modesChanged.
@@ -1455,10 +1458,33 @@ pub fn default_audio_formats() -> Vec<AudioFormatSpec> {
     }
 }
 
+/// The MainBuffered audio stream's type (T8). Learned from the owner's iPhone, 2026-11-14: with
+/// `mainBuffered` negotiated and no entry for it, airplayd logged "Error in creating formats for type
+/// 103 / media" (`APCarPlayAudioFormatsCopyFormatsForAudioType`, kParamErr) and opened no audio stream.
+pub const MAIN_BUFFERED_STREAM_TYPE: i64 = 103;
+
 /// Build the `/info` `audioFormats` array from the resolved capability set on `cfg` (YAML-driven; see
 /// [`AudioFormatSpec`]). `audioType` omitted when `None`; `audioInputFormats` omitted when `0`.
-fn audio_formats(cfg: &DeviceConfig) -> Vec<Value> {
-    cfg.audio_formats
+///
+/// With `buffered` (the mainBuffered lever) and no type-103 entry in the set, a `103 / media` entry is
+/// added carrying the same output formats as the `102 / media` one: the buffered path changes how the
+/// media arrives, not its codec (`docs/carplay/06_AV_PIPELINE.md`). Without it the bytes are as before.
+fn audio_formats(cfg: &DeviceConfig, buffered: bool) -> Vec<AudioFormatSpec> {
+    let mut v = cfg.audio_formats.clone();
+    if buffered && !v.iter().any(|s| s.stream_type == MAIN_BUFFERED_STREAM_TYPE) {
+        if let Some(media) = v
+            .iter()
+            .find(|s| s.stream_type == 102 && s.audio_type.as_deref() == Some("media"))
+            .cloned()
+        {
+            v.push(AudioFormatSpec { stream_type: MAIN_BUFFERED_STREAM_TYPE, ..media });
+        }
+    }
+    v
+}
+
+fn audio_formats_plist(specs: &[AudioFormatSpec]) -> Vec<Value> {
+    specs
         .iter()
         .map(|s| {
             let mut e = Dictionary::new();
@@ -1485,6 +1511,26 @@ fn audio_formats(cfg: &DeviceConfig) -> Vec<Value> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// T8: with buffered audio advertised, a `103 / media` entry carrying the `102 / media` formats is
+    /// added (the phone otherwise fails "creating formats for type 103 / media"); without it the set
+    /// is untouched, and an explicit 103 entry is never duplicated.
+    #[test]
+    fn buffered_audio_adds_a_type_103_media_entry() {
+        let cfg = DeviceConfig { audio_formats: preset_wireless_8(), ..DeviceConfig::default() };
+        assert_eq!(audio_formats(&cfg, false), preset_wireless_8());
+        let on = audio_formats(&cfg, true);
+        assert_eq!(on.len(), preset_wireless_8().len() + 1);
+        let e = on.last().unwrap();
+        assert_eq!(e.stream_type, MAIN_BUFFERED_STREAM_TYPE);
+        assert_eq!(e.audio_type.as_deref(), Some("media"));
+        assert_eq!(e.output_formats, AF_AAC_LC_48K_STEREO);
+        let again = DeviceConfig { audio_formats: on.clone(), ..DeviceConfig::default() };
+        assert_eq!(audio_formats(&again, true), on);
+        // No 102 media entry (the wired PCM set): nothing to copy, nothing added.
+        let wired = DeviceConfig { audio_formats: preset_wired_pcm(), ..DeviceConfig::default() };
+        assert_eq!(audio_formats(&wired, true), preset_wired_pcm());
+    }
 
     #[test]
     fn info_plist_has_full_capability_set() {
