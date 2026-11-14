@@ -750,21 +750,13 @@ impl AvSession {
                 // request) and on which `audioType`. If `input` never appears, the head unit isn't
                 // advertising mic capability in a form iOS accepts (an /info audioFormats problem), not a
                 // pipeline problem. Remove once the uplink negotiation is confirmed.
-                if (100..=112).contains(&ty) {
-                    let mut parts: Vec<String> = Vec::new();
-                    for (k, v) in sd.iter() {
-                        let vs = v
-                            .as_boolean()
-                            .map(|b| b.to_string())
-                            .or_else(|| v.as_unsigned_integer().map(|n| n.to_string()))
-                            .or_else(|| v.as_signed_integer().map(|n| n.to_string()))
-                            .or_else(|| v.as_string().map(|s| s.to_string()))
-                            .unwrap_or_else(|| "<complex>".to_string());
-                        parts.push(format!("{k}={vs}"));
-                    }
+                // T8 (2026-11-13): also every type this receiver does not serve, nested dictionaries
+                // and arrays included, so one bench session with `mainBuffered` advertised records the
+                // shape of what the phone asks for. Data values (keys among them) are logged by length.
+                if (100..=112).contains(&ty) || !matches!(ty, 100 | 101 | 102 | 110 | 111 | 130) {
                     eprintln!(
                         "[session] >>> SETUP stream dict (type {ty}): {}",
-                        parts.join(", ")
+                        describe_plist(&Value::Dictionary(sd.clone()), 0)
                     );
                 }
                 // streamConnectionID may be stored signed or unsigned in the plist — accept both.
@@ -3107,8 +3099,57 @@ fn ntp_now() -> u64 {
     (secs << 32) | frac
 }
 
+
+/// A plist value for the log, without secrets: scalars as themselves, strings up to 64 characters,
+/// data as its length only, dictionaries and arrays recursively (four levels). Used for the SETUP
+/// stream dictionaries of types this receiver does not serve (T8), whose shape is not recorded
+/// anywhere this tree can read.
+pub(crate) fn describe_plist(v: &Value, depth: usize) -> String {
+    if depth > 4 {
+        return "…".into();
+    }
+    match v {
+        Value::Boolean(b) => b.to_string(),
+        Value::Integer(n) => n
+            .as_signed()
+            .map(|x| x.to_string())
+            .or_else(|| n.as_unsigned().map(|x| x.to_string()))
+            .unwrap_or_else(|| "?".into()),
+        Value::Real(r) => r.to_string(),
+        Value::String(s) if s.chars().count() <= 64 => format!("{s:?}"),
+        Value::String(s) => format!("<string {} chars>", s.chars().count()),
+        Value::Data(d) => format!("<data {} B>", d.len()),
+        Value::Date(_) => "<date>".into(),
+        Value::Array(a) => {
+            let items: Vec<String> = a.iter().map(|x| describe_plist(x, depth + 1)).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Dictionary(d) => {
+            let items: Vec<String> =
+                d.iter().map(|(k, x)| format!("{k}={}", describe_plist(x, depth + 1))).collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        _ => "<other>".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// T8's stream dump never prints a key: data shows as a length, and nesting is kept.
+    #[test]
+    fn describe_plist_hides_data_and_keeps_shape() {
+        let mut inner = Dictionary::new();
+        inner.insert("ct".into(), Value::Integer(4.into()));
+        inner.insert("shk".into(), Value::Data(vec![7u8; 32]));
+        let mut d = Dictionary::new();
+        d.insert("type".into(), Value::Integer(103.into()));
+        d.insert("format".into(), Value::Dictionary(inner));
+        d.insert("names".into(), Value::Array(vec![Value::String("AAC".into())]));
+        let out = describe_plist(&Value::Dictionary(d), 0);
+        assert_eq!(out, r#"{type=103, format={ct=4, shk=<data 32 B>}, names=["AAC"]}"#);
+    }
+
     use super::*;
 
     /// The audio seam's control messages must be MAGIC-tagged and exactly the lengths the host's

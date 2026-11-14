@@ -612,6 +612,14 @@ class LauncherUi(private val act: Activity) {
                 onScreenChanged()
             },
         ))
+        val edges = wasidremin.gmccpa.ocbm.VehicleConfigYaml.STATUS_BAR_EDGES
+        card.addRow(EqRow(
+            act, "CarPlay status bar",
+            "Where CarPlay puts its clock and app strip: its own choice, along the bottom, or on the driver's side. Takes effect at the next connect.",
+            trailing = EqSegmented(act, listOf("Auto", "Bottom", "Driver"), edges.indexOf(DisplayPrefs.statusBarEdge(act)).coerceAtLeast(0)) { i ->
+                DisplayPrefs.setStatusBarEdge(act, edges[i])
+            },
+        ))
         card.addRow(EqRow(
             act, "Sidebar",
             "Home, media and voice buttons beside CarPlay. Restarts CarPlay.",
@@ -1340,6 +1348,77 @@ class LauncherUi(private val act: Activity) {
         }
     }
 
+    /**
+     * Settings ▸ Advanced ▸ Adapter firmware (T20): compare the adapter's files with the firmware this
+     * app carries, update them with the car in Park, or put the previous ones back. All adapter I/O
+     * runs off the main thread.
+     */
+    private fun firmwareRow(): EqRow {
+        val fw = wasidremin.gmccpa.ocbm.AdapterFirmware
+        val bundle = fw.bundled(act)
+        lateinit var row: EqRow
+        fun say(text: String) = act.runOnUiThread { if (!act.isFinishing) row.setSubtitle(text) }
+        val carries = bundle?.let { "This app carries ${it.version}." } ?: "This build carries no adapter firmware."
+        fun work(block: (wasidremin.gmccpa.ocbm.OcbmClient) -> Unit) {
+            val c = wasidremin.gmccpa.ocbm.AdapterSession.client
+            if (c == null) { say("Adapter not connected. $carries"); return }
+            Thread({ runCatching { block(c) }.onFailure { say("Failed: ${it.message}") } }, "fw-ui").start()
+        }
+        fun runUpdate(c: wasidremin.gmccpa.ocbm.OcbmClient, m: wasidremin.gmccpa.ocbm.AdapterFirmware.Manifest) {
+            val r = fw.update(act, c, m) { say(it) }
+            say(r.fold(
+                { "Installed ${m.version}. The adapter restarts now; tap Allow if the car asks. It keeps the update once it is back with Bluetooth, or puts the old files back after five minutes." },
+                { "Not updated: ${it.message}" },
+            ))
+        }
+        val check = eqButton(act, "Check", EqButtonStyle.SECONDARY) {
+            val m = bundle ?: run { say(carries); return@eqButton }
+            say("Asking the adapter…")
+            work { c ->
+                val info = fw.parseInfo(c.mgmtGetInfo(3_000).orEmpty())
+                if (!info.supported) { say("This adapter's firmware predates updates from the app. Update it once on the bench. $carries"); return@work }
+                val st = fw.check(c, m)?.getOrElse { say("The adapter refused the check: ${it.message}"); return@work }
+                    ?: run { say("The adapter did not answer the check."); return@work }
+                val has = st.version.ifEmpty { "an unrecorded version" }
+                when {
+                    st.pending -> say("The adapter has ${has}, waiting to be confirmed. $carries")
+                    st.differs.isEmpty() -> say("Up to date: the adapter matches this app (${m.version}).${if (st.prev) " Previous files kept." else ""}")
+                    wasidremin.gmccpa.lyrics.BarLyrics.parked != true ->
+                        say("${st.differs.size} file(s) differ (adapter ${has}, app ${m.version}). Put the car in Park to update.")
+                    else -> act.runOnUiThread {
+                        say("${st.differs.size} file(s) differ (adapter ${has}, app ${m.version}).")
+                        EqDialog.confirm(
+                            act, "Update the adapter",
+                            "${st.differs.size} file(s) change. CarPlay stops while the adapter restarts, about a minute. If it does not come back healthy, the adapter puts the old files back by itself.",
+                            "Update", false,
+                        ) { work { c2 -> runUpdate(c2, m) } }
+                    }
+                }
+            }
+        }
+        val back = eqButton(act, "Roll back", EqButtonStyle.SECONDARY) {
+            EqDialog.confirm(
+                act, "Previous adapter firmware",
+                "Puts back the files the last update replaced, and restarts the adapter.",
+                "Roll back", true,
+            ) {
+                work { c ->
+                    val info = fw.parseInfo(c.mgmtGetInfo(3_000).orEmpty())
+                    if (!info.prev) { say("The adapter has no previous files to put back."); return@work }
+                    say(if (fw.rollback(c)) "Rolling back; the adapter restarts." else "The adapter did not start the rollback.")
+                }
+            }
+        }
+        val buttons = android.widget.LinearLayout(act).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(back, android.widget.LinearLayout.LayoutParams(-2, -2).apply { marginEnd = EqTheme.px(16f) })
+            addView(check)
+        }
+        row = EqRow(act, "Adapter firmware", carries, trailing = buttons)
+        return row
+    }
+
     private fun buildAdvanced(page: LinearLayout) {
         wifiToggle = EqToggle(act, adapterWifi) { want ->
             wifiToggle.setChecked(!want)
@@ -1385,6 +1464,7 @@ class LauncherUi(private val act: Activity) {
             .addRow(bridgeRow)
             .addRow(announceRow)
             .addRow(announceRetriesRow)
+            .addRow(firmwareRow())
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
             .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() })))
 

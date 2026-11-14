@@ -45,6 +45,8 @@ run "pairing"    cargo test --manifest-path crates/vendor/pairing/Cargo.toml --q
 run "rtsp"       cargo test --manifest-path crates/vendor/rtsp/Cargo.toml --quiet
 run "mfi"        cargo test --manifest-path crates/vendor/mfi/Cargo.toml --quiet
 run "ocbm-host"  cargo test -p ocbm-host --quiet
+# The adapter's update script (T20), under busybox's shell when the host has it, as on the box.
+run "fw_apply"   env FW_SH="$(command -v busybox >/dev/null && echo 'busybox sh' || echo sh)" sh tools/tests/fw_apply_test.sh
 
 [ "$fail" -eq 0 ] || { echo "FAILURES"; exit 1; }
 echo "all suites passed"

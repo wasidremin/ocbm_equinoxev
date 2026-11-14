@@ -600,6 +600,25 @@ pub struct ViewAreaEntry {
     /// stream's second entry (`VehicleConfig::second_main_view_area`).
     #[serde(default)]
     pub initial: bool,
+    /// `statusBarEdge` — Apple's `ViewAreaConfig.statusBarEdge` (`StatusBarEdge`: Auto, Bottom,
+    /// Driver). Read from the MAIN stream's first entry and declared on every main view area as
+    /// `/info` `viewAreaStatusBarEdge` (0, 1, 2). Absent or unrecognised = Auto, today's bytes (T22).
+    #[serde(default, rename = "statusBarEdge")]
+    pub status_bar_edge: Option<String>,
+}
+
+/// `statusBarEdge` text to Apple's `StatusBarEdge` raw value (Auto=0, Bottom=1, Driver=2,
+/// `docs/carplay/06_AV_PIPELINE.md`). Takes `driver`, `Driver` or `StatusBarEdge.Driver`; anything
+/// else is `None`, which the caller treats as Auto.
+pub fn status_bar_edge_ordinal(s: &str) -> Option<i64> {
+    let t = s.trim();
+    let t = t.strip_prefix("StatusBarEdge.").unwrap_or(t);
+    match t.to_ascii_lowercase().as_str() {
+        "auto" => Some(0),
+        "bottom" => Some(1),
+        "driver" => Some(2),
+        _ => None,
+    }
 }
 
 impl ViewAreaEntry {
@@ -859,6 +878,12 @@ impl VehicleConfig {
             {
                 base.main_safe_area = Some(rect);
                 base.main_draw_outside_safe = e.draw_outside();
+            }
+            if let Some(edge) = e.status_bar_edge.as_deref() {
+                match status_bar_edge_ordinal(edge) {
+                    Some(n) => base.main_status_bar_edge = n,
+                    None => eprintln!("[vehicle-config] statusBarEdge {edge:?} not recognised — Auto"),
+                }
             }
         }
         // Second MAIN view area (the Dock resize button) — `viewAreas[1].viewArea`, app-driven since
@@ -2219,6 +2244,22 @@ metadata:
             .unwrap()
             .apply(base());
         assert_eq!(dev.audio_formats, base_default);
+    }
+
+    /// T22: `statusBarEdge` on the main stream's first view area reaches the device config; an
+    /// absent or unknown value leaves Auto.
+    #[test]
+    fn status_bar_edge_parses_onto_device_config() {
+        let doc = |edge: &str| format!(
+            "videoStreamsConfig:\n  mainVideoStream:\n    viewAreas:\n    - viewArea: {{ originX: 0, originY: 0, width: 1920, height: 720 }}\n{edge}"
+        );
+        let dev = |y: String| VehicleConfig::from_yaml(y.as_bytes()).expect("parse").apply(base());
+        assert_eq!(dev(doc("      statusBarEdge: driver\n")).main_status_bar_edge, 2);
+        assert_eq!(dev(doc("      statusBarEdge: StatusBarEdge.Bottom\n")).main_status_bar_edge, 1);
+        assert_eq!(dev(doc("      statusBarEdge: sideways\n")).main_status_bar_edge, 0);
+        assert_eq!(dev(doc("")).main_status_bar_edge, 0);
+        assert_eq!(status_bar_edge_ordinal("Driver"), Some(2));
+        assert_eq!(status_bar_edge_ordinal(""), None);
     }
 
     #[test]

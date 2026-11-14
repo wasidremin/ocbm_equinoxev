@@ -313,6 +313,13 @@ object Ocbm {
     const val MGMT_CONNECT_DEVICE: Byte = 0x07
     /** `[mac,mac,…]`: which phone the box tries first, kept on its flash. */
     const val MGMT_SET_ORDER: Byte = 0x08
+    /** `[MGMT_FW][op]` — update the adapter from the app (T20); the answer is a file in [FW_DIR]. */
+    const val MGMT_FW: Byte = 0x09
+    const val FW_OP_CHECK: Byte = 1
+    const val FW_OP_APPLY: Byte = 2
+    const val FW_OP_CONFIRM: Byte = 3
+    const val FW_OP_ROLLBACK: Byte = 4
+    const val FW_DIR: String = "/tmp/fwup"
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

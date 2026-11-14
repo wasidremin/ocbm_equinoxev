@@ -9,8 +9,9 @@ state it starts from and what "done" means. When a task lands, replace its body 
 pointer to the doc that now owns the result — do not leave a stale plan beside a shipped feature.
 
 **Where each task stands (2026-11-13),** by what it takes to ship. "App only" is a Play update;
-"needs adapter firmware" also needs a bench reflash of the adapter (`tools/ocbm_install.sh --full`)
-until T20 exists.
+"needs adapter firmware" also needs new adapter firmware: from app 251 on, Settings ▸ Advanced ▸
+Adapter firmware installs it (T20); before that, or for the boot path, a bench install
+(`tools/ocbm_install.sh --full`).
 
 *App only*
 
@@ -29,15 +30,15 @@ until T20 exists.
 |---|---|
 | T6 Car GPS into Maps | Built 2026-11-13 on T7's pattern, off by default. Waits for the adapter reflash; not yet tried on a phone |
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13, and the fix was built that day. It needs the adapter reflashed, an app update, and the iPhone paired again (see T7) |
-| T8 MainBuffered audio, phase B | Open, not started |
+| T8 MainBuffered audio, phase B | Prepared 2026-11-13: the adapter logs the shape of any stream it does not serve, and a bench switch advertises buffered audio. The probe needs the phone at the bench |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
 | T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). A second route, the adapter link over the car's hotspot, is recorded in T15 (2026-11-13) and not started; its first step is app only |
-| T20 Update the adapter from the app | New; would remove the bench reflash from every task in this table |
+| T20 Update the adapter from the app | Built and benched 2026-11-14 (update, confirm, manual and automatic rollback). Needs one last bench install for the boot hook; app updates after that |
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
-| T22 CarPlay's status bar on the driver's side | New (openautolink; held since 2026-11-08) |
+| T22 CarPlay's status bar on the driver's side | Built and on the adapter 2026-11-13; the setting is in the next app build. Not yet seen with a choice other than Auto |
 
 *Done*
 
@@ -366,6 +367,19 @@ a stream the box then refuses silences media. Phase B is the stream itself. SETU
 omits it (`session.rs`, "Still unimplemented and therefore omitted": AuxOutAudio, AuxInAudio,
 MainBuffered). Confirm the stream-type number and the `mainBufferedInfo` dictionary against
 `CarPlaySDK.framework` before writing that arm. This plane is also what T11 needs.
+
+**Prepared (2026-11-13).** The step that removes the main unknown is to ask the phone:
+- *Adapter.* `receiver::session` logs every SETUP stream dictionary of a type it does not serve,
+  nested dictionaries and arrays included, data values by length only
+  (`describe_plist`, so a stream key is never printed). Line: `[session] >>> SETUP stream dict
+  (type N): {…}`. On the adapter since 2026-11-13.
+- *App.* A bench switch with no UI: `shared_prefs/bench.xml` boolean `main_buffered_probe` makes the
+  subscribe document say `enablesMainBufferedAudio: true` and logs a warning. Media may go silent
+  for that session, because no buffered stream is served.
+- *The probe.* Phone at the bench, emulator with the adapter (`docs/ops/00_BUILD_AND_DEPLOY.md`
+  item 9), switch on, one connect, then read the `SETUP negotiated … features=` line (whether
+  `mainBuffered` survived) and the stream dictionary. If the phone does not ask for the stream, the
+  iPhone's own log says why (`idevicesyslog` on this server with the phone on USB; CLAUDE.md).
 
 **Done means.** With the toggle on, iOS opens a MainBuffered stream and music plays through it. With
 the toggle off, the session bytes match today.
@@ -707,20 +721,50 @@ seconds without a touch, and the log shows the transfer.
 Each needs a firmware change on the adapter as well as the app. Until T20 exists, each also needs the
 adapter carried to the bench for `tools/ocbm_install.sh --full`.
 
-## T20. Update the adapter from the app (raised 2026-11-12)
+## T20. Update the adapter from the app (raised 2026-11-12; BUILT 2026-11-13, benched 2026-11-14)
 
-**Why.** Every task in the "needs adapter firmware" table ends with a bench reflash. enigy's
-fork of this project (github.com/enigy/ocbm) updates the adapter over the USB link instead; the
-2026-11-07 review left it out as "not asked for", and with this many adapter tasks it now pays.
+**Why.** Every task in the "needs adapter firmware" table ended with a bench reflash. enigy's fork
+(github.com/enigy/ocbm) updates the adapter over the USB link instead.
 
-**State.** The pieces exist: OCBM pushes files to the box (`CH_FILE`, used for `/tmp/vehicle_status`),
-and `tools/ocbm_install.sh`'s `manifest()` is the authoritative file set. The signed boot stack is
-never touched, and `docs/ops/01_RECOVERY.md` covers a wedged box.
+**How it works.**
+- *The bundle.* `host/gm_ccpa/tools/stage_adapter_fw.sh` (run by `build_aab.sh`) builds the box
+  binaries and writes `assets/adapter_fw/`: twelve files (the four daemons, `iap_role_switch`, the
+  radio seam and the supervisor scripts; 3.9 MB) under their staged names, and a manifest of
+  `<sha256> <mode> <path>` lines headed by `version <id>`, the first 12 hex of the SHA-256 of those
+  lines. Every path must also be in `tools/ocbm_install.sh`'s manifest.
+- *Never in the bundle:* the boot path (`ocbm_boot.sh`, `run_ocbmd.sh`, `ocbm_udisk.sh`) and
+  `fw_apply.sh`. A bad update can therefore always be undone; those stay bench-installed.
+- *The adapter.* `ocbmd` takes `MGMT_FW` `[op]` (check, apply, confirm, rollback), acks at once and
+  runs `/script/fw_apply.sh <op>` detached; the answer is `/tmp/fwup/check.json` or `apply.json`,
+  which the app pulls over `CH_FILE`, matched by a nonce. `MGMT_INFO` says `"fw_update":true`,
+  `"fw"` (the installed id, `/script/fw_version`), `"fw_pending"` and `"fw_prev"`. `ocbmd` creates
+  `/tmp/fwup` at start, since a file push does not create folders.
+- *Apply* checks every staged file's SHA-256, the mode, the path, and the free space (gzip size plus
+  30 % per file, plus 512 KB; the binaries gzip to about half), then renames each old file to
+  `<path>.prev` and moves the new one in, writes `/script/fw_pending` and reboots. A failure part way
+  puts every file back.
+- *Confirm.* `AdapterFirmware.noteHealth`: the first `CT_BOX_HEALTH` with Bluetooth, btd and the root
+  filesystem healthy makes the app ask `MGMT_INFO`, and if an update is pending, confirm it.
+- *Rollback.* `ocbm_boot.sh` starts `fw_apply.sh boot` when `fw_pending` exists: unconfirmed after
+  300 s, or on the third unconfirmed boot, it restores every `.prev` and reboots. The previous files
+  stay after a confirm, for Settings ▸ Advanced ▸ Adapter firmware ▸ Roll back.
+- *App.* Settings ▸ Advanced ▸ Adapter firmware: Check (which files differ, the installed and
+  carried ids), Update (Park only, with a confirmation), Roll back. Bench verbs `fw_check`,
+  `fw_update`, `fw_rollback` run the same code without the UI.
 
-**Work.** A firmware bundle (the manifest's files and a SHA-256 of each) built with the app or
-fetched from the owner's server; the app pushes it while parked and CarPlay is idle; the box checks
-every hash, keeps the previous set, swaps, and rolls back by itself if its health does not come back
-within a time limit. Settings ▸ Advanced shows the adapter's version and offers the update.
+**Tests.** `tools/tests/fw_apply_test.sh` (23 checks, under busybox `sh` in `tools/run_tests.sh`):
+check, apply, confirm, rollback, the boot dead-man, and refusals for a bad hash, the boot path, a
+foreign path, too little room and nothing staged. `AdapterFirmwareTest`: manifest parsing and
+refusals, the content id, nonce matching, the confirm condition.
+
+**Bench, 2026-11-14 (emulator with the adapter, `fw_*` verbs).** One file made to differ on the
+adapter. `fw_check` named exactly it, with 4,284 KB free. `fw_update` sent it, the adapter applied it
+and rebooted, and the app confirmed 9 s after boot (`[fw] update 577b9da9706c confirmed by the app`).
+`fw_rollback` put the old file and id back. An update whose app was stopped at once was rolled back
+by the adapter itself after the window (see "Unconfirmed update" below).
+
+**Before it works in the car.** The adapter needs one more bench install for the boot hook and
+`fw_apply.sh`, and app 251 must carry the bundle. Done on 2026-11-13 for the owner's adapter.
 
 **Done means.** From Settings, with the car parked, the adapter updates and reconnects; a bundle with
 one bad hash is refused with nothing changed; and a forced failed start rolls back to the previous
@@ -748,14 +792,17 @@ Maps may keep the old name until the car is removed under Vehicles and added aga
 **Done means.** With the setting on, Maps shows "Chevrolet Equinox EV" (or the name the app pushes),
 and the Identify is accepted with no `0x1D03`.
 
-## T22. CarPlay's status bar on the driver's side (raised 2026-11-12; openautolink, held since 2026-11-08)
+## T22. CarPlay's status bar on the driver's side (raised 2026-11-12; openautolink, held since 2026-11-08; BUILT 2026-11-13)
 
 **Why.** CarPlay can put its status bar (clock, signal, the app strip) on the edge nearest the
 driver. openautolink offers Auto, Bottom or Driver side.
 
-**State.** `info.rs::view_areas` hardcodes `viewAreaStatusBarEdge: 0` on both main view areas; it
-needs a parsed `statusBarEdge` on `ViewAreaEntry` and an app setting (Settings ▸ Screen & Sound).
-`04_OPEN_ITEMS.md` "Held for adapter firmware".
+**Built.** Settings ▸ Screen & Sound ▸ CarPlay status bar: Auto (default), Bottom, Driver
+(`DisplayPrefs.statusBarEdge`). The app writes `statusBarEdge: bottom|driver` on the main stream's
+first view area, and nothing for Auto, so the default document is unchanged. The adapter
+(`vehicle_config::status_bar_edge_ordinal`, `DeviceConfig::main_status_bar_edge`) declares Apple's
+raw value (Auto 0, Bottom 1, Driver 2) as `viewAreaStatusBarEdge` on every main view area and never
+on the cluster. Older firmware ignores the key. On the owner's adapter since 2026-11-13.
 
 **Done means.** Each choice in the setting moves CarPlay's status bar at the next connect, and the
 media pane and view-area switching still work.

@@ -350,6 +350,16 @@ pub const MGMT_CONNECT_DEVICE: u8 = 0x07;
 /// [MGMT_SET_ORDER][ascii MACs joined by ","] -> which bonded phone btd tries first; kept on flash.
 /// Empty clears it (bond order). Status 1 if an address is malformed or btd did not take it.
 pub const MGMT_SET_ORDER: u8 = 0x08;
+/// [MGMT_FW][op u8] -> update the adapter from the app (2026-11-13, docs/ops/08_FUTURE_TASKS.md T20).
+/// The box acks at once and runs `/script/fw_apply.sh <op>` detached; the result lands in
+/// [`FW_DIR`] (`check.json`, `apply.json`), which the app reads over `CH_FILE`. The manifest and the
+/// staged files are pushed to [`FW_DIR`] first. `MGMT_INFO` says `"fw_update":true`.
+pub const MGMT_FW: u8 = 0x09;
+pub const FW_OP_CHECK: u8 = 1; // hash the manifest's files -> check.json (which differ, free space)
+pub const FW_OP_APPLY: u8 = 2; // verify the staged files, swap them in keeping .prev, reboot
+pub const FW_OP_CONFIRM: u8 = 3; // the adapter came back healthy: keep the update
+pub const FW_OP_ROLLBACK: u8 = 4; // put the previous files back and reboot
+pub const FW_DIR: &str = "/tmp/fwup";
                                             //   Box->host:
 pub const MGMT_INFO: u8 = 0x81; // [MGMT_INFO][utf8 JSON] — identity + health + bonded-device snapshot
 pub const MGMT_ACK: u8 = 0x82; // [MGMT_ACK][verb u8][status u8] — 0 ok / 1 error, echoing the request verb

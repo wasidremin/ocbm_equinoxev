@@ -378,6 +378,15 @@ touch /tmp/UDiskPassThroughMode
   ) &
   fi
 
+  # ---- APP UPDATE DEAD-MAN (T20: /script/fw_pending, armed by fw_apply.sh apply) -----------
+  # An update from the app swapped files and rebooted. Unless the app confirms within five
+  # minutes that the adapter came back healthy, fw_apply.sh puts the previous files back and
+  # reboots; on the third unconfirmed boot it does so at once. The boot path itself is never part
+  # of an app update, so this hook always runs as installed on the bench.
+  if [ -e /script/fw_pending ] && [ -f /script/fw_apply.sh ]; then
+    setsid sh /script/fw_apply.sh boot >/dev/null 2>&1 &
+  fi
+
   # ---- NCM FAILOVER WATCHDOG (opt-in: /script/ocbm_failover) ------------------------------
   # On a unit with no UART, OCBM-as-default is the only door. If the OCBM stack cannot come up
   # at all, this drops /script/ncm_only and reboots, so the box returns to NCM with ssh/telnet

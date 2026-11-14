@@ -1007,6 +1007,14 @@ const RADIO_OFF_FLAG: &str = "/tmp/radio_off";
 const RADIO_OFF_FLAG: &str = "/tmp/ocbmd_selftest_radio_off";
 
 /// Read a file and trim it, or "" on any error (for the info snapshot's small /sys+/proc reads).
+/// The adapter's half of updating it from the app (T20).
+const FW_SCRIPT: &str = "/script/fw_apply.sh";
+
+/// The installed firmware id for `MGMT_INFO`: hex only, so it needs no JSON escaping.
+fn fw_version() -> String {
+    read_trim("/script/fw_version").chars().filter(|c| c.is_ascii_hexdigit()).take(16).collect()
+}
+
 fn read_trim(path: &str) -> String {
     std::fs::read_to_string(path)
         .map(|s| s.trim().to_string())
@@ -3652,6 +3660,28 @@ impl Daemon {
                 }
                 self.mgmt_ack(verb, u8::from(!ok));
             }
+            // T20: the update script does the work, detached, so hashing a few MB never stalls this
+            // loop; its answer is a file the app pulls. The ack only says whether it was started.
+            p::MGMT_FW => {
+                let op = match pl.get(1).copied() {
+                    Some(p::FW_OP_CHECK) => "check",
+                    Some(p::FW_OP_APPLY) => "apply",
+                    Some(p::FW_OP_CONFIRM) => "confirm",
+                    Some(p::FW_OP_ROLLBACK) => "rollback",
+                    _ => "",
+                };
+                let started = !op.is_empty()
+                    && std::path::Path::new(FW_SCRIPT).exists()
+                    && std::process::Command::new("setsid")
+                        .args(["sh", FW_SCRIPT, op])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .is_ok();
+                eprintln!("[ocbmd] mgmt: firmware {op:?} requested by host — started={started}");
+                self.mgmt_ack(verb, u8::from(!started));
+            }
             p::MGMT_SET_ORDER => {
                 let resp = parse_order_arg(&pl[1..]).and_then(|order| {
                     eprintln!("[ocbmd] mgmt: phone order from host: {} address(es)", order.len());
@@ -3725,8 +3755,13 @@ impl Daemon {
              \"transport\":\"{transport}\",\"host_present\":{host},\"phone_present\":{phone},\
              \"daemons\":{{\"ocbmd\":{d0},\"iap2d\":{d1},\"airplayd\":{d2},\"carplay_wireless\":{d3}}},\
              \"host_name\":\"{host_name}\",\"phone_order\":true,\"ev_models\":true,\"car_gps\":true,\"nav_url\":true,\
+             \"fw_update\":{fw_update},\"fw\":\"{fw}\",\"fw_pending\":{fw_pending},\"fw_prev\":{fw_prev},\
              \"devices\":[{devs}]}}",
             ser = json_escape(&serial),
+            fw_update = std::path::Path::new(FW_SCRIPT).exists(),
+            fw = fw_version(),
+            fw_pending = std::path::Path::new("/script/fw_pending").exists(),
+            fw_prev = std::fs::metadata("/script/fw_prev.list").map(|m| m.len() > 0).unwrap_or(false),
             host_name = json_escape(self.host_name.as_deref().unwrap_or("")),
             ap = procs[4],
             host = self.present,
@@ -4345,6 +4380,11 @@ fn main() {
         eprintln!("[ocbmd] PANIC: {info}");
         prev_hook(info);
     }));
+    // The app stages an update here over CH_FILE (T20), and a file push does not create folders.
+    // /tmp is tmpfs, so it is gone after every reboot.
+    if let Err(e) = std::fs::create_dir_all(p::FW_DIR) {
+        eprintln!("[ocbmd] could not create {} ({e}) — updates from the app will fail", p::FW_DIR);
+    }
     eprintln!(
         "[ocbmd] start pid={} version={}",
         std::process::id(),

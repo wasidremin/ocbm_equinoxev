@@ -208,7 +208,10 @@ and the GM host application was **not** part of this installation report.
    USB, `./build.sh`, then `ocbm-host push 1314 2d00 <local> /usr/sbin/<name> 755` for each of
    `ocbmd`, `iap2d`, `carplayd`, `btd`; compare `md5sum` on the box (`tools/ocbmcmd.py`) with the
    build, then `sync; reboot`. Scripts need pushing only when their md5 differs from the repo. About
-   15 s for all four binaries; the box had 4.3 MB free before and 4.0 MB after.
+   15 s for all four binaries; the box had 4.3 MB free before and 4.0 MB after. From app 251 on, an
+   adapter that already has `fw_apply.sh` and the boot hook is updated from the app instead
+   (Settings ▸ Advanced ▸ Adapter firmware; `08_FUTURE_TASKS.md` T20); the bench is still the way to
+   change the boot path or `fw_apply.sh` itself.
 9. **The real app against the real adapter on the AAOS emulator (2026-11-13).** Pass the adapter
    through: `emulator -avd AAOS_Automotive -writable-system -gpu swangle_indirect … -qemu -device
    qemu-xhci,id=xhci -device usb-host,bus=xhci.0,vendorid=0x1314,productid=0x2d00`. The emulator

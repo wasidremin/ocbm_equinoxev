@@ -61,6 +61,9 @@ pub struct DeviceConfig {
     pub main_safe_area: Option<(i64, i64, i64, i64)>,
     /// `drawUIOutsideSafeArea` for the main stream (true = UI may draw in the viewArea↔safeArea gap).
     pub main_draw_outside_safe: bool,
+    /// `viewAreaStatusBarEdge` on every main view area: 0 Auto (the default), 1 Bottom, 2 Driver.
+    /// From the host YAML `mainVideoStream.viewAreas[0].statusBarEdge` (T22).
+    pub main_status_bar_edge: i64,
     /// A SECOND main view area (the CarPlay Dock "resize" button), in panel pixels, from the host
     /// YAML `mainVideoStream.viewAreas[1].viewArea` (+ our `initial` extension key). MAIN stream
     /// only — `view_areas` gates the second-area block on the type-110 display and Apple's
@@ -143,6 +146,7 @@ impl Default for DeviceConfig {
             max_fps: 60,
             main_safe_area: None,
             main_draw_outside_safe: false,
+            main_status_bar_edge: 0,
             main_view_area_2: None,
             alt_safe_area: None,
             alt_draw_outside_safe: false,
@@ -653,7 +657,10 @@ fn view_areas(
     draw_outside: bool,
     is_main: bool,
     second: Option<ViewArea2>,
+    status_bar_edge: i64,
 ) -> Value {
+    // Only Apple's three values reach the wire; anything else is Auto.
+    let status_bar_edge = if (0..=2).contains(&status_bar_edge) { status_bar_edge } else { 0 };
     // cornerMasks (Phase 1 experiment) is a DISPLAY-level flag (set on the `disp` dict, not here — iOS's
     // validator reads it only from displays[], never from a viewArea entry). Its ONE viewArea consequence:
     // the display that declares cornerMasks must NOT carry a `safeArea` in its viewArea, or the validator
@@ -685,7 +692,7 @@ fn view_areas(
         // type-110 only — see the type-gating note above. `viewAreaStatusBarEdge: 0` = Auto
         // (`StatusBarEdge` ordinals: Auto=0, Bottom=1, Driver=2).
         area.insert("viewAreaTransitionControl".into(), Value::Boolean(false));
-        area.insert("viewAreaStatusBarEdge".into(), Value::Integer(0.into()));
+        area.insert("viewAreaStatusBarEdge".into(), Value::Integer(status_bar_edge.into()));
         // docs/carplay/04_CAPABILITIES_AND_CONFIG.md #25: was hardcoded `false` while the app carried an `enablesFocusTransfer` toggle.
         // The lever defaults `false`, so this is byte-identical unless the owner opts in — and opting
         // in is a NEW advertisement, unvalidated on hardware, not a byte-neutral plumbing change.
@@ -730,7 +737,7 @@ fn view_areas(
             a2.insert("widthPixels".into(), Value::Integer(w2.into()));
             a2.insert("heightPixels".into(), Value::Integer(h2.into()));
             a2.insert("viewAreaTransitionControl".into(), Value::Boolean(true));
-            a2.insert("viewAreaStatusBarEdge".into(), Value::Integer(0.into()));
+            a2.insert("viewAreaStatusBarEdge".into(), Value::Integer(status_bar_edge.into()));
             a2.insert(
                 "viewAreaSupportsFocusTransfer".into(),
                 Value::Boolean(crate::levers::focus_transfer()),
@@ -960,6 +967,7 @@ fn build_info_with_view_area_2(cfg: &DeviceConfig, second: Option<ViewArea2>) ->
             cfg.main_draw_outside_safe,
             true, // type-110 main screen
             second,
+            cfg.main_status_bar_edge,
         ),
     );
     // cornerMasks at the DISPLAY (screen) level — `CARScreenInfo.wantsCornerMasks` is a screen-level
@@ -995,7 +1003,7 @@ fn build_info_with_view_area_2(cfg: &DeviceConfig, second: Option<ViewArea2>) ->
         alt.insert("adjacentViewAreas".into(), Value::Array(Vec::new()));
         alt.insert(
             "viewAreas".into(),
-            view_areas(aw, ah, cfg.alt_safe_area, cfg.alt_draw_outside_safe, false, None),
+            view_areas(aw, ah, cfg.alt_safe_area, cfg.alt_draw_outside_safe, false, None, 0),
         );
         add_appearance_keys(&mut alt);
         alt.insert("type".into(), Value::Integer(111.into())); // Cluster / AltScreen
@@ -1580,12 +1588,27 @@ mod tests {
         assert_eq!(u16::from_le_bytes([desc[52], desc[53]]), 720);
     }
 
+    /// T22: the status bar edge lands on the main view area only, and anything outside Apple's three
+    /// values is Auto. The type-111 cluster entry never carries the key.
+    #[test]
+    fn status_bar_edge_is_declared_on_the_main_view_area_only() {
+        let edge = |v: &Value| {
+            v.as_array().unwrap()[0].as_dictionary().unwrap().get("viewAreaStatusBarEdge")
+                .map(|x| x.as_signed_integer().unwrap())
+        };
+        assert_eq!(edge(&view_areas(1920, 720, None, false, true, None, 2)), Some(2));
+        assert_eq!(edge(&view_areas(1920, 720, None, false, true, None, 1)), Some(1));
+        assert_eq!(edge(&view_areas(1920, 720, None, false, true, None, 0)), Some(0));
+        assert_eq!(edge(&view_areas(1920, 720, None, false, true, None, 7)), Some(0));
+        assert_eq!(edge(&view_areas(1920, 720, None, false, false, None, 2)), None);
+    }
+
     /// `safeArea` comes from host YAML; an extreme origin used to wrap `origin + extent` in the
     /// release profile and slip a bogus rect past the very bound meant to reject it.
     #[test]
     fn safe_area_rejects_a_rect_whose_extent_overflows() {
         let bogus = Some((i64::MAX, 0, 100, 100));
-        let v = view_areas(1920, 720, bogus, false, false, None);
+        let v = view_areas(1920, 720, bogus, false, false, None, 0);
         let area = v.as_array().unwrap()[0].as_dictionary().unwrap();
         let safe = area["safeArea"].as_dictionary().unwrap();
         // Rejected → falls back to the full panel, not to a wrapped rect.

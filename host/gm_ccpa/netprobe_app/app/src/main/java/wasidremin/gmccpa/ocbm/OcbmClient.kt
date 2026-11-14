@@ -374,6 +374,7 @@ class OcbmClient(
                     log.i("<< BOX_HEALTH 0x%02x [%s]".format(f, Ocbm.bhString(f)))
                     noteBoxHealth(prev, f)
                     onBoxHealth?.invoke(f)
+                    AdapterFirmware.noteHealth(this, f)
                 }
             }
             Ocbm.CT_BT_PHASE -> {

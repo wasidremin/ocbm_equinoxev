@@ -138,6 +138,7 @@ object DisplayPrefs {
     private const val KEY_SAFE_RIGHT = "safe_right"
     private const val KEY_PHONE = "last_phone_name"
     private const val KEY_CUSTOM_TOP_BAR = "custom_top_bar"
+    private const val KEY_STATUS_BAR_EDGE = "status_bar_edge"
 
     /** Percentages the screen page offers. 100 is today's advertised size. */
     val SCALE_PRESETS = intArrayOf(100, 115, 125, 133, 150)
@@ -172,6 +173,14 @@ object DisplayPrefs {
     fun customTopBar(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_CUSTOM_TOP_BAR, false)
     fun setCustomTopBar(ctx: Context, on: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_CUSTOM_TOP_BAR, on).apply()
+    }
+
+    /** CarPlay's status bar edge (T22): `auto`, `bottom` or `driver`. Sent at the next connect. */
+    fun statusBarEdge(ctx: Context): String =
+        prefs(ctx).getString(KEY_STATUS_BAR_EDGE, null)
+            ?.takeIf { it in wasidremin.gmccpa.ocbm.VehicleConfigYaml.STATUS_BAR_EDGES } ?: "auto"
+    fun setStatusBarEdge(ctx: Context, edge: String) {
+        prefs(ctx).edit().putString(KEY_STATUS_BAR_EDGE, edge).apply()
     }
 
     fun setMode(ctx: Context, mode: ScreenMode) {

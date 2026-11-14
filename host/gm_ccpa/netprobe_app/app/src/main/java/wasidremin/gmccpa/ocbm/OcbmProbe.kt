@@ -1240,6 +1240,11 @@ class OcbmProbe(context: Context) {
                 clusterSafe = cluster?.let { wasidremin.gmccpa.nav.DriverDisplay.safeArea(ctx, it) },
                 // Lanes are drawn on the driver display only, so the larger Identify is asked for only with it.
                 metadataTier = if (cluster != null) wasidremin.gmccpa.nav.ClusterLayout.metadataTier else "proven",
+                statusBarEdge = wasidremin.gmccpa.DisplayPrefs.statusBarEdge(ctx),
+                // Bench only, no UI: `bench.xml` `main_buffered_probe` (docs/ops/08_FUTURE_TASKS.md T8).
+                mainBufferedProbe = ctx.getSharedPreferences("bench", android.content.Context.MODE_PRIVATE)
+                    .getBoolean("main_buffered_probe", false)
+                    .also { if (it) log.w("T8 bench probe: advertising buffered audio — media may be silent this session") },
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)

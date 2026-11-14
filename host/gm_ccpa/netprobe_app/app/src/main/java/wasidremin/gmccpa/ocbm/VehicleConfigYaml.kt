@@ -66,6 +66,17 @@ data class VehicleConfigSpec(
     val appDrivenSetup: Boolean = false,
     val metadataTier: String = "proven",
     /**
+     * Where CarPlay puts its status bar: `auto` (today's document, nothing emitted), `bottom` or
+     * `driver`. Apple's `ViewAreaConfig.statusBarEdge`; firmware from 2026-11-13 declares it as
+     * `viewAreaStatusBarEdge`, older firmware ignores the key (T22).
+     */
+    val statusBarEdge: String = "auto",
+    /**
+     * Bench only (T8): advertise `enablesMainBufferedAudio` so one session records what the iPhone
+     * asks for. Media may go silent, because no buffered stream is served yet. Never on in the car.
+     */
+    val mainBufferedProbe: Boolean = false,
+    /**
      * Apple `limitedUIConfig` — WHICH elements iOS restricts once `setLimitedUI(true)` is sent.
      *
      * This is a DECLARATION, not the switch. The runtime on/off is `CMD_LIMITED_UI_ON/OFF` on
@@ -296,6 +307,7 @@ object VehicleConfigYaml {
         line("        width: ${s.safeWidth}")
         line("        height: ${s.safeHeight}")
         line("      drawUIOutsideSafeArea: ${s.drawUIOutsideSafeArea}")
+        if (s.statusBarEdge != "auto") line("      statusBarEdge: ${s.statusBarEdge}")
         // The split layout's CarPlay area, index 1, directly after entry 0 and before `hidConfig`,
         // still inside the `viewAreas` list (a list item after `primaryInput` is not valid YAML at
         // this indent, and serde would reject the whole subscribe). Its safe area is the area itself;
@@ -368,7 +380,7 @@ object VehicleConfigYaml {
         s: VehicleConfigSpec,
     ) = with(b) {
         line("accessoryConfig:")
-        line("  enablesMainBufferedAudio: false")
+        line("  enablesMainBufferedAudio: ${s.mainBufferedProbe}")
         line("  enablesHEVC: ${s.enablesHevc}")
         line("  enablesUIAppearance: true")
         line("  enablesMapAppearance: true")
@@ -586,6 +598,9 @@ object VehicleConfigYaml {
      * `hostapd.conf` on every bring-up, and `0x5703` reads that file. The vehicle schema ignores
      * these keys (`serde` has no `deny_unknown_fields`).
      */
+    /** The values `statusBarEdge` takes, in Apple's order (Auto, Bottom, Driver). */
+    val STATUS_BAR_EDGES = listOf("auto", "bottom", "driver")
+
     fun renderAdapter(
         passphrase: String,
         ssid: String = AdapterWifi.SSID_PLACEHOLDER,
@@ -612,6 +627,10 @@ object VehicleConfigYaml {
          * lane guidance on the driver display asks for it.
          */
         metadataTier: String = "proven",
+        /** CarPlay's status bar edge ([DisplayPrefs.statusBarEdge]): `auto`, `bottom` or `driver`. */
+        statusBarEdge: String = "auto",
+        /** Bench only: advertise buffered audio to record the iPhone's request (T8). */
+        mainBufferedProbe: Boolean = false,
     ): ByteArray {
         require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
             "iapConfig must be a whole top-level block ending in a newline"
@@ -640,7 +659,7 @@ object VehicleConfigYaml {
         // the adapter network. [structuralError] checks the result before it is sent.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
         val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony && physicalWidthMm == 0 && physicalHeightMm == 0 &&
-            viewArea2 == null && cluster == null && metadataTier == "proven") pinned
+            viewArea2 == null && cluster == null && metadataTier == "proven" && statusBarEdge == "auto" && !mainBufferedProbe) pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
@@ -656,6 +675,8 @@ object VehicleConfigYaml {
                 cluster = cluster,
                 clusterSafe = clusterSafe?.takeIf { cluster != null },
                 metadataTier = metadataTier,
+                statusBarEdge = statusBarEdge.takeIf { it in STATUS_BAR_EDGES } ?: "auto",
+                mainBufferedProbe = mainBufferedProbe,
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

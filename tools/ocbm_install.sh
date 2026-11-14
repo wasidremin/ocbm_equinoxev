@@ -166,6 +166,9 @@ manifest() {
   echo "$REPO/ccpa/rootfs/script/ocbm_boot.sh|/script/ocbm_boot.sh|755"
   echo "$REPO/ccpa/rootfs/script/ocbm_udisk.sh|/script/ocbm_udisk.sh|755"
   echo "$REPO/tools/run_ocbmd.sh|/script/run_ocbmd.sh|755"
+  # Updating from the app (T20) and its boot-time rollback. Bench-installed only: an app update
+  # never writes this script or the boot path, so a bad update can always be undone.
+  echo "$REPO/ccpa/rootfs/script/fw_apply.sh|/script/fw_apply.sh|755"
   if [ "$FULL" = 1 ]; then
     # The radio seam MUST ship with session_supervisor.sh, because the supervisor's four radio
     # call sites now resolve through it. A box that gets the supervisor without these has no

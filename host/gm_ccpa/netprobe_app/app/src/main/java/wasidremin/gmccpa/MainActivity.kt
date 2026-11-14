@@ -1483,6 +1483,23 @@ class MainActivity : Activity() {
                 emit(r.fold({ (saved, map) -> "capture_cluster: saved ${saved.id} ${saved.metadata.windowWidth}x${saved.metadata.windowHeight} mapFrame=$map" },
                     { "capture_cluster: FAILED ${it.message}" }))
             }
+            // Bench (T20): the Settings ▸ Advanced ▸ Adapter firmware path without the UI. fw_update
+            // skips the Park check; the bench has no gear.
+            "fw_check", "fw_update", "fw_rollback" -> Thread({
+                val fw = wasidremin.gmccpa.ocbm.AdapterFirmware
+                val c = wasidremin.gmccpa.ocbm.AdapterSession.client
+                val m = fw.bundled(this)
+                emit(when {
+                    c == null -> "$what: no adapter link"
+                    m == null -> "$what: this build carries no adapter firmware"
+                    what == "fw_rollback" -> "$what: started=${fw.rollback(c)}"
+                    what == "fw_check" -> "$what: " + (fw.check(c, m)?.fold(
+                        { "bundle ${m.version}, adapter ${it.version}, differs=${it.differs}, free=${it.freeKb} KB, pending=${it.pending}, prev=${it.prev}" },
+                        { "refused: ${it.message}" }) ?: "no answer")
+                    else -> "$what: " + fw.update(this, c, m) { step -> emit("$what: $step") }
+                        .fold({ "OK $it — the adapter reboots now" }, { "FAILED ${it.message}" })
+                })
+            }, "fw-bench").start()
             "open_tab" -> {
                 val tab = i.getIntExtra("tab", 3)
                 val sub = i.getIntExtra("subtab", 0)
