@@ -724,9 +724,12 @@ pub(crate) fn build_ident_info_excluding_with_policy(
         for &e in &identity.engine_types {
             g20.u8v(sub::ENGINE_TYPE, e);
         }
-        g20.str(sub::DISPLAY_NAME, name); // sub 6
-        // sub 8 — the car's name for Apple Maps' Vehicles list (T7), emitted only when the app
-        // pushed one. Subs 1 and 6 stay the box's own name; T21 owns changing those.
+        // sub 6 — DisplayName. Apple Maps lists the car under this name, not under sub 8: on the
+        // 2026-11-13 bench Maps showed "CarLink" with sub 8 carrying the car's name. So a pushed
+        // Maps name goes in both, as the Hyundai project that got EV routing working does (T21).
+        // Sub 1 `Name` stays the box's own, and without a pushed name the bytes are unchanged.
+        g20.str(sub::DISPLAY_NAME, identity.maps_display_name.as_deref().unwrap_or(name)); // sub 6
+        // sub 8 — the car's name for Apple Maps (T7), emitted only when the app pushed one.
         if let Some(maps_name) = identity.maps_display_name.as_deref() {
             g20.str(sub::MAPS_DISPLAY_NAME, maps_name);
         }
@@ -1976,8 +1979,8 @@ mod tests {
         want.str(sub::NAME, "CarLink");
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_GASOLINE);
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_ELECTRIC);
-        want.str(sub::DISPLAY_NAME, "CarLink");
-        // Sub 8 carries the car's name for Apple Maps; subs 1 and 6 stay the box's own.
+        // Subs 6 and 8 carry the car's name for Apple Maps; sub 1 stays the box's own.
+        want.str(sub::DISPLAY_NAME, "Chevrolet Equinox EV");
         want.str(sub::MAPS_DISPLAY_NAME, "Chevrolet Equinox EV");
         want.str(sub::VEHICLE_COLOR_HEX_CODE, "#1A2B3C");
         want.u8v(sub::SUPPORTED_CHARGING_CONNECTORS, sub::SUPPORTED_CHARGING_CONNECTORS_CCS2);
@@ -2007,6 +2010,24 @@ mod tests {
 
         id.maps_display_name = None;
         assert!(!sub_ids(&id).contains(&sub::MAPS_DISPLAY_NAME));
+    }
+
+    /// Without a pushed name, sub 6 is the box's own name, as before; with one, sub 6 is the car's
+    /// and sub 1 still the box's.
+    #[test]
+    fn display_name_follows_the_pushed_maps_name() {
+        use crate::spec::ident::vehicle_info as sub;
+        let tunnel = TransportComponent::AirPlayTunnel { bt_mac: [0, 1, 2, 3, 4, 5] };
+        let value_of = |id: &crate::config::VehicleIdentity, want: u16| -> Vec<u8> {
+            let body = build_ident_info_with("CarLink", tunnel, false, id);
+            let g20 = top_level_param_value(&body, spec::ident::VEHICLE_INFORMATION_COMPONENT).unwrap();
+            top_level_param_value(&g20, want).unwrap()
+        };
+        let mut id = maximal_ev_identity();
+        assert_eq!(value_of(&id, sub::DISPLAY_NAME), b"Chevrolet Equinox EV\0".to_vec());
+        assert_eq!(value_of(&id, sub::NAME), b"CarLink\0".to_vec());
+        id.maps_display_name = None;
+        assert_eq!(value_of(&id, sub::DISPLAY_NAME), b"CarLink\0".to_vec());
     }
 
     /// Param 21 is emitted ONLY when the app pushed a `vehicleStatus:` block, and its contents match
@@ -2209,7 +2230,7 @@ mod tests {
         want.str(sub::NAME, "CarLink");
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_GASOLINE);
         want.u8v(sub::ENGINE_TYPE, sub::ENGINE_TYPE_ELECTRIC);
-        want.str(sub::DISPLAY_NAME, "CarLink");
+        want.str(sub::DISPLAY_NAME, "Chevrolet Equinox EV");
         want.str(sub::MAPS_DISPLAY_NAME, "Chevrolet Equinox EV");
         want.str(sub::VEHICLE_COLOR_HEX_CODE, "#1A2B3C");
         want.u8v(sub::SUPPORTED_CHARGING_CONNECTORS, sub::SUPPORTED_CHARGING_CONNECTORS_CCS2);

@@ -36,7 +36,7 @@ until T20 exists.
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
 | T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). A second route, the adapter link over the car's hotspot, is recorded in T15 (2026-11-13) and not started; its first step is app only |
 | T20 Update the adapter from the app | New; would remove the bench reflash from every task in this table |
-| T21 The car's name in Apple Maps | New (openautolink; held since 2026-11-08) |
+| T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | New (openautolink; held since 2026-11-08) |
 
 *Done*
@@ -719,7 +719,7 @@ within a time limit. Settings ▸ Advanced shows the adapter's version and offer
 one bad hash is refused with nothing changed; and a forced failed start rolls back to the previous
 set.
 
-## T21. The car's name in Apple Maps (raised 2026-11-12; openautolink, held since 2026-11-08)
+## T21. The car's name in Apple Maps (raised 2026-11-12; openautolink, held since 2026-11-08; BUILT and on the adapter 2026-11-13, not yet seen in Maps)
 
 **Why.** Apple Maps names the car after the adapter. openautolink sends the car's make, model and
 year instead.
@@ -730,6 +730,13 @@ that got EV routing working sends the car's name in subs 6 and 8), so build the 
 app's `accessoryName` bound (C-6) is not wired into the tunnel Identify,
 where a rejected change costs the whole session's metadata (`0x1D03`) until the setting is off, the
 same risk T7 took and passed. `04_OPEN_ITEMS.md` "Held for adapter firmware".
+
+**Built (2026-11-13).** On the bench Apple Maps ▸ Vehicles listed the car as "CarLink" while sub
+8 carried the car's name, so Maps reads sub 6 `DisplayName`. When the app pushes
+`mapsDisplayName` (T7, only to firmware saying `"ev_models":true`), `message.rs` now writes it into
+sub 6 as well as sub 8; sub 1 `Name` stays the box's, and with no pushed name the bytes are as
+before (`display_name_follows_the_pushed_maps_name`). On the adapter as `carplayd` md5 `ed5d4312…`.
+Maps may keep the old name until the car is removed under Vehicles and added again.
 
 **Done means.** With the setting on, Maps shows "Chevrolet Equinox EV" (or the name the app pushes),
 and the Identify is accepted with no `0x1D03`.
