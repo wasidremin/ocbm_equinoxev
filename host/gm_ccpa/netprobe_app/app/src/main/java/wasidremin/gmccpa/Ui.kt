@@ -659,7 +659,9 @@ class LauncherUi(private val act: Activity) {
 
     /**
      * Cluster: GM's own cluster (turns through the Car App Library), then the app's window on the
-     * driver display, where it shows CarPlay's map and draws its own cards.
+     * driver display: one switch for CarPlay's feed there and what it shows, then the cards the app
+     * draws over it, the turn card first (owner, 2026-11-14: the feed is one decision, which turn
+     * card is another).
      */
     private fun buildCluster(page: LinearLayout) {
         page.addView(eqSectionLabel(act, "GM cluster"))
@@ -681,7 +683,7 @@ class LauncherUi(private val act: Activity) {
         val driver = wasidremin.gmccpa.nav.DriverDisplay.also { it.load(act) }
         lateinit var driverRow: EqRow
         driverRow = EqRow(
-            act, "CarPlay map on the driver display", driver.statusText(act),
+            act, "CarPlay on the driver display", driver.statusText(act),
             trailing = EqToggle(act, driver.enabled) { on ->
                 driver.setEnabled(act, on)
                 driverRow.setSubtitle(driver.statusText(act))
@@ -690,15 +692,14 @@ class LauncherUi(private val act: Activity) {
         page.addView(EqCard(act).addRow(navRow).addRow(mapsArtRow))
         page.addView(eqSectionLabel(act, "Driver display"))
         val content = wasidremin.gmccpa.nav.ClusterContent.also { it.load(act) }
-        lateinit var contentRow: EqRow
-        contentRow = EqRow(
-            act, "Driver display shows", content.statusText(),
-            trailing = EqSegmented(act, wasidremin.gmccpa.nav.ClusterContent.Choice.values().map { it.short }, content.choice.ordinal) { i ->
-                content.set(act, wasidremin.gmccpa.nav.ClusterContent.Choice.values()[i])
-                contentRow.setSubtitle(content.statusText())
+        feedRow = EqRow(
+            act, "Feed shows", content.backgroundText(),
+            trailing = EqSegmented(act, listOf("Map", "Apple's view"), content.background.ordinal) { i ->
+                content.setBackground(act, wasidremin.gmccpa.nav.ClusterContent.Background.values()[i])
+                feedRow.setSubtitle(content.backgroundText())
             },
         )
-        page.addView(EqCard(act).addRow(driverRow).addRow(contentRow).addRow(clusterCaptureRow()))
+        page.addView(EqCard(act).addRow(driverRow).addRow(feedRow).addRow(clusterCaptureRow()))
         page.addView(directionsAreaCard())
         driverLayoutCards(page)
     }
@@ -946,6 +947,8 @@ class LauncherUi(private val act: Activity) {
      * card. All of it is the app's own drawing, so it applies at once; only lane guidance waits for
      * the next connect, because it changes what the adapter asks the iPhone for.
      */
+    private lateinit var feedRow: EqRow
+
     private fun driverLayoutCards(page: LinearLayout) {
         val dd = wasidremin.gmccpa.nav.DriverDisplay
         val cl = wasidremin.gmccpa.nav.ClusterLayout.also { it.load(act) }
@@ -983,18 +986,45 @@ class LauncherUi(private val act: Activity) {
         page.addView(eqSectionLabel(act, "Layout"))
         page.addView(card)
         card = EqCard(act)
-        card.addRow(EqRow(
-            act, "Turn card",
-            "During a route: a small pill with the next turn, growing to a full card in the last half mile, with " +
-                "the exit number and the turn after it. Apple's map shows the arrival time.",
-            trailing = EqToggle(act, dd.turnCard) { on -> dd.setTurnCard(act, on); editor.invalidate() },
-        ))
-        card.addRow(EqRow(
-            act, "Dock the turn card",
-            "The turn card as a panel in the bottom-right corner, in the look of the gauges on the left. Drag its " +
-                "corner above: it runs off the right and bottom edges as the gauges do.",
-            trailing = EqToggle(act, cl.dock) { on -> cl.setDock(act, on); sizeRow.setSubtitle(sizeText()); editor.invalidate() },
-        ))
+        val content = wasidremin.gmccpa.nav.ClusterContent
+        val turns = wasidremin.gmccpa.nav.ClusterContent.Turn.values()
+        // What the bottom-right panel can hold, in the picker's order.
+        val dockable = listOf(null, wasidremin.gmccpa.nav.ClusterLayout.Slot.TURN,
+            wasidremin.gmccpa.nav.ClusterLayout.Slot.MEDIA, wasidremin.gmccpa.nav.ClusterLayout.Slot.DRIVE)
+        fun dockText() = (cl.docked?.let { "${it.label} holds the panel" } ?: "Nothing holds the panel") +
+            " in the bottom-right corner, where a card sits in the look of the gauges on the left and stays open. " +
+            "Remembered for each turn card: this is the choice with the turn card ${content.turn.short}. " +
+            "Drag the panel's corner above."
+        lateinit var turnRow: EqRow
+        lateinit var dockRow: EqRow
+        lateinit var dockSeg: EqSegmented
+        fun dockChanged() {
+            dockSeg.setSelected(dockable.indexOf(cl.docked))
+            dockRow.setSubtitle(dockText())
+            sizeRow.setSubtitle(sizeText())
+            editor.invalidate()
+        }
+        turnRow = EqRow(
+            act, "Turn card", content.turnText(dd.enabled),
+            trailing = EqSegmented(act, turns.map { it.short }, content.turn.ordinal) { i ->
+                content.setTurn(act, turns[i])
+                turnRow.setSubtitle(content.turnText(dd.enabled))
+                if (::feedRow.isInitialized) feedRow.setSubtitle(content.backgroundText())
+                dockChanged()
+            },
+        )
+        card.addRow(turnRow)
+        dockSeg = EqSegmented(act, listOf("Nothing", "Turn", "Now playing", "Drive"), dockable.indexOf(cl.docked)) { i ->
+            val slot = dockable[i]
+            if (slot == wasidremin.gmccpa.nav.ClusterLayout.Slot.TURN && content.turn != wasidremin.gmccpa.nav.ClusterContent.Turn.OURS) {
+                // The panel can hold only a card this app draws.
+                android.widget.Toast.makeText(act, "The turn card can hold the panel only when it is this app's.",
+                    android.widget.Toast.LENGTH_SHORT).show()
+            } else cl.setDocked(act, slot)
+            dockChanged()
+        }
+        dockRow = EqRow(act, "Bottom-right panel holds", dockText(), trailing = dockSeg)
+        card.addRow(dockRow)
         lateinit var lanesRow: EqRow
         lanesRow = EqRow(
             act, "Lane guidance", cl.lanesText(),
@@ -1014,9 +1044,11 @@ class LauncherUi(private val act: Activity) {
         ))
         card.addRow(EqRow(
             act, "Drive",
-            "Energy over the last mile as a ring, with ticks for the last 10 miles, this month and lifetime, and a " +
-                "bar per mile. Opens while you are stopped, with no route, and when the trend flips; folded otherwise. " +
-                "During a route the turn card shows the battery you will arrive with. From EV Insights' drive log.",
+            "How far a kWh is taking you right now, a line of the last 10 miles with your usual across it, and the " +
+                "power in use along the bottom. A new drive starts with the end of the one before, in grey. Opens " +
+                "while you are stopped, with no route, and when the last mile flips against your usual; folded " +
+                "otherwise, and always open in the bottom-right panel. The battery you will arrive with shows " +
+                "with this app's turn card, or here when this card holds the panel or the turn card is not this app's.",
             trailing = EqToggle(act, cl.drive) { on -> cl.setDrive(act, on); editor.invalidate() },
         ))
         page.addView(eqSectionLabel(act, "Cards"))
@@ -1276,8 +1308,8 @@ class LauncherUi(private val act: Activity) {
         }
         row = EqRow(
             act, "Capture driver display",
-            "CarPlay's map with the app's cards, as the app draws them. GM's gauges are drawn by the car " +
-                "on top and are not in it. Needs the CarPlay map on the driver display.",
+            "CarPlay's picture with the app's cards, as the app draws them. GM's gauges are drawn by the car " +
+                "on top and are not in it. Needs CarPlay on the driver display.",
             trailing = button,
         )
         return row

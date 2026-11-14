@@ -212,7 +212,8 @@ object TurnCard {
                     val live = if (on) content(s, ClusterLayout.lanes) else null
                     val next = live ?: if (preview && on) sample(ClusterLayout.lanes) else null
                     val arr = when {
-                        next == null || !ClusterLayout.drive -> null
+                        // A docked drive card carries the arrival figure itself.
+                        next == null || !ClusterLayout.drive || ClusterLayout.docked == ClusterLayout.Slot.DRIVE -> null
                         live == null -> DriveCard.sampleArrival(DriveCard.benchFace)
                         else -> DriveCard.arrival
                     }
@@ -356,17 +357,7 @@ object TurnCard {
             val pal = ClusterLayout.GAUGE
             val h = b.height
             val x0 = b.left; val y0 = b.top
-            val w = width.toFloat(); val bottom = height.toFloat()
-            val rad = h * 0.14f
-            path.rewind()
-            path.moveTo(x0 + rad, y0)
-            path.lineTo(w, y0); path.lineTo(w, bottom)
-            path.lineTo(x0 - ClusterLayout.DOCK_SLANT * (bottom - y0), bottom)
-            path.lineTo(x0 - ClusterLayout.DOCK_SLANT * rad, y0 + rad)
-            path.quadTo(x0, y0, x0 + rad, y0)
-            path.close()
-            fill.color = pal.card
-            canvas.drawPath(path, fill)
+            CardParts.dockPanel(canvas, b, width.toFloat(), height.toFloat())
 
             val pad = h * 0.14f
             val iconSize = h * 0.50f
@@ -435,41 +426,8 @@ object TurnCard {
          * [canvas] null it only measures. Docked it sits on the panel with no tab of its own.
          */
         private fun drawArrival(canvas: Canvas?, a: DriveCard.Arrival, left: Float, top: Float, maxWidth: Float, h: Float,
-                                pal: ClusterLayout.Palette, docked: Boolean): Float {
-            val th = h * 0.30f
-            val pad = h * 0.10f
-            val bw = h * 0.27f
-            val bh = h * 0.14f
-            plain.textSize = h * 0.15f
-            val figure = if (a.short) "Charge needed" else "${a.pct}%"
-            val full = if (a.short) figure else "$figure on arrival"
-            val text = if (pad * 2.6f + bw + plain.measureText(full) <= maxWidth) full else figure
-            val w = pad * 2.6f + bw + plain.measureText(text)
-            if (canvas == null) return w
-            if (!docked) {
-                fill.color = pal.card
-                r.set(left, top, left + w, top + th)
-                canvas.drawRoundRect(r, th * 0.42f, th * 0.42f, fill)
-            }
-            val level = if (a.low) (if (night || docked) ClusterLayout.AMBER_NIGHT else ClusterLayout.AMBER)
-                else (if (night || docked) ClusterLayout.GREEN_NIGHT else ClusterLayout.GREEN)
-            val bx = left + pad
-            val by = top + (th - bh) / 2f
-            val nub = h * 0.03f
-            stroke.color = pal.dim; stroke.strokeWidth = h * 0.016f
-            r.set(bx, by, bx + bw - nub, by + bh)
-            canvas.drawRoundRect(r, h * 0.025f, h * 0.025f, stroke)
-            fill.color = pal.dim
-            r.set(bx + bw - nub, by + bh * 0.32f, bx + bw, by + bh * 0.68f)
-            canvas.drawRect(r, fill)
-            val inner = h * 0.022f
-            fill.color = level
-            r.set(bx + inner, by + inner, bx + inner + (bw - nub - inner * 2) * (a.pct / 100f).coerceIn(0.04f, 1f), by + bh - inner)
-            canvas.drawRect(r, fill)
-            plain.color = if (a.low) level else pal.text
-            canvas.drawText(text, bx + bw + pad * 0.6f, top + th / 2f + plain.textSize * 0.35f, plain)
-            return w
-        }
+                                pal: ClusterLayout.Palette, docked: Boolean): Float =
+            CardParts.arrival(canvas, a, left, top, maxWidth, h, pal, onPanel = docked, night = night)
 
         /** "Then" and the turn after, on a tab under the card. Returns where the next thing starts. */
         private fun drawThen(canvas: Canvas, c: Content, left: Float, top: Float, maxWidth: Float, h: Float, pal: ClusterLayout.Palette): Float {

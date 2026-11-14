@@ -559,6 +559,9 @@ class CarPlayActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The lyrics settings were read only when Settings was built, so this screen started on its own
+        // (the process restarted under it) took lyrics as off until Settings was opened.
+        wasidremin.gmccpa.lyrics.BarLyrics.load(applicationContext)
         previewOnly = intent.getBooleanExtra("topbar_preview", false)
         if (previewOnly && intent.hasExtra("slope_test_m"))
             previewSlopeM = intent.getFloatExtra("slope_test_m", 0f).coerceAtLeast(0f)

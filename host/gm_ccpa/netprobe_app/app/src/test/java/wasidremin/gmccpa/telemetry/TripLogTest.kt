@@ -195,6 +195,40 @@ class TripLogTest {
         assertEquals(0.0, d.downM!!, 0.01)
     }
 
+    @Test fun theDriveCardsLineAndPowerComeFromTheRecorderAndSurviveARestart() {
+        val a = recorder()
+        a.onBattery(0, 50_000.0)
+        // Five minutes at 20 m/s using 4 Wh a second (14.4 kW): 6 km, a mark every 100 m.
+        val t = cruise(a, 1_000, 300, 20.0, 50_000.0, 4.0)
+        val live = a.live(t)
+        assertEquals(61, live.marks.size)
+        assertTrue(live.tail.isEmpty())
+        assertEquals(14_400.0, live.powerW!!, 1_500.0)
+        // Killed mid-drive: the marks come back with the drive.
+        val b = recorder()
+        b.restore(a.checkpoint(), t + 60_000)
+        assertEquals(61, b.live(t + 60_000).marks.size)
+        // Parked: the drive is written out and its marks become the start of the next drive's line.
+        b.tick(t + 600_000)
+        assertEquals(1, out.size)
+        val parked = b.live(t + 600_000)
+        assertTrue(parked.marks.isEmpty())
+        assertEquals(61, parked.tail.size)
+        assertNull(parked.powerW)
+        // And that survives the head unit being killed in the car park.
+        val c = recorder()
+        c.restore(b.checkpoint(), t + 3_600_000)
+        c.onBattery(t + 3_600_000, 48_000.0)
+        c.onSpeed(t + 3_600_000, 10.0)
+        val next = c.live(t + 3_600_000)
+        assertEquals(1, next.marks.size)
+        assertEquals(61, next.tail.size)
+        assertEquals(6_000.0, next.tail.last().distM - next.tail.first().distM, 1.0)
+        // A drive too short to be recorded leaves the line as it was.
+        c.tick(t + 3_600_000 + 600_000)
+        assertEquals(61, c.live(t + 4_300_000).tail.size)
+    }
+
     @Test fun aKilledProcessPicksTheDriveUpFromItsCheckpoint() {
         val a = recorder()
         a.onBattery(0, 50_000.0)

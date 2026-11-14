@@ -213,7 +213,8 @@ object DriverDisplay {
         val found = runCatching { find(ctx, logAll = false) }.getOrNull()
         val where = if (found == null) "No driver display this app may open a window on was found."
             else "Driver display found: ${found.width}×${found.height}."
-        return "Experimental. CarPlay's Maps on the driver display, from the next connect. GM's own map can take " +
+        return "Experimental. CarPlay's own feed for the driver display (Apple Maps), with this app's cards over it, from " +
+            "the next connect. GM's own map can take " +
             "the display back; long-press the glass right of CarPlay to show CarPlay's again. Turn-by-turn in the " +
             "cluster pauses while this is on. $where"
     }

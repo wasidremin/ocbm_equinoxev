@@ -651,6 +651,52 @@ over` logged 34.7 km from the end); a route now has to be gone 15 s.
 of similar length. Arrival 46% at route start; the upload ended before the route did, so the
 estimate's error is still unmeasured. The driver display ran 41,400 frames with no hide.
 
+**Third design, 2026-11-14 (owner, after two drives with the ring).** Three complaints: bars say less
+than a line ("it can be smoothed because a jagged graph isn't worth anything"), a drive should start with
+the drive before rather than an empty card, and the ring "only updates once every few seconds. It doesn't
+feel connected to the driving experience." The ring could not have felt connected: it was the last whole
+mile, moved only when 100 m more were driven, and changed by a few percent when it did.
+
+*The car has no live power reading for an app.* `EV_BATTERY_INSTANTANEOUS_CHARGE_RATE` is a constant 0 on
+this car, and the battery (`EV_BATTERY_LEVEL`) comes in 10 Wh steps every 1 to 2 s, which is 18 kW per
+step over two seconds. So the figure is an estimate (`telemetry/LivePower`): the fitted model of this
+section (`DriveOutlook.cruise` for holding the speed, plus mass x acceleration x speed over the last 2 s,
+at 0.9 accelerating and `REGEN` 0.7 slowing), corrected by the battery: the difference between what the
+battery lost and what the model said, smoothed twice over 4 s. Replayed over the server's stored reports
+(7,367 reports, 124 continuous runs, 159,150 s of driving; per-second speed and battery only, no
+positions), against the battery's own figure over fixed windows:
+
+| Over 30 s (the battery good to ±1.2 kW) | Median error | Above 8 kW |
+|---|---|---|
+| The battery alone, smoothed as steadily | 3.1 kW | 21% |
+| The model alone | 5.5 kW | 37% |
+| **Model + battery correction (shipped)** | **1.7 kW** | **11%** |
+
+Over 10 s windows the shipped estimate is off by a median 3.6 kW against the battery's own ±3.6 kW
+quantisation. Shifting the model later by 1 to 6 s only made the fit worse, so the battery reading is
+not late. The card eases the figure toward the estimate over about 1.6 s and the power line over 0.35 s.
+
+*Research behind the look* (web, 2026-11-14): Tesla's energy graph uses a fixed distance window, a rated
+line and colour by which side of it the line is; its power meter is a thin line, right for power and left
+in green for regeneration, and owners' main complaint is that it carries no figure or reference mark.
+A Lübeck study (Moll and Franke) found drivers misjudge their average from a live reading alone, which is
+why the live figure sits beside the trend and the usual; NHTSA found these displays distract, which is why
+the card still folds during a route. Mazda's MX-30 marks the average on its live gauge, the same pairing.
+
+*The card now* (`nav/DriveCard`): a word over the figure (NOW, or LAST MI / SO FAR standing still or before
+the estimate settles), mi/kWh, "▲ 12% vs usual" against this month (lifetime before the month has a drive),
+the line of the last 10 miles (`RollingEfficiency.line`: the energy over half a mile around each tenth,
+smoothed twice on Wh/km, not on its inverse, so coasting does not spike it), the drive before in grey
+filling the span with a ring where this drive began (`RollingEfficiency.trace`; the recorder keeps the
+last 17 km of finished drives as `tail` in its checkpoint, so it survives the head unit being killed), a
+dashed usual, a dot at now, and the power line with its kW. Folded it is a pill with the figure, the last
+three miles and the power line. Docked in the bottom-right panel it takes the gauges' look and carries the
+battery on arrival, which otherwise rides this app's turn card, or this card's tab when the turn card is
+Apple's or off (`CardParts.arrival`). **Verified:** 546 JVM tests (`LivePowerTest`, the line and tail in
+`RollingEfficiencyTest`, `DriveCardTest`, the recorder's checkpoint in `TripLogTest`) and the emulator's
+driver display at 2000x810, open, folded, docked, day and night, with the Settings samples. **Not
+verified:** anything with live data, and everything on the car.
+
 ---
 
 ## 14. 2026-10-21: now-playing sync — what the 2026-10-20 drive (v209) actually shows

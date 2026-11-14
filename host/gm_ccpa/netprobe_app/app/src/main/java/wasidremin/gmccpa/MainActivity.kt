@@ -1607,8 +1607,20 @@ class MainActivity : Activity() {
                 }
                 // `--es turn x,y,scale` / `--es media x,y,scale` (percent) or `reset`: a card's place.
                 val cl = wasidremin.gmccpa.nav.ClusterLayout
-                // `--ez dock true|false` first: the turn card's place below is the docked or the free one.
-                if (i.hasExtra("dock")) cl.setDock(this, i.getBooleanExtra("dock", false))
+                // `--es turn_card off|ours|apple`: which turn card, before the panel, which is remembered for each.
+                i.getStringExtra("turn_card")?.let { k ->
+                    wasidremin.gmccpa.nav.ClusterContent.Turn.values().firstOrNull { it.key == k }
+                        ?.let { wasidremin.gmccpa.nav.ClusterContent.setTurn(this, it) }
+                }
+                // `--es dock turn|media|drive|none` (or `--ez dock true|false` for the turn card) first:
+                // a docked card's place below is the panel's, not its free one.
+                if (i.hasExtra("dock")) {
+                    val raw = i.getStringExtra("dock")
+                    cl.setDocked(this, when (raw) {
+                        null -> wasidremin.gmccpa.nav.ClusterLayout.Slot.TURN.takeIf { i.getBooleanExtra("dock", false) }
+                        else -> wasidremin.gmccpa.nav.ClusterLayout.Slot.values().firstOrNull { it.name.lowercase() == raw }
+                    })
+                }
                 for (slot in wasidremin.gmccpa.nav.ClusterLayout.Slot.values()) i.getStringExtra(slot.name.lowercase())?.let { raw ->
                     val n = raw.split(',').mapNotNull { it.trim().toIntOrNull() }
                     cl.setPlace(this, slot, if (n.size == 3) wasidremin.gmccpa.nav.ClusterLayout.Place(n[0], n[1], n[2]) else null)

@@ -23,7 +23,8 @@ import wasidremin.gmccpa.av.NowPlayingState
  * opens for [OPEN_MS] when the song changes and then folds to a pill: the cover inside a progress
  * ring with the title small beside it, so the map keeps its room. A ringing or active call shows in the card's place, with who it
  * is and how long it has run. The driver display takes no touch, so there are no buttons: the
- * steering-wheel keys and the centre screen do that.
+ * steering-wheel keys and the centre screen do that. Docked in the bottom-right panel
+ * ([ClusterLayout.docked]) it stays open, in the gauges' look.
  *
  * Nothing here is logged: titles and callers are shown, never written down.
  */
@@ -130,11 +131,14 @@ object MediaCard {
         override fun onDraw(canvas: Canvas) {
             if (width == 0 || height == 0) return
             val b = ClusterLayout.box(context, width, height, ClusterLayout.Slot.MEDIA)
-            val pal = ClusterLayout.palette(night)
-            call?.let { drawCall(canvas, it, b, pal); return }
+            val onPanel = ClusterLayout.docked == ClusterLayout.Slot.MEDIA
+            val pal = if (onPanel) ClusterLayout.GAUGE else ClusterLayout.palette(night)
             // Parked in Settings with nothing playing: a sample, so the place can be judged.
             val sample = mode == Mode.HIDDEN && preview && ClusterLayout.media
-            if (mode == Mode.HIDDEN && !sample) return
+            if (call == null && mode == Mode.HIDDEN && !sample) return
+            if (onPanel) CardParts.dockPanel(canvas, b, width.toFloat(), height.toFloat())
+            call?.let { drawCall(canvas, it, b, pal, onPanel); return }
+            if (onPanel) { drawDocked(canvas, b, pal, sample); return }
             val h = b.height
 
             val now = SystemClock.uptimeMillis()
@@ -221,12 +225,55 @@ object MediaCard {
             }
         }
 
-        private fun drawCall(canvas: Canvas, c: NowPlayingState.CallCard, b: ClusterLayout.Box, pal: ClusterLayout.Palette) {
+        /** On the bottom-right panel: the cover, title and artist, and the progress as the gauges draw a bar. */
+        private fun drawDocked(canvas: Canvas, b: ClusterLayout.Box, pal: ClusterLayout.Palette, sample: Boolean) {
+            val h = b.height
+            val pad = h * 0.14f
+            val side = h * 0.72f
+            val ax = b.left + pad
+            val ay = b.top + h * 0.12f
+            r.set(ax, ay, ax + side, ay + side)
+            clip.rewind(); clip.addRoundRect(r, side * 0.14f, side * 0.14f, Path.Direction.CW)
+            canvas.save()
+            canvas.clipPath(clip)
+            val bmp = cover
+            if (bmp != null && !sample) canvas.drawBitmap(bmp, null, r, art)
+            else {
+                fill.color = pal.track
+                canvas.drawRect(r, fill)
+                bold.color = pal.dim; bold.alpha = 255; bold.textSize = side * 0.5f
+                canvas.drawText("♪", r.centerX() - bold.measureText("♪") / 2f, r.centerY() + bold.textSize * 0.35f, bold)
+            }
+            canvas.restore()
+            val textLeft = ax + side + pad * 0.9f
+            val textWidth = b.left + b.width - pad - textLeft
+            bold.color = pal.text; bold.alpha = 255; bold.textSize = h * 0.21f
+            plain.color = pal.dim; plain.alpha = 255; plain.textSize = h * 0.17f
+            canvas.drawText(ellipsized(if (sample) "Now playing" else title ?: "", bold, textWidth), textLeft, b.top + h * 0.36f, bold)
+            canvas.drawText(ellipsized(if (sample) "Artist" else artist ?: "", plain, textWidth), textLeft, b.top + h * 0.60f, plain)
+            val p = (if (sample) 0.4f else played) ?: return
+            val y = b.top + h * 0.78f
+            val weight = h * 0.045f
+            fill.color = pal.track
+            r.set(textLeft, y, textLeft + textWidth, y + weight)
+            canvas.drawRect(r, fill)
+            fill.color = ClusterLayout.GAUGE_BAR
+            r.right = textLeft + textWidth * p
+            canvas.drawRect(r, fill)
+            // The orange mark the gauges put at the end of their own bar.
+            fill.color = pal.accent
+            r.set(r.right - weight * 0.35f, y - weight * 0.6f, r.right + weight * 0.35f, y + weight * 1.6f)
+            canvas.drawRect(r, fill)
+        }
+
+        private fun drawCall(canvas: Canvas, c: NowPlayingState.CallCard, b: ClusterLayout.Box, pal: ClusterLayout.Palette, onPanel: Boolean) {
             val h = b.height
             val pad = h * 0.13f
-            fill.color = pal.card
-            r.set(b.left, b.top, b.left + b.width, b.top + h)
-            canvas.drawRoundRect(r, h * 0.18f, h * 0.18f, fill)
+            if (!onPanel) {
+                fill.color = pal.card
+                r.set(b.left, b.top, b.left + b.width, b.top + h)
+                canvas.drawRoundRect(r, h * 0.18f, h * 0.18f, fill)
+            }
             // A green disc with a handset: an arc with a heavier lump at each end.
             val d = h - pad * 2
             val cx = b.left + pad + d / 2f

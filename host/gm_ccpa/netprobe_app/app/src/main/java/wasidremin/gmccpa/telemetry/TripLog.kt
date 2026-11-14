@@ -160,7 +160,7 @@ class TripRecorder(
         var altRef = Double.NaN
         var live = Acc()
         var done: Acc? = null
-        /** The battery every [RollingEfficiency.STEP_M] of this drive, for the Drive card. Not checkpointed. */
+        /** The battery every [RollingEfficiency.STEP_M] of this drive, for the Drive card. */
         val marks = ArrayDeque<RollingEfficiency.Mark>()
     }
 
@@ -194,6 +194,9 @@ class TripRecorder(
     private var drive: Drive? = null
     private var charge: Charge? = null
     private var rise: Rise? = null
+    /** The marks the drives before this one left ([RollingEfficiency.appended]): the start of the next drive's line. */
+    private var tail: List<RollingEfficiency.Mark> = emptyList()
+    private val power = LivePower()
 
     /** A property callback with status 0. Ids the recorder does not use are ignored. */
     fun onProperty(t: Long, id: Int, value: Any?) {
@@ -242,6 +245,7 @@ class TripRecorder(
             d.pT = t
             d.pV = v
             d.live.vmax = max(d.live.vmax, abs(v))
+            power.onSpeed(t, v, tempC)
             if (b.isFinite()) RollingEfficiency.add(d.marks, RollingEfficiency.Mark(d.live.dist, b))
             if (d.live.warmM == 0.0 && d.live.dist >= WARM_M && d.b0.isFinite() && b.isFinite()) {
                 d.live.warmM = d.live.dist
@@ -262,6 +266,7 @@ class TripRecorder(
         val prev = b
         bT = t
         b = wh
+        power.onBattery(wh)
         val d = drive
         if (d != null) {
             if (!d.b0.isFinite()) d.b0 = wh
@@ -353,7 +358,10 @@ class TripRecorder(
     private fun closeDrive() {
         val d = drive ?: return
         drive = null
-        driveTrip(d, open = false)?.let(emit)
+        power.reset()
+        val trip = driveTrip(d, open = false) ?: return
+        tail = RollingEfficiency.appended(tail, d.marks)
+        emit(trip)
     }
 
     private fun closeCharge() {
@@ -374,7 +382,8 @@ class TripRecorder(
 
     /** What the car reads right now, with the drive in progress, for [DriveLive]. */
     fun live(t: Long): DriveLive.State = DriveLive.State(openDrive(), b.takeIf { it.isFinite() }, capWh, tempC,
-        speedMps = abs(speed), metric = distUnits == KILOMETERS, atMs = t, marks = drive?.marks?.toList() ?: emptyList())
+        speedMps = abs(speed), metric = distUnits == KILOMETERS, atMs = t, marks = drive?.marks?.toList() ?: emptyList(),
+        tail = tail, powerW = power.watts?.takeIf { drive != null && t - power.atMs in 0..LIVE_POWER_FRESH_MS })
 
     /** Everything needed to pick up after the process is killed, as one small JSON document. */
     fun checkpoint(): String {
@@ -386,7 +395,7 @@ class TripRecorder(
                 .putOpt("bPrev", d.bPrev.takeIf { it.isFinite() }).putOpt("range0", d.range0)
                 .putOpt("lat0", d.lat0).putOpt("lon0", d.lon0).put("pT", d.pT).put("pV", d.pV)
                 .putOpt("altRef", d.altRef.takeIf { it.isFinite() }).put("live", d.live.toJson())
-                .putOpt("done", d.done?.toJson()))
+                .putOpt("done", d.done?.toJson()).put("marks", RollingEfficiency.pack(d.marks)))
             driveTrip(d, open = true)?.let { o.put("trip", it.toJson()) }
         }
         charge?.let { c ->
@@ -394,6 +403,7 @@ class TripRecorder(
                 .put("chg", c.charging).putOpt("lat", c.lat).putOpt("lon", c.lon).putOpt("es", c.endState))
         }
         rise?.let { o.put("rise", JSONObject().put("t", it.t).put("b0", it.b0)) }
+        if (tail.isNotEmpty()) o.put("tail", RollingEfficiency.pack(tail))
         return o.toString()
     }
 
@@ -418,6 +428,7 @@ class TripRecorder(
                 d.altRef = j.optDouble("altRef", Double.NaN)
                 d.live = j.optJSONObject("live")?.let { Acc.from(it) } ?: Acc()
                 d.done = j.optJSONObject("done")?.let { Acc.from(it) }
+                d.marks.addAll(RollingEfficiency.unpack(j.optString("marks").ifEmpty { null }))
             }
         }
         o.optJSONObject("charge")?.let { j ->
@@ -429,11 +440,14 @@ class TripRecorder(
             }
         }
         o.optJSONObject("rise")?.let { j -> rise = Rise(j.optLong("t"), j.optDouble("b0")) }
+        tail = RollingEfficiency.unpack(o.optString("tail").ifEmpty { null })
         tick(now)
     }
 
     companion object {
         const val MOVING_MPS = 0.3
+        /** [LivePower]'s figure is shown only while the speed readings behind it are this recent. */
+        const val LIVE_POWER_FRESH_MS = 4_000L
         /** A drive is over once the car has stood this long; shorter stops stay inside the drive. */
         const val IDLE_CLOSE_MS = 240_000L
         const val MIN_DRIVE_M = 500.0
@@ -490,6 +504,10 @@ object DriveLive {
         val atMs: Long,
         /** The drive under way's battery marks ([RollingEfficiency]); empty with no drive. */
         val marks: List<RollingEfficiency.Mark> = emptyList(),
+        /** The marks the drives before left, joined end to end: what the line shows before this drive. */
+        val tail: List<RollingEfficiency.Mark> = emptyList(),
+        /** The power in use now, in watts, negative regenerating ([LivePower]); null when unknown. */
+        val powerW: Double? = null,
     )
 
     /** A reading older than this is the past: on-change properties go quiet at a long stop, not for this long. */

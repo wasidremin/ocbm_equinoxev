@@ -21,7 +21,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T17 Arrival estimate by road type | New; waits for one more drive's `gap=` lines |
 | T18 "Will I make it" at route start | New, not started |
 | T19 Spotify hand-back | New, not started |
-| T23 Apple's own turn card on the driver display | Step 1 built 2026-11-13: a "Driver display shows" setting (Map, Turn card, Apple's view) using commands the adapter already had. Needs one drive to see what Apple draws. Map and card together would need a second stream and the adapter |
+| T23 Apple's own turn card on the driver display | Built and tried on the car 2026-11-14: Apple's card replaces the map on the one feed. Map and card together (a second feed) declined by the owner; settings reworked so Apple's card is a Turn card choice and the bottom-right panel can hold another card beside it |
 | Log redaction lets a second Bluetooth address through | A defect, so it lives in `04_OPEN_ITEMS.md`; tiny |
 
 *Needs adapter firmware*
@@ -928,7 +928,21 @@ Apple's turn card requested sent=true` and the adapter `navCard showUI(instructi
 route, Apple drew its suggested destinations (Home, Work) on a plain background, not a turn; the
 first frame came about two minutes after the request. The app's now-playing card drew over it.
 
-**To see on the car.** What the turn card and Apple's view each look like at 2000×810 during a route (the
+**On the car, 2026-11-14 (Play 251).** The owner switched between Apple's view and Apple's turn card
+twice during a route (14:06 to 14:08 UTC): each switch logged `navApp showUI(instrumentcluster)` or
+`navCard showUI(instructioncard)` and the one feed changed what it carried, with no new stream and no
+restart. So the card is separate *content* but not a separate *feed*: Apple's map and Apple's card
+cannot both show. The capture taken at 14:07:22 stayed queued in the car (its network could not resolve
+the receiver), so how much of the 2000×810 frame the card fills is still unseen.
+
+**Decision (owner, 2026-11-14).** Without both at once, no more work on placing Apple's card: step 3 (a
+second feed) is declined. Instead the settings were reworked (`host/gm_ccpa/docs/SETTINGS_AUDIT.md`
+"2026-11-14 deltas"): one switch for CarPlay on the driver display and "Feed shows" Map / Apple's view;
+the Turn card row chooses Off / This app's / Apple's; and the bottom-right panel can hold the turn card,
+now playing or the drive card, remembered per turn card, so with Apple's card on the feed the drive card
+or now playing can be docked in that corner.
+
+**To see on the car (earlier note).** What the turn card and Apple's view each look like at 2000×810 during a route (the
 "Capture driver display" button saves it), and whether the log shows
 `cluster epoch open … Apple's turn card requested sent=true`.
 

@@ -9,7 +9,8 @@ import wasidremin.gmccpa.ProbeLog
  *
  * Three places, each dragged and sized in Settings: the turn card (with the "then" turn and the lane
  * strip stacked under it), the now-playing card (which a call takes over while it lasts) and the
- * drive card ([DriveCard]: arrival battery, or this drive against the usual). All are
+ * drive card ([DriveCard]: energy now and over the last ten miles). One of the three can instead hold
+ * the bottom-right panel ([docked]), in the look of the car's gauges. All are
  * the app's own drawing, so nothing here is declared to CarPlay and every change applies at once.
  * The driver display takes no touch; the cards only show.
  */
@@ -21,8 +22,12 @@ object ClusterLayout {
     private const val KEY_CALL = "call_card"
     private const val KEY_LANES = "lane_guidance"
     private const val KEY_OLD_TURN_AREA = "turn_card_area"
+    /** Before 2026-11-14: whether the turn card was docked. Read once, as the default for [KEY_DOCK_BY]. */
     private const val KEY_DOCK = "turn_dock"
     private const val KEY_DOCK_PLACE = "slot_turn_dock"
+    /** Which card holds the panel, per turn card in use: `dock_ours`, `dock_apple`, `dock_off`. */
+    private const val KEY_DOCK_BY = "dock_"
+    private const val DOCK_NONE = "none"
     private const val KEY_DRIVE = "drive_card"
 
     /** A card's top-left corner in percent of the driver display, and its size in percent of the default. */
@@ -71,6 +76,19 @@ object ClusterLayout {
      * 7..88% down, and the gauges' top edge sits 54% down: this mirrors them.
      */
     val DOCK_DEFAULT = Place(70, 54)
+    /**
+     * Pure: the card holding the panel when Settings stored [stored] for [turn]. The turn card can
+     * hold it only when it is this app's own; with nothing stored, a turn card docked before
+     * 2026-11-14 ([oldDock]) stays docked.
+     */
+    fun dockedFor(turn: ClusterContent.Turn, stored: String?, oldDock: Boolean): Slot? {
+        val slot = when (stored) {
+            null -> if (oldDock && turn == ClusterContent.Turn.OURS) Slot.TURN else null
+            else -> Slot.values().firstOrNull { it.key == stored }
+        }
+        return slot?.takeIf { it != Slot.TURN || turn == ClusterContent.Turn.OURS }
+    }
+
     /** The drive card while the turn card is docked where it would sit: the turn card's free corner. */
     val DRIVE_DOCKED_DEFAULT = Place(2, 6)
     /** How far the docked panel's left edge leans out per pixel down, measured off the gauges. */
@@ -85,19 +103,19 @@ object ClusterLayout {
 
     /** [slot]'s card at [p], docked or free as Settings has it. */
     fun boxAt(w: Int, h: Int, slot: Slot, p: Place): Box =
-        if (slot == Slot.TURN && dock) dockRect(w, h, p) else rect(w, h, slot, p)
+        if (slot == docked) dockRect(w, h, p) else rect(w, h, slot, p)
 
     fun box(ctx: Context, w: Int, h: Int, slot: Slot): Box = boxAt(w, h, slot, place(ctx, slot))
 
     /** Everything [slot] can cover: the card and its stack, or the docked panel out to the edges. */
     fun footprint(ctx: Context, w: Int, h: Int, slot: Slot): Box {
         val b = box(ctx, w, h, slot)
-        return if (slot == Slot.TURN && dock) Box(b.left, b.top, w - b.left, h - b.top) else Box(b.left, b.top, b.width, b.height * slot.stack)
+        return if (slot == docked) Box(b.left, b.top, w - b.left, h - b.top) else Box(b.left, b.top, b.width, b.height * slot.stack)
     }
 
     fun place(ctx: Context, slot: Slot): Place {
         val prefs = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (slot == Slot.TURN && dock) {
+        if (slot == docked) {
             return parse(prefs.getString(KEY_DOCK_PLACE, null), 3)?.let { Place(it[0], it[1], it[2]).clamped() } ?: DOCK_DEFAULT
         }
         parse(prefs.getString(slot.key, null), 3)?.let { return Place(it[0], it[1], it[2]).clamped() }
@@ -109,9 +127,9 @@ object ClusterLayout {
 
     fun setPlace(ctx: Context, slot: Slot, p: Place?) {
         val e = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-        val docked = slot == Slot.TURN && dock
-        val key = if (docked) KEY_DOCK_PLACE else slot.key
-        if (p == null) { e.remove(key); if (!docked) e.remove(KEY_OLD_TURN_AREA) }
+        val inDock = slot == docked
+        val key = if (inDock) KEY_DOCK_PLACE else slot.key
+        if (p == null) { e.remove(key); if (!inDock) e.remove(KEY_OLD_TURN_AREA) }
         else p.clamped().let { e.putString(key, "${it.x},${it.y},${it.scale}") }
         e.apply()
         DriverDisplay.preview()
@@ -133,9 +151,19 @@ object ClusterLayout {
      */
     @Volatile var lanes = false
         private set
-    /** The turn card as a panel in the bottom-right corner, in the look of the car's gauges. Off by default. */
-    @Volatile var dock = false
-        private set
+    /** What Settings stored for the panel, by [ClusterContent.Turn]'s ordinal. */
+    private val dockStored = arrayOfNulls<String>(ClusterContent.Turn.values().size)
+    @Volatile private var oldDock = false
+
+    /**
+     * The card holding the bottom-right panel, in the look of the car's gauges, or null. Remembered
+     * for each turn card in use (owner, 2026-11-14): with Apple's turn card on the feed this app's own
+     * is hidden, and the panel it would hold can take now playing or the drive card instead.
+     */
+    val docked: Slot? get() = ClusterContent.turn.let { dockedFor(it, dockStored[it.ordinal], oldDock) }
+
+    /** The turn card is the one docked. */
+    val dock: Boolean get() = docked == Slot.TURN
     /** The drive card: arrival battery during a route, else this drive against the usual. On by default. */
     @Volatile var drive = true
         private set
@@ -148,7 +176,8 @@ object ClusterLayout {
         media = p.getBoolean(KEY_MEDIA, true)
         call = p.getBoolean(KEY_CALL, true)
         lanes = p.getBoolean(KEY_LANES, false)
-        dock = p.getBoolean(KEY_DOCK, false)
+        oldDock = p.getBoolean(KEY_DOCK, false)
+        for (t in ClusterContent.Turn.values()) dockStored[t.ordinal] = p.getString(KEY_DOCK_BY + t.key, null)
         drive = p.getBoolean(KEY_DRIVE, true)
         app = a
     }
@@ -170,10 +199,21 @@ object ClusterLayout {
         if (on) DriverDisplay.preview() else DriverDisplayActivity.refreshPreview()
     }
 
-    fun setDock(ctx: Context, on: Boolean) {
-        save(ctx, KEY_DOCK, on); dock = on
-        log.i("turn card ${if (on) "DOCKED bottom right" else "free"} (Settings)")
+    /** Put [slot]'s card in the bottom-right panel, or nothing, for the turn card now in use. */
+    fun setDocked(ctx: Context, slot: Slot?) {
+        load(ctx)
+        val turn = ClusterContent.turn
+        val value = slot?.key ?: DOCK_NONE
+        dockStored[turn.ordinal] = value
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_DOCK_BY + turn.key, value).apply()
+        log.i("bottom-right panel holds ${docked?.label ?: "nothing"} with the turn card ${turn.short} (Settings)")
         DriverDisplay.preview()
+    }
+
+    /** The turn card in use changed, and with it what the panel holds. */
+    fun onTurnChanged() {
+        log.i("bottom-right panel holds ${docked?.label ?: "nothing"} with the turn card ${ClusterContent.turn.short}")
+        DriverDisplayActivity.refreshPreview()
     }
 
     fun setCall(ctx: Context, on: Boolean) {
@@ -219,12 +259,15 @@ object ClusterLayout {
     ) }
     fun palette(night: Boolean): Palette = if (night) NIGHT else DAY
 
-    /** The docked turn card: the gauges' own black, white figures, blue-grey units and orange bar, day and night. */
+    /** A docked card: the gauges' own black, white figures, blue-grey units and orange bar, day and night. */
     val GAUGE = Palette(
         card = 0xFF0B0C0F.toInt(), text = 0xFFFFFFFF.toInt(), dim = 0xFFD0D4DA.toInt(),
         faint = 0x50FFFFFF, track = 0xFF1E2A44.toInt(), accent = 0xFFF26A21.toInt(),
     )
     const val GAUGE_UNIT = 0xFF6F8FB8.toInt()
+    /** The blue of the gauges' power bar, for a docked card's own bar and line. */
+    const val GAUGE_BAR = 0xFF3F6FD8.toInt()
+    const val GAUGE_BAR_BRIGHT = 0xFF7FB4FF.toInt()
 
     /** The green of a highway exit sign and of an answered call. */
     const val GREEN = 0xFF2B8A3E.toInt()

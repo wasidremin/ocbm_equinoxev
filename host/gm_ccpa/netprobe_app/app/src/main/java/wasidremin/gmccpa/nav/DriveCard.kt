@@ -2,39 +2,52 @@ package wasidremin.gmccpa.nav
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
+import android.graphics.DashPathEffect
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
 import android.os.SystemClock
 import android.text.TextPaint
-import android.text.TextUtils
 import wasidremin.gmccpa.ProbeLog
 import wasidremin.gmccpa.av.CarNight
 import wasidremin.gmccpa.telemetry.DriveLive
 import wasidremin.gmccpa.telemetry.DriveOutlook
+import wasidremin.gmccpa.telemetry.LivePower
 import wasidremin.gmccpa.telemetry.RollingEfficiency
 import wasidremin.gmccpa.telemetry.TripStore
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.math.sign
+import kotlin.math.sqrt
 
 /**
- * The drive in progress on the driver display ([ClusterLayout.Slot.DRIVE]): how much energy the last
- * mile took against the last ten, this month and the car's lifetime ([RollingEfficiency], the drive
- * log). Redesigned 2026-11-12 after the owner's first drive with it: the arrival figure barely moves
- * when the estimate is right, so it went to the turn card ([arrival], drawn by [TurnCard]) and this
- * card shows something that changes every tenth of a mile.
+ * The drive in progress on the driver display ([ClusterLayout.Slot.DRIVE]): how far a kWh is taking
+ * the car right now, and how the last ten miles went.
  *
- * The ring is a gauge from 0 to [scale] in mi/kWh (km/kWh in metric, so fuller is always better).
- * Its arc is the last mile, green when that beats the last ten by more than [TREND_BAND], amber when
- * it is that much worse. Folded it carries one tick, the last ten; open it carries three: the last
- * ten, this month and lifetime, with a bar per mile underneath, scaled to the bars' own range.
+ * Third design (owner, 2026-11-14, after two drives with a ring and a bar per mile: the ring moved
+ * once every few seconds and "doesn't feel connected to the driving experience", and bars say less
+ * than a line). `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.6 has the reasoning and the sources.
  *
- * It opens when it is safe and useful to read: while the car stands ([STOPPED_MS]), with no route
- * (no turn card then), and for [OPEN_MS] when the trend flips between better and worse, at most
- * every [FLIP_EVERY_MS]. Otherwise, during a route, it is folded.
+ * - **The figure** is mi/kWh (km/kWh in metric) at this moment, from [LivePower], eased every frame
+ *   so it follows the pedal. Standing still it is the last mile instead, and says so.
+ * - **The line** is the last ten miles, smoothed ([RollingEfficiency.trace]). A new drive starts with
+ *   the end of the drive before in grey, and a ring on the line marks where this one began. A dashed
+ *   line is the usual (this month, else lifetime). The dot at its right end is now.
+ * - **The power line** along the bottom runs right while the car uses power and left, in green, while
+ *   it regenerates, with the kW beside it.
+ *
+ * Free on the map it opens when it is safe and useful to read: while the car stands ([STOPPED_MS]),
+ * with no route (no turn card then), and for [OPEN_MS] when the last mile flips between better and
+ * worse than usual, at most every [FLIP_EVERY_MS]; otherwise it folds to a pill. Docked in the
+ * bottom-right panel ([ClusterLayout.docked]) it is always open, in the gauges' look, and carries
+ * the battery on arrival. Free, it carries that figure on a tab when this app's turn card, which
+ * otherwise has it, is not showing.
  *
  * Everything is worked out on the car. The log lines carry numbers only.
  */
@@ -42,43 +55,63 @@ object DriveCard {
     enum class Mode { HIDDEN, CHIP, OPEN }
     enum class Tone { PLAIN, GOOD, WARN }
 
-    /** Everything the card shows at one moment, in the figure's own unit (mi/kWh or km/kWh). */
+    /** A point of the line as drawn: [x] miles (km) from now, 0 at now; [y] in the card's figure. */
+    data class Pt(val x: Float, val y: Float)
+
+    /** Everything the card shows that changes with distance, in the figure's own unit (mi/kWh or km/kWh). */
     data class Face(
         /** The last mile (km); null until the first one is done. */
-        val now: Double?,
-        /** The last ten, or the drive so far when it is shorter ([tenIsSoFar]). */
-        val ten: Double?,
-        val tenIsSoFar: Boolean,
+        val last: Double?,
+        /** The last ten, or the drive so far when it is shorter ([recentIsSoFar]). */
+        val recent: Double?,
+        val recentIsSoFar: Boolean,
         val month: Double?,
         val monthLabel: String,
         val lifetime: Double?,
-        /** One figure per whole mile (km) of the last ten, oldest first. */
-        val bars: List<Double>,
+        /** The end of the drive before, oldest first; empty when there was none or this drive fills the span. */
+        val past: List<Pt>,
+        /** This drive, oldest first; empty for its first few hundred metres. */
+        val line: List<Pt>,
+        /** Where this drive began on the line, when the drive before is showing. */
+        val startX: Float?,
         val metric: Boolean,
     ) {
-        val tone: Tone get() = tone(now, ten)
-        val scale: Double get() = if (metric) 8.0 else 5.0
+        /** What the dashed line is: this month, or lifetime before the month has a drive. */
+        val usual: Double? get() = month ?: lifetime
+        /** The stretch compared with the usual: the last mile, or the drive so far before it has one. */
+        val compared: Double? get() = last ?: recent
+        val tone: Tone get() = tone(compared, usual)
         val unitWord: String get() = if (metric) "km" else "mi"
         val rate: String get() = if (metric) "km/kWh" else "mi/kWh"
     }
 
-    /** The battery on arrival, drawn at the foot of the turn card while a route runs. */
+    /** The battery on arrival, drawn with the turn card or with this card ([arrivalHere]). */
     data class Arrival(val pct: Int, val low: Boolean, val short: Boolean)
 
+    /** The line covers this many miles (km). */
+    const val SPAN = 10.0
+    /** Folded, the pill's small line covers this many. */
+    const val PILL_SPAN = 3.0
     const val OPEN_MS = 8_000L
     /** Standing this long opens the card: a red light or traffic, when it can be read. */
     const val STOPPED_MS = 3_000L
     const val STOPPED_MPS = 0.5
     /** A flip of the trend opens the card at most this often. */
     const val FLIP_EVERY_MS = 180_000L
-    /** The last mile is "better" or "worse" than the last ten beyond this share of it. */
+    /** The last mile is "better" or "worse" than usual beyond this share of it. */
     const val TREND_BAND = 0.05
     /** The arrival estimate is logged again when it moves this many points. */
     const val ARRIVAL_STEP = 3
     /** A route that reports none for this long has ended; a reroute passes through "no route" for a moment. */
     const val ROUTE_GONE_MS = 15_000L
+    /** The power line is full at this much: the Equinox EV's front motor is 157 kW. */
+    const val POWER_FULL_W = 150_000.0
+    const val REGEN_FULL_W = 80_000.0
+    /** The power line and the figure ease toward a new reading over about this long. */
+    const val POWER_EASE_MS = 350f
+    const val FIGURE_EASE_MS = 1600f
 
-    /** Bench only (`--es drive_face good|worse|first|low|short`): the Settings sample, and the turn card's arrival sample. */
+    /** Bench only (`--es drive_face good|worse|first|low|short`): the Settings sample, and the arrival sample. */
     @Volatile var benchFace: String? = null
 
     /** The battery on arrival now, or null with no route; read by [TurnCard]. */
@@ -89,14 +122,14 @@ object DriveCard {
     // Pure decisions
     // ---------------------------------------------------------------------------------------------
 
-    fun tone(now: Double?, ten: Double?): Tone = when {
-        now == null || ten == null || ten <= 0.0 -> Tone.PLAIN
-        now >= ten * (1 + TREND_BAND) -> Tone.GOOD
-        now <= ten * (1 - TREND_BAND) -> Tone.WARN
+    fun tone(now: Double?, usual: Double?): Tone = when {
+        now == null || usual == null || usual <= 0.0 -> Tone.PLAIN
+        now >= usual * (1 + TREND_BAND) -> Tone.GOOD
+        now <= usual * (1 - TREND_BAND) -> Tone.WARN
         else -> Tone.PLAIN
     }
 
-    /** Pure: what the card is at this moment. */
+    /** Pure: what the free card is at this moment. */
     fun mode(hasFace: Boolean, routeActive: Boolean, stoppedMs: Long, sinceFlipMs: Long): Mode = when {
         !hasFace -> Mode.HIDDEN
         !routeActive || stoppedMs >= STOPPED_MS || sinceFlipMs < OPEN_MS -> Mode.OPEN
@@ -107,22 +140,29 @@ object DriveCard {
     fun flipped(lastSignificant: Tone?, tone: Tone): Boolean =
         tone != Tone.PLAIN && lastSignificant != null && lastSignificant != Tone.PLAIN && tone != lastSignificant
 
-    /** Pure: the card for [marks] and the log's averages (Wh/km). Null before the drive has gone anywhere. */
-    fun face(marks: List<RollingEfficiency.Mark>, monthWhPerKm: Double?, lifetimeWhPerKm: Double?,
-             monthLabel: String, metric: Boolean): Face? {
+    /**
+     * Pure: the card for this drive's [marks], the [tail] the drives before left, and the log's
+     * averages (Wh/km). Null with no drive under way.
+     */
+    fun face(marks: List<RollingEfficiency.Mark>, tail: List<RollingEfficiency.Mark>, monthWhPerKm: Double?,
+             lifetimeWhPerKm: Double?, monthLabel: String, metric: Boolean): Face? {
         if (marks.isEmpty()) return null
         val unit = if (metric) 1000.0 else wasidremin.gmccpa.telemetry.TripStats.M_PER_MILE
         val last = RollingEfficiency.span(marks, unit)?.takeIf { it.distM >= unit * 0.95 }
         val ten = RollingEfficiency.span(marks, unit * 10)?.takeIf { it.distM >= unit * 0.5 }
         fun shown(whPerKm: Double?) = whPerKm?.let { RollingEfficiency.perKwh(it, metric) }
+        val trace = RollingEfficiency.trace(marks, tail, unit, SPAN)
+        fun pts(l: List<RollingEfficiency.Point>) = l.map { Pt(it.x.toFloat(), RollingEfficiency.perKwh(it.whPerKm, metric).toFloat()) }
         return Face(
-            now = shown(last?.whPerKm),
-            ten = shown(ten?.whPerKm),
-            tenIsSoFar = ten != null && ten.distM < unit * 9.5,
+            last = shown(last?.whPerKm),
+            recent = shown(ten?.whPerKm),
+            recentIsSoFar = ten != null && ten.distM < unit * 9.5,
             month = shown(monthWhPerKm),
             monthLabel = monthLabel,
             lifetime = shown(lifetimeWhPerKm),
-            bars = RollingEfficiency.perUnit(marks, unit, 10).map { RollingEfficiency.perKwh(it, metric) },
+            past = pts(trace.past),
+            line = pts(trace.now),
+            startX = trace.startX?.toFloat(),
             metric = metric,
         )
     }
@@ -131,33 +171,71 @@ object DriveCard {
         if (it >= RollingEfficiency.CAP) ">9.9" else "%.1f".format(Locale.US, it)
     } ?: "—"
 
-    /** Folded, beside the ring: how the last mile compares with the last ten. */
-    internal fun chipText(f: Face): String {
-        val now = f.now ?: return "first ${f.unitWord}…"
-        val ten = f.ten ?: return f.rate
-        val pct = ((now / ten - 1) * 100).roundToInt()
+    /** Pure: the figure for this moment, or null standing still or before [LivePower] has settled. */
+    fun nowFigure(powerW: Double?, speedMps: Double, metric: Boolean): Double? {
+        val rate = LivePower.whPerKm(powerW ?: return null, speedMps) ?: return null
+        return RollingEfficiency.perKwh(rate, metric)
+    }
+
+    /** Pure: the small word over the figure, which says what the figure is. */
+    internal fun figureLabel(f: Face, live: Boolean): String = when {
+        live -> "NOW"
+        f.last != null -> "LAST ${f.unitWord.uppercase(Locale.US)}"
+        f.recent != null -> "SO FAR"
+        else -> "THIS DRIVE"
+    }
+
+    /** Pure: how the last mile compares with the usual; empty with nothing to compare. */
+    internal fun vsText(f: Face): String {
+        val now = f.compared ?: return ""
+        val usual = f.usual ?: return ""
+        val pct = ((now / usual - 1) * 100).roundToInt()
         return when (f.tone) {
-            Tone.GOOD -> "▲$pct% vs 10 ${f.unitWord}"
-            Tone.WARN -> "▼${-pct}% vs 10 ${f.unitWord}"
-            Tone.PLAIN -> "≈ 10 ${f.unitWord} avg"
+            Tone.GOOD -> "▲ $pct% vs usual"
+            Tone.WARN -> "▼ ${-pct}% vs usual"
+            Tone.PLAIN -> "≈ usual"
         }
     }
 
-    internal fun title(f: Face): String =
-        f.now?.let { "${figure(it)} ${f.rate} · last ${f.unitWord}" } ?: "Measuring the first ${f.unitWord}"
+    /**
+     * Pure: where the power line ends, -1 (full regeneration) to 1 (full power). The square root gives
+     * the 5 to 30 kW of ordinary driving most of the line; on a straight scale they would be a sliver.
+     */
+    fun powerFraction(watts: Double): Float {
+        val full = if (watts >= 0) POWER_FULL_W else REGEN_FULL_W
+        return (sign(watts) * sqrt((abs(watts) / full).coerceAtMost(1.0))).toFloat()
+    }
 
-    /** Open, the second line: the three marks on the ring, in its colours. */
-    internal fun legend(f: Face): List<Pair<String, Double?>> = listOf(
-        (if (f.tenIsSoFar) "so far" else "10 ${f.unitWord}") to f.ten,
-        f.monthLabel to f.month,
-        "all" to f.lifetime,
-    )
+    internal fun kwText(watts: Double): String {
+        val kw = (watts / 1000.0).roundToInt()
+        return if (kw < 0) "−${-kw} kW" else "$kw kW"
+    }
+
+    /** Pure: the line's bottom and top in the figure's unit, with room around what it has to show. */
+    fun range(f: Face): Pair<Float, Float> {
+        val seen = (f.past + f.line).map { it.y } + listOfNotNull(f.usual?.toFloat())
+        val lo = (seen.minOrNull() ?: 2f) * 0.88f
+        val hi = (seen.maxOrNull() ?: 4f) * 1.06f
+        val least = if (f.metric) 1.6f else 1f
+        return if (hi - lo >= least) lo to hi else ((lo + hi - least) / 2f) to ((lo + hi + least) / 2f)
+    }
+
+    /** A made-up line for the Settings sample: [from]..[to] miles from now, bending by [lift] at its end. */
+    private fun samplePts(from: Float, to: Float, lift: Float): List<Pt> {
+        val n = ((to - from) / 0.1f).roundToInt().coerceAtLeast(1)
+        return List(n + 1) { i ->
+            val x = from + (to - from) * i / n
+            val along = i / n.toFloat()
+            val y = 3.1 + 0.55 * Math.sin(x * 0.9 + 0.6) + 0.3 * Math.sin(x * 2.3 + 1.4) + lift * along * along
+            Pt(x, y.toFloat())
+        }
+    }
 
     /** The Settings sample, and the bench's other faces. */
     internal fun sampleFace(name: String?): Face = when (name) {
-        "worse" -> Face(2.6, 3.1, false, 3.2, "Nov", 3.0, listOf(3.3, 3.2, 3.4, 3.0, 2.9, 3.1, 3.3, 2.8, 2.7, 2.6), false)
-        "first" -> Face(null, 2.4, true, 3.2, "Nov", 3.0, emptyList(), false)
-        else -> Face(3.4, 3.0, false, 3.2, "Nov", 3.1, listOf(2.8, 2.9, 3.1, 2.7, 2.9, 3.0, 3.2, 3.1, 3.3, 3.4), false)
+        "worse" -> Face(2.6, 3.1, false, 3.2, "Nov", 3.0, samplePts(-10f, -6f, 0f), samplePts(-6f, -0.1f, -0.7f), -6f, false)
+        "first" -> Face(null, null, true, 3.2, "Nov", 3.0, samplePts(-10f, 0f, 0f), emptyList(), 0f, false)
+        else -> Face(3.6, 3.2, false, 3.2, "Nov", 3.1, samplePts(-10f, -6f, 0f), samplePts(-6f, -0.1f, 0.5f), -6f, false)
     }
 
     internal fun sampleArrival(name: String?): Arrival = when (name) {
@@ -165,6 +243,13 @@ object DriveCard {
         "short" -> Arrival(0, low = true, short = true)
         else -> Arrival(62, low = false, short = false)
     }
+
+    /**
+     * Pure: whether this card draws the battery on arrival. The turn card has it while it is this
+     * app's and this card is free; docked, this card has it, and it has it when the turn card is
+     * Apple's or off, which would otherwise leave the figure nowhere.
+     */
+    fun arrivalHere(docked: Boolean, turn: ClusterContent.Turn): Boolean = docked || turn != ClusterContent.Turn.OURS
 
     // ---------------------------------------------------------------------------------------------
     // The car's readings and the drive log
@@ -246,15 +331,16 @@ object DriveCard {
         val tz = java.util.TimeZone.getDefault().getOffset(nowMs) / 60_000
         val month = h?.let { DriveOutlook.average(it.drives, DriveOutlook.monthStart(nowMs, tz)) }
         val label = java.text.SimpleDateFormat("MMM", Locale.getDefault()).format(java.util.Date(nowMs))
-        val f = face(live.marks, month, h?.let { DriveOutlook.average(it.drives) }, label, live.metric)
+        val f = face(live.marks, live.tail, month, h?.let { DriveOutlook.average(it.drives) }, label, live.metric)
         if (f == null) { loggedUnits = 0; return null }
         // Once per whole mile (km) completed: the figures the card is showing, numbers only.
         val unitM = if (live.metric) 1000.0 else wasidremin.gmccpa.telemetry.TripStats.M_PER_MILE
         val units = (live.marks.last().distM / unitM).toInt()
         if (units > loggedUnits) {
             loggedUnits = units
-            log.i("drive card: last ${f.unitWord} ${figure(f.now)} ${f.rate}, ${if (f.tenIsSoFar) "so far" else "10 ${f.unitWord}"} " +
-                "${figure(f.ten)}, ${f.monthLabel} ${figure(f.month)}, all ${figure(f.lifetime)}")
+            log.i("drive card: last ${f.unitWord} ${figure(f.last)} ${f.rate}, ${if (f.recentIsSoFar) "so far" else "10 ${f.unitWord}"} " +
+                "${figure(f.recent)}, ${f.monthLabel} ${figure(f.month)}, all ${figure(f.lifetime)}, now " +
+                (live.powerW?.let { kwText(it) } ?: "no power figure") + ", line ${f.past.size}+${f.line.size} points")
         }
         return f
     }
@@ -270,33 +356,58 @@ object DriveCard {
 
     private const val HISTORY_CHECK_MS = 60_000L
 
-    /** The month and lifetime ticks; the last ten's tick is the card's text colour. */
-    const val MONTH_TICK = 0xFFBF5AF2.toInt()
-    const val LIFETIME_TICK = 0xFF8E8E93.toInt()
-
     class View(ctx: Context) : android.view.View(ctx) {
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
-        private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
         private val bold = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { isFakeBoldText = true }
         private val plain = TextPaint(Paint.ANTI_ALIAS_FLAG)
         private val r = RectF()
+        private val path = Path()
+        private val area = Path()
+        private var dash: DashPathEffect? = null
+        private var dashFor = 0f
+
+        /** The colours of one line: its low and high ends, the drive before, and the dot at now. */
+        private class Ink(val lo: Int, val hi: Int, val past: Int, val head: Int, val ground: Int)
 
         private var face: Face? = null
         private var mode = Mode.HIDDEN
         private var preview = false
         private var night = false
+        private var docked = false
+        private var shownArrival: Arrival? = null
         private var stoppedSince = 0L
         private var lastSignificant: Tone? = null
         private var flipOpenedAt = -FLIP_EVERY_MS
-        /** 0 the ring alone, 1 the open card; eased toward [mode]. */
+        /** 0 the pill, 1 the open card; eased toward [mode]. */
         private var open = 1f
         private var lastFrame = 0L
+        /** Milliseconds since the frame before, at most 100: what every easing here steps by. */
+        private var frameMs = 0f
+
+        // The car's reading, and what is drawn of it: eased every frame toward the reading.
+        private var powerW: Double? = null
+        private var speedMps = 0.0
+        private var metric = false
+        private var shownW = 0f
+        private var figureW = 0f
+        private var figureV = 0f
+        /** This frame draws the Settings sample, not the car. */
+        private var sampling = false
+        private val shaders = LinkedHashMap<Long, LinearGradient>()
+
+        /** A top-to-bottom fade from [c0] at [y0] to [c1] at [y1], kept while the same one is asked for. */
+        private fun fade(y0: Float, y1: Float, c0: Int, c1: Int): LinearGradient {
+            val key = (y0.toBits().toLong() * 31 + y1.toBits()) * 31 + c0.toLong() * 131 + c1
+            shaders[key]?.let { return it }
+            if (shaders.size >= 12) shaders.remove(shaders.keys.first())
+            return LinearGradient(0f, y0, 0f, y1, c0, c1, Shader.TileMode.CLAMP).also { shaders[key] = it }
+        }
 
         private val tick = object : Runnable {
             override fun run() {
                 refresh()
-                postDelayed(this, 1000)
+                postDelayed(this, 500)
             }
         }
 
@@ -304,7 +415,8 @@ object DriveCard {
             val now = SystemClock.elapsedRealtime()
             val showPreview = DriverDisplay.previewUntil > now
             val f = if (ClusterLayout.drive) current(context) else { arrival = null; null }
-            val speed = DriveLive.fresh(System.currentTimeMillis())?.speedMps
+            val live = DriveLive.fresh(System.currentTimeMillis())
+            val speed = live?.speedMps
             stoppedSince = if (speed != null && speed < STOPPED_MPS) (if (stoppedSince == 0L) now else stoppedSince) else 0L
             if (f != null) {
                 val t = f.tone
@@ -312,10 +424,20 @@ object DriveCard {
                 if (t != Tone.PLAIN) lastSignificant = t
             } else lastSignificant = null
             val nextMode = mode(f != null, routeActive, if (stoppedSince == 0L) 0L else now - stoppedSince, now - flipOpenedAt)
+            val nextDocked = ClusterLayout.docked == ClusterLayout.Slot.DRIVE
+            val arr = arrival.takeIf { arrivalHere(nextDocked, ClusterContent.turn) }
+            val nextW = live?.powerW?.takeIf { f != null }
+            if (nextW != null && powerW == null) {
+                // The first reading after none: start from it, not from a sweep up from zero.
+                shownW = nextW.toFloat(); figureW = shownW; figureV = (speed ?: 0.0).toFloat()
+            }
+            val changed = nextW != powerW || (speed ?: 0.0) != speedMps
+            powerW = nextW; speedMps = speed ?: 0.0; metric = live?.metric ?: false
             val wasHidden = mode == Mode.HIDDEN && !preview
-            if (nextMode != mode || f != face || showPreview != preview || night != CarNight.night) {
+            if (nextMode != mode || f != face || showPreview != preview || night != CarNight.night || nextDocked != docked ||
+                arr != shownArrival || changed) {
                 if (wasHidden) open = if (nextMode == Mode.CHIP) 0f else 1f
-                mode = nextMode; face = f; preview = showPreview; night = CarNight.night
+                mode = nextMode; face = f; preview = showPreview; night = CarNight.night; docked = nextDocked; shownArrival = arr
                 invalidate()
             }
         }
@@ -323,29 +445,36 @@ object DriveCard {
         override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
         override fun onDetachedFromWindow() { removeCallbacks(tick); super.onDetachedFromWindow() }
 
-        /** [text] on one line in [width]: shrunk by up to a fifth, then cut with an ellipsis. */
-        private fun fitted(text: String, paint: TextPaint, width: Float): String {
-            val w = maxOf(0f, width)
-            val need = paint.measureText(text)
-            if (need > w && need > 0f) paint.textSize *= maxOf(0.8f, w / need)
-            return TextUtils.ellipsize(text, paint, w, TextUtils.TruncateAt.END).toString()
+        private fun toneColor(tone: Tone, pal: ClusterLayout.Palette, bright: Boolean): Int = when (tone) {
+            Tone.PLAIN -> pal.dim
+            Tone.GOOD -> if (bright) ClusterLayout.GREEN_NIGHT else ClusterLayout.GREEN
+            Tone.WARN -> if (bright) ClusterLayout.AMBER_NIGHT else ClusterLayout.AMBER
         }
 
-        private fun toneColor(tone: Tone, pal: ClusterLayout.Palette): Int = when (tone) {
-            Tone.PLAIN -> pal.accent
-            Tone.GOOD -> if (night) ClusterLayout.GREEN_NIGHT else ClusterLayout.GREEN
-            Tone.WARN -> if (night) ClusterLayout.AMBER_NIGHT else ClusterLayout.AMBER
+        private fun withAlpha(color: Int, alpha: Float): Int =
+            (color and 0x00FFFFFF) or (((color ushr 24) * alpha.coerceIn(0f, 1f)).toInt() shl 24)
+
+        /** Ease what is drawn toward the car's reading; true while it is still moving. */
+        private fun ease(sample: Boolean): Boolean {
+            val now = SystemClock.uptimeMillis()
+            val dt = (now - lastFrame).coerceIn(0, 100).toFloat()
+            lastFrame = now
+            frameMs = dt
+            if (sample) { shownW = 18_000f; figureW = shownW; figureV = 24.6f; return false }
+            val target = (powerW ?: 0.0).toFloat()
+            shownW += (target - shownW) * (1 - exp(-dt / POWER_EASE_MS))
+            figureW += (target - figureW) * (1 - exp(-dt / FIGURE_EASE_MS))
+            figureV += (speedMps.toFloat() - figureV) * (1 - exp(-dt / FIGURE_EASE_MS))
+            return abs(target - shownW) > 120f || abs(target - figureW) > 120f || abs(speedMps.toFloat() - figureV) > 0.05f
         }
 
-        /** A mark across the ring at [v] on the gauge. */
-        private fun tickAt(canvas: Canvas, cx: Float, cy: Float, rr: Float, v: Double?, scale: Double, color: Int, alpha: Int) {
-            v ?: return
-            val a = Math.toRadians(-90.0 + 360.0 * (v / scale).coerceIn(0.0, 1.0))
-            val half = ring.strokeWidth * 0.95f
-            val cos = Math.cos(a).toFloat(); val sin = Math.sin(a).toFloat()
-            tickPaint.color = color; tickPaint.alpha = alpha
-            tickPaint.strokeWidth = ring.strokeWidth * 0.32f
-            canvas.drawLine(cx + (rr - half) * cos, cy + (rr - half) * sin, cx + (rr + half) * cos, cy + (rr + half) * sin, tickPaint)
+        /** The Settings sample's figure for now: where its own line ends. */
+        private fun sampleNow(f: Face): Double = f.last ?: f.usual ?: 3.2
+
+        /** The figure and the word over it, for this frame. */
+        private fun reading(f: Face, sample: Boolean): Pair<String, String> {
+            val live = if (sample) sampleNow(f) else if (powerW == null) null else nowFigure(figureW.toDouble(), figureV.toDouble(), f.metric)
+            return figure(live ?: f.last ?: f.recent) to figureLabel(f, live != null)
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -354,128 +483,237 @@ object DriveCard {
             val sample = mode == Mode.HIDDEN && preview && ClusterLayout.drive
             if (mode == Mode.HIDDEN && !sample) return
             val f = (if (sample) sampleFace(benchFace) else face) ?: return
+            sampling = sample
+            val moving = ease(sample)
             val b = ClusterLayout.box(context, width, height, ClusterLayout.Slot.DRIVE)
+            val arr = if (sample && arrivalHere(docked, ClusterContent.turn)) sampleArrival(benchFace) else shownArrival
+            if (docked) drawDocked(canvas, f, b, sample, arr) else drawFree(canvas, f, b, sample, arr)
+            if (moving) postInvalidateOnAnimation()
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // Free on the map: the open card, folding to a pill
+        // -----------------------------------------------------------------------------------------
+
+        private fun drawFree(canvas: Canvas, f: Face, b: ClusterLayout.Box, sample: Boolean, arr: Arrival?) {
             val pal = ClusterLayout.palette(night)
             val h = b.height
-
-            val now = SystemClock.uptimeMillis()
             val target = if (mode == Mode.CHIP || (sample && MediaCard.benchFolded)) 0f else 1f
             if (open != target) {
-                val step = ((now - lastFrame).coerceIn(0, 50)) / 380f
+                val step = minOf(frameMs, 50f) / 380f
                 open = if (open < target) minOf(target, open + step) else maxOf(target, open - step)
                 postInvalidateOnAnimation()
             }
-            lastFrame = now
             val t = open * open * (3 - 2 * open)
 
-            // Folded, the card is the ring with a few words beside it, hugging its side of the display.
-            val chip = h * 0.74f
+            // Folded, the card is a pill hugging its side of the display.
+            val chip = h * 0.56f
+            val chipW = chip * 2.95f
             val rightSide = b.left + b.width / 2f > width / 2f
-            val pad = h * 0.13f
-            plain.textSize = h * 0.17f
-            val folded = fitted(chipText(f), plain, b.width - chip - pad * 1.4f)
-            val chipW = chip + pad * 0.2f + plain.measureText(folded) + pad * 1.2f
             val cw = chipW + (b.width - chipW) * t
             val ch = chip + (h - chip) * t
             val left = if (rightSide) b.left + b.width - cw else b.left
+            val top = b.top
             val radius = chip / 2f + (h * 0.18f - chip / 2f) * t
             fill.color = pal.card
-            r.set(left, b.top, left + cw, b.top + ch)
+            r.set(left, top, left + cw, top + ch)
             canvas.drawRoundRect(r, radius, radius, fill)
-
-            // The ring: a gauge whose arc is the last mile, with the averages as ticks on its rim.
-            val side = chip * 0.80f + (h * 0.66f - chip * 0.80f) * t
-            val inset = (chip - chip * 0.80f) / 2f + (pad - (chip - chip * 0.80f) / 2f) * t
-            val cx = left + inset + side / 2f
-            val cy = b.top + ch / 2f
-            ring.strokeWidth = side * 0.10f
-            val rr = side / 2f - ring.strokeWidth
-            r.set(cx - rr, cy - rr, cx + rr, cy + rr)
-            ring.color = pal.track
-            canvas.drawOval(r, ring)
-            f.now?.let { v ->
-                ring.color = toneColor(f.tone, pal)
-                canvas.drawArc(r, -90f, (360.0 * (v / f.scale).coerceIn(0.0, 1.0)).toFloat(), false, ring)
-            }
-            val tickAlpha = 255
-            tickAt(canvas, cx, cy, rr, f.ten, f.scale, pal.text, tickAlpha)
-            if (t >= 0.5f) {
-                val a = (255 * ((t - 0.5f) * 2f)).toInt().coerceIn(0, 255)
-                tickAt(canvas, cx, cy, rr, f.month, f.scale, MONTH_TICK, a)
-                tickAt(canvas, cx, cy, rr, f.lifetime, f.scale, LIFETIME_TICK, a)
-            }
-            val label = figure(f.now)
-            bold.color = pal.text; bold.alpha = 255; bold.textSize = side * 0.30f
-            val inside = side - ring.strokeWidth * 4f
-            val need = bold.measureText(label)
-            if (need > inside) bold.textSize *= inside / need
-            canvas.drawText(label, cx - bold.measureText(label) / 2f, cy + bold.textSize * 0.35f, bold)
+            val ink = Ink(pal.accent, if (night) ClusterLayout.GREEN_NIGHT else ClusterLayout.GREEN, pal.dim,
+                if (night) ClusterLayout.GREEN_NIGHT else ClusterLayout.GREEN, pal.card or 0xFF000000.toInt())
+            val (figureText, label) = reading(f, sample)
 
             if (t < 0.5f) {
-                plain.color = pal.text; plain.alpha = (255 * (1f - 2f * t)).toInt().coerceIn(0, 255)
-                canvas.drawText(folded, left + chip + pad * 0.2f, b.top + chip / 2f + plain.textSize * 0.35f, plain)
-                return
-            }
-            val alpha = ((t - 0.5f) * 2f).coerceIn(0f, 1f)
-            val textLeft = left + inset + side + pad * 0.85f
-            val textWidth = left + cw - pad - textLeft
-            bold.color = pal.text; bold.alpha = (255 * alpha).toInt(); bold.textSize = h * 0.19f
-            val top = b.top + pad
-            canvas.drawText(fitted(title(f), bold, textWidth), textLeft, top + h * 0.20f, bold)
-
-            // The legend: a dot in each tick's colour, its label and its figure.
-            plain.textSize = h * 0.145f
-            val parts = legend(f)
-            val dot = plain.textSize * 0.32f
-            val gap = plain.textSize * 0.55f
-            val texts = parts.map { (name, v) -> "$name ${figure(v)}" }
-            val need2 = texts.sumOf { plain.measureText(it).toDouble() }.toFloat() + parts.size * (dot * 2 + dot) + gap * (parts.size - 1)
-            if (need2 > textWidth) plain.textSize *= maxOf(0.75f, textWidth / need2)
-            var x = textLeft
-            val base = top + h * 0.42f
-            val colors = listOf(pal.text, MONTH_TICK, LIFETIME_TICK)
-            for ((i, s) in texts.withIndex()) {
-                fill.color = colors[i]; fill.alpha = (255 * alpha).toInt()
-                canvas.drawCircle(x + dot, base - plain.textSize * 0.33f, dot, fill)
-                x += dot * 3
-                plain.color = pal.dim; plain.alpha = (255 * alpha).toInt()
-                canvas.drawText(s, x, base, plain)
-                x += plain.measureText(s) + gap
-            }
-
-            // A bar per mile of the last ten. Scaled to their own range, not the ring's, so that a hill
-            // or a motorway stretch shows as a shape: on 0..5 mi/kWh a mile at 2.8 and one at 3.4 differ
-            // by a few pixels (emulator, 2026-11-12).
-            val barsTop = top + h * 0.50f
-            val barsBottom = b.top + ch - pad * 0.9f
-            val slots = 10
-            val seen = f.bars + listOfNotNull(f.ten)
-            val lo = (seen.minOrNull() ?: 0.0) * 0.85
-            val hi = maxOf((seen.maxOrNull() ?: f.scale) * 1.03, lo + 0.5)
-            fun level(v: Double) = ((v - lo) / (hi - lo)).coerceIn(0.08, 1.0)
-            val slotW = textWidth / slots
-            val bw = slotW * 0.62f
-            for (i in 0 until slots) {
-                val v = f.bars.getOrNull(f.bars.size - slots + i)
-                val x0 = textLeft + slotW * i + (slotW - bw) / 2f
-                if (v == null) {
-                    fill.color = pal.track; fill.alpha = (Color.alpha(pal.track) * alpha).toInt()
-                    r.set(x0, barsBottom - h * 0.02f, x0 + bw, barsBottom)
-                    canvas.drawRoundRect(r, bw / 3f, bw / 3f, fill)
-                    continue
+                val a = 1f - 2f * t
+                bold.color = withAlpha(pal.text, a); bold.textSize = chip * 0.39f
+                canvas.drawText(figureText, left + chip * 0.30f, top + chip * 0.55f, bold)
+                plain.color = withAlpha(pal.dim, a); plain.textSize = chip * 0.115f
+                canvas.drawText(f.rate, left + chip * 0.32f, top + chip * 0.75f, plain)
+                val lx = left + chip * 0.30f + maxOf(bold.measureText(figureText), chip * 0.72f) + chip * 0.16f
+                drawLine(canvas, f, lx, top + chip * 0.22f, left + chipW - chip * 0.40f - lx, chip * 0.42f, pal, ink, a, mini = true)
+                drawPower(canvas, left + chip * 0.43f, top + chip * 0.875f, chipW - chip * 0.86f, chip * 0.035f, pal, a, label = false)
+            } else {
+                val a = (t - 0.5f) * 2f
+                val x0 = left + h * 0.16f
+                plain.color = withAlpha(pal.dim, a); plain.textSize = h * 0.082f; plain.letterSpacing = 0.12f
+                canvas.drawText(label, x0, top + h * 0.235f, plain)
+                plain.letterSpacing = 0f
+                bold.color = withAlpha(pal.text, a); bold.textSize = h * 0.31f
+                canvas.drawText(figureText, x0 - h * 0.01f, top + h * 0.535f, bold)
+                plain.textSize = h * 0.09f
+                canvas.drawText(f.rate, x0 + h * 0.01f, top + h * 0.665f, plain)
+                val vs = vsText(f)
+                if (vs.isNotEmpty()) {
+                    bold.color = withAlpha(toneColor(f.tone, pal, night), a); bold.textSize = h * 0.088f
+                    canvas.drawText(vs, x0 + h * 0.01f, top + h * 0.815f, bold)
                 }
-                val hh = ((barsBottom - barsTop) * level(v)).toFloat()
-                val newest = i == slots - 1
-                fill.color = if (newest) toneColor(f.tone, pal) else pal.dim
-                fill.alpha = ((if (newest) 255 else 150) * alpha).toInt()
-                r.set(x0, barsBottom - hh, x0 + bw, barsBottom)
-                canvas.drawRoundRect(r, bw / 3f, bw / 3f, fill)
+                val gx = left + h * 0.89f
+                drawLine(canvas, f, gx, top + h * 0.155f, left + cw - h * 0.17f - gx, h * 0.60f, pal, ink, a, mini = false)
+                drawPower(canvas, x0, top + h * 0.918f, cw - h * 0.32f, h * 0.018f, pal, a, label = true, textSize = h * 0.082f)
             }
-            // The last ten's level across the bars.
-            f.ten?.let { v ->
-                val y = (barsBottom - (barsBottom - barsTop) * level(v)).toFloat()
-                tickPaint.color = pal.text; tickPaint.alpha = (200 * alpha).toInt(); tickPaint.strokeWidth = h * 0.012f
-                canvas.drawLine(textLeft, y, textLeft + textWidth, y, tickPaint)
+            if (arr != null) {
+                val tabTop = if (top + ch + h * 0.36f <= height) top + ch + h * 0.06f else top - h * 0.36f
+                val aw = CardParts.arrival(null, arr, 0f, 0f, b.width, h, pal, onPanel = false, night = night)
+                CardParts.arrival(canvas, arr, if (rightSide) left + cw - aw else left, tabTop, b.width, h, pal, onPanel = false, night = night)
+            }
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // Docked: on the bottom-right panel, in the gauges' look
+        // -----------------------------------------------------------------------------------------
+
+        private fun drawDocked(canvas: Canvas, f: Face, b: ClusterLayout.Box, sample: Boolean, arr: Arrival?) {
+            CardParts.dockPanel(canvas, b, width.toFloat(), height.toFloat())
+            val pal = ClusterLayout.GAUGE
+            val h = b.height
+            val x0 = b.left + h * 0.14f
+            val y0 = b.top
+            val ink = Ink(ClusterLayout.GAUGE_BAR, ClusterLayout.GAUGE_BAR_BRIGHT, pal.dim, pal.accent, pal.card)
+            val (figureText, label) = reading(f, sample)
+            plain.color = ClusterLayout.GAUGE_UNIT; plain.textSize = h * 0.085f; plain.letterSpacing = 0.12f
+            canvas.drawText(label, x0, y0 + h * 0.17f, plain)
+            plain.letterSpacing = 0f
+            bold.color = pal.text; bold.textSize = h * 0.40f
+            canvas.drawText(figureText, x0 - h * 0.01f, y0 + h * 0.56f, bold)
+            plain.textSize = h * 0.105f
+            canvas.drawText(f.rate, x0 + h * 0.01f, y0 + h * 0.72f, plain)
+            val gx = x0 + maxOf(bold.measureText(figureText), h * 0.72f) + h * 0.16f
+            val right = b.left + b.width - h * 0.14f
+            drawLine(canvas, f, gx, y0 + h * 0.10f, right - gx, h * 0.62f, pal, ink, 1f, mini = false)
+            drawPower(canvas, x0, y0 + h * 0.90f, right - x0, h * 0.022f, pal, 1f, label = true, labelColor = ClusterLayout.GAUGE_UNIT,
+                textSize = h * 0.095f)
+            if (arr != null) CardParts.arrival(canvas, arr, b.left + h * 0.04f, y0 + h * 1.03f, b.width, h, pal, onPanel = true, night = true)
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // The line and the power line
+        // -----------------------------------------------------------------------------------------
+
+        /** [pts] as a curve through the midpoints of its neighbours, so no corner shows at a point. */
+        private fun curve(out: Path, pts: List<Pt>, px: (Float) -> Float, py: (Float) -> Float) {
+            out.rewind()
+            if (pts.isEmpty()) return
+            out.moveTo(px(pts[0].x), py(pts[0].y))
+            for (i in 1 until pts.size) {
+                val ax = px(pts[i - 1].x); val ay = py(pts[i - 1].y)
+                val bx = px(pts[i].x); val by = py(pts[i].y)
+                out.quadTo(ax, ay, (ax + bx) / 2f, (ay + by) / 2f)
+            }
+            out.lineTo(px(pts.last().x), py(pts.last().y))
+        }
+
+        private fun under(out: Path, line: Path, x0: Float, x1: Float, base: Float) {
+            out.set(line)
+            out.lineTo(x1, base); out.lineTo(x0, base); out.close()
+        }
+
+        /**
+         * The line in the box at [x], [y]: the drive before, this drive, the usual, where this drive
+         * began and the dot at now. [mini] is the pill's: the last [PILL_SPAN] only, and no words.
+         */
+        private fun drawLine(canvas: Canvas, f: Face, x: Float, y: Float, w: Float, h: Float, pal: ClusterLayout.Palette,
+                             ink: Ink, alpha: Float, mini: Boolean) {
+            if (w <= 0f || h <= 0f) return
+            val span = (if (mini) PILL_SPAN else SPAN).toFloat()
+            val past = f.past.filter { it.x >= -span }
+            val line = f.line.filter { it.x >= -span }
+            val (lo, hi) = range(f)
+            val px = { v: Float -> x + w * (1f + v / span) }
+            val py = { v: Float -> y + h * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f)) }
+            val base = y + h
+            val weight = h * (if (mini) 0.07f else 0.034f)
+
+            if (past.isNotEmpty()) {
+                curve(path, past, px, py)
+                under(area, path, px(past.first().x), px(past.last().x), base)
+                fill.shader = fade(y, base, withAlpha(ink.past, 0.16f * alpha), withAlpha(ink.past, 0f))
+                canvas.drawPath(area, fill)
+                fill.shader = null
+                stroke.color = withAlpha(ink.past, 0.6f * alpha); stroke.strokeWidth = weight * 0.72f
+                canvas.drawPath(path, stroke)
+            }
+            f.usual?.takeIf { !mini }?.let { u ->
+                val uy = py(u.toFloat())
+                if (dashFor != h) { dash = DashPathEffect(floatArrayOf(h * 0.045f, h * 0.05f), 0f); dashFor = h }
+                stroke.color = withAlpha(pal.text, 0.42f * alpha); stroke.strokeWidth = h * 0.012f; stroke.pathEffect = dash
+                canvas.drawLine(x, uy, x + w, uy, stroke)
+                stroke.pathEffect = null
+                plain.color = withAlpha(pal.dim, alpha); plain.textSize = h * 0.135f
+                // Under the line at the left, clear of a curve that starts above it; over it otherwise.
+                val firstY = (past.firstOrNull() ?: line.firstOrNull())?.let { py(it.y) } ?: y
+                val ty = if (firstY < uy) uy + plain.textSize * 1.25f else uy - plain.textSize * 0.5f
+                canvas.drawText("usual ${figure(u)}", x + h * 0.02f, ty.coerceIn(y + plain.textSize, base), plain)
+            }
+            // Now: the live figure, or with none the line's own end.
+            val live = if (sampling) sampleNow(f) else if (powerW == null) null else nowFigure(figureW.toDouble(), figureV.toDouble(), f.metric)
+            val endPt = line.lastOrNull()
+            val headY = py((live?.toFloat() ?: endPt?.y ?: past.lastOrNull()?.y ?: ((lo + hi) / 2f)))
+            val headX = x + w
+            if (line.isNotEmpty()) {
+                curve(path, line, px, py)
+                val lx = px(line.last().x)
+                val ly = py(line.last().y)
+                path.cubicTo((lx + headX) / 2f, ly, (lx + headX) / 2f, headY, headX, headY)
+                under(area, path, px(line.first().x), headX, base)
+                fill.shader = fade(y, base, withAlpha(ink.hi, 0.30f * alpha), withAlpha(ink.lo, 0f))
+                canvas.drawPath(area, fill)
+                fill.shader = null
+                stroke.shader = fade(base, y, withAlpha(ink.lo, alpha), withAlpha(ink.hi, alpha))
+                stroke.color = withAlpha(0xFFFFFFFF.toInt(), alpha); stroke.strokeWidth = weight
+                canvas.drawPath(path, stroke)
+                stroke.shader = null
+            }
+            // Where this drive began: a hairline the height of the box and a ring on the line.
+            f.startX?.takeIf { it >= -span }?.let { sx ->
+                val mx = px(sx)
+                val my = line.firstOrNull()?.let { py(it.y) } ?: past.lastOrNull()?.let { py(it.y) } ?: headY
+                stroke.color = withAlpha(pal.text, 0.34f * alpha); stroke.strokeWidth = h * 0.010f
+                canvas.drawLine(mx, y, mx, base, stroke)
+                val ring = h * (if (mini) 0.075f else 0.042f)
+                fill.color = withAlpha(ink.ground, alpha)
+                canvas.drawCircle(mx, my, ring, fill)
+                stroke.color = withAlpha(pal.text, alpha); stroke.strokeWidth = ring * 0.42f
+                canvas.drawCircle(mx, my, ring, stroke)
+                if (!mini) {
+                    plain.color = withAlpha(pal.dim, alpha); plain.textSize = h * 0.135f
+                    val word = "this drive"
+                    val tx = if (mx + h * 0.06f + plain.measureText(word) <= x + w) mx + h * 0.06f else mx - h * 0.06f - plain.measureText(word)
+                    canvas.drawText(word, tx, y + plain.textSize, plain)
+                }
+            }
+            val dot = h * (if (mini) 0.09f else 0.05f)
+            fill.color = withAlpha(ink.head, 0.24f * alpha)
+            canvas.drawCircle(headX, headY, dot * 2f, fill)
+            fill.color = withAlpha(ink.head, alpha)
+            canvas.drawCircle(headX, headY, dot, fill)
+            stroke.color = withAlpha(ink.ground, alpha); stroke.strokeWidth = dot * 0.36f
+            canvas.drawCircle(headX, headY, dot, stroke)
+        }
+
+        /**
+         * The power line from [x] across [w] at [y]: a track, a tick at zero three tenths along, and
+         * the power from the tick, right in the text colour or left in green, with the kW over its
+         * right end when [label]. Before [LivePower] has a figure it is the track and tick alone.
+         */
+        private fun drawPower(canvas: Canvas, x: Float, y: Float, w: Float, weight: Float, pal: ClusterLayout.Palette, alpha: Float,
+                              label: Boolean, labelColor: Int = pal.dim, textSize: Float = 0f) {
+            if (w <= 0f) return
+            val zero = x + w * 0.30f
+            stroke.strokeWidth = weight
+            stroke.color = withAlpha(pal.track, alpha)
+            canvas.drawLine(x, y, x + w, y, stroke)
+            val watts = if (powerW != null || sampling) shownW.toDouble() else null
+            if (watts != null) {
+                val fr = powerFraction(watts)
+                val end = if (fr >= 0) zero + (x + w - zero) * fr else zero + (zero - x) * fr
+                stroke.color = withAlpha(if (fr >= 0) pal.text else ClusterLayout.GREEN_NIGHT, alpha)
+                canvas.drawLine(zero, y, end, y, stroke)
+            }
+            stroke.color = withAlpha(pal.dim, alpha); stroke.strokeWidth = weight * 0.5f
+            canvas.drawLine(zero, y - weight * 1.7f, zero, y + weight * 1.7f, stroke)
+            if (label && watts != null) {
+                plain.color = withAlpha(labelColor, alpha); plain.textSize = textSize
+                val text = kwText(watts)
+                canvas.drawText(text, x + w - plain.measureText(text), y - weight * 2.4f, plain)
             }
         }
     }

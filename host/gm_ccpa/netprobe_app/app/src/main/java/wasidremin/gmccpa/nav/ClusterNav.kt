@@ -198,7 +198,7 @@ object ClusterNav {
         Support.NO_TEMPLATES_HOST -> "This car has no Templates Host, so the cluster cannot take turns from apps."
         Support.OK -> when {
             !enabled -> "Shows CarPlay's next turn, distance and arrival time in the instrument cluster."
-            !active -> "Paused while CarPlay map on the driver display is on: GM takes the driver display back when navigation starts."
+            !active -> "Paused while CarPlay on the driver display is on: GM takes the driver display back when navigation starts."
             bound -> "Connected. CarPlay turns show in the cluster while a route is active."
             else -> "Connects when CarPlay starts a route. The screen flickers once while it does."
         }

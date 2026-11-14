@@ -37,6 +37,10 @@ import java.util.concurrent.Executors
  * Behind it all is the cover blown up, blurred and dimmed ([ArtBackdrop]), as CarPlay's own Now
  * Playing has it; a new song's backdrop fades in over the last one's. Over a backdrop the secondary
  * text is translucent white, which holds its contrast on any colour where the theme's greys do not.
+ * A song with no lyrics to show (none found, lookup off, or lrclib.net out of reach) gets its cover
+ * as large as the pane instead of an empty lyrics area (owner, 2026-11-14): the cover on top, then
+ * the title, the progress line and the controls, as CarPlay's own Now Playing has them.
+ *
  * Lyrics show in any gear (the pane is for the passenger) whenever Settings ▸ Playback ▸ Look up
  * lyrics is on. The button at the top hides the pane (for a split, gives CarPlay the whole panel);
  * a tap on the strip right of CarPlay brings it back.
@@ -70,6 +74,24 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         // A hairline, so a cover as dark as the pane still has an edge.
         foreground = EqTheme.rounded(0, 14f, stroke = 0x24FFFFFF, strokeDp = 1f)
     }
+    /** The cover as large as the pane, shown in place of the lyrics when a song has none ([artLarge]). */
+    private val bigArt = object : ImageView(ctx) {
+        // A square as large as the room it is given allows.
+        override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+            val side = minOf(MeasureSpec.getSize(widthSpec), MeasureSpec.getSize(heightSpec))
+            super.onMeasure(MeasureSpec.makeMeasureSpec(side, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(side, MeasureSpec.EXACTLY))
+        }
+    }.apply {
+        scaleType = ImageView.ScaleType.CENTER_CROP
+        clipToOutline = true
+        background = EqTheme.rounded(0x14FFFFFF, 22f)
+        foreground = EqTheme.rounded(0, 22f, stroke = 0x24FFFFFF, strokeDp = 1f)
+    }
+    private val artBox = android.widget.FrameLayout(ctx)
+    private val lyricsBox = LinearLayout(ctx)
+    private lateinit var titleColumn: LinearLayout
+    private var artBitmap: Bitmap? = null
+    private var artLarge = false
     private val title = EqTheme.text(ctx, 27f, EqTheme.TEXT, EqTheme.Weight.MEDIUM).apply { singleLine() }
     private val artist = EqTheme.text(ctx, 20f, EqTheme.TEXT_DIM).apply { singleLine() }
     private val progress = ProgressLine(ctx)
@@ -144,16 +166,21 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
             addView(appName, LayoutParams(0, -2, 1f))
             addView(hideButton, LayoutParams(EqTheme.px(56f), EqTheme.px(56f)))
         }, LayoutParams(-1, -2))
-        // The art is a thumbnail beside the title, so the lyrics get the height (owner, 2026-11-08).
+        // The large cover's place: it takes the height the lyrics would, above the title.
+        artBox.addView(bigArt, android.widget.FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        artBox.visibility = GONE
+        addView(artBox, LayoutParams(-1, 0, 1f).apply { topMargin = EqTheme.px(4f) })
+        // With lyrics the art is a thumbnail beside the title, so the lyrics get the height (owner, 2026-11-08).
+        titleColumn = LinearLayout(ctx).apply {
+            orientation = VERTICAL
+            addView(title, LayoutParams(-1, -2))
+            addView(artist, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(4f) })
+        }
         addView(LinearLayout(ctx).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(art, LayoutParams(0, 0))
-            addView(LinearLayout(ctx).apply {
-                orientation = VERTICAL
-                addView(title, LayoutParams(-1, -2))
-                addView(artist, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(4f) })
-            }, LayoutParams(0, -2, 1f).apply { marginStart = EqTheme.px(16f) })
+            addView(titleColumn, LayoutParams(0, -2, 1f).apply { marginStart = EqTheme.px(16f) })
         }, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(8f) })
         addView(progress, LayoutParams(-1, EqTheme.px(14f)).apply { topMargin = EqTheme.px(14f) })
         addView(LinearLayout(ctx).apply {
@@ -178,7 +205,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
                 setOnClickListener { actions.mediaButton(wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_NEXT) }
             }, LayoutParams(size, size))
         }, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(8f) })
-        addView(LinearLayout(ctx).apply {
+        addView(lyricsBox.apply {
             orientation = VERTICAL
             gravity = Gravity.CENTER
             lyricViews.forEach { addView(it, LayoutParams(-1, -2).apply { topMargin = EqTheme.px(6f) }) }
@@ -306,12 +333,33 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         refreshLyrics()
     }
 
-    private fun showArt(bm: Bitmap?, blurred: Bitmap?) {
-        if (bm == null) art.setImageDrawable(NoteMark()) else {
-            art.setImageBitmap(bm)
-            art.alpha = 0f
-            art.animate().alpha(1f).setDuration(BACKDROP_FADE_MS / 2).start()
+    /** Switch between the large cover and the thumbnail with lyrics, when the song calls for it. */
+    private fun applyArtLayout() {
+        val large = largeArt(artBitmap != null, BarLyrics.status, artLarge)
+        if (large == artLarge) return
+        artLarge = large
+        if (isLaidOut) android.transition.TransitionManager.beginDelayedTransition(this,
+            android.transition.AutoTransition().setDuration(ART_LAYOUT_MS))
+        artBox.visibility = if (large) VISIBLE else GONE
+        lyricsBox.visibility = if (large) GONE else VISIBLE
+        art.visibility = if (large) GONE else VISIBLE
+        (titleColumn.layoutParams as LayoutParams).let { lp ->
+            lp.marginStart = if (large) 0 else EqTheme.px(16f)
+            titleColumn.layoutParams = lp
         }
+    }
+
+    private fun showArt(bm: Bitmap?, blurred: Bitmap?) {
+        artBitmap = bm
+        if (bm == null) { art.setImageDrawable(NoteMark()); bigArt.setImageDrawable(null) } else {
+            art.setImageBitmap(bm)
+            bigArt.setImageBitmap(bm)
+            for (v in listOf(art, bigArt)) {
+                v.alpha = 0f
+                v.animate().alpha(1f).setDuration(BACKDROP_FADE_MS / 2).start()
+            }
+        }
+        applyArtLayout()
         setBackdrop(blurred)
         onArt?.invoke(bm)
     }
@@ -328,6 +376,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
     private fun refreshLyrics() {
         val cur = BarLyrics.current()
         val status = BarLyrics.status
+        applyArtLayout()
         val i = cur?.second ?: Int.MIN_VALUE + 1
         if (i == shownLyricIndex && status == shownLyricStatus) return
         shownLyricIndex = i
@@ -476,6 +525,19 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         private const val ART_MAX_PX = 512
         private const val BACKDROP_ZOOM = 1.2f
         private const val BACKDROP_FADE_MS = 600L
+        private const val ART_LAYOUT_MS = 260L
+
+        /**
+         * Pure: whether the cover takes the lyrics' place. Only with a cover to show, and only once the
+         * lookup has said there is nothing; while it is still looking the pane stays as it was ([was]),
+         * so a run of songs with lyrics does not flip the layout twice a song.
+         */
+        internal fun largeArt(hasArt: Boolean, status: BarLyrics.Status, was: Boolean): Boolean = when {
+            !hasArt -> false
+            status == BarLyrics.Status.FOUND -> false
+            status == BarLyrics.Status.LOOKING -> was
+            else -> true
+        }
         private const val APPEAR_MS = 220L
         /**
          * Over a backdrop, a lyric row's alpha by its distance from the sung line. The furthest stays
