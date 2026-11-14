@@ -30,7 +30,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 |---|---|
 | T6 Car GPS into Maps | Built 2026-11-13 on T7's pattern, off by default. Waits for the adapter reflash; not yet tried on a phone |
 | T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13, and the fix was built that day. It needs the adapter reflashed, an app update, and the iPhone paired again (see T7) |
-| T8 MainBuffered audio, phase B | Probed 2026-11-14 with the iPhone's own log: buffered audio is stream type 103 and the phone wanted a `103 / media` audio format entry, now added. Next probe shows its stream request |
+| T8 MainBuffered audio, phase B | Probed twice 2026-11-14: buffered audio is stream type 103; with the `103 / media` format the phone builds the stream and Apple Music asks for it (dictionary recorded, own 32-byte key `shk`). Next: the receiver's type-103 arm |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
@@ -398,10 +398,34 @@ creating formats for type 103 / media`** (kParamErr up through `APCarPlayAudioFo
 set up no audio stream. So MainBuffered is **stream type 103**, and the phone needs an `audioFormats`
 entry for `103 / media`. `info.rs` now adds one, with the `102 / media` formats, whenever the
 mainBuffered lever is on (`buffered_audio_adds_a_type_103_media_entry`); without the lever the
-bytes are unchanged. Not yet on the adapter or probed: the next session should show the phone's
-type-103 SETUP dictionary in full. The same log also said `viewAreas … found but feature not
+bytes are unchanged. The same log also said `viewAreas … found but feature not
 declared in setup response` for a session with the split pane off (the main view area is still
 described); harmless today.
+
+**Second probe (2026-11-14, 692638d on the adapter through the app's own update).** With the
+`103 / media` entry the phone builds the stream: airplayd logs `APEndpointStreamBufferedAudio
+created … streamType=BufferedAudio subType=AudioBuffered supportedAudioFormats=[AAC-LC/48000/2]` and
+audiomxd picks CarPlay as the buffered endpoint. Which app asks matters: the earlier plays, with Spotify the active player, stayed on 102.
+Apple Music (`clientID="com.apple.Music"`) switched "from Local to Buffered" and sent 38 SETUPs for
+type 103 in about a minute. The receiver answered each with `streams=[]` (`SETUP phase2 stream type
+103 NOT IMPLEMENTED — omitted`), so on the phone `apsession_setupStreamsCreatingResponse` failed,
+`audioStream_setupAudioStream` returned -6727 kNotFoundErr, and Music logged `FailedToPlayToEnd`
+and dropped the item. **So with the probe on, Apple Music cannot play**; the switch is back off.
+The stream request, as the adapter logged it (the key by length):
+
+    {type=103, audioType="media", audioMode="default", isMedia=true, clientID="com.apple.Music",
+     audioFormat=8388608, audioFormatIndex=23, ct=4, spf=1024, packetFormatAPAP=false,
+     supportsDynamicStreamID=true, streamConnectionID=<u64>, shk=<data 32 B>}
+
+`audioFormat` 0x800000 is AAC-LC 48 kHz stereo, the same as 102; the phone transcodes (it logged a
+44.1 kHz source and `transportASBD = AAC, 48000 Hz, Stereo, 1024 samples/packet`). Unlike 102 it
+carries its own 32-byte key `shk` and no `controlPort`, so the stream is not keyed from the session
+secret the way `derive_stream_keys(&shared, scid)` keys 102. The phase-B work is therefore a type-103
+arm in `setup_phase2`: answer with the stream's `type`, a data port (and whatever else the phone's
+`apsession_setupStreamsCreatingResponse` checks), receive the buffered AAC over TCP decrypted with
+`shk`, and hand the frames to the existing media path. What the response must hold and the packet
+framing are the open questions; the phone's airplayd errors name the check that fails, so each
+attempt can be read off its log as this one was.
 
 **Done means.** With the toggle on, iOS opens a MainBuffered stream and music plays through it. With
 the toggle off, the session bytes match today.
