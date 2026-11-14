@@ -378,11 +378,12 @@ touch /tmp/UDiskPassThroughMode
   ) &
   fi
 
-  # ---- APP UPDATE DEAD-MAN (T20: /script/fw_pending, armed by fw_apply.sh apply) -----------
-  # An update from the app swapped files and rebooted. Unless the app confirms within five
-  # minutes that the adapter came back healthy, fw_apply.sh puts the previous files back and
-  # reboots; on the third unconfirmed boot it does so at once. The boot path itself is never part
-  # of an app update, so this hook always runs as installed on the bench.
+  # ---- APP UPDATE TRIAL (T20: /script/fw_pending, the journal fw_apply.sh apply writes) ------
+  # An update from the app swapped files and rebooted. fw_apply.sh boot undoes a swap a power cut
+  # interrupted, rolls back on the third unconfirmed start or when ocbmd will not run, and once a
+  # host has said HELLO gives the app five minutes to confirm. With no host it waits: a car switched
+  # off straight after an update keeps it. The boot path itself is never part of an app update, so
+  # this hook always runs as installed on the bench.
   if [ -e /script/fw_pending ] && [ -f /script/fw_apply.sh ]; then
     setsid sh /script/fw_apply.sh boot >/dev/null 2>&1 &
   fi

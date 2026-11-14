@@ -46,6 +46,15 @@ class AdapterFirmwareTest {
         assertFalse(AdapterFirmware.versionOf(e) == AdapterFirmware.versionOf(changed))
     }
 
+    /** The app build number travels with the manifest, so the adapter can refuse a downgrade. */
+    @Test fun theBuildNumberIsCarried() {
+        val m = AdapterFirmware.parseManifest("version 01\nseq 251\n$a 755 /usr/sbin/carplayd\n")!!
+        assertEquals(251, m.seq)
+        assertEquals("version 01\nnonce 5f\nseq 251\n$a 755 /usr/sbin/carplayd\n", m.text("5f"))
+        assertNull(AdapterFirmware.parseManifest(good)!!.seq)
+        assertNull(AdapterFirmware.parseManifest("version 01\nseq x1\n$a 755 /usr/sbin/carplayd\n"))
+    }
+
     @Test fun stagedNamesFlattenThePath() {
         assertEquals("_usr_sbin_carplayd", AdapterFirmware.stagedName("/usr/sbin/carplayd"))
     }

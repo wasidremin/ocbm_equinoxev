@@ -33,6 +33,12 @@ documented the shape of those two JSON documents and the model ids Maps accepts.
 relay and the app's models for the Equinox EV were written here from those facts; none of their
 code or vehicle data is used.
 
+**enigy/ocbm**, update design (github.com/enigy/ocbm, Unlicense) — `ccpa/installer/ocbm_update.sh`
+and `ocbm_dispatch.sh` showed how an adapter update survives a power cut and a car switched off:
+place every file before any rename, journal before the swap, undo an unplaced journal at boot,
+start the trial's clock only when a host connects, and count flash at 0.7 of a file's size.
+`ccpa/rootfs/script/fw_apply.sh` follows that order, written for this tree's per-file staging.
+
 **mib2q-carplay-rgi** (github.com/luka-dev/mib2q-carplay-rgi, GPL-3.0) — the field layout of
 Apple's `PASCD` wheel-speed sentence was taken from it as a fact. None of its code is used.
 

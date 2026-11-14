@@ -30,10 +30,12 @@ object AdapterFirmware {
     private const val MANIFEST = "manifest"
 
     data class Entry(val sha256: String, val mode: String, val path: String)
-    data class Manifest(val version: String, val entries: List<Entry>) {
+    /** [seq] is the app build that carries this firmware; the adapter refuses one older than it has. */
+    data class Manifest(val version: String, val entries: List<Entry>, val seq: Int? = null) {
         fun text(nonce: String): String = buildString {
             append("version ").append(version).append('\n')
             append("nonce ").append(nonce).append('\n')
+            seq?.let { append("seq ").append(it).append('\n') }
             for (e in entries) append(e.sha256).append(' ').append(e.mode).append(' ').append(e.path).append('\n')
         }
     }
@@ -57,6 +59,7 @@ object AdapterFirmware {
     /** Parse the bundled manifest. Null if any line is malformed or names a path an update may not touch. */
     fun parseManifest(text: String): Manifest? {
         var version: String? = null
+        var seq: Int? = null
         val entries = mutableListOf<Entry>()
         for (raw in text.lines()) {
             val line = raw.trim()
@@ -64,13 +67,14 @@ object AdapterFirmware {
             val f = line.split(' ')
             when {
                 f.size == 2 && f[0] == "version" && f[1].matches(Regex("[0-9a-f]{1,16}")) -> version = f[1]
+                f.size == 2 && f[0] == "seq" && f[1].matches(Regex("[0-9]{1,9}")) -> seq = f[1].toInt()
                 f.size == 3 && SHA.matches(f[0]) && (f[1] == "755" || f[1] == "644") &&
                     PATH.matches(f[2]) && f[2] !in NEVER && ".." !in f[2] -> entries += Entry(f[0], f[1], f[2])
                 else -> return null
             }
         }
         if (version == null || entries.isEmpty() || entries.map { it.path }.toSet().size != entries.size) return null
-        return Manifest(version, entries)
+        return Manifest(version, entries, seq)
     }
 
     /** The version id a bundle carries: the first 12 hex of the SHA-256 of its entry lines. */

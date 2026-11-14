@@ -82,12 +82,13 @@ export GM_ASSETS_DIR="$GM_BUILD_DIR/root/assets"
 mkdir -p "$GM_ASSETS_DIR"
 cp -R "$APP_ROOT/app/src/main/assets/." "$GM_ASSETS_DIR/"
 printf '%s\n' "$STAMP_SHA" > "$GM_ASSETS_DIR/build_sha"
-# The adapter firmware this app can install (Settings ▸ Advanced ▸ Adapter firmware, T20).
-"$GM_ROOT/tools/stage_adapter_fw.sh"
 export AAB_VERSION_CODE="${AAB_VERSION_CODE:-$(cd "$GM_ROOT" && git rev-list --count HEAD 2>/dev/null || echo 1)}"
 export AAB_VERSION_NAME="${AAB_VERSION_NAME:-4.0+$STAMP_SHA}"
 case "$AAB_VERSION_CODE" in ''|*[!0-9]*) echo "FATAL: AAB_VERSION_CODE must be numeric: $AAB_VERSION_CODE" >&2; exit 1;; esac
 [ "$AAB_VERSION_CODE" -gt 0 ] || { echo "FATAL: versionCode must be > 0" >&2; exit 1; }
+# The adapter firmware this app can install (Settings ▸ Advanced ▸ Adapter firmware, T20), stamped
+# with this versionCode so an adapter never takes firmware older than it has.
+"$GM_ROOT/tools/stage_adapter_fw.sh"
 
 printf '[2/5] Gradle bundlePlayRelease\n'
 (

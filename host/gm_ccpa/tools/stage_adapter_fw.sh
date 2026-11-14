@@ -51,5 +51,9 @@ for f in "${FILES[@]}"; do
   lines+="$(sha256sum "$local_f" | cut -d' ' -f1) $mode $box_f"$'\n'
 done
 version="$(printf '%s' "$lines" | sha256sum | cut -c1-12)"
-{ echo "version $version"; printf '%s' "$lines"; } > "$OUT/manifest"
+# The app build's number, when build_aab.sh sets it: an adapter that has firmware from a later build
+# refuses this one rather than go backwards (fw_apply.sh, "seq").
+{ echo "version $version"
+  case "${AAB_VERSION_CODE:-}" in ''|*[!0-9]*) ;; *) echo "seq $AAB_VERSION_CODE" ;; esac
+  printf '%s' "$lines"; } > "$OUT/manifest"
 echo "[adapter-fw] staged $(echo -n "$lines" | grep -c .) files, version $version, $(du -sk "$OUT" | cut -f1) KB -> $OUT"

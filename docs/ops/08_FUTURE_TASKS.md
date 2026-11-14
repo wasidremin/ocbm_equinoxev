@@ -739,29 +739,43 @@ adapter carried to the bench for `tools/ocbm_install.sh --full`.
   which the app pulls over `CH_FILE`, matched by a nonce. `MGMT_INFO` says `"fw_update":true`,
   `"fw"` (the installed id, `/script/fw_version`), `"fw_pending"` and `"fw_prev"`. `ocbmd` creates
   `/tmp/fwup` at start, since a file push does not create folders.
-- *Apply* checks every staged file's SHA-256, the mode, the path, and the free space (gzip size plus
-  30 % per file, plus 512 KB; the binaries gzip to about half), then renames each old file to
-  `<path>.prev` and moves the new one in, writes `/script/fw_pending` and reboots. A failure part way
-  puts every file back.
+- *Apply* (2026-11-14, after enigy/ocbm's `ocbm_update.sh`): refuses, changing nothing, on a bad
+  path, mode or SHA-256, an update already in its trial, a build older than the adapter's (the
+  manifest's `seq` is the app's versionCode; `/script/fw_seq`), or too little flash (0.7 of each
+  file's size, enigy's measurement of jffs2 on this adapter, plus 512 KB). Then it places every new
+  file as `<path>.new` and checks its sum again, writes the journal `/script/fw_pending` listing
+  every file, and only then renames (old to `<path>.prev`, new into place), marks the journal
+  `placed` and reboots. A lock keeps an update and a rollback from overlapping.
 - *Confirm.* `AdapterFirmware.noteHealth`: the first `CT_BOX_HEALTH` with Bluetooth, btd and the root
   filesystem healthy makes the app ask `MGMT_INFO`, and if an update is pending, confirm it.
-- *Rollback.* `ocbm_boot.sh` starts `fw_apply.sh boot` when `fw_pending` exists: unconfirmed after
-  300 s, or on the third unconfirmed boot, it restores every `.prev` and reboots. The previous files
-  stay after a confirm, for Settings ▸ Advanced ▸ Adapter firmware ▸ Roll back.
+- *The trial.* `ocbm_boot.sh` starts `fw_apply.sh boot` when `fw_pending` exists. A journal never
+  marked `placed` (power lost in the swap) is undone at once; so is the third start without a
+  confirmation; ocbmd not running for 60 s rolls back; and once a host has said HELLO
+  (`/tmp/ocbm_hello_seen`) the app has 300 s to confirm. With no host the trial stays open, so a car
+  switched off straight after a good update keeps it (enigy's `ocbm_dispatch.sh` does the same).
+  The previous files stay after a confirm, for Settings ▸ Advanced ▸ Adapter firmware ▸ Roll back.
 - *App.* Settings ▸ Advanced ▸ Adapter firmware: Check (which files differ, the installed and
   carried ids), Update (Park only, with a confirmation), Roll back. Bench verbs `fw_check`,
   `fw_update`, `fw_rollback` run the same code without the UI.
 
-**Tests.** `tools/tests/fw_apply_test.sh` (23 checks, under busybox `sh` in `tools/run_tests.sh`):
-check, apply, confirm, rollback, the boot dead-man, and refusals for a bad hash, the boot path, a
-foreign path, too little room and nothing staged. `AdapterFirmwareTest`: manifest parsing and
+**Tests.** `tools/tests/fw_apply_test.sh` (35 checks, under busybox `sh` in `tools/run_tests.sh`):
+check, apply, confirm, rollback, every way the trial ends (no host, a host that never confirms, a
+confirmation, ocbmd down, the third start), a power cut between two renames, and refusals for a bad
+hash, the boot path, a foreign path, too little room, nothing staged, an older build and an update
+already running. `AdapterFirmwareTest`: manifest parsing and
 refusals, the content id, nonce matching, the confirm condition.
 
 **Bench, 2026-11-14 (emulator with the adapter, `fw_*` verbs).** One file made to differ on the
 adapter. `fw_check` named exactly it, with 4,284 KB free. `fw_update` sent it, the adapter applied it
 and rebooted, and the app confirmed 9 s after boot (`[fw] update 577b9da9706c confirmed by the app`).
-`fw_rollback` put the old file and id back. An update whose app was stopped at once was rolled back
-by the adapter itself after the window (see "Unconfirmed update" below).
+`fw_rollback` put the old file and id back. Stopping the app straight after an update did not test
+the timeout: the adapter's USB re-attach relaunched the app, which confirmed it, as it should.
+
+**On the adapter, through its console (2026-11-14).** A swap stopped between the two renames of
+`/script/phone_reset.sh` and a reboot, as a power cut would leave it: the next boot put the original
+back (same md5), removed `.new` and `.prev`, kept the version, and rebooted clean. An update applied,
+then a host connected and never confirmed: the trial logged `a host connected; 300s to confirm`, and
+after the window the adapter restored the original file (same md5) and version and rebooted clean.
 
 **Before it works in the car.** The adapter needs one more bench install for the boot hook and
 `fw_apply.sh`, and app 251 must carry the bundle. Done on 2026-11-13 for the owner's adapter.
