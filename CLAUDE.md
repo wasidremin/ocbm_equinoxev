@@ -1,258 +1,261 @@
-# ccpa_custom
+# ocbm_equinoxev
 
-Open-source Rust userspace for the **Carlinkit CPC200-CCPA** CarPlay adapter, plus the Android
-Automotive app (`host/gm_ccpa`) that drives it from a **Chevrolet Equinox EV**. This checkout is the
-Equinox fork of lvalen91/ocbm (see Repository rules). The owner runs an iPhone and has **no Mac**:
-the macOS app, the Silverado app, Android Auto and the Pi/C2Air ports were removed 2026-10-27, and
-anything below that names a Mac-side path describes upstream's machine, not this one.
+Wireless CarPlay for a **Chevrolet Equinox EV**: open Rust firmware for the Carlinkit **CPC200-CCPA**
+adapter, and the Android Automotive app (`wasidremin.gmccpa`, Google Play internal track) that drives
+it. A fork of lvalen91/ocbm, cut down on 2026-10-27 to what the owner uses: one iPhone, one Equinox
+EV, **no Mac**. The Mac app, the Silverado app, Android Auto, the Pi/C2Air ports and the remote MFi
+path are gone; do not bring them back or plan work for them.
+
+How it runs on the car: the adapter raises its own Wi-Fi access point and runs the CarPlay receiver
+(`carplayd`); the iPhone joins it after the Bluetooth/iAP2 handoff; the adapter forwards the
+still-encrypted audio and video over USB (OCBM) to the app, which decrypts, decodes, renders, and
+owns the session's configuration. The car has no adb: the app reaches it only through Play.
+
+## Where things are
+
+| Path | What |
+|---|---|
+| `ccpa/` | Adapter daemons (`ocbmd`, `iap2d`, `carplayd`) and its root filesystem scripts (`rootfs/script/`) |
+| `crates/` | `ocbm-proto` (the wire contract, shared with the app), `box-common`, `bt-common`, and `vendor/` (receiver, iap2-core, metadata, mfi, pairing, rtsp, wireless, eld-codec) |
+| `host/gm_ccpa/` | The app: `netprobe_app/` (Kotlin), `native/carplay-jni` (the Rust receiver core through JNI), `tools/` (build, publish, the lyrics package builder), `docs/` (app lessons and the settings audit) |
+| `host/ocbm-host/` | Bench client: talks OCBM to the adapter from this server |
+| `host/evinsights/` | Self-hosted EV telemetry workbench (FastAPI, TimescaleDB, React). Separate from the app's on-car EV Insights |
+| `tools/` | Adapter install, deploy and recovery scripts; `run_tests.sh`; `docs_check.py`; `tests/` |
+| `docs/` | The documentation: four categories, see below |
+
+## Start here
+
+- **Picking up work:** [docs/ops/04_OPEN_ITEMS.md](docs/ops/04_OPEN_ITEMS.md) (what is open) and
+  [docs/ops/08_FUTURE_TASKS.md](docs/ops/08_FUTURE_TASKS.md) (planned tasks `T1`…, each with its
+  state and what "done" means).
+- **The map of every document:** [docs/README.md](docs/README.md).
+
+Read the owning document **before** touching the code it covers:
+
+| Before you touch | Read |
+|---|---|
+| Anything about a protocol question | [docs/ops/03_REFERENCE_INDEX.md](docs/ops/03_REFERENCE_INDEX.md): which source answers which question |
+| OCBM channels, frames, new commands (`crates/ocbm-proto`, `ocbm/OcbmProto.kt`) | [docs/carplay/01_OCBM_PROTOCOL.md](docs/carplay/01_OCBM_PROTOCOL.md) |
+| Session start, SETUP, teardown | [docs/carplay/02_SESSION_LIFECYCLE.md](docs/carplay/02_SESSION_LIFECYCLE.md) |
+| What CarPlay is told about the car (`/info`, the YAML config, any new capability) | [docs/carplay/04_CAPABILITIES_AND_CONFIG.md](docs/carplay/04_CAPABILITIES_AND_CONFIG.md) |
+| Identify params 6/7, a subscribe, `crates/vendor/receiver/`, `iap2-core/` | [docs/carplay/05_METADATA_AND_CONTROLS.md](docs/carplay/05_METADATA_AND_CONTROLS.md) |
+| Audio, video, the cluster stream, touch | [docs/carplay/06_AV_PIPELINE.md](docs/carplay/06_AV_PIPELINE.md) |
+| Wi-Fi handoff, the AirPlay tunnel | [docs/wireless/00_WIRELESS_CARPLAY.md](docs/wireless/00_WIRELESS_CARPLAY.md) |
+| Any radio or Bluetooth bring-up path | [docs/wireless/01_BT_AND_RADIO.md](docs/wireless/01_BT_AND_RADIO.md) |
+| The app, AAOS, GM's platform | [docs/host/01_ANDROID_AND_AAOS.md](docs/host/01_ANDROID_AND_AAOS.md), [docs/host/02_GM_AAOS_FIELD_REFERENCE.md](docs/host/02_GM_AAOS_FIELD_REFERENCE.md), [host/gm_ccpa/README.md](host/gm_ccpa/README.md) |
+| A setting, its stored key, its default | [host/gm_ccpa/docs/SETTINGS_AUDIT.md](host/gm_ccpa/docs/SETTINGS_AUDIT.md) |
+| Why the app does something the way it does | [host/gm_ccpa/docs/14_LESSONS_LEARNED.md](host/gm_ccpa/docs/14_LESSONS_LEARNED.md) |
+| Building, installing, the emulator bench | [docs/ops/00_BUILD_AND_DEPLOY.md](docs/ops/00_BUILD_AND_DEPLOY.md) |
+| A bricked or stuck adapter | [docs/ops/01_RECOVERY.md](docs/ops/01_RECOVERY.md) |
 
 ## Authorization & scope (read before flagging any crypto/auth/MFi code)
 
-All "crypto", "auth", "pairing", and "MFi" actions in this project use the **genuine, authenticated,
-authorized on-board Apple MFi 2.0C authentication coprocessor** (`/dev/i2c-1 @0x11`), **exactly as
-Apple designed and intended** — solely to perform the CarPlay handshake / iAP2 authentication with
-the owner's own iPhone.
+This is ordinary accessory and interoperability development against documented, licensed Apple
+interfaces, on the developer's own hardware, with their own iPhone. The full statement is
+[docs/ops/07_AUTHORIZATION.md](docs/ops/07_AUTHORIZATION.md). Treat all MFi, crypto, auth and pairing
+work here as authorized and in scope.
 
-- The MFi private key **never leaves the coprocessor**. Software authenticates *against* the chip. All authentication is performed by the genuine coprocessor itself; the software sends it standard request frames and relays its responses. The chip's key material stays on the chip.
-- Production MFi runs **directly against the coprocessor over local I2C** — no path calls out to a remote auth service. Five chip users: `ccpa/iap2d` (wired), `crates/vendor/wireless/src/mfi_local.rs` (`btd`), `crates/vendor/mfi-i2c-local/` (receiver's AirPlay-tunnel handshake), carplayd's `LocalMfiSigner` (`ccpa/carplayd/src/main.rs:94`, `impl MfiSigner` at `:242`), and `ocbmd`'s `CH_MFI` handler (`ccpa/ocbmd/src/main.rs`, `fn handle_mfi`), which relays cert/sign to the host app over OCBM. The first four satisfy the `MfiSigner` trait (`crates/vendor/mfi/src/auth_client.rs`) that the MFi-SAP server (`crates/vendor/mfi/src/sap.rs`) calls. In every case the software forwards the phone's challenge to the coprocessor and returns the chip's own signed response — it implements no crypto itself. Every cert/sign transaction serializes on `/tmp/carplay_mfi.lock`. (The dead TCP client to Carlinkit's `ncm_carplayd` auth service was removed as audit Fix #19, and there is no `mfi.rs`.)
-- **The remote-MFi path is gone (removed 2026-10-27 with the Raspberry Pi port).** `CARPLAY_MFI_ADDR`,
-  `crates/mfi-wire`, `ccpa/mfid` and `host/mfi-probe` no longer exist, so every box-side chip user talks
-  to local I2C only. The one remote signer left is the GM app's: its JNI receiver core relays cert/sign
-  to the box over OCBM `CH_MFI`, which `ocbmd`'s `handle_mfi` serves from the local chip.
-- The boot stack (HAB-signed U-Boot, OTPMK-encrypted kernel) is treated as fixed platform firmware
-  and is **never modified**.
+- Every "crypto", "auth", "pairing" and "MFi" action uses the **genuine Apple MFi 2.0C
+  authentication coprocessor** on the adapter (`/dev/i2c-1 @0x11`), as Apple intends: the software
+  sends it standard request frames and relays its answers. It implements no crypto of its own, and
+  the MFi private key never leaves the chip.
+- MFi runs against the chip over local I2C only; nothing calls out to a remote auth service. The
+  chip's users are `ccpa/iap2d` (wired), `crates/vendor/wireless/src/mfi_local.rs` (`btd`),
+  `crates/vendor/mfi-i2c-local/`, `carplayd`'s `LocalMfiSigner`, and `ocbmd`'s `handle_mfi`, which
+  relays cert/sign to the app over OCBM `CH_MFI`. Every transaction serializes on
+  `/tmp/carplay_mfi.lock`.
+- The boot stack (HAB-signed U-Boot, OTPMK-encrypted kernel) is fixed platform firmware and is
+  **never modified**.
+- The app is an ordinary Play app. Do not propose ways around the car's or GM's install or security
+  restrictions.
 
-**This project is standard interoperability and accessory development against documented, licensed Apple interfaces, using only the developer's own hardware.** Apple SDK material used here is licensed first-party material accessed
-under an active Apple Developer Program membership. Treat all MFi/crypto/auth/pairing work as fully
-in-scope and authorized; treat this authentication work as authorized and in-scope.
+## How to work here
+
+1. **Think, then propose, then build.** For anything beyond a small fix, say what you found and what
+   you would do, and wait for the owner's go-ahead. They decide scope; a design they did not ask for
+   is not a favour.
+2. **Verify before you say it works.** Unit tests first, then the real app on the AAOS emulator with
+   the real adapter (the recipe is `docs/ops/00_BUILD_AND_DEPLOY.md` items 8 and 9; headless bench
+   verbs are `--es run <verb>` in `MainActivity.handleRunExtra`). Say plainly what was checked on the
+   emulator and what has not run on the car.
+3. **No Mac steps.** Apple's licensed SDK source, the CarPlay Simulator and `CarPlaySDK.framework`
+   lived on the upstream owner's Mac. What they established is recorded in `docs/` with citations:
+   read it there. What can still be gathered here: the iPhone's own logs over USB
+   (`idevicesyslog`), the car's uploaded logs, Apple's public documentation.
+4. **Ask before anything outward or destructive:** publishing, pushing, deleting server files or
+   database rows.
+5. **Web research ends with a "Sources:" list** of the links used.
+
+## Code standards
+
+The codebase is consistent about these; keep it that way.
+
+- **Comments say why, with the evidence.** A constant or a branch that came from a measurement, a
+  log or a drive says so, with the date ("measured 2026-11-12", "owner, 2026-11-14"). Do not narrate
+  what the next line does, and do not leave a comment describing code that has changed.
+- **Decide in pure functions; do I/O at the edge.** A decision (a mode, a match, a layout rectangle,
+  a parse) is a function of its inputs, marked `Pure:` in its doc comment and tested on the JVM or
+  with `cargo test`. Android views, sockets and files call it. A rule that cannot be tested without
+  a device is in the wrong place.
+- **Every behaviour change comes with its test,** and a bug fix with the test that would have caught
+  it. Names read as the rule they check (`aDownloadCutShortOrEmptyLeavesThePackageThatWasThere`).
+- **No dead code and no second copy.** Delete what a change replaces; move shared drawing or parsing
+  into one helper (`nav/CardParts.kt` is the pattern) instead of pasting it.
+- **Logs carry numbers only.** Logs are uploaded: no song names, road names, destinations, caller
+  names, coordinates or MAC addresses. Lists of names the feature needs live in files on the head
+  unit, not in the log.
+- **Stored settings carry over.** When a setting changes shape, read the old key as the default for
+  the new one, and say so in `SETTINGS_AUDIT.md`.
+- **App-driven configuration.** Anything configurable about CarPlay is decided by the app and pushed
+  to the adapter; the adapter presents what it is given. A box-side default is an interim floor, to
+  be earned by a measured failure and the owner's approval
+  (`docs/carplay/04_CAPABILITIES_AND_CONFIG.md`).
+- **The adapter is small.** About 12.5 MB of root filesystem: size-first release profile, no new
+  dependency without a reason, and never a chipset whitelist (see Radios).
+- **A new adapter capability is announced, not assumed.** The adapter lists what it can do in
+  `MGMT_INFO`; the app uses a feature only when the flag is there, so a new app works with old
+  firmware.
+- **Licences.** This repository is Unlicense. Code may come only from Unlicense or public-domain
+  sources, credited in the file header and in [NOTICE.md](NOTICE.md). From GPL projects take facts
+  and ideas, never code.
+
+## Documentation standards
+
+`docs/` is four categories (`carplay/`, `wireless/`, `host/`, `ops/`), **at most 10 documents each**,
+enforced by `python3 tools/docs_check.py`. One topic has one owner.
+
+- **Correct the owning document in place,** at the claim, with the date and the evidence. Never add
+  a `*_CORRECTIONS`, `*_V2` or dated sibling; if a topic needs a new file, merge something first.
+  The 66-file corpus this replaced had readers acting on refuted claims they met in the wrong file.
+- **Finish the change in the docs in the same commit:** the owning protocol or app document, the
+  task in `08_FUTURE_TASKS.md` (state, what was verified, what was not), `04_OPEN_ITEMS.md` if
+  something is left to check on the car, `SETTINGS_AUDIT.md` for any setting, and `NOTICE.md` for
+  any outside source.
+- **Separate what was verified from what was not,** and where (unit test, emulator, bench adapter,
+  the car). "Not yet on the car" is a normal and useful sentence.
+- **When the source conflicts with a project document, the source wins,** and the document is
+  corrected.
+
+## Build, test, ship
+
+```sh
+./build.sh                         # adapter binaries (armv7 musl, nightly + zig) and ocbm-host; never a bare cargo zigbuild
+sh tools/run_tests.sh              # every adapter-side suite; plain `cargo test --workspace` skips most of them
+python3 tools/docs_check.py        # the documentation rules
+# The app's unit tests. Gradle is not on PATH: use the binary host/gm_ccpa/tools/build_aab.sh names
+# (GRADLE_BIN, else the wrapper's copy under ~/.gradle), with the three directories it exports:
+cd host/gm_ccpa/netprobe_app
+export GM_BUILD_DIR=~/.cache/carlink-artifacts/gm_ccpa/gradle
+export GM_JNI_DIR=$GM_BUILD_DIR/root/jniLibs GM_ASSETS_DIR=$GM_BUILD_DIR/root/assets
+"$GRADLE" --offline -q :app:testSideloadDebugUnitTest      # then :app:assembleSideloadDebug for the emulator
+```
+
+- **Build output lives outside the tree** (`~/.cache/cargo-targets/`, `~/.cache/carlink-artifacts/`,
+  `mktemp -d`), and is also in `.gitignore`. Ignore patterns for it are slashless (`apk`, not
+  `apk/`): the paths are often symlinks, and a trailing slash matches directories only.
+- **The adapter's firmware ships inside the app.** `build_aab.sh` stages it
+  (`host/gm_ccpa/tools/stage_adapter_fw.sh`) and the app updates the adapter from Settings ▸ Advanced, with a
+  trial and a rollback (`ccpa/rootfs/script/fw_apply.sh`, task T20). The boot path and
+  `fw_apply.sh` itself are installed by hand once (`tools/ocbm_install.sh`) and never by an update.
+- **Publishing to Play, only when the owner asks:** from the repository root,
+  `AAB_VERSION_CODE=<n> AAB_VERSION_NAME=4.0+<name> bash host/gm_ccpa/tools/build_aab.sh --publish`.
+  The tree must be committed and must not be edited while it runs. Then record the new high-water
+  mark in three places and commit: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6,
+  `docs/ops/04_OPEN_ITEMS.md` and `host/gm_ccpa/docs/SETTINGS_AUDIT.md` ("Version high-water"). The
+  next version code is one above the mark recorded there.
 
 ## Repository rules
 
-**One branch: `main`.** This repo has a single long-lived branch and no others. Do not create a
-feature/topic branch, do not leave work parked on one, and do not ask which branch to use — commit to
-`main`. If a branch already exists, fast-forward `main` onto it and delete it.
+- **One branch: `main`.** Commit to it; do not create or park work on another branch. The repository
+  is published by mirror, not by pull request, so a side branch is work the next session has to
+  rediscover.
+- **Never push to `origin`** (lvalen91/ocbm), never open a pull request there, never retry a refused
+  push with another credential. Fetching and reading it are fine.
+- **This fork publishes to the `equinox` remote** (`wasidremin/ocbm_equinoxev`), and only when the
+  owner asks.
+- **Never commit or print:** `play-service-account.json`, any `.env`, signing keys, the adapter's
+  `carplay_cfg.yaml` or `split_cfg.yaml` (they hold the Wi-Fi passphrase), car or CarPlay captures,
+  uploaded logs, or anything from the owner's personal exports. Probe data holds raw GPS: never print
+  coordinates or describe places. The iPhone's syslog holds personal data: search it for specific
+  terms, never dump it.
 
-*Why:* the repo is published by rsync/mirror rather than by pull request, so a side branch is not a
-review mechanism — it is just work that the mirror does not carry and that the next session has to
-rediscover. A 70-commit branch sat unmerged for exactly that reason (2026-09-08).
+## Protocol rules that were paid for
 
-**Do not push to lvalen91.** `origin` is `https://github.com/lvalen91/ocbm.git`. That GitHub
-account is lvalen91 (local trees sometimes spell it `ivalen91`, as in
-`tmp_carlink_native_ivalen91_update`). This checkout does not publish there: do not `git push`
-to `origin`, do not open a pull request on that repo, and do not retry a refused push with
-another credential. Fetch and read are fine.
+These cost sessions to learn. The owning documents have the evidence; do not re-derive them.
 
-**The Equinox line publishes to the fork** `https://github.com/wasidremin/ocbm_equinoxev`
-(remote `equinox`). That repo is a fork of lvalen91/ocbm so the original history and credit stay
-attached. Push `main` there. The GM app also leaves through the Play internal track
-(`host/gm_ccpa/tools/build_aab.sh --publish`). (2026-09-23)
+**Metadata and Identify** (`docs/carplay/05_METADATA_AND_CONTROLS.md`)
 
-**Build artifacts and caches live outside the tree** (`~/.cache/cargo-targets/`,
-`~/.cache/carlink-artifacts/`, `mktemp -d` under `/tmp`), and are ignored in `.gitignore` as well so
-nothing reaches a commit. Ignore patterns for these must be SLASHLESS (`apk`, not `apk/`): a trailing
-slash matches directories only, and these paths are often symlinks into the cache. (Upstream's rule
-was "never under `~/Documents`" because iCloud sync on a Mac dropped conflict copies into build
-trees.)
+- `iap2-core/src/features.rs` is the table Identify params 6/7 and the subscribe sequence are
+  **generated** from. Never hand-edit one of the three. TLV ids come from Apple's parameter tables
+  (`iap2-core/src/spec.rs`), never from inference.
+- iOS enforces three declaration rules (§5.6): a `Start*` must be declared with its `Stop*`; a
+  receive must not be declared without its send; a subscribe for an id that param 6 does not
+  declare is silently ignored.
+- **When an Identify is rejected, ask the phone; do not bisect.** `accessoryd` names the parameter,
+  the message id and the reason: `idevicesyslog -u <udid> -p accessoryd -o <file>`, then
+  `grep -E "iapreject|Identification info rejected" <file>`. A `0x1D03` cannot be recovered within
+  a session.
+- **The metadata tier is pushed by the app** (`VehicleConfigYaml.kt`), armed once per process:
+  `carplayd` picks up a change on the next session, the long-lived `iap2d` only when the phone is
+  unplugged and replugged. `/tmp/carplay_metadata` and `CARPLAY_METADATA` are bench levers for an
+  adapter with no app attached.
+- **The Bluetooth-time Identify is byte-pinned** and never consults the tier. iOS rejected growth
+  there twice and broke the Wi-Fi handoff. Do not "fix the inconsistency".
+- **Wireless iAP2 rides a RemoteControlSession DataStream, SETUP stream type 130,** with its own
+  header and ChaCha20-Poly1305 framing, not `iAPSendMessage` inside `POST /command`.
 
-## Documentation rule (2026-08-31)
+**Radios** (`docs/wireless/01_BT_AND_RADIO.md`)
 
-`docs/` is five categories — `carplay/`, `androidauto/`, `wireless/`, `host/`, `ops/` — **capped at
-10 documents each**, enforced by `tools/docs_check.py`. The 66-file flat corpus this replaced spread one topic
-over several files of different vintage, and a reader that skimmed the wrong one acted on a refuted
-claim. So: **correct the owning document in place.** Never add a `*_CORRECTIONS`, `*_V2` or dated
-sibling; if a topic genuinely needs a new file, merge something first. Start from
-[docs/README.md](docs/README.md).
+- CCPA ships at least six WLAN/BT chips, and only a unit's own driver set is in its root
+  filesystem. **Never branch on a chipset list, and never install chip-specific bring-up, drivers or
+  firmware from the repository.**
+- The seam (`radio_detect.sh`, `radio_hal.sh`, `radio_ap_up.sh`) is the sanctioned exception and is
+  installed: it holds no firmware path or module name, and resolves a unit's bring-up at run time
+  from that unit's own dispatcher. Do not remove it from an install list.
+- A mapping the seam cannot extract in closed form is refused (`unsupported`), never emitted raw.
+- The access-point layer is always ours (`/script/radio_ap_up.sh`); the vendor's script damages the
+  configuration on a stripped unit. `hci0` reading `UP RUNNING` proves nothing: convergence is a
+  real HCI round trip. The Wi-Fi interface name is an insmod parameter, not `wlan0`; the Rust side
+  still hardcodes it in places, tracked in that document.
 
-## Before investigating ANY protocol question: read `docs/ops/03_REFERENCE_INDEX.md`
+**Sources** (`docs/ops/03_REFERENCE_INDEX.md`)
 
-The index names the sources the protocol work was checked against and which source answers which
-kind of question. **In this fork none of the Mac-side sources are on disk.** Apple's licensed CarPlay
-Communication Plug-in R14G17 source, the CarPlay Simulator and its `CarPlaySDK.framework`, the iOS 27
-extracts, SpeedPlay and CT5 CINEMO all lived on the upstream owner's Mac
-(`~/Documents/carlink/...`, `/Applications/Xcode.app/...`). What they established is recorded in
-`docs/`, with citations; read it there. Do not tell the owner to "check the Simulator" or run anything
-on a Mac. What CAN still be gathered here:
+- Silence in the 2017 SDK drop is not an answer: it says nothing about what Apple added since.
+  Prefer what `docs/` records from the current `CarPlaySDK.framework` and Simulator, then shipping
+  head units, then the 2017 source for what it does contain.
+- "Carlinkit does X" means X can be made to work, never that X is correct. Separate a vendor's
+  choices from what they were observed putting on the wire against a real iPhone.
+- Disassembly and on-hardware experiments are the last resort. Read the documents first.
 
-- the **iPhone's own logs over USB** with libimobiledevice on Linux (`idevicesyslog`; see the
-  Identify-reject recipe below), which is the highest-yield source the index lists;
-- the **car's logs**, uploaded by the app (`/opt/stacks/cloudbridge-log/logs.txt`);
-- **Apple's public developer documentation and WWDC sessions**.
+## Other repositories we learn from
 
-**Design doctrine: `docs/carplay/04_CAPABILITIES_AND_CONFIG.md` — anything configurable regarding CarPlay is app-driven; the box
-presents app-pushed config.** Box placement is earned (measured app-driven failure + owner
-approval), never designed-in.
+[NOTICE.md](NOTICE.md) is the record of what was taken from where; update it with every port or
+borrowed fact.
 
-## Wireless metadata: read `docs/carplay/05_METADATA_AND_CONTROLS.md` before touching `crates/vendor/receiver/`
+| Repository | Licence | What it is to us | May we take code? |
+|---|---|---|---|
+| [lvalen91/ocbm](https://github.com/lvalen91/ocbm) | Unlicense | Upstream: this fork's parent (`origin`, read-only) | Yes |
+| [lvalen91/carlink](https://github.com/lvalen91/carlink) | Unlicense | The maneuver table, trip shape and cluster turn-by-turn logic (`nav/`) | Yes, credited |
+| [enigy/carlink](https://github.com/enigy/carlink) | Unlicense | Media pane, timed lyrics client and cache, call tests, navigation focus, split-screen view areas | Yes, credited |
+| [enigy/ocbm](https://github.com/enigy/ocbm) | Unlicense | Adapter startup fixes, route-guidance detail, the power-safe update design. Reviewed weekly for changes worth porting | Yes, credited |
+| [mossyhub/openautolink](https://github.com/mossyhub/openautolink) | GPL-3.0 | Showed that GM exposes the driver display to an ordinary app, and how to return to it | **No.** Ideas only |
+| [isaacwisdom/egmp-carplay-ev-routing](https://github.com/isaacwisdom/egmp-carplay-ev-routing) | GPL-3.0+ | The charging and consumption models Apple Maps needs for EV routing | **No.** Facts only |
+| [augard/evmaps](https://github.com/augard/evmaps) | none stated | Same subject, the model ids Maps accepts | **No.** Facts only |
+| [luka-dev/mib2q-carplay-rgi](https://github.com/luka-dev/mib2q-carplay-rgi) | GPL-3.0 | The layout of Apple's `PASCD` wheel-speed sentence | **No.** Facts only |
+| [metheos/CPC200-CCPA-Firmware-Dump](https://github.com/metheos/CPC200-CCPA-Firmware-Dump) | check before use | The idea of the adapter joining the car's hotspot (task T15) | Not without checking |
+| [lrclib.net](https://lrclib.net) | public service | Timed lyrics, asked at run time and by the lyrics package builder | Not applicable |
 
-`docs/carplay/05_METADATA_AND_CONTROLS.md` is the authoritative transport document.
-**Wireless iAP2 does not ride `iAPSendMessage` inside `POST /command`.** It rides a
-RemoteControlSession **DataStream, SETUP stream type 130**, with a 32-byte message header and its own
-ChaCha20-Poly1305 framing. Everything in docs/wireless/00_WIRELESS_CARPLAY.md that assumes the `POST /command` carrier is refuted;
-their message-shape, plist-key and link-layer content still stands. Do not re-plan the wireless
-workstream from docs/wireless/00_WIRELESS_CARPLAY.md alone.
+Check an idea against these before designing from scratch: several problems here (the adapter
+update, lyrics, the driver display) were already solved in one of them.
 
-## Metadata: read `docs/carplay/05_METADATA_AND_CONTROLS.md` before touching Identify params 6/7 or any subscribe
+## On this server, outside the repository
 
-`iap2-core/src/features.rs` is the box-side table from which Identify params 6/7 and the subscribe
-sequence are GENERATED — never hand-edit one of the three. WHICH tier/content is selected is
-app-driven: per docs/carplay/04_CAPABILITIES_AND_CONFIG.md, the app's YAML config is the single source of truth for declaration
-content, and the compiled table + its levers are the interim box-side mechanism, not the design.
-One interim box-side artifact pending app-push: the WIRED arm unions the table with a
-hand-maintained floor (`SENT_MSG_IDS`/`RCV_MSG_IDS` in `message.rs`), which carries the
-call-control cluster.
-
-**Declaration rules iOS enforces** (device-proven, docs/carplay/05_METADATA_AND_CONTROLS.md §5.6):
-
-1. A `Start*` must be declared together with its `Stop*`, or iOS returns `RequiredInfoMissing` against
-   the Stop id and rejects the whole feature. We never send a Stop and declare them all anyway —
-   declaration is a capability statement, not a promise of traffic.
-2. A receive must not be declared without its send (`OptionalMsgNotValidWithoutRequiredMsgs`).
-3. A subscribe for an id param 6 does not declare is silently ignored — no error, no data.
-
-**When an Identify is rejected, ask the phone — do not bisect.** `accessoryd` names the parameter, the
-message id and a reason from Apple's own enum:
-
-    idevicesyslog -u <udid> -p accessoryd -o <file>
-    grep -E "iapreject|Identification info rejected" <file>
-
-Three sessions were spent guessing at a reject the phone explained in one. A `0x1D03` is unrecoverable
-within a session (params 6/7 are un-strippable, so the retry is byte-identical and the second reject
-aborts), which is why the compiled default is the pre-expansion baseline (that box-side compiled
-default is itself an interim safety floor per docs/carplay/04_CAPABILITIES_AND_CONFIG.md, retired once the app-pushed config covers
-tier selection).
-
-**The tier is APP-PUSHED (docs/carplay/04_CAPABILITIES_AND_CONFIG.md B3, landed 2026-08-10).** The GM app emits
-`metadata: {tier, skip}` in every config push (`VehicleConfigYaml.kt`; ships `proven`,
-byte-equivalent to the compiled floor) and each daemon arms it once per process before its
-Identify — iap2d at startup and again at SendIdentify, carplayd per control connection.
-**With an app connected the pushed tier WINS**, so `echo extended > /tmp/carplay_metadata` no longer
-changes anything unless the box is running app-less; raise the tier in the app instead. The app
-re-pushes on every SUBSCRIBE, which retires the re-arm-after-every-reboot wart — but WHEN a changed
-tier takes effect differs per arm, because arming is first-arm-wins per process: carplayd is spawned
-per session, so the tunnel arm picks up a new tier on the next session; **iap2d is long-lived and
-deliberately survives app teardown, so the WIRED tier changes only when iap2d restarts — i.e. on a
-phone unplug/replug (the gadget goes un-CONFIGURED, iap2d exits, projection_up respawns it), not on
-an app reconnect.** A differing push against an already-armed process logs
-`pushed metadata tier ... IGNORED`.
-**Scope: the pushed tier governs the WIRED and AirPlayTunnel Identifies only.** The BT-time
-(`TransportComponent::Wireless`) params 6/7 are a hardcoded id list in `message.rs` that never
-consults the policy — the pin CLAUDE.md describes below is structural, not conventional, and is
-unreachable from the pushed config. Do not "fix the inconsistency" by wiring the tier into that arm.
-
-Bench levers (app-less only, subordinate to any pushed tier), resolved ONCE per process and cached
-(editing them mid-run does nothing until
-the daemon restarts): `CARPLAY_METADATA=proven|extended|all` (`rx-only` also parses here but is a
-refuted dead end, docs/carplay/05_METADATA_AND_CONTROLS.md §6.2 — the app-pushed path REFUSES it), `CARPLAY_METADATA_SKIP=<names>`, or the on-box file
-`/tmp/carplay_metadata` (`extended skip=call_history`). Between the two bench sources the file's
-`skip=` list applies even when the environment variable sets the tier — but a PUSHED `skip`
-REPLACES both rather than concatenating (app intent must not mix with stale on-box state). `/tmp` is
-tmpfs, so a box reboot reverts to the default — **when running app-less, re-arm with
-`echo extended > /tmp/carplay_metadata`.**
-
-TLV parameter ids come from Apple's own parameter tables, never from inference.
-`crates/vendor/iap2-core/src/spec.rs` was generated from the Simulator's spec archive and is the
-authority in this fork. (`tools/i2mspec_dump.py` decodes that archive, which ships only with Xcode /
-the CarPlay Simulator on macOS, so it cannot run here.)
-
-**The Bluetooth-time Identify stays byte-pinned.** docs/wireless/00_WIRELESS_CARPLAY.md recorded iOS rejecting params-6/7
-growth there twice, breaking the WiFi handoff. Those rejects carried only the generic marker, so what
-they objected to was never established — do not read them as a general rule (docs/carplay/05_METADATA_AND_CONTROLS.md §6.2). Per
-docs/carplay/04_CAPABILITIES_AND_CONFIG.md the pin is a sequencing constraint — the app-pushed config needs per-transport-arm
-applicability (wired vs wireless) until wireless Identify growth is re-validated — not an exception
-to app ownership of declaration content.
-
-**Silence in R14G17 is not an answer.** It is a 2017 drop and says nothing about anything added since —
-the DataStream layer, stream type 130, `APEndpointRemoteControlSession`. Upstream escalated to
-`CarPlaySDK.framework`, the CarPlay Simulator binary, the iOS 27 extracts and the iPhone's own logs;
-the 2026-07-25 breakthrough came entirely from that escalation. In this fork only the iPhone's own
-logs remain on the table, so lean on them, and on what `docs/` already records from the rest.
-
-**Separate a vendor's *choices* from their *observations*.** A design decision is not normative; a value
-they were observed putting on the wire against a real iPhone is still evidence. SpeedPlay's wireless
-`MaxRcvPacketLength = 0xFFFF` was dismissed as Carlinkit noise in docs/carplay/02_SESSION_LIFECYCLE.md — it was **correct**, and
-is confirmed by Apple's own transport-type-2 template and the iPhone's own SYN-ACK.
-
-**Order of authority (upstream owner directive, REORDERED 2026-08-10).** Ordered by CURRENCY, because
-the repeated failure was trusting a 2017 drop's silence about features added since. In this fork the
-ranking applies to the findings `docs/` records from each source, since none of the sources is on
-disk here:
-
-1. **`CarPlaySDK.framework`** — the CURRENT receiver side, shipped inside the CarPlay Simulator
-   (macOS only). Its symbol names carry full C signatures, so the contract for a feature was usually
-   readable without disassembly. It is the only source that knows about everything post-2017: the RCS DataStream and its seven client types,
-   `MainBuffered`, the Enhanced-Siri `AuxIn`/`AuxOut` uplink, the SETUP feature-intersection gate,
-   params 21/22 and 30. **Silence in R14G17 is not evidence of absence; check here.**
-2. **The rest of the CarPlay Simulator** — implementation examples and working config: the ten real
-   `VehicleConfig` templates in `Contents/Resources/VehicleConfigs/Configs/`, `iAP2MessageKit`'s
-   parameter catalogs (via `tools/i2mspec_dump.py`), and the statically-linked `iAP2Link.c`.
-   Note the Simulator is **wired-only** (USB device classes), so its templates can advertise
-   capabilities it may never exercise — that is still evidence of the CONTRACT, not of the behaviour.
-3. **CT5 CINEMO** — a shipping head unit; authoritative for what the Apple sources leave open.
-4. **SpeedPlay TBOX.**
-5. **The licensed R14G17 SDK source (2017).** Still LICENSED FIRST-PARTY SOURCE and still the best
-   material for what it actually covers — where it contains a thing (the `Platform/HID*.c`
-   descriptor builders are literal C, and its knob template is byte-identical to the 2026
-   Simulator's), it is byte-authoritative and must be preferred over any re-derivation. It is ranked
-   fifth for SEARCH ORDER, not for trustworthiness: it is a 2017 drop and its gaps have repeatedly
-   been mistaken for answers.
-6. **Everything else** — the stock Carlinkit CPC200-CCPA firmware, the iOS extracts — supplementary
-   material for filling gaps the above leave open.
-
-**Carlinkit's own implementations (the stock CCPA firmware and the TBOX SpeedPlay) are working but
-flawed — replacing them with an Apple-faithful implementation is why OCBM exists.** "Carlinkit does X"
-means *X can be made to work*, never *X is correct*. SpeedPlay's iAP2 link layer is a reverse-engineered
-re-derivation, not a licensed drop (its own embedded build paths read `jni_Reverse_auto/reverse-aa`).
-
-## Radios: never hardcode a chipset — read `docs/wireless/01_BT_AND_RADIO.md` before touching any bring-up path
-
-CCPA ships at least six WLAN/BT parts (RTL8822BS/CS, RTL8733BS, BCM4354/4335, BCM4358, SD8987,
-IW416) and **only the driver set for a unit's own chip is in its rootfs** — there is no fallback.
-So: **never branch on a chipset whitelist for behaviour** (an unrecognised variant falls off the
-end of one and gets nothing), and never install **chipset-specific** bring-up, drivers or
-firmware from the repo overlay, because those are the IW416 baseline's.
-
-**The seam itself is the sanctioned exception and IS installed** (`ncm_base_install.sh` boot
-path, `ocbm_install.sh --full`). `radio_detect.sh` / `radio_hal.sh` / `radio_ap_up.sh` contain no
-firmware path, no module name and no attach-helper invocation — they resolve a unit's bring-up at
-runtime from that unit's own dispatcher, so they cannot put one chip's bring-up on another chip's
-board, which is the only thing the rule protects against. `is_radio()` matches `radio_*` so they
-are also protected from deletion. **Do not "restore compliance" by removing them from an install
-list** — that leaves every non-IW416 unit with callers naming scripts it does not have, which is
-the exact failure the seam exists to fix.
-
-The seam is `ccpa/rootfs/script/radio_detect.sh` (read-only detection, emits `/tmp/radio_caps`)
-and `radio_hal.sh` (verbs `probe|status|wifi_ap_on|wifi_ap_off|bt_on|bt_off`). It **adopts the
-vendor's mapping, not their mechanism**: the per-chip `insmod` lines come from the unit's own
-`init_bluetooth_wifi.sh` and the attach command plus ordering constraint from its
-`attach_bluetooth.sh`, but neither dispatcher is ever executed — they fork BT attach and return
-(the docs/wireless/01_BT_AND_RADIO.md 7-minute bring-up fight), can `reboot` from inside a radio call, and untar into the
-rootfs.
-
-**Extraction only works where the vendor branch is closed-form.** Realtek's is; NXP's and
-Broadcom's carry shell variables resolved elsewhere in the dispatcher, so those mappings are
-*refused* rather than emitted, and the seam reports `unsupported`. Never "fix" that by emitting
-the raw text: a descriptor containing an unexpanded `$var` makes `. /tmp/radio_caps` abort under
-`set -u` with status 2 — which is the seam's *already converged* code, i.e. silent false success.
-See docs/wireless/01_BT_AND_RADIO.md §6d.
-
-Three things that will bite:
-
-1. **The AP layer is always ours.** The vendor's `start_bluetooth_wifi.sh` on a stripped box seds
-   an EMPTY `wpa_passphrase` into `/etc/hostapd.conf` (persistent, on flash) and defaults its IP
-   to `192.168.50.2` — NCM's own address — then `killall`s every `udhcpd` on teardown. Invoke the
-   owned layer as `/script/radio_ap_up.sh`; the vendor file exists at the other path on every
-   unit, so presence there proves nothing.
-2. **`hci0` existing — even reading `UP RUNNING` — proves nothing.** Convergence is a real HCI
-   round-trip under a timeout. Measured: a healthy controller still misses ~1 name read in 4, so
-   be *strict to declare success, reluctant to destroy* — a false negative resets a working chip.
-3. **The interface name is an insmod parameter**, not a constant (`if2name=sta0`,
-   `iface_name=sta`; on Broadcom `wlan0` does not exist until explicitly created). Enumerate
-   `/sys/class/net/*/wireless`; never assume `wlan0`. The Rust side still hardcodes it
-   (`av.rs:65` — note `:70` is `AP_IP`, an address, not an interface name — plus `box_identity.rs:15`,
-   `message.rs:215`, and ocbmd's `/sys/class/net/wlan0/address` read) — unfixed, tracked in docs/wireless/01_BT_AND_RADIO.md.
-
-**Disassembly and on-hardware experiments are the last resort, not the first.** Over 2026-07-22 → 07-25
-this project burned several sessions — six disassembly passes and multiple deploy-test-revert hardware
-cycles — re-deriving answers that were plain text in the Integration Guide. Worse, one doc *quoted* the
-sentence it needed and did not act on it. Where a project doc
-conflicts with that source, the source wins.
+- **The upload receiver** (`/opt/stacks/cloudbridge-log/log_server.py`, the `cloudbridge-log`
+  container): logs, probes, captures, and the two downloads the app takes, `/history` and `/lyrics`.
+  Described in `host/gm_ccpa/README.md`.
+- **The lyrics package** is built weekly from the owner's crontab by
+  `host/gm_ccpa/tools/lyrics_pack.py` (task T24). Its song lists, answers and Spotify sign-in live
+  under `~/.local/share/gmccpa-lyrics/` and `~/.config/gmccpa-lyrics/`.
+- **The emulator bench:** an AAOS emulator with the adapter passed through on USB, and
+  `ocbm-host` for pushing a single adapter binary. The adapter and the phone are plugged into this
+  server when the owner says so; do not assume either.
