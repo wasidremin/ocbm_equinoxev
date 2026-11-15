@@ -753,12 +753,18 @@ be dropped in (item 1 below).
   (149) and the radio layer restarts the access point on it, which took `sta0` down
   (`INTERFACE_DISABLED`). One radio serves both, so the access point has to follow the client
   link's channel, not the other way round.
-- `radio_hal.sh` now honours `/tmp/radio_ap_iface` (an interface name; absent by default, so
-  nothing changes): the bench override that put the access point on `wlan0` through the normal path.
 
-**Next, in order.** (1) The radio layer: access point on the uAP interface, the client link brought
-up first, and the access point's channel taken from it (the app's pushed channel used only with no
-client link). (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
+**Step 1 built (2026-11-15), off by default.** `radio_hal.sh` reads `/script/sta_uplink.conf`
+(`enabled=1`, `ap_iface`, `sta_iface`, `ssid`, `psk`; mode 600). Only when it is enabled, names two
+existing wireless interfaces and a `wpa_supplicant` is installed does anything change: the client
+link joins first (12 s at most), the access point goes on `ap_iface` on the client's channel
+(`RADIO_AP_CHANNEL` to `radio_ap_up.sh`, over the app's pushed one), and the client gets a lease.
+Not joined: the access point comes up as before. `radio_ap_up.sh` now sets the 40 MHz direction from
+the channel in use (the file's `HT40+` made hostapd refuse channel 48). Bench: off, unchanged
+(`sta0`, 149) before and after a restart; on, `uplink: joined … 5240 MHz -> channel 48`, access
+point on `wlan0` channel 48 `HT40-`, client still `COMPLETED`, home router reachable.
+
+**Next, in order.** (1) Done above. (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
 hotspot's name and passphrase pushed by the app (it already has them, prefs `hotspot_credentials`).
 (3) A throughput test under a full session in the car. (4) The network transport in the app.
 

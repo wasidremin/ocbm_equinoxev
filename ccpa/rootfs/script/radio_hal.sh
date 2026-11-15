@@ -175,15 +175,90 @@ caps() {
 # arithmetic syntax error. It only ever reached that line when NO interface existed (otherwise
 # the caller's `&& break` fired first), i.e. exclusively in the BT-only bridge role. Keep these
 # names distinctive.
+# =============================================================================================
+# CLIENT LINK (T15 route B, 2026-11-15): the adapter joins the car's hotspot on one interface and
+# keeps its access point for the phone on the other, both on one radio and so on one channel.
+# OFF unless /script/sta_uplink.conf says enabled=1 AND names an existing access-point and client
+# interface AND a wpa_supplicant is installed. Anything missing: today's behaviour, untouched.
+# The file is pushed by the app (key=value, mode 600): enabled, ap_iface, sta_iface, ssid, psk.
+# It names interfaces rather than a chip: which interface is which is this unit's driver
+# configuration (IW416 drv_mode=3: wlan0 access point, sta0 client), measured on the bench.
+# =============================================================================================
+UPLINK_CONF=/script/sta_uplink.conf
+UPLINK_STATE=/tmp/.radio_uplink_state
+UPLINK_WPA=$(command -v wpa_supplicant 2>/dev/null || true)
+UPLINK_CLI=$(command -v wpa_cli 2>/dev/null || true)
+
+uplink_key() {  # $1 = key; the value from the conf file, without surrounding space
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$UPLINK_CONF" 2>/dev/null | head -1 | tr -d '\r'
+}
+
+# Pure: an interface name this script will hand to ifconfig and hostapd.
+uplink_ifname_ok() { case "$1" in ''|*[!a-z0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+uplink_enabled() {
+  [ -s "$UPLINK_CONF" ] || return 1
+  [ "$(uplink_key enabled)" = 1 ] || return 1
+  [ -n "$UPLINK_WPA" ] && [ -n "$UPLINK_CLI" ] || return 1
+  UPLINK_AP_IF=$(uplink_key ap_iface); UPLINK_STA_IF=$(uplink_key sta_iface)
+  uplink_ifname_ok "$UPLINK_AP_IF" && uplink_ifname_ok "$UPLINK_STA_IF" || return 1
+  [ "$UPLINK_AP_IF" != "$UPLINK_STA_IF" ] || return 1
+  for _ui in "$UPLINK_AP_IF" "$UPLINK_STA_IF"; do
+    [ -e "/sys/class/net/$_ui/wireless" ] || [ -e "/sys/class/net/$_ui/phy80211" ] || return 1
+  done
+  return 0
+}
+
+# Pure: a frequency in MHz as a channel number; empty for anything else.
+freq_to_channel() {
+  case "$1" in
+    2484) echo 14 ;;
+    24[0-9][0-9]) echo $(( ($1 - 2407) / 5 )) ;;
+    5[0-9][0-9][0-9]) echo $(( ($1 - 5000) / 5 )) ;;
+    *) echo "" ;;
+  esac
+}
+
+# Join the car's hotspot on the client interface. Its channel goes to /tmp/.radio_uplink_channel
+# (empty when unknown); returns 1 if it did not join within the time allowed, in which case the
+# access point comes up as it always has.
+uplink_up() {
+  : > /tmp/.radio_uplink_channel
+  _ssid=$(uplink_key ssid); _psk=$(uplink_key psk)
+  [ -n "$_ssid" ] || { log "uplink: no ssid configured"; return 1; }
+  umask 077
+  { echo "ctrl_interface=/tmp/wpa_uplink"
+    echo "network={"
+    printf '  ssid="%s"\n' "$_ssid"
+    if [ -n "$_psk" ]; then printf '  psk="%s"\n' "$_psk"; else echo "  key_mgmt=NONE"; fi
+    echo "}"; } > /tmp/wpa_uplink.conf
+  ifconfig "$UPLINK_STA_IF" up 2>/dev/null
+  if ! "$UPLINK_CLI" -p /tmp/wpa_uplink -i "$UPLINK_STA_IF" status >/dev/null 2>&1; then
+    "$UPLINK_WPA" -B -D wext -i "$UPLINK_STA_IF" -c /tmp/wpa_uplink.conf -P /tmp/wpa_uplink.pid >/dev/null 2>&1 \
+      || { log "uplink: wpa_supplicant did not start"; return 1; }
+  fi
+  _n=0
+  while [ "$_n" -lt 60 ]; do   # 12 s: a hotspot that is up answers in 2-4 s
+    "$UPLINK_CLI" -p /tmp/wpa_uplink -i "$UPLINK_STA_IF" status 2>/dev/null | grep -q '^wpa_state=COMPLETED' && break
+    _n=$((_n+1)); sleep 0.2
+  done
+  "$UPLINK_CLI" -p /tmp/wpa_uplink -i "$UPLINK_STA_IF" status 2>/dev/null | grep -q '^wpa_state=COMPLETED' \
+    || { log "uplink: not joined within 12 s"; publish "$UPLINK_STATE" "result=fail" "detail=no-join"; return 1; }
+  # The wext driver leaves freq= out of status: read it off the joined access point's scan entry.
+  _bssid=$("$UPLINK_CLI" -p /tmp/wpa_uplink -i "$UPLINK_STA_IF" status 2>/dev/null | sed -n 's/^bssid=//p')
+  _freq=$("$UPLINK_CLI" -p /tmp/wpa_uplink -i "$UPLINK_STA_IF" scan_results 2>/dev/null | awk -v b="$_bssid" 'tolower($1)==tolower(b){print $2; exit}')
+  _ch=$(freq_to_channel "$_freq")
+  # An address, so the app can reach this side. Run once, in the background; the lease renews itself.
+  pgrep -f "udhcpc -i $UPLINK_STA_IF" >/dev/null 2>&1 || udhcpc -i "$UPLINK_STA_IF" -b -p /tmp/udhcpc_uplink.pid >/dev/null 2>&1
+  publish "$UPLINK_STATE" "result=ok" "sta_iface=$UPLINK_STA_IF" "freq=$_freq" "channel=$_ch"
+  log "uplink: joined on $UPLINK_STA_IF, ${_freq:-unknown} MHz -> channel ${_ch:-unknown}"
+  echo "$_ch" > /tmp/.radio_uplink_channel
+}
+
 wlan_iface() {
-  # T15 bench (2026-11-15): /tmp/radio_ap_iface names the interface the access point goes on, so
-  # a second interface stays free for a client link to the car's hotspot. Honoured only when it
-  # names an existing wireless interface; absent (the default), the first one is taken as before.
-  if [ -s /tmp/radio_ap_iface ]; then
-    _wif_o=$(tr -cd 'a-z0-9' < /tmp/radio_ap_iface)
-    if [ -n "$_wif_o" ] && { [ -e "/sys/class/net/$_wif_o/wireless" ] || [ -e "/sys/class/net/$_wif_o/phy80211" ]; }; then
-      echo "$_wif_o"; return 0
-    fi
+  # The client link to the car's hotspot (T15) puts the access point on its own interface.
+  if uplink_enabled; then
+    echo "$UPLINK_AP_IF"; return 0
   fi
   for _wif_d in /sys/class/net/*/; do
     [ -e "$_wif_d/wireless" ] || [ -e "$_wif_d/phy80211" ] || continue
@@ -507,7 +582,11 @@ do_wifi_ap_on() {
         return 1; }
       # RADIO_BOX_NAME is resolved HERE, not inside the AP layer, so the SSID and the Bluetooth
       # name provably come from one decision rather than two derivations that can disagree.
-      ONDEMAND_WIFI=1 RADIO_WLAN_IF="$_i" RADIO_BOX_NAME="$(box_name)" \
+      # With the client link on, join first and put the access point on the channel it found:
+      # one radio, one channel. Not joined: the access point comes up as it always has.
+      _uplink_ch=""
+      if uplink_enabled && uplink_up; then _uplink_ch=$(cat /tmp/.radio_uplink_channel 2>/dev/null); fi
+      ONDEMAND_WIFI=1 RADIO_WLAN_IF="$_i" RADIO_BOX_NAME="$(box_name)" RADIO_AP_CHANNEL="$_uplink_ch" \
         sh /script/radio_ap_up.sh AP 2>&1 | sed "s/^/$LOGP   /"
       _n=0; while [ "$_n" -lt 50 ]; do ap_running && break; _n=$((_n+1)); sleep 0.2; done
       if ap_running; then

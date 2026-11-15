@@ -123,6 +123,8 @@ fi
 # ---- channel + band ---------------------------------------------------------------------------
 ch=$(sed -n 's/^channel=//p' /etc/hostapd.conf | head -1)
 [ -e /etc/wifi_use_24G ] && ch=6
+# The client link's channel (radio_hal.sh, T15) wins over both: one radio serves the two networks.
+case "${RADIO_AP_CHANNEL:-}" in ''|*[!0-9]*) ;; *) ch=$RADIO_AP_CHANNEL; echo "$L channel $ch, the client link's" ;; esac
 case "$ch" in ''|*[!0-9]*) ch=36 ;; esac
 # hostapd of this vintage has no ACS and refuses to start with no channel, so it is always pinned.
 if [ "$ch" -ge 1 ] && [ "$ch" -le 14 ]; then
@@ -131,6 +133,21 @@ else
   grep -q "^hw_mode=g" /etc/hostapd.conf && sed -i "s/^hw_mode=g/hw_mode=a/" /etc/hostapd.conf
 fi
 sed -i "s/^channel=.*/channel=${ch}/" /etc/hostapd.conf
+# A 40 MHz pair goes up from some channels and down from others; the file carried HT40+ for 149,
+# which hostapd refuses on, say, 48 ("Unable to setup interface", measured 2026-11-15). Follow
+# the channel actually used; on a channel with no pair, 20 MHz.
+ht40=""
+if [ "$ch" -ge 36 ] && [ "$ch" -le 144 ]; then
+  [ $(( (ch - 36) / 4 % 2 )) = 0 ] && ht40="HT40+" || ht40="HT40-"
+elif [ "$ch" -ge 149 ] && [ "$ch" -le 161 ]; then
+  [ $(( (ch - 149) / 4 % 2 )) = 0 ] && ht40="HT40+" || ht40="HT40-"
+elif [ "$ch" -ge 1 ] && [ "$ch" -le 7 ]; then ht40="HT40+"
+elif [ "$ch" -ge 8 ] && [ "$ch" -le 13 ]; then ht40="HT40-"
+fi
+if grep -q '^ht_capab=' /etc/hostapd.conf; then
+  if [ -n "$ht40" ]; then sed -i "s/\[HT40[+-]\]/[$ht40]/" /etc/hostapd.conf
+  else sed -i "s/\[HT40[+-]\]//" /etc/hostapd.conf; fi
+fi
 # The AP must serve the interface we were handed, whatever it is called.
 if grep -q '^interface=' /etc/hostapd.conf; then
   sed -i "s/^interface=.*/interface=$IF/" /etc/hostapd.conf
