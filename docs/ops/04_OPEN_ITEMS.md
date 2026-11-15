@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 252 (`4.0+drive-card-v3`, 2026-11-14; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 253 (`4.0+lyrics-package`, 2026-11-14; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Data budget: nothing checked on the car (Play 246).** The app
   used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
@@ -312,8 +312,8 @@ high-water mark: versionCode 252 (`4.0+drive-card-v3`, 2026-11-14; `host/gm_ccpa
   - **Lyrics package (2026-11-14, `docs/ops/08_FUTURE_TASKS.md` T24).** Built and served; the car has
     not yet downloaded one. To check on the car: that it downloads on home Wi-Fi or the hotspot
     (`lyrics package: N songs … downloaded … over Wi-Fi` in the log), and that a song from the package
-    shows lyrics with *Look up online* set to Never. Open: the owner's Spotify sign-in on the server
-    (`lyrics_pack.py spotify-login <client-id>`), which adds liked songs and their own playlists.
+    shows lyrics with *Look up online* set to Never. The owner's Spotify sign-in on the
+    server is done (2026-11-14).
   - Connection time on the new adapter firmware (startup fixes 5389084/749f72c), bench only: when the
     iPhone answered the first page, subscribe → first picture took 8.8 s and 10.4 s, against the car's
     10.7 s median on the old firmware (44 sessions since 2026-10-15, `[startup]` lines; fastest 8.1 s).

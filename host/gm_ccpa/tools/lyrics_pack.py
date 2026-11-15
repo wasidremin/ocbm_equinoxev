@@ -532,10 +532,12 @@ def cmd_build(args):
                             [(sid, int(d), lrc, now) for d, lrc in got])
         else:
             con.execute("INSERT INTO answer (song, dur, lrc, checked) VALUES (?,0,NULL,?)", (sid, now))
+        # Each answer is written down at once: a run that is stopped loses nothing, and another
+        # command (reading the Spotify library, say) is never kept waiting on this one.
+        con.commit()
         if args.verbose:
             print(f"  {'+' if got else '-'} {title} / {artist}")
         if n % 100 == 0:
-            con.commit()
             print(f"build: {n} of {len(todo)} asked, {found} found")
         time.sleep(PAUSE_S)
     con.commit()

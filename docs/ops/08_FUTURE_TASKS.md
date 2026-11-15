@@ -985,9 +985,11 @@ account, so the app can stay offline and still show lyrics.
 receiver: download, "up to date" on a repeat, a song found under its remaster's name, one not in the
 package refused. **Not verified:** on the car.
 
-**Open.** The Spotify sign-in (one link to approve; needs the owner's client id and
-`http://127.0.0.1:8888/callback` among the app's redirect URIs). *Look up online* still defaults to
-Always, so nothing changed unasked; Wi-Fi only is the setting for this car.
+**Spotify sign-in done (2026-11-14):** 339 liked songs and 17 of the owner's 30 playlists readable,
+487 songs not already known from the history or the charts; 8,130 songs in all. In Play 253.
+
+**Open.** *Look up online* still defaults to Always, so nothing changed unasked; Wi-Fi only is the
+setting for this car. The first download on the car has not been seen.
 
 ## Left off this plan
 
