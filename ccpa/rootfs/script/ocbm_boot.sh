@@ -35,6 +35,17 @@ touch /tmp/UDiskPassThroughMode
   # the gadget under an open permission dialog, killing the grant the driver is
   # tapping. The bench can still set usb_announce_retries in /script/ocbm.conf.
   USB_ANNOUNCE_RETRIES=0
+  # The network function beside OCBM (docs/ops/08_FUTURE_TASKS.md T15, 2026-11-15): none (the
+  # default: this script then does exactly what it did before), eth or usb. A car's own system
+  # claims a USB network device, as it does a USB drive, so an app that reaches the adapter over it
+  # needs no USB permission and no Allow tap. `eth` gives the car a globally-administered address,
+  # which makes Linux name its end eth<N> (what Android brings up as Ethernet); `usb` leaves the
+  # driver's own locally-administered one, named usb<N>. `usb_net=eth-once` / `usb-once` in
+  # /script/ocbm.conf present it for ONE start: the key is written back to 0 before the gadget
+  # is armed, so a car that refuses the three-function device gets the usual device at the next
+  # power-on with nobody touching the adapter.
+  USB_NET=none
+  USB_NET_ONCE=0
   SERIAL_PER_DEVICE=0
   bootlog() { echo "$*" >> "$L"; echo "$*" >> /tmp/box.log; }
   trim_ws() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -79,6 +90,13 @@ touch /tmp/UDiskPassThroughMode
         usb_announce_medium) case "$cfgval" in image|none) USB_ANNOUNCE_MEDIUM=$cfgval;; *) echo "[ocbm-boot] W invalid usb_announce_medium=$cfgval; keeping $USB_ANNOUNCE_MEDIUM" >> "$L";; esac ;;
         usb_announce_retry_ms) case "$cfgval" in ''|*[!0-9]*) echo "[ocbm-boot] W invalid usb_announce_retry_ms=$cfgval; keeping $USB_ANNOUNCE_RETRY_MS" >> "$L";; *) USB_ANNOUNCE_RETRY_MS=$cfgval;; esac ;;
         usb_announce_retries) case "$cfgval" in ''|*[!0-9]*) echo "[ocbm-boot] W invalid usb_announce_retries=$cfgval; keeping $USB_ANNOUNCE_RETRIES" >> "$L";; *) USB_ANNOUNCE_RETRIES=$cfgval;; esac ;;
+        usb_net) case "$cfgval" in
+            0) USB_NET=none; USB_NET_ONCE=0 ;;
+            eth|usb) USB_NET=$cfgval; USB_NET_ONCE=0 ;;
+            eth-once) USB_NET=eth; USB_NET_ONCE=1 ;;
+            usb-once) USB_NET=usb; USB_NET_ONCE=1 ;;
+            *) echo "[ocbm-boot] W invalid usb_net=$cfgval in /script/ocbm.conf; network function off" >> "$L" ;;
+          esac ;;
       esac
     done < /script/ocbm.conf
   fi
@@ -88,6 +106,30 @@ touch /tmp/UDiskPassThroughMode
   [ "$USB_ANNOUNCE_RETRY_MS" -le 300000 ] 2>/dev/null || USB_ANNOUNCE_RETRY_MS=300000
   [ "$USB_ANNOUNCE_RETRIES" -ge 0 ] 2>/dev/null || USB_ANNOUNCE_RETRIES=0
   [ "$USB_ANNOUNCE_RETRIES" -le 3 ] 2>/dev/null || USB_ANNOUNCE_RETRIES=3
+  # One start only: put the key back BEFORE anything is presented, and present nothing if that
+  # cannot be made to stick. A trial that could repeat by itself would strand a car that refuses it.
+  if [ "$USB_NET_ONCE" = 1 ]; then
+    sed -i 's/^[[:space:]]*usb_net[[:space:]]*=.*/usb_net=0/' /script/ocbm.conf 2>/dev/null
+    sync
+    if grep -q '^usb_net=0$' /script/ocbm.conf 2>/dev/null && ! grep -q 'usb_net=.*once' /script/ocbm.conf 2>/dev/null; then
+      bootlog "[ocbm-boot] usb_net=$USB_NET for this start only; /script/ocbm.conf is back to usb_net=0"
+    else
+      bootlog "[ocbm-boot] W could not write usb_net=0 back; network function NOT presented"
+      USB_NET=none
+    fi
+  fi
+  # The address the car sees for the network function, for `eth`: six bytes from this unit's
+  # serial, with the multicast and locally-administered bits of the first cleared.
+  USB_NET_HOST_MAC=
+  if [ "$USB_NET" = eth ]; then
+    _h=$(printf '%s' "$USB_SERIAL" | md5sum 2>/dev/null | cut -c1-12)
+    case "$_h" in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+        _o=$(printf '%02x' $(( 0x$(printf '%s' "$_h" | cut -c1-2) & 0xfc )))
+        USB_NET_HOST_MAC="$_o:$(printf '%s' "$_h" | cut -c3-4):$(printf '%s' "$_h" | cut -c5-6):$(printf '%s' "$_h" | cut -c7-8):$(printf '%s' "$_h" | cut -c9-10):$(printf '%s' "$_h" | cut -c11-12)" ;;
+      *) bootlog "[ocbm-boot] W no address could be made for usb_net=eth; network function off"; USB_NET=none ;;
+    esac
+  fi
   [ "$SERIAL_PER_DEVICE" = 1 ] || { [ "$USB_ANNOUNCE" = 1 ] && bootlog "[ocbm-boot] E announce disabled — no per-device serial (would match the vendor-generic iSerial)"; USB_ANNOUNCE=0; }
   uptime_ms() { awk '{ printf "%.0f", $1 * 1000 }' /proc/uptime; }
   sleep_ms() { _s=$(( $1 / 1000 )); _ms=$(( $1 % 1000 )); sleep "$(printf '%d.%03d' "$_s" "$_ms")"; }
@@ -132,7 +174,28 @@ touch /tmp/UDiskPassThroughMode
       losetup -d /dev/loop1 2>/dev/null
       rm -f /tmp/ram_fat32.img
     fi
-    if [ "$_composite" = 1 ]; then echo accessory,mass_storage > "$A/functions"; else echo accessory > "$A/functions"; fi
+    if [ "$_composite" = 1 ]; then _functions=accessory,mass_storage; else _functions=accessory; fi
+    USB_NET_BOUND=0
+    if [ "$USB_NET" != none ]; then
+      # The network function goes between the two: OCBM stays interface 0, where every host looks.
+      if [ "$_composite" = 1 ]; then _with_net=accessory,ncm,mass_storage; else _with_net=accessory,ncm; fi
+      echo "$_with_net" > "$A/functions" 2>/dev/null
+      if [ "$(cat "$A/functions" 2>/dev/null)" = "$_with_net" ]; then
+        USB_NET_BOUND=1
+        # The host's address is this driver's f_ncm/ethaddr, read at bind. Writing the function
+        # list resets it, so it is set after; the module's host_addr parameter is ignored
+        # (both measured 2026-11-15). All zeros leaves the driver's own choice.
+        if [ -n "$USB_NET_HOST_MAC" ]; then
+          echo "$USB_NET_HOST_MAC" > /sys/class/android_usb_accessory/f_ncm/ethaddr 2>/dev/null \
+            || bootlog "[ocbm-boot] W f_ncm/ethaddr refused; the host names the link usb<N>"
+        fi
+      else
+        bootlog "[ocbm-boot] W functions=$_with_net rejected (got \"$(cat "$A/functions" 2>/dev/null)\"); network function off"
+        echo "$_functions" > "$A/functions"
+      fi
+    else
+      echo "$_functions" > "$A/functions"
+    fi
     echo 1 > "$A/enable"
     OCBM_BOUND_MS=$(uptime_ms)
     _rebind_detail=""
@@ -255,7 +318,17 @@ touch /tmp/UDiskPassThroughMode
     /script/ocbm_udisk.sh prepare >> "$L" 2>&1
   fi
   grep -q storage_common /proc/modules || insmod /tmp/storage_common.ko 2>/dev/null
-  grep -q g_android_accessory /proc/modules || insmod /tmp/g_android_accessory.ko 2>/dev/null
+  if [ -n "$USB_NET_HOST_MAC" ] && ! grep -q g_android_accessory /proc/modules; then
+    # u_ether takes the host's address from the module's host_addr at load and copies it into
+    # f_ncm/ethaddr at every bind, so it is set here or not at all. A refused parameter falls back
+    # to the plain load: no gadget would mean no way back in.
+    insmod /tmp/g_android_accessory.ko host_addr="$USB_NET_HOST_MAC" 2>/dev/null \
+      || { bootlog "[ocbm-boot] W insmod refused host_addr; the host names the link usb<N>"; insmod /tmp/g_android_accessory.ko 2>/dev/null; }
+    bootlog "[ocbm-boot] usb_net: gadget loaded with host_addr=$(cat /sys/module/g_android_accessory/parameters/host_addr 2>/dev/null | cut -c1-2)…"
+  else
+    grep -q g_android_accessory /proc/modules || insmod /tmp/g_android_accessory.ko 2>/dev/null
+    [ -n "$USB_NET_HOST_MAC" ] && bootlog "[ocbm-boot] W usb_net: gadget already loaded; host_addr cannot be set"
+  fi
   # ZLP after a wMaxPacketSize-multiple accessory write. Off by default (accZLP=N, measured
   # 2026-09-02); without it a 512-multiple frame followed by idle never completes the host's
   # bulk read and is discarded on its timeout (macOS app and ocbm-host alike).
@@ -274,6 +347,41 @@ touch /tmp/UDiskPassThroughMode
   # Boot starts with either the GM storage-only admission announcement or direct OCBM when disabled.
   # /script/ocbm_udisk still affects only the later OCBM composite (PID 2d00), not the announcement.
   announce_then_ocbm
+  rm -f /tmp/ocbm_usb_net
+  if [ "${USB_NET_BOUND:-0}" = 1 ]; then
+    # Off the boot's critical path: ocbmd must not wait on a netdev. The adapter's end of the
+    # link takes the maintenance mode's address and lease pool (custom_init.sh), which the access
+    # point layer already refuses to use; no router and no DNS are offered, so a car that takes
+    # a lease gains a link to the adapter and nothing it would route its own traffic through.
+    (
+      i=0; while [ ! -e /sys/class/net/ncm0 ] && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+      if [ ! -e /sys/class/net/ncm0 ]; then bootlog "[ocbm-boot] W usb_net: ncm0 never appeared"; exit 0; fi
+      ifconfig ncm0 192.168.50.2 netmask 255.255.255.0 mtu 1500 up
+      cat > /tmp/udhcpd_ncm.conf <<CFG
+start 192.168.50.100
+end 192.168.50.150
+interface ncm0
+opt subnet 255.255.255.0
+opt lease 86400
+lease_file /tmp/udhcpd_ncm.leases
+pidfile /tmp/udhcpd_ncm.pid
+max_leases 20
+CFG
+      touch /tmp/udhcpd_ncm.leases
+      busybox udhcpd -f /tmp/udhcpd_ncm.conf >/tmp/udhcpd_ncm.log 2>&1 &
+      # The link-local address appears once duplicate detection is done.
+      i=0; _ll=
+      while [ "$i" -lt 30 ]; do
+        _ll=$(ifconfig ncm0 2>/dev/null | sed -n 's/.*inet6 addr: \(fe80:[0-9a-f:]*\)\/64.*/\1/p' | head -1)
+        [ -n "$_ll" ] && break
+        i=$((i+1)); sleep 0.1
+      done
+      # What ocbmd tells the app (MGMT_INFO "usb_net") and where it listens. Written last and whole.
+      printf 'style=%s\nv4=192.168.50.2\nll=%s\nport=5010\n' "$USB_NET" "$_ll" > /tmp/ocbm_usb_net.new
+      mv /tmp/ocbm_usb_net.new /tmp/ocbm_usb_net
+      bootlog "[ocbm-boot] usb_net=$USB_NET up: ncm0 192.168.50.2 link-local=${_ll:-none} leases 192.168.50.100-150"
+    ) &
+  fi
   i=0; while [ ! -e /dev/usb_accessory ] && [ "$i" -lt 50 ]; do i=$((i+1)); sleep 0.1; done
   if [ ! -e /dev/usb_accessory ]; then
     bootlog "[ocbm-boot] W /dev/usb_accessory missing after OCBM bind"

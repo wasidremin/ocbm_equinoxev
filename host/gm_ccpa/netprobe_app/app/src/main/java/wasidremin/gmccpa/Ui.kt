@@ -1399,6 +1399,23 @@ class LauncherUi(private val act: Activity) {
      * app carries, update them with the car in Park, or put the previous ones back. All adapter I/O
      * runs off the main thread.
      */
+    /** Settings ▸ Advanced ▸ USB network trial (T15): one adapter start with the network function beside OCBM. */
+    private fun usbNetRow(): EqRow {
+        lateinit var row: EqRow
+        val text = "Experimental, one start only. The adapter restarts and also offers a USB network link, which the car " +
+            "handles itself. The log then says whether the app reached the adapter without the Allow tap. Its next start is the usual one."
+        row = EqRow(act, "USB network trial", text, trailing = eqButton(act, "Try once", EqButtonStyle.SECONDARY) {
+            val c = wasidremin.gmccpa.ocbm.AdapterSession.client
+            if (c == null) { row.setSubtitle("Adapter not connected. $text"); return@eqButton }
+            row.setSubtitle("Arming…")
+            Thread({
+                val line = runCatching { wasidremin.gmccpa.ocbm.UsbNet.startTrial(c) }.getOrElse { "Failed: ${it.message}" }
+                act.runOnUiThread { if (!act.isFinishing) row.setSubtitle(line) }
+            }, "usb-net-ui").start()
+        })
+        return row
+    }
+
     private fun firmwareRow(): EqRow {
         val fw = wasidremin.gmccpa.ocbm.AdapterFirmware
         val bundle = fw.bundled(act)
@@ -1511,6 +1528,7 @@ class LauncherUi(private val act: Activity) {
             .addRow(announceRow)
             .addRow(announceRetriesRow)
             .addRow(firmwareRow())
+            .addRow(usbNetRow())
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
             .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() })))
 

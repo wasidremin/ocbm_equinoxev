@@ -1015,6 +1015,54 @@ fn fw_version() -> String {
     read_trim("/script/fw_version").chars().filter(|c| c.is_ascii_hexdigit()).take(16).collect()
 }
 
+/// The network function beside OCBM, when the boot script presented it this start.
+fn usb_net() -> Option<p::UsbNet> {
+    p::usb_net_parse(&std::fs::read_to_string(p::USB_NET_FILE).ok()?)
+}
+
+/// Answer a TCP connection that arrives over the network function with one line and close
+/// (`ocbm_proto::USB_NET_BANNER`). It proves a host can reach the adapter over that link with no
+/// USB permission; nothing else is served there yet. The boot script brings the link up in the
+/// background, so this waits for its file, and gives up quietly on a start that has none.
+fn usb_net_listener() {
+    use std::io::Write;
+    let mut net = None;
+    for _ in 0..90 {
+        net = usb_net();
+        if net.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    let Some(net) = net else { return };
+    // One socket for both families where the kernel allows it; IPv4 alone otherwise.
+    let listener = std::net::TcpListener::bind((std::net::Ipv6Addr::UNSPECIFIED, net.port))
+        .or_else(|_| std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, net.port)));
+    let listener = match listener {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[ocbmd] usb_net: cannot listen on port {} ({e})", net.port);
+            return;
+        }
+    };
+    eprintln!("[ocbmd] usb_net: listening on port {} ({} naming)", net.port, net.style);
+    let mut answered = 0u32;
+    for conn in listener.incoming() {
+        let Ok(mut conn) = conn else { continue };
+        let Ok(peer) = conn.peer_addr() else { continue };
+        if !p::usb_net_peer_ok(&net, peer.ip()) {
+            continue; // not this link: closed without a word
+        }
+        let _ = conn.set_write_timeout(Some(std::time::Duration::from_secs(2)));
+        let _ = conn.write_all(format!("{}\n", p::USB_NET_BANNER).as_bytes());
+        answered += 1;
+        // The first few say the link works; after that it is noise.
+        if answered <= 3 {
+            eprintln!("[ocbmd] usb_net: answered a host over the network function ({} so far)", answered);
+        }
+    }
+}
+
 fn read_trim(path: &str) -> String {
     std::fs::read_to_string(path)
         .map(|s| s.trim().to_string())
@@ -3756,7 +3804,11 @@ impl Daemon {
              \"daemons\":{{\"ocbmd\":{d0},\"iap2d\":{d1},\"airplayd\":{d2},\"carplay_wireless\":{d3}}},\
              \"host_name\":\"{host_name}\",\"phone_order\":true,\"ev_models\":true,\"car_gps\":true,\"nav_url\":true,\
              \"fw_update\":{fw_update},\"fw\":\"{fw}\",\"fw_pending\":{fw_pending},\"fw_prev\":{fw_prev},\
-             \"devices\":[{devs}]}}",
+             {usb_net}\"devices\":[{devs}]}}",
+            // Only when the boot script presented the network function this start (T15).
+            usb_net = usb_net()
+                .map(|n| format!("\"usb_net\":{},", p::usb_net_json(&n)))
+                .unwrap_or_default(),
             ser = json_escape(&serial),
             fw_update = std::path::Path::new(FW_SCRIPT).exists(),
             fw = fw_version(),
@@ -4372,6 +4424,8 @@ fn main() {
             -1
         }
     };
+    // The network function's test listener (T15): idle unless the boot script presented the link.
+    let _ = std::thread::Builder::new().name("usb_net".into()).spawn(usb_net_listener);
     // panic = "abort" workspace-wide, so a panic is the last thing this process ever does and the
     // hook's output is the only record of it. Chain rather than replace: the default hook carries
     // the location and any RUST_BACKTRACE.

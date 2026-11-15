@@ -631,6 +631,47 @@ USB bridge would show the change. Items 2 and 3 cannot be reached until then.
    for the bridge, and the app falls back to its own dialog.
 3. The relay has not carried a session. The emulator has no adapter.
 
+### Route A: a USB network link beside OCBM (raised, built and benched 2026-11-15)
+
+**The idea.** Android's own system takes a USB network device the way it takes a USB drive, so an
+app that reaches the adapter over a network link needs no USB permission and no Allow tap. The
+adapter's gadget driver can present a network function (`f_ncm`) beside OCBM.
+
+**Built (off by default).** `ccpa/rootfs/script/ocbm_boot.sh`: `usb_net=eth-once` (or `usb-once`) in
+`/script/ocbm.conf` presents `accessory,ncm,mass_storage` for one start; the key is written back to
+`usb_net=0` before anything is presented, so a car that refuses the device gets the usual one at the
+next power-on. The adapter's end is `ncm0` 192.168.50.2 with a lease pool, no router and no DNS.
+`ocbmd` says so in `MGMT_INFO` (`"usb_net":{…}`, `ocbm_proto::usb_net_json`) and answers
+`OCBM-NET 1` on TCP 5010 to that link only (`usb_net_peer_ok`). The app (`ocbm/UsbNet.kt`) logs, on
+every connect where the adapter presents the link, the interfaces Android shows it and whether the
+test port answers on each; Settings ▸ Advanced ▸ USB network trial (bench verb `usb_net_trial`)
+arms one start and restarts the adapter.
+
+**Measured on the bench.**
+
+- The three-function device enumerates on Linux with OCBM still interface 0 and still working; the
+  link carries 106 Mbps adapter to host (`nc` from `/dev/zero`), 2 ms ping. OCBM over the bulk pipe
+  measured 339 Mbps.
+- **Stock Android leaves the link down.** On the AAOS 14 emulator with the adapter passed through,
+  the kernel creates `usb0` (its `cdc_ncm` is built in) and `EthernetTracker` does not track it:
+  it takes interfaces matching `eth\d` only. The app cannot raise an interface itself, so the probe
+  logged `adapter not reached` on every interface.
+- **The name cannot be changed from the adapter.** Linux names the host's end `usb<N>` when the
+  device's address is locally administered and `eth<N>` otherwise. This adapter's gadget driver
+  (`g_android_accessory`) writes its own locally-administered address into `f_ncm/ethaddr` at
+  every bind: the module's `host_addr` parameter is accepted and ignored, and an address written
+  to `ethaddr` between unbind and rebind is replaced at the rebind (read back each step,
+  2026-11-15). The driver is a kernel module file on the adapter, not the boot stack, but changing
+  it is not proposed.
+
+**What is left to learn.** Whether GM's build is like stock: its Ethernet service could be
+configured to take `usb\d` (`config_ethernet_iface_regex`), which nothing here shows either way. One
+car start with the trial answers it at no risk: the log line `usb-net: REACHED the adapter` or
+`adapter not reached`, with the interfaces the car showed. Expect not reached.
+
+**Done means (this route).** The car's log shows `REACHED` on a trial start; then the network
+transport is built behind `Transport.kt` with USB kept as the fallback.
+
 ### Second route: the adapter link over the car's hotspot, with no USB claim (raised 2026-11-13; recorded, not started)
 
 The owner asked for this to be recorded and not built (2026-11-13). Everything below is what was

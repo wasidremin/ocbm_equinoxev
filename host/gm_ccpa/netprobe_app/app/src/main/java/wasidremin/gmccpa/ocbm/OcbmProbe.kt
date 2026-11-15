@@ -1106,9 +1106,10 @@ class OcbmProbe(context: Context) {
         // Bonded-device snapshot at the top of the session. Taken HERE rather than at any of the
         // four runAll() call sites so every path that brings a link up gets one — the start-vs-end
         // diff is the whole point, and a session missing its start snapshot cannot be diffed at all.
-        wasidremin.gmccpa.logging.SessionSummary.current()?.let { sess ->
-            runCatching { c.mgmtGetInfo() }.getOrNull()?.let { sess.onMgmtInfoStart(it) }
-        }
+        val startInfo = runCatching { c.mgmtGetInfo() }.getOrNull()
+        wasidremin.gmccpa.logging.SessionSummary.current()?.let { sess -> startInfo?.let { sess.onMgmtInfoStart(it) } }
+        // T15: when the adapter presents its USB network this start, whether the app reaches it there.
+        startInfo?.let { UsbNet.probe(it) }
 
         c.setTime()
 

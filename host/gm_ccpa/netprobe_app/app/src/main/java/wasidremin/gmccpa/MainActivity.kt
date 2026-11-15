@@ -1496,6 +1496,11 @@ class MainActivity : Activity() {
                 }.start()
                 else pack.refresh(this) { line -> emit("lyrics_pack: $line ${pack.get(this).meta()?.let { "${it.songs} songs, ${it.bytes / 1024} KB, id ${it.id}" } ?: "no package"}") }
             }
+            // Bench (T15): arm one adapter start with the USB network and restart it.
+            "usb_net_trial" -> runAsync {
+                val c = wasidremin.gmccpa.ocbm.AdapterSession.client
+                emit("usb_net_trial: " + (c?.let { wasidremin.gmccpa.ocbm.UsbNet.startTrial(it) } ?: "no adapter link"))
+            }
             "capture_cluster" -> wasidremin.gmccpa.av.CarPlayFrameGrabber.saveDriverDisplayAsync(this) { r ->
                 emit(r.fold({ (saved, map) -> "capture_cluster: saved ${saved.id} ${saved.metadata.windowWidth}x${saved.metadata.windowHeight} mapFrame=$map" },
                     { "capture_cluster: FAILED ${it.message}" }))

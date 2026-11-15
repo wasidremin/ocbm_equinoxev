@@ -360,6 +360,70 @@ pub const FW_OP_APPLY: u8 = 2; // verify the staged files, swap them in keeping 
 pub const FW_OP_CONFIRM: u8 = 3; // the adapter came back healthy: keep the update
 pub const FW_OP_ROLLBACK: u8 = 4; // put the previous files back and reboot
 pub const FW_DIR: &str = "/tmp/fwup";
+
+/// The network function beside OCBM (2026-11-15, docs/ops/08_FUTURE_TASKS.md T15). When the boot
+/// script presents it (`usb_net` in `/script/ocbm.conf`) it writes [`USB_NET_FILE`]: `style=eth|usb`,
+/// `v4=`, `ll=` (the adapter's link-local address, empty if none) and `port=`. `MGMT_INFO` then
+/// carries `"usb_net":{…}` ([`usb_net_json`]) and `ocbmd` answers a TCP connection on that port,
+/// from that link only, with [`USB_NET_BANNER`] and a newline. A host that reaches it has a path to
+/// the adapter that needed no USB permission. The banner is all it serves so far: the test is
+/// whether a car brings the link up for an ordinary app at all.
+pub const USB_NET_FILE: &str = "/tmp/ocbm_usb_net";
+pub const USB_NET_PORT: u16 = 5010;
+pub const USB_NET_BANNER: &str = "OCBM-NET 1";
+
+/// The network function as the boot script described it ([`USB_NET_FILE`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsbNet {
+    /// `eth` or `usb`: how the host's end is named.
+    pub style: String,
+    pub v4: std::net::Ipv4Addr,
+    pub ll: Option<std::net::Ipv6Addr>,
+    pub port: u16,
+}
+
+/// Parse [`USB_NET_FILE`]. `None` unless every field it needs is there and well formed: the text
+/// goes into a JSON document and names an address to listen on.
+pub fn usb_net_parse(text: &str) -> Option<UsbNet> {
+    let (mut style, mut v4, mut ll, mut port) = (None, None, None, None);
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let v = v.trim();
+        match k.trim() {
+            "style" if v == "eth" || v == "usb" => style = Some(v.to_string()),
+            "v4" => v4 = v.parse::<std::net::Ipv4Addr>().ok(),
+            "ll" if !v.is_empty() => ll = v.parse::<std::net::Ipv6Addr>().ok(),
+            "port" => port = v.parse::<u16>().ok().filter(|p| *p != 0),
+            _ => {}
+        }
+    }
+    Some(UsbNet { style: style?, v4: v4?, ll, port: port? })
+}
+
+/// [`UsbNet`] as the value of `MGMT_INFO`'s `"usb_net"` key.
+pub fn usb_net_json(n: &UsbNet) -> String {
+    format!(
+        "{{\"style\":\"{}\",\"v4\":\"{}\",\"ll\":\"{}\",\"port\":{}}}",
+        n.style,
+        n.v4,
+        n.ll.map(|a| a.to_string()).unwrap_or_default(),
+        n.port
+    )
+}
+
+/// Whether a connection from `peer` came over the network function: the link's own IPv4 subnet
+/// (`net`'s /24) or a link-local IPv6 address. The adapter's access point is on another subnet, so
+/// a phone on it is refused.
+pub fn usb_net_peer_ok(net: &UsbNet, peer: std::net::IpAddr) -> bool {
+    let v4_ok = |a: std::net::Ipv4Addr| a.octets()[..3] == net.v4.octets()[..3];
+    match peer {
+        std::net::IpAddr::V4(a) => v4_ok(a),
+        std::net::IpAddr::V6(a) => match a.to_ipv4_mapped() {
+            Some(m) => v4_ok(m),
+            None => (a.segments()[0] & 0xffc0) == 0xfe80,
+        },
+    }
+}
                                             //   Box->host:
 pub const MGMT_INFO: u8 = 0x81; // [MGMT_INFO][utf8 JSON] — identity + health + bonded-device snapshot
 pub const MGMT_ACK: u8 = 0x82; // [MGMT_ACK][verb u8][status u8] — 0 ok / 1 error, echoing the request verb
@@ -988,6 +1052,45 @@ impl Reassembler {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usb_net_file_is_parsed_whole_or_not_at_all() {
+        let n = usb_net_parse("style=eth\nv4=192.168.50.2\nll=fe80::c08e:30ff:fe52:e9a3\nport=5010\n").unwrap();
+        assert_eq!(n.style, "eth");
+        assert_eq!(n.v4, std::net::Ipv4Addr::new(192, 168, 50, 2));
+        assert_eq!(n.port, 5010);
+        assert_eq!(
+            usb_net_json(&n),
+            r#"{"style":"eth","v4":"192.168.50.2","ll":"fe80::c08e:30ff:fe52:e9a3","port":5010}"#
+        );
+        // No link-local address yet is still a link; a missing or malformed field is not.
+        let no_ll = usb_net_parse("style=usb\nv4=192.168.50.2\nll=\nport=5010\n").unwrap();
+        assert_eq!(no_ll.ll, None);
+        assert_eq!(usb_net_json(&no_ll), r#"{"style":"usb","v4":"192.168.50.2","ll":"","port":5010}"#);
+        for bad in [
+            "",
+            "style=eth\nv4=192.168.50.2\n",
+            "style=wifi\nv4=192.168.50.2\nport=5010\n",
+            "style=eth\nv4=nonsense\nport=5010\n",
+            "style=eth\nv4=192.168.50.2\nport=0\n",
+            "style=eth\\\"\nv4=192.168.50.2\nport=5010\n",
+        ] {
+            assert_eq!(usb_net_parse(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn usb_net_answers_only_its_own_link() {
+        let n = usb_net_parse("style=eth\nv4=192.168.50.2\nll=\nport=5010\n").unwrap();
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        assert!(usb_net_peer_ok(&n, ip("192.168.50.100")));
+        assert!(usb_net_peer_ok(&n, ip("::ffff:192.168.50.100")));
+        assert!(usb_net_peer_ok(&n, ip("fe80::1")));
+        // The adapter's access point, and anything routed.
+        assert!(!usb_net_peer_ok(&n, ip("192.168.43.20")));
+        assert!(!usb_net_peer_ok(&n, ip("::ffff:10.0.0.1")));
+        assert!(!usb_net_peer_ok(&n, ip("2001:db8::1")));
+    }
+
     /// Every CH_INPUT sub-frame the protocol defines fits the reader's limit.
     #[test]
     fn the_input_frame_limit_holds_every_sub_frame() {
