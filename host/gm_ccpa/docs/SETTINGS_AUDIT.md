@@ -310,6 +310,14 @@ stays (serves Capture Current).
   the lyrics settings were read only when Settings was built, so a CarPlay screen started
   on its own took lyrics as off (`BarLyrics.load` now runs in `CarPlayActivity.onCreate`).
 
+## 2026-11-15 deltas (car hotspot join; Play 254–255)
+
+- **Join the car's hotspot** (Advanced, off by default; T15 route B): the adapter joins the vehicle
+  hotspot beside its own network. Tapping the row opens the hotspot name and password entry, since
+  the Vehicle hotspot row is hidden while Adapter Wi-Fi is on, which it always is on the Equinox
+  (owner, 2026-11-15, on 254). Stored in `hotspot_credentials` as before; the switch is `sta_uplink/enabled`.
+- **USB network trial** (Advanced): arms one adapter start with a USB network link beside OCBM (T15 route A).
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,
