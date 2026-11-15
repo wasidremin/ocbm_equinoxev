@@ -182,6 +182,9 @@ manifest() {
     echo "$ARM/iap2d|/usr/sbin/iap2d|755"
     echo "$ARM/carplayd|/usr/sbin/carplayd|755"
     echo "$ARM/btd|/usr/sbin/btd|755"
+    # The Wi-Fi client for the car-hotspot link (T15). Idle unless /script/sta_uplink.conf enables it.
+    echo "$ARM/wpa_supplicant|/usr/sbin/wpa_supplicant|755"
+    echo "$ARM/wpa_cli|/usr/sbin/wpa_cli|755"
     # WIRED CARPLAY CANNOT START WITHOUT THIS. projection_up.sh calls `iap_role_switch` by bare
     # name (PATH), and docs/ops/01_RECOVERY.md puts it in /usr/bin. Absent, the 0x51 host-role switch never runs, so
     # the iPhone stays a USB device, the phone-facing iAP2 gadget never binds to a host, and iap2d

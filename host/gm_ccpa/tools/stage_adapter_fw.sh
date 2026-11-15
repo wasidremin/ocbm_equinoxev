@@ -23,6 +23,8 @@ FILES=(
   "$ARM/iap2d|/usr/sbin/iap2d|755"
   "$ARM/carplayd|/usr/sbin/carplayd|755"
   "$ARM/btd|/usr/sbin/btd|755"
+  "$ARM/wpa_supplicant|/usr/sbin/wpa_supplicant|755"
+  "$ARM/wpa_cli|/usr/sbin/wpa_cli|755"
   "$REPO/accessory_init/iap_role_switch.armv7|/usr/bin/iap_role_switch|755"
   "$REPO/ccpa/rootfs/script/radio_detect.sh|/script/radio_detect.sh|755"
   "$REPO/ccpa/rootfs/script/radio_hal.sh|/script/radio_hal.sh|755"

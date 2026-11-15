@@ -19,6 +19,12 @@ came from in their header comments.
 - **enigy/ocbm** (github.com/enigy/ocbm) — adapter-side startup fixes and the route-guidance
   additions (exit labels, junction and lane detail).
 
+## Built from upstream source
+
+- **wpa_supplicant 2.11** (w1.fi, BSD licence) — the adapter's Wi-Fi client for joining the car's
+  hotspot (T15). Not in this repository: `tools/build_wpa_supplicant.sh` downloads the release,
+  checks its pinned SHA-256 and builds it; the binary ships in the adapter firmware.
+
 ## Ideas, no code
 
 **openautolink** (github.com/mossyhub/openautolink, GPL-3.0) — showed on a Blazer EV that GM

@@ -764,7 +764,19 @@ the channel in use (the file's `HT40+` made hostapd refuse channel 48). Bench: o
 (`sta0`, 149) before and after a restart; on, `uplink: joined … 5240 MHz -> channel 48`, access
 point on `wlan0` channel 48 `HT40-`, client still `COMPLETED`, home router reachable.
 
-**Next, in order.** (1) Done above. (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
+**Step 2 built (2026-11-15), off by default.** `tools/build_wpa_supplicant.sh` (from `build.sh`)
+builds `wpa_supplicant`/`wpa_cli` from the pinned 2.11 release; they ship in `ocbm_install.sh --full`
+and the app's update bundle, adding 708 KB (the bench adapter went from 3.0 to 2.3 MB free).
+`ocbmd` says `"sta_uplink":true` in `MGMT_INFO` when both are installed. The app (`ocbm/StaUplink.kt`,
+Settings ▸ Advanced ▸ Join the car's hotspot) writes `/script/sta_uplink.conf` (mode 600) at every
+connect where it differs: the Vehicle hotspot name and passphrase when on, `enabled=0` when off;
+a name or passphrase with a quote, backslash or control character is refused, never written.
+End to end on the bench with the owner's iPhone: the app wrote the file, the adapter joined the
+home network at its next Wi-Fi start (5240 MHz), raised its access point on `wlan0` channel 48,
+and a wireless CarPlay session ran with the client link up. Settings is off by default, so a car
+that takes the update behaves as before. Interface names are this adapter's (`wlan0`/`sta0`).
+
+**Next, in order.** (1), (2) Done above. (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
 hotspot's name and passphrase pushed by the app (it already has them, prefs `hotspot_credentials`).
 (3) A throughput test under a full session in the car. (4) The network transport in the app.
 

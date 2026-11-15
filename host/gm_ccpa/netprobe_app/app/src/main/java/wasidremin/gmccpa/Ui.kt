@@ -1399,6 +1399,15 @@ class LauncherUi(private val act: Activity) {
      * app carries, update them with the car in Park, or put the previous ones back. All adapter I/O
      * runs off the main thread.
      */
+    /** Settings ▸ Advanced ▸ Join the car's hotspot (T15 route B), off by default. */
+    private fun staUplinkRow(): EqRow = EqRow(
+        act, "Join the car's hotspot",
+        "Experimental. The adapter joins the vehicle hotspot (name and passphrase above) as well as running its own " +
+            "network for the iPhone, so the app can later reach it with no Allow tap. CarPlay still runs over USB for now. " +
+            "Applies when the adapter next starts its Wi-Fi.",
+        trailing = EqToggle(act, wasidremin.gmccpa.ocbm.StaUplink.enabled(act)) { on -> wasidremin.gmccpa.ocbm.StaUplink.setEnabled(act, on) },
+    )
+
     /** Settings ▸ Advanced ▸ USB network trial (T15): one adapter start with the network function beside OCBM. */
     private fun usbNetRow(): EqRow {
         lateinit var row: EqRow
@@ -1529,6 +1538,7 @@ class LauncherUi(private val act: Activity) {
             .addRow(announceRetriesRow)
             .addRow(firmwareRow())
             .addRow(usbNetRow())
+            .addRow(staUplinkRow())
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
             .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() })))
 

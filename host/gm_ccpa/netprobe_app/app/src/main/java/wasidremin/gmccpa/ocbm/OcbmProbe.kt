@@ -1110,6 +1110,8 @@ class OcbmProbe(context: Context) {
         wasidremin.gmccpa.logging.SessionSummary.current()?.let { sess -> startInfo?.let { sess.onMgmtInfoStart(it) } }
         // T15: when the adapter presents its USB network this start, whether the app reaches it there.
         startInfo?.let { UsbNet.probe(it) }
+        // T15 route B: tell the adapter whether, and to which network, its client link should join.
+        runCatching { StaUplink.sync(ctx, c, startInfo) }
 
         c.setTime()
 

@@ -27,6 +27,9 @@ BOX_STD="-Z build-std=std,panic_abort"
 $BOX_CARGO zigbuild $BOX_STD --target armv7-unknown-linux-musleabihf --release -p ocbmd
 echo "built  target/armv7-unknown-linux-musleabihf/release/ocbmd  ($(wc -c < target/armv7-unknown-linux-musleabihf/release/ocbmd) bytes, armv7 static)"
 
+# The Wi-Fi client for the car-hotspot link (T15). Cached after the first build.
+sh tools/build_wpa_supplicant.sh
+
 cargo build --release -p ocbm-host
 echo "built  target/release/ocbm-host  ($(wc -c < target/release/ocbm-host) bytes)"
 

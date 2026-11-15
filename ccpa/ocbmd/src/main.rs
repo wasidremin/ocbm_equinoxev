@@ -3804,7 +3804,10 @@ impl Daemon {
              \"daemons\":{{\"ocbmd\":{d0},\"iap2d\":{d1},\"airplayd\":{d2},\"carplay_wireless\":{d3}}},\
              \"host_name\":\"{host_name}\",\"phone_order\":true,\"ev_models\":true,\"car_gps\":true,\"nav_url\":true,\
              \"fw_update\":{fw_update},\"fw\":\"{fw}\",\"fw_pending\":{fw_pending},\"fw_prev\":{fw_prev},\
-             {usb_net}\"devices\":[{devs}]}}",
+             {usb_net}\"sta_uplink\":{sta_uplink},\"devices\":[{devs}]}}",
+            // T15 route B: this box can join the car's hotspot (the app pushes sta_uplink.conf).
+            sta_uplink = std::path::Path::new("/usr/sbin/wpa_supplicant").exists()
+                && std::path::Path::new("/usr/sbin/wpa_cli").exists(),
             // Only when the boot script presented the network function this start (T15).
             usb_net = usb_net()
                 .map(|n| format!("\"usb_net\":{},", p::usb_net_json(&n)))
