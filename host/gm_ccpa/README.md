@@ -141,7 +141,13 @@ Contract: `netprobe_app/.../logging/LogExport.kt` (`DEFAULT_REMOTE_BASE_URL`) an
 container with `/opt/stacks/cloudbridge-log:/app`, so the live store is `/app/logs.txt`
 in-container = `logs.txt` on host; tail page at `.../cloudbridge/`, raw at
 `.../logs/raw`, probe list at `.../probes`, capture/launch lists at
-`.../api/captures` and `.../api/launches`).
+`.../api/captures` and `.../api/launches`; `GET .../history?car=<id>` and
+`GET .../lyrics?car=<id>[&have=<id>]` give the drive history and the lyrics package to a
+car that names a static part it has uploaded). The lyrics package is built on the same
+server by `tools/lyrics_pack.py` (weekly, from the owner's crontab) into
+`/opt/stacks/cloudbridge-log/lyrics/`; its song lists, lrclib answers and Spotify sign-in
+live under `~/.local/share/gmccpa-lyrics/` and `~/.config/gmccpa-lyrics/`, never in a
+repository.
 Each `/logs` line is stored as `<server-stamp>  <event line>`; lines are redacted
 on-device before upload. Local reproductions: `car-logs-delta-20261002/regenerate.sh`
 shows the exact extraction from `logs.txt`.

@@ -1479,6 +1479,23 @@ class MainActivity : Activity() {
             "capture_own" -> setCaptureScope(LogCapture.Scope.OWN_PROCESS)
             "ocbm_selftest" -> runAsync { ocbm().selfTest() }
             // Bench: capture the driver display as Settings ▸ Cluster does; the result goes to the log.
+            // Bench: the lyrics package, as Settings ▸ Lyrics ▸ Download now. `--es car <id>` (and
+            // `--es base <url>`) name the receiver first, which the car learns from an upload.
+            // `--es find "Title|Artist|seconds"` asks the package for one song and says only whether it has it.
+            "lyrics_pack" -> {
+                val pack = wasidremin.gmccpa.lyrics.LyricsPack
+                wasidremin.gmccpa.lyrics.BarLyrics.load(this)
+                i.getStringExtra("car")?.let { car ->
+                    pack.remember(this, i.getStringExtra("base") ?: wasidremin.gmccpa.upload.UploadCenter.baseUrl(this), car)
+                }
+                val find = i.getStringExtra("find")?.split('|')
+                if (find != null && find.size == 3) Thread {
+                    val k = wasidremin.gmccpa.lyrics.LyricsKey(find[0], find[1], "", find[2].toLongOrNull() ?: 0L)
+                    val lrc = pack.get(this).find(k)
+                    emit("lyrics_pack: find -> ${lrc?.let { "${it.lines().size} lines" } ?: "not in the package"}")
+                }.start()
+                else pack.refresh(this) { line -> emit("lyrics_pack: $line ${pack.get(this).meta()?.let { "${it.songs} songs, ${it.bytes / 1024} KB, id ${it.id}" } ?: "no package"}") }
+            }
             "capture_cluster" -> wasidremin.gmccpa.av.CarPlayFrameGrabber.saveDriverDisplayAsync(this) { r ->
                 emit(r.fold({ (saved, map) -> "capture_cluster: saved ${saved.id} ${saved.metadata.windowWidth}x${saved.metadata.windowHeight} mapFrame=$map" },
                     { "capture_cluster: FAILED ${it.message}" }))

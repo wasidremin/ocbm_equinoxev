@@ -347,6 +347,8 @@ object ProbeUpload {
                     // The receiver is reachable and knows this car: ask it once for the drives from
                     // before the car kept a log (a few kilobytes).
                     res.staticId?.let { HistoryImport.runOnce(appCtx, base, it) }
+                    // And, on Wi-Fi, once a day: a newer lyrics package, and the songs that went without.
+                    res.staticId?.let { wasidremin.gmccpa.lyrics.LyricsPack.onReceiverReached(appCtx, base, it) }
                     onState?.let {
                         wasidremin.gmccpa.upload.UploadCenter.emitState(
                             it,

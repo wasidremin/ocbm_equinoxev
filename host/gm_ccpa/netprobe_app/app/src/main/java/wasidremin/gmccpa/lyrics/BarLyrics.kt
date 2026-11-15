@@ -29,6 +29,7 @@ object BarLyrics {
     private const val PREFS = "lyrics"
     private const val KEY_LOOKUP = "lookup"
     private const val KEY_TOP_BAR = "top_bar"
+    private const val KEY_ONLINE = "online"
     private const val TICK_MS = 250L
 
     /** Look up lyrics on lrclib.net. */
@@ -37,8 +38,26 @@ object BarLyrics {
     /** Show the line being sung in the top bar (Park only). */
     @Volatile var topBar = false
         private set
+    @Volatile var online = LyricsOnline.ALWAYS
+        private set
     @Volatile private var loaded = false
     private var disk: LyricsDiskCache? = null
+    private var pack: LyricsPack? = null
+    private var wanted: LyricsWanted? = null
+    @Volatile private var app: Context? = null
+
+    fun setOnline(ctx: Context, mode: LyricsOnline) {
+        load(ctx)
+        online = mode
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_ONLINE, mode.key).apply()
+        log.i("lyrics: lrclib.net asked ${mode.short} (Settings)")
+    }
+
+    fun onlineText(): String = when (online) {
+        LyricsOnline.ALWAYS -> "A song with no lyrics on the head unit is looked up on lrclib.net over whatever connection the car has, its own data included."
+        LyricsOnline.WIFI -> "A song with no lyrics on the head unit is looked up only on Wi-Fi or a hotspot. Off them it goes without, and is looked up the next time the car is on Wi-Fi."
+        LyricsOnline.NEVER -> "lrclib.net is never asked while a song plays. Lyrics come from the package and from songs heard before; a song that goes without is looked up the next time the package is refreshed on Wi-Fi."
+    }
 
     /** The car is in Park; null until the gear is known ([wasidremin.gmccpa.av.VehicleStateWatcher]). */
     @Volatile var parked: Boolean? = null
@@ -73,7 +92,11 @@ object BarLyrics {
             val p = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             lookup = p.getBoolean(KEY_LOOKUP, false)
             topBar = p.getBoolean(KEY_TOP_BAR, false)
+            online = LyricsOnline.values().firstOrNull { it.key == p.getString(KEY_ONLINE, null) } ?: LyricsOnline.ALWAYS
             disk = LyricsDiskCache.get(app)
+            pack = LyricsPack.get(app)
+            wanted = LyricsWanted.get(app)
+            this.app = app
             status = if (lookup) Status.NO_SONG else Status.OFF
             loaded = true
         }
@@ -139,7 +162,10 @@ object BarLyrics {
         key = k
         worker.execute {
             if (key != k || !lookup) return@execute
-            val answer = LrcLib.find(k, disk)
+            val ask = online.mayAsk(app?.let { wasidremin.gmccpa.upload.DataMeter.onWifi(it) } == true)
+            val answer = LrcLib.find(k, disk, pack = pack, online = ask)
+            // A song that went without, for either reason, is looked up the next time the car is on Wi-Fi.
+            if (answer == null || answer.offline) wanted?.add(k)
             if (key != k) return@execute
             if (answer == null) {
                 status = Status.UNREACHABLE

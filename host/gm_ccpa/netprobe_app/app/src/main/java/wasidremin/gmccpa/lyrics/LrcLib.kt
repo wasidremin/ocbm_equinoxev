@@ -47,8 +47,11 @@ data class LyricsKey(
 object LrcLib {
     private val log = ProbeLog.sub("lyrics")
 
-    /** A finished lookup: [lyrics] null when LRCLIB has none for the song. */
-    class Answer(val lyrics: SyncedLyrics?)
+    /**
+     * A finished lookup: [lyrics] null when LRCLIB has none for the song, or, with [offline], when the
+     * head unit has none and LRCLIB was not to be asked.
+     */
+    class Answer(val lyrics: SyncedLyrics?, val offline: Boolean = false)
 
     /** LRCLIB reached, answering an HTTP error rather than a body or a 404. */
     internal class HttpError(val code: Int, path: String) : IOException("HTTP $code from /api/$path")
@@ -75,16 +78,28 @@ object LrcLib {
 
     /**
      * LRCLIB's answer for the song, or null when LRCLIB could not be reached or answered unreadably,
-     * which is not an answer: the caller asks again. Lyrics kept on the head unit ([disk]) are taken
-     * first, and found ones are kept there.
+     * which is not an answer: the caller asks again. Lyrics kept on the head unit are taken first:
+     * those of songs heard before ([disk]), then the downloaded package ([pack]). LRCLIB is asked
+     * only when [online]; found lyrics are kept in [disk].
      */
-    fun find(key: LyricsKey, disk: LyricsDiskCache? = null, api: Api = Net): Answer? {
+    fun find(key: LyricsKey, disk: LyricsDiskCache? = null, api: Api = Net, pack: LyricsPack? = null, online: Boolean = true): Answer? {
         cached(key)?.let { return it }
         disk?.read(key)?.let { lrc ->
             SyncedLyrics.parse(lrc)?.let { lyrics ->
                 log.i("lyrics: ${lyrics.lines.size} timed lines, kept on the head unit")
                 return Answer(lyrics).also { synchronized(cache) { cache[key] = it } }
             }
+        }
+        pack?.find(key)?.let { lrc ->
+            SyncedLyrics.parse(lrc)?.let { lyrics ->
+                log.i("lyrics: ${lyrics.lines.size} timed lines, from the package")
+                return Answer(lyrics).also { synchronized(cache) { cache[key] = it } }
+            }
+        }
+        if (!online) {
+            // Not an answer to keep: the song is asked about again once the car may ask.
+            log.i("lyrics: none on the head unit for a ${key.durationSec}s song, and LRCLIB is not asked off Wi-Fi")
+            return Answer(null, offline = true)
         }
         val lrc = try {
             lookUp(key, api)

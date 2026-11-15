@@ -708,7 +708,7 @@ class LauncherUi(private val act: Activity) {
     private fun lyricsRows(card: EqCard) {
         val lyrics = wasidremin.gmccpa.lyrics.BarLyrics
         lyrics.load(act)
-        fun subtitle() = "Timed lyrics for the media pane and the top bar. Song titles, artists, albums and lengths go to lrclib.net. " +
+        fun subtitle() = "Timed lyrics for the media pane and the top bar. Songs not in the package or heard before are looked up on lrclib.net by title, artist, album and length. " +
             lyrics.usageText(act)
         lateinit var row: EqRow
         val clear = eqButton(act, "Clear", EqButtonStyle.SECONDARY) {
@@ -724,6 +724,20 @@ class LauncherUi(private val act: Activity) {
         }
         row = EqRow(act, "Look up lyrics", subtitle(), trailing = controls)
         card.addRow(row)
+        val pack = wasidremin.gmccpa.lyrics.LyricsPack
+        lateinit var packRow: EqRow
+        packRow = EqRow(act, "Lyrics package", pack.statusText(act), trailing = eqButton(act, "Download now", EqButtonStyle.SECONDARY) {
+            packRow.setSubtitle("Asking the server…")
+            pack.refresh(act) { line -> act.runOnUiThread { packRow.setSubtitle(line + " " + pack.statusText(act)); row.setSubtitle(subtitle()) } }
+        })
+        card.addRow(packRow)
+        val modes = wasidremin.gmccpa.lyrics.LyricsOnline.values()
+        lateinit var onlineRow: EqRow
+        onlineRow = EqRow(act, "Look up online", lyrics.onlineText(), trailing = EqSegmented(act, modes.map { it.short }, lyrics.online.ordinal) { i ->
+            lyrics.setOnline(act, modes[i])
+            onlineRow.setSubtitle(lyrics.onlineText())
+        })
+        card.addRow(onlineRow)
         card.addRow(EqRow(
             act, "Lyrics in the top bar",
             "The line being sung, in the custom top bar, while the car is in Park. Needs Look up lyrics.",

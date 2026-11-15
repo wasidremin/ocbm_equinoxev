@@ -307,8 +307,13 @@ high-water mark: versionCode 252 (`4.0+drive-card-v3`, 2026-11-14; `host/gm_ccpa
     now-playing chip (cover in a progress ring) in place of the faint handle. Emulator only so far,
     with drawn covers (white, saturated, near black). To check on the car: the lyrics against real
     covers in daylight, and that the chip sits whole on the glass right of the picture.
-  - *Settings ▸ Playback ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
+  - *Settings ▸ Screen & Sound ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
     *Lyrics in the top bar* shows the current line there, in Park only.
+  - **Lyrics package (2026-11-14, `docs/ops/08_FUTURE_TASKS.md` T24).** Built and served; the car has
+    not yet downloaded one. To check on the car: that it downloads on home Wi-Fi or the hotspot
+    (`lyrics package: N songs … downloaded … over Wi-Fi` in the log), and that a song from the package
+    shows lyrics with *Look up online* set to Never. Open: the owner's Spotify sign-in on the server
+    (`lyrics_pack.py spotify-login <client-id>`), which adds liked songs and their own playlists.
   - Connection time on the new adapter firmware (startup fixes 5389084/749f72c), bench only: when the
     iPhone answered the first page, subscribe → first picture took 8.8 s and 10.4 s, against the car's
     10.7 s median on the old firmware (44 sessions since 2026-10-15, `[startup]` lines; fastest 8.1 s).

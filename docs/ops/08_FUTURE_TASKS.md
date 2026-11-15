@@ -39,6 +39,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T20 Update the adapter from the app | Built and benched 2026-11-14 (update, confirm, manual and automatic rollback). Needs one last bench install for the boot hook; app updates after that |
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
+| T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
 
 *Done*
 
@@ -952,6 +953,41 @@ may be the same picture as the map. Step 3's risks are in the doc cited above.
 
 **Done means.** On the car, Apple's instruction card shows on the driver display during a route,
 beside or instead of the map as the owner chooses, and the app's own card steps aside while it does.
+
+## T24. Lyrics with no connection: the lyrics package (raised and built 2026-11-14)
+
+**Why.** The car's own data is short, and the app looked every song up on lrclib.net as it played.
+The owner asked for a large package of lyrics taken while on Wi-Fi, ideally from their Spotify
+account, so the app can stay offline and still show lyrics.
+
+**Built.** The home server makes the package and the car takes it only on Wi-Fi or a hotspot.
+
+- *Builder* (`host/gm_ccpa/tools/lyrics_pack.py`, stdlib Python, weekly from the owner's crontab).
+  Three lists: Billboard's Year-End Hot 100 for 1980 to 2025 from Wikipedia (4,255 songs; 4,172 have
+  timed lyrics on lrclib, up to three lengths each); the owner's Spotify listening-history export
+  (3,419 songs played 30 s or more, the length taken from full plays); and their Spotify library
+  (liked songs and the playlists they own), once signed in with their own developer app (PKCE, no
+  secret). Spotify gives a development-mode app nothing inside anyone else's playlist, its own mixes
+  included, so those songs come only through the history or the catch-up below. lrclib is asked once
+  per song, slowly, and every answer is kept, so a weekly run asks only about new songs.
+- *Receiver* (`/opt/stacks/cloudbridge-log/log_server.py`): `GET /lyrics?car=<id>[&have=<id>]`, behind
+  the gate `/history` uses, 304 when the car already holds that package.
+- *App* (`lyrics/LyricsPack.kt`): the download (Wi-Fi only; by itself at most daily after an upload,
+  or Settings ▸ Screen & Sound ▸ Lyrics ▸ Download now), a store of one data file and an index, and
+  the lookup order: songs heard before, then the package, then lrclib if *Look up online* (Always /
+  Wi-Fi only / Never) allows. A song is matched by its bare title (what a release adds after " - "
+  or in brackets dropped), one word of the artist in common, and a length within 3 s: lyrics timed
+  for another cut would run early or late, so no match is better than a wrong one. A song that goes
+  without is listed and looked up the next time the car is on Wi-Fi.
+
+**Verified.** The builder's naming rules against the app's (the same test vectors in
+`tools/tests/lyrics_pack_test.py` and `LyricsPackTest`), and on the emulator against the real
+receiver: download, "up to date" on a repeat, a song found under its remaster's name, one not in the
+package refused. **Not verified:** on the car.
+
+**Open.** The Spotify sign-in (one link to approve; needs the owner's client id and
+`http://127.0.0.1:8888/callback` among the app's redirect URIs). *Look up online* still defaults to
+Always, so nothing changed unasked; Wi-Fi only is the setting for this car.
 
 ## Left off this plan
 
