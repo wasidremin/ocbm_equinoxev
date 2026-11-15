@@ -8,6 +8,10 @@ Owner-directed work items that are neither an open defect nor a verification gap
 state it starts from and what "done" means. When a task lands, replace its body with a one-line
 pointer to the doc that now owns the result — do not leave a stale plan beside a shipped feature.
 
+**What the owner would feel most (2026-11-14).** Asked what still annoys on an ordinary drive: "just
+time to connect and the pop up." So **T25 (faster connect)** and **T15 (no Allow tap)** come before
+any new feature. The app is for the owner alone; nothing here is planned for other owners or cars.
+
 **Where each task stands (2026-11-13),** by what it takes to ship. "App only" is a Play update;
 "needs adapter firmware" also needs new adapter firmware: from app 251 on, Settings ▸ Advanced ▸
 Adapter firmware installs it (T20); before that, or for the boot path, a bench install
@@ -22,6 +26,14 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T18 "Will I make it" at route start | New, not started |
 | T19 Spotify hand-back | New, not started |
 | T23 Apple's own turn card on the driver display | Built and tried on the car 2026-11-14: Apple's card replaces the map on the one feed. Map and card together (a second feed) declined by the owner; settings reworked so Apple's card is a Turn card choice and the bottom-right panel can hold another card beside it |
+| T26 "Try this drive" card | New 2026-11-14, not started |
+| T27 "Why didn't CarPlay connect?" | New 2026-11-14, not started |
+| T28 After-drive summary | New 2026-11-14, not started |
+| T29 Charging card | New 2026-11-14, not started |
+| T30 Weather-aware arrival estimate | New 2026-11-14, not started |
+| T31 Mileage log | New 2026-11-14, not started; also needs the server |
+| T32 Context docking | New 2026-11-14, not started |
+| T33 Remove the Silverado hotspot mode | New 2026-11-14, not started; a removal |
 | Log redaction lets a second Bluetooth address through | A defect, so it lives in `04_OPEN_ITEMS.md`; tiny |
 
 *Needs adapter firmware*
@@ -40,6 +52,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
+| T25 Faster connect | New 2026-11-14, not started; **the owner's first annoyance**. May be app only, depending on where the time goes |
 
 *Done*
 
@@ -580,6 +593,9 @@ car log).
 
 ## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; a second route over the car's hotspot recorded 2026-11-13, not started)
 
+**Priority (2026-11-14).** One of the two things the owner still finds annoying on every drive (the
+other is the time to connect, T25).
+
 **The ask.** The driver taps Allow for the adapter on every drive. The owner found the XDA post
 (enigy's Carlink thread, page 28) saying a sideloaded bridge removes it for a Play app.
 
@@ -991,6 +1007,96 @@ package refused. **Not verified:** on the car.
 **Open.** *Look up online* still defaults to Always, so nothing changed unasked; Wi-Fi only is the
 setting for this car. The first download on the car has not been seen.
 
+## T25. Faster connect (raised 2026-11-14; the owner's first annoyance)
+
+**Why.** From starting the adapter to the first CarPlay picture is a median 10.7 s on the car (44
+sessions, `[startup]` lines; fastest 8.1 s). The owner named it first when asked what still annoys.
+
+**Work.** Measure before changing anything: the app already logs each stage (attach, permission,
+hello, subscribe, discoverable, Bluetooth connected, Wi-Fi handoff, first picture). Take the last
+month's lines, find which stage holds most of the time and how much it varies, and attack that one.
+The Allow tap (T15) sits inside this time too.
+
+**Done means.** The median on the car drops by a stated amount, measured by the same lines.
+
+## T26. "Try this drive" card (raised 2026-11-14)
+
+**Why.** The car has no adb and the owner is the only tester, so a feature is "not yet on the car"
+until a drive happens to exercise it and the logs happen to show it. About a dozen items wait that way.
+
+**What.** The build carries a short list of things to check. On Park the app shows them, one tap
+each: worked, did not, did not try. The answers upload with the logs, so the next session knows.
+
+**Done means.** A published build's checks come back answered without the owner writing anything.
+
+## T27. "Why didn't CarPlay connect?" (raised 2026-11-14)
+
+**Why.** A slow or failed connect is explained today by reading logs afterwards.
+
+**What.** After a connect that fails or takes much longer than usual, one plain sentence on the
+centre screen saying which stage stalled (the phone did not answer, the handoff did not finish, the
+adapter was not there), with the fix that fits: wait, restart the adapter, forget the phone.
+
+**Done means.** The owner can say why a bad connect happened without a log.
+
+## T28. After-drive summary (raised 2026-11-14)
+
+**What.** On Park, one screen for the drive just finished: distance, energy, mi/kWh against the
+usual, and where the energy went (speed, the cold start, standing) as `DriveOutlook` already splits
+it. Numbers the Drive card cannot show while moving.
+
+**Done means.** The summary shows on Park after a drive of a mile or more and matches the drive log.
+
+## T29. Charging card (raised 2026-11-14)
+
+**What.** While plugged in with the car on: charging power, time to the charge limit and the cost so
+far, from the readings the charge log already uses. The head unit sleeps while the car is off, so
+this is for sitting in the car at a charger; the rest of the session still comes from the log.
+
+**Done means.** At a charger the card's power and time to the limit agree with the car's own screen.
+
+## T30. Weather-aware arrival estimate (raised 2026-11-14)
+
+**Why.** The arrival estimate knows speed and temperature. Wind and rain are what it cannot see,
+and they are most of its misses on a long motorway drive.
+
+**What.** A forecast for the route, fetched on Wi-Fi or the hotspot before leaving (never on the
+car's data), and a wind and rain term in `DriveOutlook`, fitted on the owner's drives as the rest
+was. Needs a forecast source that is free and keyless, to be chosen.
+
+**Done means.** On replayed drives with known weather the estimate's error falls; if it does not,
+the term is left out.
+
+## T31. Mileage log (raised 2026-11-14)
+
+**What.** Each drive tagged business or personal (a default by route, one tap to change), and a
+monthly report from the home server: miles, cost and the list of drives. The drive log has the rest.
+
+**Done means.** A month's report can be produced without touching the car.
+
+## T32. Context docking (raised 2026-11-14)
+
+**Why.** The bottom-right panel holds one card, chosen in Settings (2026-11-14). The card worth
+having there changes with what is happening.
+
+**What.** A fourth choice, "Automatic": the turn card during a route, the drive card otherwise, the
+call card while a call is up. Each switch eased, and never while a turn is close.
+
+**Done means.** A drive with a route, a call and a stretch with neither shows the right card in the
+panel at each, with no setting touched.
+
+## T33. Remove the Silverado hotspot mode (raised 2026-11-14)
+
+**Why.** The app still carries upstream's design in which the iPhone streams over the vehicle's
+hotspot straight to the app, behind Advanced ▸ Adapter Wi-Fi. The Equinox cannot use it (GM's
+firewall drops the phone's connection), and every connect path that exists is one that can go wrong.
+
+**What.** Delete the mode, its setting and the code only it reaches, and the documents that
+describe the truck bring-up. A removal with no new behaviour; T15's hotspot route is a different
+thing (the adapter's link to the app, not the phone's) and is not affected.
+
+**Done means.** The app builds and connects as before with the mode gone, and its tests pass.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.
@@ -1018,6 +1124,10 @@ Kept here so a later session does not promote them into tasks.
   cluster ignores (`docs/host/02_GM_AAOS_FIELD_REFERENCE.md`). The exit label was taken instead.
   (2026-11-10: lane guidance did arrive later by another route, drawn by the app on its own
   driver-display window rather than in GM's cluster; see T13.)
+- **For other owners or other cars (owner, 2026-11-14: "this is just for me").** A first-run setup
+  pass (pairing, screen outline and adapter update in one guided flow), display profiles for other GM
+  EVs (Blazer EV, Silverado EV), and a layout per iPhone. Raised in a brainstorm and declined: one
+  owner, one phone, one Equinox.
 - **enigy's per-iPhone settings, adapter updates over OCBM, stock conversion.** Not asked for; per-phone
   settings matter little with this app's few per-phone choices, and the adapter is updated on the server.
 - **New enigy commits are reviewed weekly (from 2026-11-09).** A scheduled check on the owner's Claude
