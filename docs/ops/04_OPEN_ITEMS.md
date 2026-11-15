@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 253 (`4.0+lyrics-package`, 2026-11-14; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 254 (`4.0+car-hotspot-join`, 2026-11-15; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **Data budget: nothing checked on the car (Play 246).** The app
   used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
