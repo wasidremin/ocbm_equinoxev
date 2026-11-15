@@ -176,6 +176,15 @@ caps() {
 # the caller's `&& break` fired first), i.e. exclusively in the BT-only bridge role. Keep these
 # names distinctive.
 wlan_iface() {
+  # T15 bench (2026-11-15): /tmp/radio_ap_iface names the interface the access point goes on, so
+  # a second interface stays free for a client link to the car's hotspot. Honoured only when it
+  # names an existing wireless interface; absent (the default), the first one is taken as before.
+  if [ -s /tmp/radio_ap_iface ]; then
+    _wif_o=$(tr -cd 'a-z0-9' < /tmp/radio_ap_iface)
+    if [ -n "$_wif_o" ] && { [ -e "/sys/class/net/$_wif_o/wireless" ] || [ -e "/sys/class/net/$_wif_o/phy80211" ]; }; then
+      echo "$_wif_o"; return 0
+    fi
+  fi
   for _wif_d in /sys/class/net/*/; do
     [ -e "$_wif_d/wireless" ] || [ -e "$_wif_d/phy80211" ] || continue
     basename "$_wif_d"; return 0

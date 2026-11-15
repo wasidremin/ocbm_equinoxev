@@ -735,6 +735,33 @@ be dropped in (item 1 below).
    picture, and that clock starts after the Allow tap (3.4 s in the one logged case, 2026-11-05).
    This route trades the tap for the adapter's scan, join and lease.
 
+**Bench, 2026-11-15 (adapter on the server, the owner's home 5 GHz Wi-Fi standing in for the car's hotspot).**
+
+- *Interface roles: settled.* `moal` runs with `drv_mode=3` (station + uAP): `sta0` is the client
+  interface and `wlan0` the driver's own access point. This tree put `hostapd` on `sta0` only because
+  `radio_hal.sh`'s `wlan_iface` takes the first wireless interface alphabetically. `hostapd` on
+  `wlan0` comes up cleanly (`AP-ENABLED`) and the phone sees and joins it; a full wireless CarPlay
+  session ran over it with the owner's iPhone through the emulator.
+- *The adapter has no client software.* The stripped firmware carries `hostapd` and no
+  `wpa_supplicant`. A static one was cross-built for the bench (2.11, wext driver, internal crypto,
+  578 KB; `scratchpad/`, not in the tree) and run from `/tmp`.
+- *Both roles at once: works.* `sta0` joined the home network (WPA2-PSK, 5240 MHz, signal −54) while
+  `wlan0` served the access point, and carried **69 Mbps** adapter → server, through two wireless
+  hops (the server is on Wi-Fi too; the car would be one hop). During a CarPlay session the link
+  answered pings with no loss (12 ms average, one 80 ms spike).
+- *What breaks it today.* At a session the app pushes the access point's channel in its config
+  (149) and the radio layer restarts the access point on it, which took `sta0` down
+  (`INTERFACE_DISABLED`). One radio serves both, so the access point has to follow the client
+  link's channel, not the other way round.
+- `radio_hal.sh` now honours `/tmp/radio_ap_iface` (an interface name; absent by default, so
+  nothing changes): the bench override that put the access point on `wlan0` through the normal path.
+
+**Next, in order.** (1) The radio layer: access point on the uAP interface, the client link brought
+up first, and the access point's channel taken from it (the app's pushed channel used only with no
+client link). (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
+hotspot's name and passphrase pushed by the app (it already has them, prefs `hotspot_credentials`).
+(3) A throughput test under a full session in the car. (4) The network transport in the app.
+
 **Plan when resumed, with a stop at each step.**
 
 1. *App only.* Log at every start whether the hotspot interface is up, how long after the car woke,
