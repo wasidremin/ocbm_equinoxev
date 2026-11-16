@@ -52,7 +52,11 @@ object RollingEfficiency {
 
     /** A point every this share of a mile (km). */
     const val LINE_STEP = 0.1
-    /** Each point is the energy over this share of a mile (km) around it: 15 battery steps at motorway speed. */
+    /**
+     * Each point is the energy over this many miles (km) around it, by default. 0.5 is 15 battery
+     * steps at motorway speed, and read as spiky on the car (owner, 2026-11-16): Settings ▸ Cluster ▸
+     * Drive line smoothing chooses it ([wasidremin.gmccpa.nav.ClusterLayout.driveSmoothing]).
+     */
     const val LINE_WINDOW = 0.5
     /** Nearer an end of the marks than this, a point would be a few battery steps and is left out. */
     const val LINE_EDGE_M = 150.0
@@ -75,16 +79,16 @@ object RollingEfficiency {
 
     /**
      * Pure: [marks] as a smoothed line over their last [spanUnits] miles (km), oldest first, ending
-     * [endX] miles (km) before now. Each point is the energy over [LINE_WINDOW] around it (less near
+     * [endX] miles (km) before now. Each point is the energy over [windowUnits] around it (less near
      * the ends), and the points are then smoothed against their neighbours. The smoothing is done on
      * energy per distance, not on its inverse: a coasting stretch would otherwise swamp its neighbours.
      */
-    fun line(marks: List<Mark>, unitM: Double, spanUnits: Double, endX: Double = 0.0): List<Point> {
+    fun line(marks: List<Mark>, unitM: Double, spanUnits: Double, endX: Double = 0.0, windowUnits: Double = LINE_WINDOW): List<Point> {
         if (marks.size < 2 || spanUnits <= 0.0) return emptyList()
         val first = marks.first().distM
         val last = marks.last().distM
         val step = unitM * LINE_STEP
-        val half = unitM * LINE_WINDOW / 2
+        val half = unitM * windowUnits.coerceAtLeast(LINE_STEP) / 2
         val xs = ArrayList<Double>()
         val rates = ArrayList<Double>()
         var d = last - LINE_EDGE_M
@@ -109,11 +113,11 @@ object RollingEfficiency {
      * [tail] (the marks the drives before left, [appended]) as the span still has room for. The two
      * are smoothed apart, so a drive's cold start does not bleed into the drive before.
      */
-    fun trace(marks: List<Mark>, tail: List<Mark>, unitM: Double, spanUnits: Double = 10.0): Trace {
+    fun trace(marks: List<Mark>, tail: List<Mark>, unitM: Double, spanUnits: Double = 10.0, windowUnits: Double = LINE_WINDOW): Trace {
         val driven = if (marks.size >= 2) (marks.last().distM - marks.first().distM) / unitM else 0.0
-        val now = line(marks, unitM, spanUnits)
+        val now = line(marks, unitM, spanUnits, windowUnits = windowUnits)
         val room = spanUnits - driven
-        val past = if (room > LINE_STEP) line(tail, unitM, room, endX = -driven) else emptyList()
+        val past = if (room > LINE_STEP) line(tail, unitM, room, endX = -driven, windowUnits = windowUnits) else emptyList()
         return Trace(past, now, if (past.isNotEmpty()) -driven else null)
     }
 

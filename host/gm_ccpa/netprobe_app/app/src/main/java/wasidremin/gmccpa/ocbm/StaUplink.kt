@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Wi-Fi start of each adapter boot the radio layer scans once and logs, numbers and flags only,
  * whether that network is visible, its band, channel and security, then stops the scan before
  * starting its own access point exactly as always (`radio_hal.sh` `hotspot_scan`). The app also logs
- * when the car's own hotspot interface comes up after the head unit starts ([watchHotspot]).
+ * when the car's own hotspot interface comes up after the app starts ([watchHotspot]).
  *
  * Off, the app writes `enabled=0`. Changing the setting or the name reaches a connected adapter at
  * once ([pushNow]), not only at the next connect: a Restart Wi-Fi on 2026-11-15 ran with the old file.
@@ -34,7 +34,7 @@ object StaUplink {
     private const val KEY_ON = "enabled"
     /** The adapter's client-capable interface (NXP IW416, `drv_mode=3`), measured on the bench. */
     const val STA_IFACE = "sta0"
-    /** How long after the head unit starts the app looks for the car's hotspot coming up. */
+    /** How long the app looks for the car's hotspot coming up. */
     const val WATCH_MS = 240_000L
     private val watching = AtomicBoolean(false)
 
@@ -93,9 +93,10 @@ object StaUplink {
     }
 
     /**
-     * Once per process: log when the car's hotspot interface has an address, in seconds after the
-     * head unit started ([SystemClock.elapsedRealtime]), checking every 2 s for [WATCH_MS]. Names
-     * and counts only.
+     * Once per process: log when the car's hotspot interface has an address, in seconds after this
+     * app's process started, checking every 2 s for [WATCH_MS]. Not after the head unit started: it
+     * sleeps rather than restarts when the car is off, and read +600,892 s on the car (2026-11-16).
+     * Names and counts only.
      */
     fun watchHotspot() {
         if (!watching.compareAndSet(false, true)) return
@@ -109,13 +110,13 @@ object StaUplink {
                         .map { it.name }
                 }.getOrDefault(emptyList())
                 if (up.isNotEmpty()) {
-                    log.i("hotspot-check: the car's hotspot is up (${up.joinToString(",")}) at +${SystemClock.elapsedRealtime() / 1000}s after the head unit started")
+                    log.i("hotspot-check: the car's hotspot is up (${up.joinToString(",")}) at +${(SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()) / 1000}s after the app started")
                     seen = true
                     break
                 }
                 Thread.sleep(2_000)
             }
-            if (!seen) log.w("hotspot-check: the car's hotspot did not come up within ${WATCH_MS / 1000}s (head unit up ${SystemClock.elapsedRealtime() / 1000}s)")
+            if (!seen) log.w("hotspot-check: the car's hotspot did not come up within ${WATCH_MS / 1000}s of checking")
         }, "hotspot-watch").apply { isDaemon = true }.start()
     }
 }

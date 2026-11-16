@@ -676,6 +676,8 @@ Over 10 s windows the shipped estimate is off by a median 3.6 kW against the bat
 quantisation. Shifting the model later by 1 to 6 s only made the fit worse, so the battery reading is
 not late. The card eases the figure toward the estimate over about 1.6 s and the power line over 0.35 s.
 
+*The line's averaging (2026-11-16).* Half a mile around each point read as spiky on the car, so Settings ▸ Cluster ▸ Drive line smoothing offers ½, 1, 2 and 3 miles (km in metric), default 1.
+
 *Research behind the look* (web, 2026-11-14): Tesla's energy graph uses a fixed distance window, a rated
 line and colour by which side of it the line is; its power meter is a thin line, right for power and left
 in green for regeneration, and owners' main complaint is that it carries no figure or reference mark.

@@ -145,13 +145,14 @@ object DriveCard {
      * averages (Wh/km). Null with no drive under way.
      */
     fun face(marks: List<RollingEfficiency.Mark>, tail: List<RollingEfficiency.Mark>, monthWhPerKm: Double?,
-             lifetimeWhPerKm: Double?, monthLabel: String, metric: Boolean): Face? {
+             lifetimeWhPerKm: Double?, monthLabel: String, metric: Boolean,
+             windowUnits: Double = RollingEfficiency.LINE_WINDOW): Face? {
         if (marks.isEmpty()) return null
         val unit = if (metric) 1000.0 else wasidremin.gmccpa.telemetry.TripStats.M_PER_MILE
         val last = RollingEfficiency.span(marks, unit)?.takeIf { it.distM >= unit * 0.95 }
         val ten = RollingEfficiency.span(marks, unit * 10)?.takeIf { it.distM >= unit * 0.5 }
         fun shown(whPerKm: Double?) = whPerKm?.let { RollingEfficiency.perKwh(it, metric) }
-        val trace = RollingEfficiency.trace(marks, tail, unit, SPAN)
+        val trace = RollingEfficiency.trace(marks, tail, unit, SPAN, windowUnits)
         fun pts(l: List<RollingEfficiency.Point>) = l.map { Pt(it.x.toFloat(), RollingEfficiency.perKwh(it.whPerKm, metric).toFloat()) }
         return Face(
             last = shown(last?.whPerKm),
@@ -331,7 +332,8 @@ object DriveCard {
         val tz = java.util.TimeZone.getDefault().getOffset(nowMs) / 60_000
         val month = h?.let { DriveOutlook.average(it.drives, DriveOutlook.monthStart(nowMs, tz)) }
         val label = java.text.SimpleDateFormat("MMM", Locale.getDefault()).format(java.util.Date(nowMs))
-        val f = face(live.marks, live.tail, month, h?.let { DriveOutlook.average(it.drives) }, label, live.metric)
+        val f = face(live.marks, live.tail, month, h?.let { DriveOutlook.average(it.drives) }, label, live.metric,
+            ClusterLayout.driveSmoothing.units)
         if (f == null) { loggedUnits = 0; return null }
         // Once per whole mile (km) completed: the figures the card is showing, numbers only.
         val unitM = if (live.metric) 1000.0 else wasidremin.gmccpa.telemetry.TripStats.M_PER_MILE

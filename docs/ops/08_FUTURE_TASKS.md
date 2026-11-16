@@ -807,6 +807,11 @@ on, and a paired iPhone: the scan logged NOT seen, the access point came up as a
 went live (first video +26 s). The scan takes about 5 s, once per adapter boot, only while the
 setting is on.
 
+**First drive with 256 (2026-11-16).** The app wrote the setting, but the adapter was still on the
+255 firmware (8557ec09254a), which ignores the new file, so no scan ran: the firmware update has to be
+applied from Settings first. The hotspot timing line read `+600892s after the head unit started`:
+the head unit sleeps rather than restarts, so it now counts from the app's start.
+
 **Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
 route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join
 around starting the access point at once on the channel remembered from the last drive, with a

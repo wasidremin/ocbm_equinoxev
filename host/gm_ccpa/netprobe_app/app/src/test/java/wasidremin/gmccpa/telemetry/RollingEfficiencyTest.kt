@@ -103,4 +103,18 @@ class RollingEfficiencyTest {
         assertTrue(RollingEfficiency.unpack(null).isEmpty())
         assertTrue(RollingEfficiency.unpack("rubbish;1,2;x,y").size == 1)
     }
+
+    @Test fun aWiderWindowGivesASmootherLine() {
+        // 300 Wh/km and 100 Wh/km alternating every 300 m: the shape a short window turns into spikes.
+        val spiky = drive(10.0) { if ((it * 1000 / 300).toInt() % 2 == 0) 300.0 else 100.0 }
+        fun spread(w: Double) = RollingEfficiency.line(spiky, 1000.0, 10.0, windowUnits = w)
+            .drop(20).dropLast(20).map { it.whPerKm }.let { it.max() - it.min() }
+        val light = spread(0.5); val medium = spread(1.0); val heavy = spread(2.0)
+        assertTrue("$light $medium $heavy", light > medium && medium > heavy)
+        // The level is the same whatever the window: averaging must not move the line.
+        val mean = RollingEfficiency.line(spiky, 1000.0, 10.0, windowUnits = 2.0).drop(20).dropLast(20).map { it.whPerKm }.average()
+        assertEquals(200.0, mean, 10.0)
+        // A steady drive reads the same whatever the window.
+        assertTrue(RollingEfficiency.line(drive(8.0) { 200.0 }, 1000.0, 10.0, windowUnits = 3.0).all { kotlin.math.abs(it.whPerKm - 200.0) < 1e-6 })
+    }
 }

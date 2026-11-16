@@ -1068,6 +1068,13 @@ class LauncherUi(private val act: Activity) {
                 "with this app's turn card, or here when this card holds the panel or the turn card is not this app's.",
             trailing = EqToggle(act, cl.drive) { on -> cl.setDrive(act, on); editor.invalidate() },
         ))
+        val smoothings = wasidremin.gmccpa.nav.ClusterLayout.DriveSmoothing.values()
+        card.addRow(EqRow(
+            act, "Drive line smoothing",
+            "How much the Drive card's line is averaged: each point is the energy over this many miles (km in metric) " +
+                "around it. Higher is smoother and slower to show a change. Applies at once.",
+            trailing = EqSegmented(act, smoothings.map { it.short }, cl.driveSmoothing.ordinal) { i -> cl.setDriveSmoothing(act, smoothings[i]) },
+        ))
         page.addView(eqSectionLabel(act, "Cards"))
         page.addView(card)
     }

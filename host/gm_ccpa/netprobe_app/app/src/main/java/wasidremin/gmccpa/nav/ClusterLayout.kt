@@ -29,6 +29,7 @@ object ClusterLayout {
     private const val KEY_DOCK_BY = "dock_"
     private const val DOCK_NONE = "none"
     private const val KEY_DRIVE = "drive_card"
+    private const val KEY_DRIVE_SMOOTHING = "drive_smoothing"
 
     /** A card's top-left corner in percent of the driver display, and its size in percent of the default. */
     data class Place(val x: Int, val y: Int, val scale: Int = 100) {
@@ -165,6 +166,25 @@ object ClusterLayout {
     /** The turn card is the one docked. */
     val dock: Boolean get() = docked == Slot.TURN
     /** The drive card: arrival battery during a route, else this drive against the usual. On by default. */
+    /**
+     * How much the Drive card's line is averaged: each point is the energy over this distance around
+     * it. Light was the only choice before 2026-11-16 and read as spiky on the car (owner).
+     */
+    enum class DriveSmoothing(val key: String, val short: String, val units: Double) {
+        LIGHT("light", "½", 0.5), MEDIUM("medium", "1", 1.0), HEAVY("heavy", "2", 2.0), HEAVIEST("heaviest", "3", 3.0),
+    }
+
+    @Volatile var driveSmoothing = DriveSmoothing.MEDIUM
+        private set
+
+    fun setDriveSmoothing(ctx: Context, s: DriveSmoothing) {
+        load(ctx)
+        driveSmoothing = s
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_DRIVE_SMOOTHING, s.key).apply()
+        log.i("drive card line averaged over ${s.units} mi/km (Settings)")
+        DriverDisplay.preview()
+    }
+
     @Volatile var drive = true
         private set
     @Volatile private var app: Context? = null
@@ -179,6 +199,7 @@ object ClusterLayout {
         oldDock = p.getBoolean(KEY_DOCK, false)
         for (t in ClusterContent.Turn.values()) dockStored[t.ordinal] = p.getString(KEY_DOCK_BY + t.key, null)
         drive = p.getBoolean(KEY_DRIVE, true)
+        driveSmoothing = DriveSmoothing.values().firstOrNull { it.key == p.getString(KEY_DRIVE_SMOOTHING, null) } ?: DriveSmoothing.MEDIUM
         app = a
     }
 
