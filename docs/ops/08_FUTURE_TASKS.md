@@ -776,7 +776,36 @@ home network at its next Wi-Fi start (5240 MHz), raised its access point on `wla
 and a wireless CarPlay session ran with the client link up. Settings is off by default, so a car
 that takes the update behaves as before. Interface names are this adapter's (`wlan0`/`sta0`).
 
-**Next, in order.** (1), (2) Done above. (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
+**In the car, 2026-11-15 (254/255): the join failed and broke CarPlay with the setting on.** Two
+attempts logged `uplink: not joined within 12 s`; the log does not say why. On the second the access
+point came up on `wlan0` channel 149, Bluetooth sent the Wi-Fi handoff, and the phone never joined
+(`no CarPlay connect within 45s`). Most likely the failed join left `wpa_supplicant` scanning on the
+one radio after hostapd started, which the bench never exercised because the join always succeeded
+there. With the setting off the next connect was normal. A Restart Wi-Fi also ran with the old file,
+because the app wrote it only at a connect.
+
+**Step back (owner, 2026-11-16).** Three unknowns can each end this route, and none had been
+measured before building: (1) the car hotspot's security (an Android 14 hotspot may be WPA3-only,
+which this client cannot join, and which alone would explain two failed joins); (2) its band and
+channel (2.4 GHz would drop wireless CarPlay to 2.4 GHz; a DFS channel may refuse an access point);
+(3) how soon it is up after the car wakes, since waiting for a join adds to the time to CarPlay (T25).
+The plan's own step 1 (measure the hotspot first) had been skipped.
+
+**Built instead (2026-11-16): a diagnostic, off by default.** The join and the access-point move are
+gone from `radio_hal.sh`. With the setting on (Settings ▸ Advanced ▸ Check the car's hotspot; the
+app sends the name only, no password), the first Wi-Fi start of each adapter boot scans once and
+logs `hotspot scan: … seen: <MHz> channel N (5GHz|DFS|2.4GHz) signal … security [flags]` or `NOT
+seen`, then stops the client and waits for it to exit before hostapd starts as always. The app logs
+`hotspot-check: the car's hotspot is up (…) at +Ns after the head unit started`, and the setting and
+name now reach a connected adapter at once. Pure helpers tested (`tools/tests/radio_scan_test.sh`,
+`StaUplinkTest`). **Still to verify on the bench before publishing:** off unchanged; on with the home
+network as the name (seen, channel 48, WPA2) and CarPlay still connecting; on with a name not
+present (NOT seen) and CarPlay still connecting.
+
+**Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
+route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join
+around starting the access point at once on the channel remembered from the last drive, with a
+failed join leaving nothing running. (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
 hotspot's name and passphrase pushed by the app (it already has them, prefs `hotspot_credentials`).
 (3) A throughput test under a full session in the car. (4) The network transport in the app.
 

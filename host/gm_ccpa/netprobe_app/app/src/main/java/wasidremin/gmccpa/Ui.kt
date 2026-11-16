@@ -319,6 +319,8 @@ class LauncherUi(private val act: Activity) {
         act.getSharedPreferences(CRED_PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_SSID, ssid).putString(KEY_PASS, pass).putString(KEY_CHAN, chan).apply()
         if (::joinHotspotRow.isInitialized) joinHotspotRow.setSubtitle(staUplinkText())
+        // A new hotspot name reaches a connected adapter now, not at the next connect.
+        if (wasidremin.gmccpa.ocbm.StaUplink.enabled(act)) wasidremin.gmccpa.ocbm.StaUplink.pushNow(act)
     }
 
     private fun buildRoot(): View {
@@ -1401,22 +1403,21 @@ class LauncherUi(private val act: Activity) {
      * runs off the main thread.
      */
     /**
-     * Settings ▸ Advanced ▸ Join the car's hotspot (T15 route B), off by default. Tapping the row
-     * enters the car hotspot's name and passphrase: the Vehicle hotspot row is hidden while Adapter
-     * Wi-Fi is on, which it always is on the Equinox (owner, 2026-11-15: "I don't see the vehicle
-     * hotspot place").
+     * Settings ▸ Advanced ▸ Check the car's hotspot (T15 route B diagnostic), off by default.
+     * Tapping the row enters the hotspot's name: the Vehicle hotspot row is hidden while Adapter
+     * Wi-Fi is on, which it always is on the Equinox.
      */
     private fun staUplinkText(): String =
-        "Experimental. The adapter joins the car's hotspot as well as running its own network for the iPhone, so the " +
-            "app can later reach it with no Allow tap. CarPlay still runs over USB for now. Applies when the adapter next " +
-            "starts its Wi-Fi. Tap here to enter the hotspot's name and password, exactly as the car shows them. " +
-            (if (ssid.isBlank() || pass.isBlank()) "Hotspot: not set." else "Hotspot: $ssid.")
+        "Diagnostic. When the adapter next starts, it looks once for the car's hotspot and logs whether it can see it, " +
+            "its band, channel and security; CarPlay is not changed. Turn on the car's hotspot first. Tap here to enter " +
+            "the hotspot's name exactly as the car shows it. " +
+            (if (ssid.isBlank()) "Hotspot: not set." else "Hotspot: $ssid.")
 
     private lateinit var joinHotspotRow: EqRow
 
     private fun staUplinkRow(): EqRow {
         joinHotspotRow = EqRow(
-            act, "Join the car's hotspot", staUplinkText(),
+            act, "Check the car's hotspot", staUplinkText(),
             trailing = EqToggle(act, wasidremin.gmccpa.ocbm.StaUplink.enabled(act)) { on -> wasidremin.gmccpa.ocbm.StaUplink.setEnabled(act, on) },
             onClick = { showCredentialsDialog() },
         )
