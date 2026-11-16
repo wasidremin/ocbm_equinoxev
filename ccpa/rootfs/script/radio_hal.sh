@@ -233,21 +233,27 @@ hotspot_scan_stop() {
   ! { [ -n "$_hs_pid" ] && kill -0 "$_hs_pid" 2>/dev/null; }
 }
 
+# The scan's lines also go to /tmp/box.log, which ocbmd streams to the app live. Its only other copy
+# is /tmp/wlan.log, which every later Wi-Fi start overwrites and the app pulls only when it stops:
+# in the car the scan ran, then a radio restart rewrote the file before the app ever read it
+# (2026-11-16). Numbers and flags only, as everywhere in these lines.
+scan_log() { log "$*"; echo "$LOGP $*" >> /tmp/box.log 2>/dev/null; }
+
 # Once per boot, before the access point starts: look for the car's hotspot and log what it is.
 hotspot_scan() {
   [ -e "$UPLINK_SCANNED" ] && return 0
   [ -s "$UPLINK_CONF" ] && [ "$(uplink_key enabled)" = 1 ] || return 0
-  [ -n "$UPLINK_WPA" ] && [ -n "$UPLINK_CLI" ] || { log "hotspot scan: no wpa_supplicant on this adapter"; return 0; }
+  [ -n "$UPLINK_WPA" ] && [ -n "$UPLINK_CLI" ] || { scan_log "hotspot scan: no wpa_supplicant on this adapter"; return 0; }
   touch "$UPLINK_SCANNED"
   _hs_if=$(uplink_key sta_iface)
   uplink_ifname_ok "$_hs_if" && { [ -e "/sys/class/net/$_hs_if/wireless" ] || [ -e "/sys/class/net/$_hs_if/phy80211" ]; } \
-    || { log "hotspot scan: interface '${_hs_if}' is not a wireless interface here; skipped"; return 0; }
+    || { scan_log "hotspot scan: interface '${_hs_if}' is not a wireless interface here; skipped"; return 0; }
   _hs_ssid=$(uplink_key ssid)
-  [ -n "$_hs_ssid" ] || { log "hotspot scan: no hotspot name configured; skipped"; return 0; }
+  [ -n "$_hs_ssid" ] || { scan_log "hotspot scan: no hotspot name configured; skipped"; return 0; }
   ifconfig "$_hs_if" up 2>/dev/null
   printf 'ctrl_interface=/tmp/wpa_hotspot_scan\n' > /tmp/wpa_hotspot_scan.conf
   "$UPLINK_WPA" -B -D wext -i "$_hs_if" -c /tmp/wpa_hotspot_scan.conf -P /tmp/wpa_hotspot_scan.pid >/dev/null 2>&1 \
-    || { log "hotspot scan: wpa_supplicant did not start"; hotspot_scan_stop; return 0; }
+    || { scan_log "hotspot scan: wpa_supplicant did not start"; hotspot_scan_stop; return 0; }
   _hs_t0=$(cut -d. -f1 /proc/uptime)
   "$UPLINK_CLI" -p /tmp/wpa_hotspot_scan -i "$_hs_if" scan >/dev/null 2>&1
   # A full scan of both bands takes 2-4 s on this radio; read twice, keep the later.
@@ -259,19 +265,19 @@ hotspot_scan() {
     _hs_rows=$_hs_now
   done
   _hs_res=$("$UPLINK_CLI" -p /tmp/wpa_hotspot_scan -i "$_hs_if" scan_results 2>/dev/null | tail -n +2)
-  hotspot_scan_stop || log "hotspot scan: W the client did not stop"
+  hotspot_scan_stop || scan_log "hotspot scan: W the client did not stop"
   _hs_total=$(printf '%s\n' "$_hs_res" | grep -c .)
   _hs_24=$(printf '%s\n' "$_hs_res" | awk -F'\t' '$2>=2400 && $2<2500' | grep -c .)
   _hs_5=$(printf '%s\n' "$_hs_res" | awk -F'\t' '$2>=4900 && $2<5900' | grep -c .)
   # Exact name match on the SSID column. The app refuses names with quotes, backslashes or controls.
   _hs_match=$(printf '%s\n' "$_hs_res" | awk -F'\t' -v n="$_hs_ssid" '$5==n {print $2" "$3" "$4}')
-  log "hotspot scan: ${_hs_total} networks seen (${_hs_24} on 2.4 GHz, ${_hs_5} on 5 GHz) in $(( $(cut -d. -f1 /proc/uptime) - _hs_t0 )) s"
+  scan_log "hotspot scan: ${_hs_total} networks seen (${_hs_24} on 2.4 GHz, ${_hs_5} on 5 GHz) in $(( $(cut -d. -f1 /proc/uptime) - _hs_t0 )) s"
   if [ -z "$_hs_match" ]; then
-    log "hotspot scan: the car's hotspot was NOT seen"
+    scan_log "hotspot scan: the car's hotspot was NOT seen"
   else
     printf '%s\n' "$_hs_match" | while read -r _hs_f _hs_s _hs_fl; do
       _hs_c=$(freq_to_channel "$_hs_f")
-      log "hotspot scan: the car's hotspot seen: ${_hs_f} MHz channel ${_hs_c:-?} ($(channel_note "$_hs_c")) signal ${_hs_s} dBm security ${_hs_fl}"
+      scan_log "hotspot scan: the car's hotspot seen: ${_hs_f} MHz channel ${_hs_c:-?} ($(channel_note "$_hs_c")) signal ${_hs_s} dBm security ${_hs_fl}"
     done
   fi
 }

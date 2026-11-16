@@ -22,4 +22,12 @@ is "6 is 2.4 GHz" "$(channel_note 6)" 2.4GHz
 uplink_ifname_ok sta0 && is "sta0 is a usable name" ok ok || is "sta0 is a usable name" no ok
 uplink_ifname_ok 'sta0;reboot' && is "a name with a semicolon is refused" no ok || is "a name with a semicolon is refused" ok ok
 uplink_ifname_ok '' && is "an empty name is refused" no ok || is "an empty name is refused" ok ok
+# The scan's lines reach the streamed box log, not only wlan.log (lost in the car 2026-11-16).
+T=$(mktemp -d)
+eval "LOGP='[radio_hal]'; log() { :; }; $(sed -n '/^scan_log() /p' "$F" | sed "s#/tmp/box.log#$T/box.log#")"
+scan_log "hotspot scan: the car's hotspot was NOT seen"
+is "a scan line is written to the box log" "$(cat "$T/box.log")" "[radio_hal] hotspot scan: the car's hotspot was NOT seen"
+rm -rf "$T"
+n=$(sed -n '/^hotspot_scan() {/,/^}/p' "$F" | grep -c ' log "hotspot scan')
+is "every scan line in hotspot_scan goes through scan_log" "$n" 0
 [ "$fails" -eq 0 ] && echo "radio_scan: all passed" || { echo "radio_scan: $fails failed"; exit 1; }

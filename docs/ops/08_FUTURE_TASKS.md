@@ -812,6 +812,13 @@ setting is on.
 applied from Settings first. The hotspot timing line read `+600892s after the head unit started`:
 the head unit sleeps rather than restarts, so it now counts from the app's start.
 
+**Second drive (2026-11-16, 12:29 UTC).** The adapter had the scan (bench-installed files; its
+`fw` label still read 8557ec09254a, which only an app update changes) and booted with the setting on,
+but no scan line reached the uploads: `radio_hal.sh` wrote it to `/tmp/wlan.log`, which every later
+Wi-Fi start overwrites and the app pulls only when it stops, and a radio restart after the session
+ended rewrote it first. The car's hotspot was up 3 s after the app started. Fix: the scan lines also
+go to `/tmp/box.log` (`scan_log`), which is streamed live; tested in `radio_scan_test.sh`.
+
 **Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
 route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join
 around starting the access point at once on the channel remembered from the last drive, with a
