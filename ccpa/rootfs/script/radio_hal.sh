@@ -176,20 +176,36 @@ caps() {
 # the caller's `&& break` fired first), i.e. exclusively in the BT-only bridge role. Keep these
 # names distinctive.
 # =============================================================================================
-# CAR HOTSPOT SCAN (T15 route B diagnostic, 2026-11-16). Before joining the car's hotspot is worth
-# building, three facts about it are needed that no log has: is it visible from the adapter, on
-# which band and channel, and with which security (WPA2, or WPA3-only, which this client cannot
-# join). With /script/sta_uplink.conf `enabled=1` and a wpa_supplicant installed, the first
-# wifi_ap_on of each boot scans once, logs what it found (numbers and flags only: no network name,
-# no address), and stops the client completely BEFORE the access point is started exactly as it
-# always is. It never joins, never moves the access point, never changes its channel.
+# THE CAR'S HOTSPOT (T15 route B). Off unless /script/sta_uplink.conf says enabled=1. The file is
+# pushed by the app (key=value, mode 600): enabled, sta_iface, ssid, and psk when the adapter is to
+# join; without psk it is the scan-only diagnostic of 2026-11-16.
 #
-# Why not join: the 2026-11-15 build joined, and a failed join left wpa_supplicant scanning on the
-# one radio after the access point came up; the phone never got onto the access point and CarPlay
-# did not connect (car log 23:32 UTC). Whatever runs here must be gone before hostapd starts.
-# The file is pushed by the app (key=value, mode 600): enabled, sta_iface, ssid.
+# The scan: once per boot, BEFORE the access point starts, wpa_supplicant scans both bands, the
+# result is logged (numbers and flags only: no network name, no address), and the client is stopped
+# completely before hostapd starts. In the car it found the hotspot WPA2 on 5765 MHz, channel 153,
+# and on 2437 MHz (2026-11-16, Play 258). A usable 5 GHz channel (not DFS) is remembered on flash.
+#
+# The join (2026-11-16), only with a passphrase AND a remembered channel:
+#  - the access point starts AT ONCE, on the remembered channel and on the driver's other wireless
+#    interface (IW416 drv_mode=3: wlan0 access point, sta0 client, bench 2026-11-15), so the phone's
+#    handoff never waits on the car;
+#  - then, in the background, the client tries that one frequency (freq_list) for UPLINK_JOIN_S;
+#  - not joined, or the link lost later, or an address clash: the client is stopped completely and
+#    not tried again until the next Wi-Fi start. One radio serves both networks, and a client left
+#    searching took it away from the access point in the car on 2026-11-15 (23:32 UTC): the phone
+#    never joined;
+#  - the hotspot seen on another usable channel is remembered for the next Wi-Fi start; the access
+#    point is never moved under a session.
+# The lines go to /tmp/box.log, which ocbmd streams live: /tmp/wlan.log is overwritten at every
+# Wi-Fi start and only pulled when the app stops (car, 2026-11-16).
 # =============================================================================================
 UPLINK_CONF=/script/sta_uplink.conf
+UPLINK_MEMORY=/script/sta_uplink.channel
+UPLINK_AP_IF_FILE=/tmp/.radio_ap_iface
+UPLINK_AP_CH_FILE=/tmp/.radio_uplink_ap_channel
+UPLINK_JOINED_AT=/tmp/.radio_uplink_joined_at
+UPLINK_DIR=/tmp/wpa_uplink
+UPLINK_JOIN_S=10
 UPLINK_WPA=$(command -v wpa_supplicant 2>/dev/null || true)
 UPLINK_CLI=$(command -v wpa_cli 2>/dev/null || true)
 UPLINK_SCANNED=/tmp/.radio_hotspot_scanned
@@ -201,6 +217,13 @@ uplink_key() {  # $1 = key; the value from the conf file, without surrounding sp
 # Pure: an interface name this script will hand to ifconfig.
 uplink_ifname_ok() { case "$1" in ''|*[!a-z0-9]*) return 1 ;; *) return 0 ;; esac; }
 
+# Pure: a WPA passphrase that can be written inside quotes: 8-63 printable, no quote or backslash.
+uplink_psk_ok() {
+  case "$1" in *'"'*|*'\'*) return 1 ;; esac
+  [ "${#1}" -ge 8 ] && [ "${#1}" -le 63 ] || return 1
+  [ "$(printf '%s' "$1" | tr -d '\040-\176' | wc -c)" -eq 0 ]
+}
+
 # Pure: a frequency in MHz as a channel number; empty for anything else.
 freq_to_channel() {
   case "$1" in
@@ -211,6 +234,11 @@ freq_to_channel() {
   esac
 }
 
+# Pure: a 5 GHz channel as its frequency in MHz; empty for anything else.
+channel_to_freq() {
+  case "$1" in ''|*[!0-9]*) echo "" ;; *) [ "$1" -ge 32 ] && [ "$1" -le 177 ] && echo $(( 5000 + $1 * 5 )) || echo "" ;; esac
+}
+
 # Pure: what an access point may not simply start on: radar-checked (DFS) 5 GHz channels.
 channel_note() {
   case "$1" in
@@ -219,6 +247,37 @@ channel_note() {
     *) echo "5GHz" ;;
   esac
 }
+
+# Pure: a channel the access point may move to for the car: 5 GHz, not DFS.
+uplink_channel_ok() {
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(channel_note "$1")" = 5GHz ] && [ -n "$(channel_to_freq "$1")" ]
+}
+
+# Pure: the usable channel to remember from `wpa_cli scan_results` rows (tab-separated: bssid, freq,
+# signal, flags, ssid) for the network named $1: the strongest on a usable 5 GHz channel.
+uplink_pick_channel() {
+  awk -F'\t' -v n="$1" '$5==n && $2>=5000 && $2<5900 {print $3" "$2}' | sort -rn | while read -r _upc_s _upc_f; do
+    _upc_c=$(freq_to_channel "$_upc_f")
+    uplink_channel_ok "$_upc_c" && { echo "$_upc_c"; break; }
+  done
+}
+
+uplink_remembered() { _upr=$(head -1 "$UPLINK_MEMORY" 2>/dev/null | tr -d '\r '); uplink_channel_ok "$_upr" && echo "$_upr"; }
+
+uplink_remember() {  # $1 = channel; written to flash only when it changes
+  uplink_channel_ok "$1" || return 0
+  [ "$(uplink_remembered)" = "$1" ] && return 0
+  echo "$1" > "$UPLINK_MEMORY" 2>/dev/null && sync
+}
+
+is_wireless() { [ -e "/sys/class/net/$1/wireless" ] || [ -e "/sys/class/net/$1/phy80211" ]; }
+
+# The scan's lines also go to /tmp/box.log, which ocbmd streams to the app live. Its only other copy
+# is /tmp/wlan.log, which every later Wi-Fi start overwrites and the app pulls only when it stops:
+# in the car the scan ran, then a radio restart rewrote the file before the app ever read it
+# (2026-11-16). Numbers and flags only, as everywhere in these lines.
+scan_log() { log "$*"; echo "$LOGP $*" >> /tmp/box.log 2>/dev/null; }
 
 # Stop the client this scan started, and wait until it is gone: hostapd must not share the radio
 # with it (see above). Returns 1 only if it could not be stopped.
@@ -233,20 +292,16 @@ hotspot_scan_stop() {
   ! { [ -n "$_hs_pid" ] && kill -0 "$_hs_pid" 2>/dev/null; }
 }
 
-# The scan's lines also go to /tmp/box.log, which ocbmd streams to the app live. Its only other copy
-# is /tmp/wlan.log, which every later Wi-Fi start overwrites and the app pulls only when it stops:
-# in the car the scan ran, then a radio restart rewrote the file before the app ever read it
-# (2026-11-16). Numbers and flags only, as everywhere in these lines.
-scan_log() { log "$*"; echo "$LOGP $*" >> /tmp/box.log 2>/dev/null; }
-
-# Once per boot, before the access point starts: look for the car's hotspot and log what it is.
+# Before the access point starts: look for the car's hotspot, log what it is, remember its channel.
+# Once per boot at most; with a passphrase, only while no channel is remembered (the join needs one).
 hotspot_scan() {
-  [ -e "$UPLINK_SCANNED" ] && return 0
   [ -s "$UPLINK_CONF" ] && [ "$(uplink_key enabled)" = 1 ] || return 0
+  [ -e "$UPLINK_SCANNED" ] && return 0
+  [ -n "$(uplink_key psk)" ] && [ -n "$(uplink_remembered)" ] && return 0
   [ -n "$UPLINK_WPA" ] && [ -n "$UPLINK_CLI" ] || { scan_log "hotspot scan: no wpa_supplicant on this adapter"; return 0; }
   touch "$UPLINK_SCANNED"
   _hs_if=$(uplink_key sta_iface)
-  uplink_ifname_ok "$_hs_if" && { [ -e "/sys/class/net/$_hs_if/wireless" ] || [ -e "/sys/class/net/$_hs_if/phy80211" ]; } \
+  uplink_ifname_ok "$_hs_if" && is_wireless "$_hs_if" \
     || { scan_log "hotspot scan: interface '${_hs_if}' is not a wireless interface here; skipped"; return 0; }
   _hs_ssid=$(uplink_key ssid)
   [ -n "$_hs_ssid" ] || { scan_log "hotspot scan: no hotspot name configured; skipped"; return 0; }
@@ -279,10 +334,125 @@ hotspot_scan() {
       _hs_c=$(freq_to_channel "$_hs_f")
       scan_log "hotspot scan: the car's hotspot seen: ${_hs_f} MHz channel ${_hs_c:-?} ($(channel_note "$_hs_c")) signal ${_hs_s} dBm security ${_hs_fl}"
     done
+    _hs_pick=$(printf '%s\n' "$_hs_res" | uplink_pick_channel "$_hs_ssid")
+    if [ -n "$_hs_pick" ]; then uplink_remember "$_hs_pick"; scan_log "hotspot scan: channel $_hs_pick remembered"
+    else scan_log "hotspot scan: not on a 5 GHz channel the access point can use; nothing remembered"; fi
   fi
 }
 
+# Whether this Wi-Fi start joins the car: sets UPLINK_STA_IF, UPLINK_AP_IF and UPLINK_CH. Every
+# condition missing means the access point starts exactly as it does without this feature.
+uplink_plan() {
+  [ -s "$UPLINK_CONF" ] && [ "$(uplink_key enabled)" = 1 ] || return 1
+  [ -n "$(uplink_key psk)" ] || return 1
+  [ -n "$UPLINK_WPA" ] && [ -n "$UPLINK_CLI" ] || return 1
+  uplink_psk_ok "$(uplink_key psk)" || { scan_log "uplink: the passphrase cannot be used; not joining"; return 1; }
+  [ -n "$(uplink_key ssid)" ] || return 1
+  UPLINK_STA_IF=$(uplink_key sta_iface)
+  uplink_ifname_ok "$UPLINK_STA_IF" && is_wireless "$UPLINK_STA_IF" || return 1
+  UPLINK_AP_IF=""
+  for _upl_d in /sys/class/net/*/; do
+    _upl_n=$(basename "$_upl_d")
+    [ "$_upl_n" != "$UPLINK_STA_IF" ] && is_wireless "$_upl_n" && { UPLINK_AP_IF=$_upl_n; break; }
+  done
+  [ -n "$UPLINK_AP_IF" ] || { scan_log "uplink: no second wireless interface for the access point; not joining"; return 1; }
+  UPLINK_CH=$(uplink_remembered)
+  [ -n "$UPLINK_CH" ] || { scan_log "uplink: no channel remembered for the car's hotspot yet; not joining"; return 1; }
+}
+
+uplink_log() { echo "$LOGP uplink: $*" >> /tmp/box.log 2>/dev/null; }
+uplink_cli() { "$UPLINK_CLI" -p "$UPLINK_DIR" -i "$UPLINK_STA_IF" "$@" 2>/dev/null; }
+uplink_joined() { uplink_cli status | grep -q '^wpa_state=COMPLETED'; }
+
+# Stop the client completely: guard, DHCP client, wpa_supplicant, address. $1 = "guard" when the
+# guard itself calls it (it must not kill itself).
+uplink_stop() {
+  [ "$1" = guard ] || { _ups_g=$(cat /tmp/wpa_uplink.guard 2>/dev/null); [ -n "$_ups_g" ] && kill "$_ups_g" 2>/dev/null; }
+  _ups_d=$(cat /tmp/udhcpc_uplink.pid 2>/dev/null); [ -n "$_ups_d" ] && kill "$_ups_d" 2>/dev/null
+  _ups_p=$(cat /tmp/wpa_uplink.pid 2>/dev/null)
+  [ -n "$_ups_p" ] && kill "$_ups_p" 2>/dev/null
+  _ups_n=0
+  while [ "$_ups_n" -lt 20 ] && [ -n "$_ups_p" ] && kill -0 "$_ups_p" 2>/dev/null; do _ups_n=$((_ups_n+1)); sleep 0.1; done
+  [ -n "$_ups_p" ] && kill -0 "$_ups_p" 2>/dev/null && kill -9 "$_ups_p" 2>/dev/null
+  if [ -s "$UPLINK_JOINED_AT" ]; then
+    uplink_log "client stopped after $(( $(cut -d. -f1 /proc/uptime) - $(cat "$UPLINK_JOINED_AT") )) s joined"
+  fi
+  _ups_if=$(cat /tmp/wpa_uplink.if 2>/dev/null)
+  uplink_ifname_ok "$_ups_if" && ifconfig "$_ups_if" 0.0.0.0 down 2>/dev/null
+  rm -rf "$UPLINK_DIR" /tmp/wpa_uplink.conf /tmp/wpa_uplink.pid /tmp/wpa_uplink.guard /tmp/wpa_uplink.if \
+         /tmp/udhcpc_uplink.pid "$UPLINK_JOINED_AT"
+}
+
+# Pure: whether two dotted quads share their first three octets (the access point serves a /24).
+same_24() { [ -n "$1" ] && [ "${1%.*}" = "${2%.*}" ]; }
+
+# The background half of a join. Its output goes nowhere: callers of this script may read its
+# output to the end, and a child left holding that pipe would keep them waiting.
+uplink_run() {
+  _upj_t0=$(cut -d. -f1 /proc/uptime)
+  _upj_f=$(channel_to_freq "$UPLINK_CH")
+  echo "$UPLINK_STA_IF" > /tmp/wpa_uplink.if
+  ( umask 077
+    { echo "ctrl_interface=$UPLINK_DIR"
+      echo "network={"
+      printf '  ssid="%s"\n' "$(uplink_key ssid)"
+      printf '  psk="%s"\n' "$(uplink_key psk)"
+      echo "  scan_freq=$_upj_f"
+      echo "  freq_list=$_upj_f"
+      echo "}"; } > /tmp/wpa_uplink.conf )
+  ifconfig "$UPLINK_STA_IF" 0.0.0.0 up 2>/dev/null
+  "$UPLINK_WPA" -B -D wext -i "$UPLINK_STA_IF" -c /tmp/wpa_uplink.conf -P /tmp/wpa_uplink.pid >/dev/null 2>&1 \
+    || { uplink_log "wpa_supplicant did not start"; uplink_stop guard; return; }
+  _upj_n=0
+  while [ "$_upj_n" -lt $((UPLINK_JOIN_S * 5)) ] && ! uplink_joined; do _upj_n=$((_upj_n+1)); sleep 0.2; done
+  _upj_res=$(uplink_cli scan_results | tail -n +2)
+  if ! uplink_joined; then
+    _upj_seen=$(printf '%s\n' "$_upj_res" | awk -F'\t' -v n="$(uplink_key ssid)" '$5==n {print $2}' | sort -u | tr '\n' ' ')
+    _upj_pick=$(printf '%s\n' "$_upj_res" | uplink_pick_channel "$(uplink_key ssid)")
+    if [ -n "$_upj_pick" ] && [ "$_upj_pick" != "$UPLINK_CH" ]; then
+      uplink_remember "$_upj_pick"
+      uplink_log "not joined: the car's hotspot is on channel $_upj_pick now, not $UPLINK_CH; the adapter follows at its next Wi-Fi start"
+    elif [ -n "$_upj_seen" ]; then
+      uplink_log "not joined within ${UPLINK_JOIN_S} s though the hotspot was seen (${_upj_seen% }MHz): passphrase?"
+    else
+      uplink_log "not joined within ${UPLINK_JOIN_S} s: the car's hotspot was not seen"
+    fi
+    uplink_stop guard; return
+  fi
+  _upj_b=$(uplink_cli status | sed -n 's/^bssid=//p')
+  _upj_sig=$(printf '%s\n' "$_upj_res" | awk -F'\t' -v b="$_upj_b" 'tolower($1)==tolower(b){print $3; exit}')
+  cut -d. -f1 /proc/uptime > "$UPLINK_JOINED_AT"
+  uplink_log "joined on channel $UPLINK_CH in $(( $(cut -d. -f1 /proc/uptime) - _upj_t0 )) s, signal ${_upj_sig:-?} dBm"
+  udhcpc -i "$UPLINK_STA_IF" -b -t 5 -T 2 -p /tmp/udhcpc_uplink.pid >/dev/null 2>&1 \
+    || uplink_log "W the DHCP client did not start"
+  _upj_n=0; _upj_ip=""
+  while [ "$_upj_n" -lt 25 ] && [ -z "$_upj_ip" ]; do _upj_n=$((_upj_n+1)); sleep 0.4; _upj_ip=$(ap_ip_of "$UPLINK_STA_IF"); done
+  if [ -z "$_upj_ip" ]; then uplink_log "no address within 10 s; client stopped"; uplink_stop guard; return; fi
+  # The car's network on the access point's own /24 would leave two routes to one subnet.
+  if same_24 "$_upj_ip" "$(ap_ip_of "$UPLINK_AP_IF")"; then
+    uplink_log "the car's network uses the access point's own subnet; client stopped"; uplink_stop guard; return
+  fi
+  uplink_log "address: yes, in $(( $(cut -d. -f1 /proc/uptime) - _upj_t0 )) s"
+  # Watch the link. Lost: stop, do not search again under a session (see the section header).
+  _upj_miss=0
+  while kill -0 "$(cat /tmp/wpa_uplink.pid 2>/dev/null)" 2>/dev/null; do
+    sleep 3
+    if uplink_joined; then _upj_miss=0; else _upj_miss=$((_upj_miss+1)); fi
+    [ "$_upj_miss" -ge 2 ] && { uplink_log "link lost; client stopped until the next Wi-Fi start"; uplink_stop guard; return; }
+  done
+}
+
+uplink_start() {
+  uplink_stop
+  ( uplink_run ) </dev/null >/dev/null 2>&1 &
+  echo $! > /tmp/wpa_uplink.guard
+}
+
+# The access point's interface: the one this boot's Wi-Fi start chose (the join puts it on the
+# driver's other interface), else the first wireless interface.
 wlan_iface() {
+  _wif_r=$(cat "$UPLINK_AP_IF_FILE" 2>/dev/null)
+  uplink_ifname_ok "$_wif_r" && is_wireless "$_wif_r" && { echo "$_wif_r"; return 0; }
   for _wif_d in /sys/class/net/*/; do
     [ -e "$_wif_d/wireless" ] || [ -e "$_wif_d/phy80211" ] || continue
     basename "$_wif_d"; return 0
@@ -605,13 +775,24 @@ do_wifi_ap_on() {
         return 1; }
       # RADIO_BOX_NAME is resolved HERE, not inside the AP layer, so the SSID and the Bluetooth
       # name provably come from one decision rather than two derivations that can disagree.
-      # With the client link on, join first and put the access point on the channel it found:
-      # one radio, one channel. Not joined: the access point comes up as it always has.
-      # T15 diagnostic: at most once per boot, and finished (client stopped) before hostapd starts.
+      # The car's hotspot (T15, see its section): the scan finishes, client stopped, before hostapd
+      # starts; a join puts the access point on the remembered channel and joins after it is up.
       hotspot_scan
-      ONDEMAND_WIFI=1 RADIO_WLAN_IF="$_i" RADIO_BOX_NAME="$(box_name)" \
+      _ap_ch=""
+      uplink_stop
+      if uplink_plan; then
+        _i=$UPLINK_AP_IF; _ap_ch=$UPLINK_CH
+        echo "$_i" > "$UPLINK_AP_IF_FILE"; echo "$_ap_ch" > "$UPLINK_AP_CH_FILE"
+        # This interface may have served the access point earlier in this boot: drop that address.
+        ifconfig "$UPLINK_STA_IF" 0.0.0.0 down 2>/dev/null
+      else
+        rm -f "$UPLINK_AP_IF_FILE" "$UPLINK_AP_CH_FILE"
+        _i=$(wlan_iface)
+      fi
+      ONDEMAND_WIFI=1 RADIO_WLAN_IF="$_i" RADIO_BOX_NAME="$(box_name)" RADIO_AP_CHANNEL="$_ap_ch" \
         sh /script/radio_ap_up.sh AP 2>&1 | sed "s/^/$LOGP   /"
       _n=0; while [ "$_n" -lt 50 ]; do ap_running && break; _n=$((_n+1)); sleep 0.2; done
+      if ap_running && [ -n "$_ap_ch" ]; then uplink_start; fi
       if ap_running; then
         publish "$WLAN_STATE" "result=ok" "backend=mapped" "chipset=$RADIO_SDIO_DEVICE" \
                 "ap_iface=$_i" "ap_ip=$(ap_ip_of "$_i")" "wlan_mac=$(cat /sys/class/net/$_i/address 2>/dev/null)"
@@ -643,6 +824,7 @@ do_wifi_ap_off() {
     publish "$WLAN_STATE" "result=ok" "backend=owned" "detail=wlan_off rc=$_rc"
     return 0
   fi
+  uplink_stop
   killall hostapd 2>/dev/null
   # Kill ONLY the AP's DHCP server. A killall udhcpd here would take down the NCM one serving
   # the management link - on a box with no UART that is the only way in, and it is exactly what

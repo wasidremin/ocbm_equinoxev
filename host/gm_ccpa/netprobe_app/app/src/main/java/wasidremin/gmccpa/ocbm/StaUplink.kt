@@ -9,16 +9,17 @@ import java.net.NetworkInterface
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Settings ▸ Advanced ▸ Check the car's hotspot (docs/ops/08_FUTURE_TASKS.md T15 route B), off by
- * default. A diagnostic, not the feature: it finds out whether the adapter joining the car's hotspot
- * can work at all before that is built.
+ * Settings ▸ Advanced ▸ Join the car's hotspot (docs/ops/08_FUTURE_TASKS.md T15 route B, step 1),
+ * off by default. Nothing uses the link yet: this finds out whether the adapter can hold it through
+ * a drive without touching CarPlay.
  *
  * On, with an adapter whose `MGMT_INFO` says `"sta_uplink":true`, the app writes
- * `/script/sta_uplink.conf` with the car hotspot's name only (a scan needs no password). At the first
- * Wi-Fi start of each adapter boot the radio layer scans once and logs, numbers and flags only,
- * whether that network is visible, its band, channel and security, then stops the scan before
- * starting its own access point exactly as always (`radio_hal.sh` `hotspot_scan`). The app also logs
- * when the car's own hotspot interface comes up after the app starts ([watchHotspot]).
+ * `/script/sta_uplink.conf` with the car hotspot's name and, when it has a usable one, its
+ * passphrase. The radio layer (`radio_hal.sh`, "THE CAR'S HOTSPOT") scans once to learn the
+ * hotspot's channel, then at each Wi-Fi start puts its own access point on that channel at once
+ * and joins in the background, stopping the client completely if the join fails or the link is
+ * lost. Without a passphrase it is the scan-only diagnostic of 2026-11-16 (Play 256-258). The app
+ * also logs when the car's own hotspot interface comes up after the app starts ([watchHotspot]).
  *
  * Off, the app writes `enabled=0`. Changing the setting or the name reaches a connected adapter at
  * once ([pushNow]), not only at the next connect: a Restart Wi-Fi on 2026-11-15 ran with the old file.
@@ -51,32 +52,36 @@ object StaUplink {
     fun supported(mgmtInfo: String?): Boolean =
         runCatching { JSONObject(mgmtInfo ?: return false).optBoolean("sta_uplink", false) }.getOrDefault(false)
 
-    /** Pure: the file for the adapter. A name that cannot be written safely turns it off. */
-    fun conf(on: Boolean, ssid: String?): String {
+    /**
+     * Pure: the file for the adapter. A name that cannot be written safely turns it off; a
+     * passphrase that cannot (or none) leaves it a scan, which never joins.
+     */
+    fun conf(on: Boolean, ssid: String?, psk: String? = null): String {
         if (!on || ssid.isNullOrEmpty() || !safe(ssid) || ssid.length > 32) return "enabled=0\n"
-        return "enabled=1\nsta_iface=$STA_IFACE\nssid=$ssid\n"
+        val key = psk?.takeIf { it.length in 8..63 && safe(it) }?.let { "psk=$it\n" } ?: ""
+        return "enabled=1\nsta_iface=$STA_IFACE\nssid=$ssid\n$key"
     }
 
     /** Pure: printable, and nothing that would end a line or a quoted string in the adapter's files. */
     internal fun safe(s: String): Boolean = s.all { it.code in 0x20..0x7E && it != '"' && it != '\\' }
 
-    private fun hotspotName(ctx: Context): String? =
-        // Settings ▸ Advanced ▸ Vehicle hotspot (Ui's CRED_PREFS / KEY_SSID).
-        ctx.applicationContext.getSharedPreferences("hotspot_credentials", Context.MODE_PRIVATE).getString("ssid", null)
+    // Settings ▸ Advanced ▸ Vehicle hotspot (Ui's CRED_PREFS, KEY_SSID and KEY_PASS).
+    private fun creds(ctx: Context) = ctx.applicationContext.getSharedPreferences("hotspot_credentials", Context.MODE_PRIVATE)
 
     /**
      * Write the file if what the adapter has differs. Blocking; off the main thread. Logs whether it
-     * was written, never the name.
+     * was written, never the name or the passphrase.
      */
     fun sync(ctx: Context, c: OcbmClient, mgmtInfo: String?) {
         if (enabled(ctx)) watchHotspot()
         if (!supported(mgmtInfo)) return
-        val want = conf(enabled(ctx), hotspotName(ctx))
+        val want = conf(enabled(ctx), creds(ctx).getString("ssid", null), creds(ctx).getString("pass", null))
         val have = c.fileRead(PATH).bytes?.toString(Charsets.UTF_8)
         if (have == want || (have == null && want == "enabled=0\n")) return
         val ok = c.filePush(PATH, want.toByteArray(Charsets.UTF_8), 384)
         val on = want.startsWith("enabled=1")
-        log.i("hotspot-check: adapter set ${if (on) "to scan for the car's hotspot at its next boot" else "off"} written=$ok")
+        val join = want.contains("\npsk=")
+        log.i("hotspot-check: adapter set ${if (!on) "off" else if (join) "to join the car's hotspot at its next Wi-Fi start" else "to scan for the car's hotspot at its next boot (no usable password)"} written=$ok")
         if (enabled(ctx) && !on) log.w("hotspot-check: on, but the hotspot name is missing or unusable; left off")
     }
 

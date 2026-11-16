@@ -320,6 +320,10 @@ stays (serves Capture Current).
 - **2026-11-16, Play 256:** the row is now **Check the car's hotspot**, a diagnostic: the adapter
   scans once per boot for the named network and logs band, channel and security; it no longer joins.
   Only the name is sent (no password), and a change reaches a connected adapter at once.
+- **Join the car's hotspot** (Advanced, 2026-11-16, not yet published): the scan row renamed; same
+  switch (`sta_uplink/enabled`) and the same Vehicle hotspot name and password
+  (`hotspot_credentials/ssid`, `pass`). With a usable password the adapter is now told to join;
+  without one it only scans, as in 256-258.
 - **Drive line smoothing** (Cluster ▸ Cards, 2026-11-16): ½ / 1 / 2 / 3 miles, default 1.
 - **USB network trial** (Advanced): arms one adapter start with a USB network link beside OCBM (T15 route A).
 

@@ -635,6 +635,9 @@ apply_host_wifi_creds() {
   _s=$(cfg_value wifi_ssid)
   _p=$(cfg_value wifi_pass)
   _c=$(cfg_value wifi_channel)
+  # Joining the car's hotspot (T15) pins the access point to the car's channel: one radio. The file
+  # the phone's handoff reads must name the channel the access point is really on.
+  [ -s /tmp/.radio_uplink_ap_channel ] && _c=$(head -1 /tmp/.radio_uplink_ap_channel)
   _ssid_src=host
   if wifi_ap_enabled; then
     # Box-AP role: the beacon is ccpa-<4hex>, decided once by radio_hal's box_name() and written

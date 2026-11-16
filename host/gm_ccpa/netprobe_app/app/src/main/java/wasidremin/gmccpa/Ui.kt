@@ -1410,21 +1410,22 @@ class LauncherUi(private val act: Activity) {
      * runs off the main thread.
      */
     /**
-     * Settings ▸ Advanced ▸ Check the car's hotspot (T15 route B diagnostic), off by default.
-     * Tapping the row enters the hotspot's name: the Vehicle hotspot row is hidden while Adapter
-     * Wi-Fi is on, which it always is on the Equinox.
+     * Settings ▸ Advanced ▸ Join the car's hotspot (T15 route B, step 1), off by default. Tapping
+     * the row enters the hotspot's name and password: the Vehicle hotspot row is hidden while
+     * Adapter Wi-Fi is on, which it always is on the Equinox.
      */
     private fun staUplinkText(): String =
-        "Diagnostic. When the adapter next starts, it looks once for the car's hotspot and logs whether it can see it, " +
-            "its band, channel and security; CarPlay is not changed. Turn on the car's hotspot first. Tap here to enter " +
-            "the hotspot's name exactly as the car shows it. " +
-            (if (ssid.isBlank()) "Hotspot: not set." else "Hotspot: $ssid.")
+        "Experimental. The adapter joins the car's hotspot after its own Wi-Fi is up, on the channel it last saw the " +
+            "hotspot on; if it cannot, it stops trying until its next start. Nothing uses the link yet: the log says " +
+            "whether it held. Without a password it only looks for the hotspot. Turn on the car's hotspot first. Tap " +
+            "here to enter its name and password exactly as the car shows them. " +
+            (if (ssid.isBlank()) "Hotspot: not set." else "Hotspot: $ssid, password ${if (pass.length in 8..63) "set" else "not set"}.")
 
     private lateinit var joinHotspotRow: EqRow
 
     private fun staUplinkRow(): EqRow {
         joinHotspotRow = EqRow(
-            act, "Check the car's hotspot", staUplinkText(),
+            act, "Join the car's hotspot", staUplinkText(),
             trailing = EqToggle(act, wasidremin.gmccpa.ocbm.StaUplink.enabled(act)) { on -> wasidremin.gmccpa.ocbm.StaUplink.setEnabled(act, on) },
             onClick = { showCredentialsDialog() },
         )

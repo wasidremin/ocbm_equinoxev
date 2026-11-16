@@ -830,6 +830,30 @@ setting is on). Channel 153 is the upper half of the 149/153 pair the adapter's 
 already uses (channel 149, HT40+), so moving that access point to 153 (HT40−) keeps the same
 40 MHz block.
 
+**Step 1 of the join, built 2026-11-16 (owner's go-ahead after the third drive).** Settings ▸
+Advanced ▸ *Join the car's hotspot* (the same switch and stored key as the scan) now sends the
+hotspot's passphrase as well when it has a usable one (8–63 printable, no quote or backslash;
+`StaUplink.conf`). `radio_hal.sh` ("THE CAR'S HOTSPOT"):
+- the scan remembers the strongest usable 5 GHz channel (not DFS) in `/script/sta_uplink.channel`;
+  with a passphrase it runs only while nothing is remembered, at most once per boot;
+- with a passphrase and a remembered channel, the access point starts at once on that channel and
+  on the driver's other wireless interface (`wlan0`; the client is `sta0`), and only then does a
+  background join try that one frequency (`freq_list`) for 10 s;
+- not joined, no address within 10 s, the car's network on the access point's own /24, or the link
+  lost later (two missed 3 s checks): the client is stopped completely and not tried again until
+  the next Wi-Fi start. Wi-Fi off stops it too. The hotspot seen on another usable channel is
+  remembered for the next start; the access point is never moved under a session;
+- the supervisor writes the pinned channel into `hostapd.conf` instead of the app's
+  (`/tmp/.radio_uplink_ap_channel`), so the phone's handoff names the channel the access point is on;
+- every line goes to the streamed box log: `uplink: joined on channel N in N s, signal N dBm`,
+  `address: yes`, `client stopped after N s joined`, `link lost`, `not joined …`.
+Verified: `radio_scan_test.sh` (pure helpers, and that every way out of a join stops the client),
+`StaUplinkTest`, all suites. **Not yet run on the adapter**: it was in the car. To bench before
+publishing, with the home network standing in: the join on the remembered channel with a CarPlay
+session over the access point; a wrong passphrase (client gone, CarPlay connects); the hotspot
+switched off mid-session (client gone, CarPlay holds); the setting off (unchanged); and whether this
+firmware has a DHCP client script for `udhcpc`.
+
 **Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
 route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join
 around starting the access point at once on the channel remembered from the last drive, with a

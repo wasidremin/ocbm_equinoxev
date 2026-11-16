@@ -5,14 +5,23 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** T15 route B diagnostic: what the app tells the adapter ([StaUplink]). */
+/** T15 route B: what the app tells the adapter ([StaUplink]). */
 class StaUplinkTest {
     @Test fun onWithANameTheAdapterIsToldToScanForIt() {
         assertEquals("enabled=1\nsta_iface=sta0\nssid=Equinox 1234\n", StaUplink.conf(true, "Equinox 1234"))
     }
 
-    @Test fun noPasswordIsEverSentForAScan() {
-        assertFalse(StaUplink.conf(true, "Car").contains("psk"))
+    @Test fun withAPasswordTheAdapterIsToldToJoin() {
+        assertEquals("enabled=1\nsta_iface=sta0\nssid=Car\npsk=my car pass\n", StaUplink.conf(true, "Car", "my car pass"))
+    }
+
+    @Test fun aPasswordThatCannotBeWrittenSafelyLeavesAScanNotAJoin() {
+        for (p in listOf(null, "", "short", "x".repeat(64), "has\"quote", "back\\slash", "new\nline"))
+            assertEquals("$p", "enabled=1\nsta_iface=sta0\nssid=Car\n", StaUplink.conf(true, "Car", p))
+    }
+
+    @Test fun offSendsNoPassword() {
+        assertEquals("enabled=0\n", StaUplink.conf(false, "Car", "my car pass"))
     }
 
     @Test fun offOrUnusableIsOff() {
