@@ -316,6 +316,9 @@ stays (serves Capture Current).
   hotspot beside its own network. Tapping the row opens the hotspot name and password entry, since
   the Vehicle hotspot row is hidden while Adapter Wi-Fi is on, which it always is on the Equinox
   (owner, 2026-11-15, on 254). Stored in `hotspot_credentials` as before; the switch is `sta_uplink/enabled`.
+- **2026-11-16, Play 256:** the row is now **Check the car's hotspot**, a diagnostic: the adapter
+  scans once per boot for the named network and logs band, channel and security; it no longer joins.
+  Only the name is sent (no password), and a change reaches a connected adapter at once.
 - **USB network trial** (Advanced): arms one adapter start with a USB network link beside OCBM (T15 route A).
 
 ## Version high-water
@@ -324,7 +327,7 @@ stays (serves Capture Current).
   `versionName = AAB_VERSION_NAME env ?: "4.0+…"`.
 - **Doc 14 owns the running record** (its "versionCode is not
   `git rev-list --count`" bullet); read it there instead of trusting a number in
-  this file, which went stale three times. Last copied here: **255
-  `4.0+hotspot-entry`** (2026-11-15, PUBLISH_OK).
+  this file, which went stale three times. Last copied here: **256
+  `4.0+hotspot-scan`** (2026-11-16, PUBLISH_OK).
 - Track: `automotive:internal`, status COMPLETED. Publishing only happens via
   `tools/build_aab.sh --publish` (`AAB_VERSION_CODE` env); nothing auto-publishes.
