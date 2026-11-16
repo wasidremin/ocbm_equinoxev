@@ -819,6 +819,17 @@ Wi-Fi start overwrites and the app pulls only when it stops, and a radio restart
 ended rewrote it first. The car's hotspot was up 3 s after the app started. Fix: the scan lines also
 go to `/tmp/box.log` (`scan_log`), which is streamed live; tested in `radio_scan_test.sh`.
 
+**Third drive (2026-11-16, 12:44 UTC, Play 258, adapter firmware 1e4f2f76c137, update confirmed).**
+The scan's answer, through the streamed box log: `3 networks seen (2 on 2.4 GHz, 1 on 5 GHz) in 5 s`;
+the car's hotspot on **5765 MHz, channel 153 (5 GHz, not DFS), −25 dBm, `[WPA2-PSK-CCMP][ESS]`**, and
+the same name on 2437 MHz, channel 6, −22 dBm, also WPA2 (one dual-band hotspot). The app saw the
+car's hotspot interface up 2 s after it started. CarPlay connected as usual. Against the rule
+below: WPA2, a usable 5 GHz channel, up early, so route B is **not** stopped. Not yet known: whether
+the car keeps channel 153 from drive to drive (the scan logs it at every adapter boot while the
+setting is on). Channel 153 is the upper half of the 149/153 pair the adapter's own access point
+already uses (channel 149, HT40+), so moving that access point to 153 (HT40−) keeps the same
+40 MHz block.
+
 **Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
 route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join
 around starting the access point at once on the channel remembered from the last drive, with a
