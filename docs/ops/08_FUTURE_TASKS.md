@@ -798,9 +798,14 @@ logs `hotspot scan: … seen: <MHz> channel N (5GHz|DFS|2.4GHz) signal … secur
 seen`, then stops the client and waits for it to exit before hostapd starts as always. The app logs
 `hotspot-check: the car's hotspot is up (…) at +Ns after the head unit started`, and the setting and
 name now reach a connected adapter at once. Pure helpers tested (`tools/tests/radio_scan_test.sh`,
-`StaUplinkTest`). **Still to verify on the bench before publishing:** off unchanged; on with the home
-network as the name (seen, channel 48, WPA2) and CarPlay still connecting; on with a name not
-present (NOT seen) and CarPlay still connecting.
+`StaUplinkTest`). **Bench, 2026-11-16:** off, unchanged (`sta0`, channel 149, no client); on with
+the home network's name, four access points logged (5240 MHz ch 48 −69 dBm and three on 2.4 GHz,
+all `[WPA2-PSK-CCMP]`), client gone, access point as usual; a second Wi-Fi start in the same boot
+does not scan; on with a name not present, `20 networks seen … NOT seen`, client gone. The failure
+case end to end: a fresh adapter boot with a name not present, the app (emulator) with the setting
+on, and a paired iPhone: the scan logged NOT seen, the access point came up as always, and CarPlay
+went live (first video +26 s). The scan takes about 5 s, once per adapter boot, only while the
+setting is on.
 
 **Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
 route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join
