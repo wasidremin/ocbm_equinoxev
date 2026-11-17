@@ -320,7 +320,7 @@ stays (serves Capture Current).
 - **2026-11-16, Play 256:** the row is now **Check the car's hotspot**, a diagnostic: the adapter
   scans once per boot for the named network and logs band, channel and security; it no longer joins.
   Only the name is sent (no password), and a change reaches a connected adapter at once.
-- **Join the car's hotspot** (Advanced, 2026-11-16, not yet published): the scan row renamed; same
+- **Join the car's hotspot** (Advanced, 2026-11-16, Play 259): the scan row renamed; same
   switch (`sta_uplink/enabled`) and the same Vehicle hotspot name and password
   (`hotspot_credentials/ssid`, `pass`). With a usable password the adapter is now told to join;
   without one it only scans, as in 256-258.
@@ -333,7 +333,7 @@ stays (serves Capture Current).
   `versionName = AAB_VERSION_NAME env ?: "4.0+…"`.
 - **Doc 14 owns the running record** (its "versionCode is not
   `git rev-list --count`" bullet); read it there instead of trusting a number in
-  this file, which went stale three times. Last copied here: **258
-  `4.0+scan-log`** (2026-11-16, PUBLISH_OK).
+  this file, which went stale three times. Last copied here: **259
+  `4.0+hotspot-join`** (2026-11-16, PUBLISH_OK).
 - Track: `automotive:internal`, status COMPLETED. Publishing only happens via
   `tools/build_aab.sh --publish` (`AAB_VERSION_CODE` env); nothing auto-publishes.
