@@ -884,6 +884,21 @@ path is covered by the structural test only), throughput, and anything in the ca
 about 16 s when it fails. The car's hotspot was up 2 s after the app started, and the adapter's Wi-Fi
 start comes later than that, so the join should usually find it.
 
+*In the car with Play 259 (2026-11-17, 22:04–22:44 UTC).* The update installed and was confirmed.
+**No join succeeded**: every attempt logged the hotspot seen on 5765 MHz (channel 153) but not joined
+within 10 s, before and after the owner re-entered the password from the car's own hotspot
+settings; one start saw no hotspot at all, and the app saw the car's hotspot come up 97 s after it
+started that time (2–3 s on 11-16). Nothing was remembered, so the access point stayed on channel
+149 on `wlan0` and the handoff named 149. CarPlay connected on every start but one (22:36: no
+connect within 15 s, the app restarted it, then live), and each start waited 13–17 s for the
+failed join. The owner turned the setting off at 22:44.
+The log could not tell a wrong password from the car refusing the adapter, so the join now also
+logs the furthest `wpa_state` it reached and the order of states (names only):
+`uplink: furthest step 4WAY_HANDSHAKE (the password exchange failed); states SCANNING>…`, or
+`ASSOCIATING (the hotspot did not accept the connection)` (`uplink_state_rank`, `uplink_state_note`,
+tested; the loop run against a fake client for a wrong password, a refusal and a success; not run on
+the adapter, which was in the car). Next: one drive with the setting on.
+
 *If that is too slow (the fallback, not built).* Build `wpa_supplicant` with the **nl80211** driver
 (it needs libnl, statically linked, a few hundred KB more on the adapter) and check that the IW416's
 `moal` driver offers cfg80211 for its client interface. nl80211 scans a given frequency only, in a

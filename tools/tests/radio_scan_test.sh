@@ -5,7 +5,7 @@ set -u
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
 F="$HERE/ccpa/rootfs/script/radio_hal.sh"
 eval "$(sed -n '/^freq_to_channel() {/,/^}/p; /^channel_note() {/,/^}/p; /^uplink_ifname_ok()/p;
-  /^channel_to_freq() {/,/^}/p; /^uplink_channel_ok() {/,/^}/p; /^uplink_freq_list() {/,/^}/p; /^uplink_pick_channel() {/,/^}/p; /^uplink_why_not() {/,/^}/p;
+  /^channel_to_freq() {/,/^}/p; /^uplink_channel_ok() {/,/^}/p; /^uplink_freq_list() {/,/^}/p; /^uplink_pick_channel() {/,/^}/p; /^uplink_why_not() {/,/^}/p; /^uplink_state_rank() {/,/^}/p; /^uplink_state_note() {/,/^}/p;
   /^uplink_psk_ok() {/,/^}/p; /^same_24()/p' "$F")"
 fails=0
 is() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got '$2' want '$3'"; fails=$((fails+1)); fi; }
@@ -65,6 +65,16 @@ is "not on the remembered channel but on a usable one is a move" "$(printf '%s\n
 is "with nothing remembered, seen on a looked-at channel is a password question" "$(printf '%s\n' "$rows" | uplink_why_not Car "5180 5765" '')" "password 5765"
 is "seen only on 2.4 GHz is elsewhere" "$(printf '%s\n' "c${TAB}2437${TAB}-40${TAB}[WPA2]${TAB}Car" | uplink_why_not Car 5765 153)" "elsewhere 2437"
 is "not seen at all" "$(printf '%s\n' "$rows" | uplink_why_not Nope 5765 153)" unseen
+# How far a failed join got (the car refused every join of Play 259, 2026-11-17).
+is "stuck scanning never tried" "$(uplink_state_note SCANNING)" "never tried to connect"
+is "no state at all never tried" "$(uplink_state_note '')" "never tried to connect"
+is "associating is the hotspot not accepting" "$(uplink_state_note ASSOCIATING)" "the hotspot did not accept the connection"
+is "authenticating too" "$(uplink_state_note AUTHENTICATING)" "the hotspot did not accept the connection"
+is "the 4-way handshake is the password" "$(uplink_state_note 4WAY_HANDSHAKE)" "the password exchange failed"
+is "associated but no further is the password too" "$(uplink_state_note ASSOCIATED)" "the password exchange failed"
+is "group handshake is after the password" "$(uplink_state_note GROUP_HANDSHAKE)" "failed after the password exchange"
+is "the handshake ranks above associating" "$( [ "$(uplink_state_rank 4WAY_HANDSHAKE)" -gt "$(uplink_state_rank ASSOCIATING)" ] && echo yes)" yes
+is "disconnected ranks below scanning" "$( [ "$(uplink_state_rank DISCONNECTED)" -lt "$(uplink_state_rank SCANNING)" ] && echo yes)" yes
 is "a passphrase of 8 is usable" "$(ok uplink_psk_ok 12345678)" yes
 is "7 is too short" "$(ok uplink_psk_ok 1234567)" no
 is "64 is too long" "$(ok uplink_psk_ok "$(printf '%064d' 0)")" no

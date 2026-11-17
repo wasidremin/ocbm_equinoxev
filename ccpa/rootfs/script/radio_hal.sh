@@ -299,6 +299,28 @@ uplink_why_not() {
   else echo unseen; fi
 }
 
+# Pure: how far a wpa_supplicant state is along a join (wpa_cli status, wpa_state=).
+uplink_state_rank() {
+  case "$1" in
+    AUTHENTICATING) echo 2 ;; ASSOCIATING) echo 3 ;; ASSOCIATED) echo 4 ;;
+    4WAY_HANDSHAKE) echo 5 ;; GROUP_HANDSHAKE) echo 6 ;; COMPLETED) echo 7 ;;
+    SCANNING) echo 1 ;; *) echo 0 ;;
+  esac
+}
+
+# Pure: what the furthest state a failed join reached says about why. The car's hotspot refused
+# every join of Play 259 (2026-11-17) and the old log could not tell a wrong password from a
+# refusal: this is the line that tells them apart.
+uplink_state_note() {
+  case "$(uplink_state_rank "$1")" in
+    0|1) echo "never tried to connect" ;;
+    2|3) echo "the hotspot did not accept the connection" ;;
+    4|5) echo "the password exchange failed" ;;
+    6) echo "failed after the password exchange" ;;
+    *) echo "joined" ;;
+  esac
+}
+
 uplink_remembered() { _upr=$(head -1 "$UPLINK_MEMORY" 2>/dev/null | tr -d '\r '); uplink_channel_ok "$_upr" && echo "$_upr"; }
 
 uplink_remember() {  # $1 = channel; written to flash only when it changes
@@ -434,8 +456,18 @@ uplink_join() {
   ifconfig "$UPLINK_STA_IF" 0.0.0.0 up 2>/dev/null
   "$UPLINK_WPA" -B -D wext -i "$UPLINK_STA_IF" -c /tmp/wpa_uplink.conf -P /tmp/wpa_uplink.pid >/dev/null 2>&1 \
     || { scan_log "uplink: wpa_supplicant did not start"; uplink_stop guard; return 1; }
-  _upj_n=0
-  while [ "$_upj_n" -lt $((UPLINK_JOIN_S * 5)) ] && ! uplink_joined; do _upj_n=$((_upj_n+1)); sleep 0.2; done
+  # Follow the client's state: the furthest it got, and the order of states (names only).
+  _upj_n=0; _upj_far=""; _upj_path=""; _upj_last=""; _upj_hops=0
+  while [ "$_upj_n" -lt $((UPLINK_JOIN_S * 5)) ]; do
+    _upj_st=$(uplink_cli status | sed -n 's/^wpa_state=//p')
+    [ "$_upj_st" = COMPLETED ] && break
+    if [ -n "$_upj_st" ] && [ "$_upj_st" != "$_upj_last" ]; then
+      [ "$_upj_hops" -lt 16 ] && _upj_path="${_upj_path:+$_upj_path>}$_upj_st"
+      _upj_last=$_upj_st; _upj_hops=$((_upj_hops+1))
+      [ "$(uplink_state_rank "$_upj_st")" -gt "$(uplink_state_rank "$_upj_far")" ] && _upj_far=$_upj_st
+    fi
+    _upj_n=$((_upj_n+1)); sleep 0.2
+  done
   _upj_res=$(uplink_cli scan_results | tail -n +2)
   _upj_b=$(uplink_cli status | sed -n 's/^bssid=//p')
   _upj_f=$(printf '%s\n' "$_upj_res" | awk -F'\t' -v b="$_upj_b" 'tolower($1)==tolower(b){print $2; exit}')
@@ -449,6 +481,7 @@ uplink_join() {
       elsewhere*) scan_log "uplink: not joined: the car's hotspot was seen only on ${_upj_why#* } MHz (joins only on 5 GHz, not DFS); client stopped" ;;
       *)         scan_log "uplink: not joined within ${UPLINK_JOIN_S} s: the car's hotspot was not seen; client stopped" ;;
     esac
+    scan_log "uplink: furthest step ${_upj_far:-none} ($(uplink_state_note "$_upj_far")); states ${_upj_path:-none} (${_upj_hops} changes)"
     uplink_stop guard; return 1
   fi
   _upj_sig=$(printf '%s\n' "$_upj_res" | awk -F'\t' -v b="$_upj_b" 'tolower($1)==tolower(b){print $3; exit}')
