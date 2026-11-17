@@ -787,6 +787,7 @@ wireless_up() {
       echo "[sup] wifi_ap:false -> box SoftAP SUPPRESSED (BT-only bridge role; the head-unit app owns Wi-Fi)" >/tmp/wlan.log
     else
       sh /script/radio_hal.sh wifi_ap_on >/tmp/wlan.log 2>&1 &
+      _wifi_pid=$!
     fi
     # bt.log stays the small truncated per-attempt status file that docs/wireless/01_BT_AND_RADIO.md
     # tells an operator to cat directly. Capture the real exit status before copying
@@ -798,6 +799,16 @@ wireless_up() {
       0|2) ;;
       *) echo "[sup] BT bring-up failed rc=$_bt_rc — not launching advertiser" >>/tmp/box.log; exit 1 ;;
     esac
+    # Joining the car hotspot (T15, radio_hal.sh) holds the access point back until the join is
+    # done, up to about 12 s. The phone is handed over as soon as btd has it, and an iPhone handed a
+    # network not yet on the air did not wait for it (bench 2026-11-16: one session in four needed a
+    # restart). So with a join configured, btd waits for the access point. radio_hal bounds this.
+    if [ -n "${_wifi_pid:-}" ] && grep -q "^enabled=1" /script/sta_uplink.conf 2>/dev/null \
+       && grep -q "^psk=." /script/sta_uplink.conf 2>/dev/null; then
+      _w0=$(cut -d. -f1 /proc/uptime)
+      wait "$_wifi_pid"
+      echo "[sup] waited $(( $(cut -d. -f1 /proc/uptime) - _w0 )) s for the access point (car hotspot join configured)" >>/tmp/box.log
+    fi
     # BENCH LEVER (2026-09-03): opt-in btmon capture for this wireless session. Armed by either the
     # file flag or the env var -- the outer `env BT_PAIRING_MODE=... setsid sh -c` wrapper
     # above only lists the vars it OVERRIDES, so CARPLAY_BTMON, if exported by the caller, still

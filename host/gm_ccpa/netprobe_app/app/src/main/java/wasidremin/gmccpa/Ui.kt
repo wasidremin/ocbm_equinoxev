@@ -1415,10 +1415,11 @@ class LauncherUi(private val act: Activity) {
      * Adapter Wi-Fi is on, which it always is on the Equinox.
      */
     private fun staUplinkText(): String =
-        "Experimental. The adapter joins the car's hotspot after its own Wi-Fi is up, on the channel it last saw the " +
-            "hotspot on; if it cannot, it stops trying until its next start. Nothing uses the link yet: the log says " +
-            "whether it held. Without a password it only looks for the hotspot. Turn on the car's hotspot first. Tap " +
-            "here to enter its name and password exactly as the car shows them. " +
+        "Experimental. Each time the adapter starts its Wi-Fi it first joins the car's hotspot, for up to 10 s, then " +
+            "starts its own on the same channel; if it cannot join, it stops trying until its next start. CarPlay can " +
+            "take up to about 10 s longer to connect. Nothing uses the link yet: the log says whether it held. Without " +
+            "a password it only looks for the hotspot. Turn on the car's hotspot first. Tap here to enter its name and " +
+            "password exactly as the car shows them. " +
             (if (ssid.isBlank()) "Hotspot: not set." else "Hotspot: $ssid, password ${if (pass.length in 8..63) "set" else "not set"}.")
 
     private lateinit var joinHotspotRow: EqRow

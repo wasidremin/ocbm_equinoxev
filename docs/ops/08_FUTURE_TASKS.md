@@ -830,29 +830,66 @@ setting is on). Channel 153 is the upper half of the 149/153 pair the adapter's 
 already uses (channel 149, HT40+), so moving that access point to 153 (HT40−) keeps the same
 40 MHz block.
 
-**Step 1 of the join, built 2026-11-16 (owner's go-ahead after the third drive).** Settings ▸
-Advanced ▸ *Join the car's hotspot* (the same switch and stored key as the scan) now sends the
-hotspot's passphrase as well when it has a usable one (8–63 printable, no quote or backslash;
-`StaUplink.conf`). `radio_hal.sh` ("THE CAR'S HOTSPOT"):
-- the scan remembers the strongest usable 5 GHz channel (not DFS) in `/script/sta_uplink.channel`;
-  with a passphrase it runs only while nothing is remembered, at most once per boot;
-- with a passphrase and a remembered channel, the access point starts at once on that channel and
-  on the driver's other wireless interface (`wlan0`; the client is `sta0`), and only then does a
-  background join try that one frequency (`freq_list`) for 10 s;
-- not joined, no address within 10 s, the car's network on the access point's own /24, or the link
-  lost later (two missed 3 s checks): the client is stopped completely and not tried again until
-  the next Wi-Fi start. Wi-Fi off stops it too. The hotspot seen on another usable channel is
-  remembered for the next start; the access point is never moved under a session;
-- the supervisor writes the pinned channel into `hostapd.conf` instead of the app's
-  (`/tmp/.radio_uplink_ap_channel`), so the phone's handoff names the channel the access point is on;
-- every line goes to the streamed box log: `uplink: joined on channel N in N s, signal N dBm`,
-  `address: yes`, `client stopped after N s joined`, `link lost`, `not joined …`.
-Verified: `radio_scan_test.sh` (pure helpers, and that every way out of a join stops the client),
-`StaUplinkTest`, all suites. **Not yet run on the adapter**: it was in the car. To bench before
-publishing, with the home network standing in: the join on the remembered channel with a CarPlay
-session over the access point; a wrong passphrase (client gone, CarPlay connects); the hotspot
-switched off mid-session (client gone, CarPlay holds); the setting off (unchanged); and whether this
-firmware has a DHCP client script for `udhcpc`.
+**Step 1 of the join (2026-11-16, owner's go-ahead after the third drive): built and benched, not
+yet in the car.** Settings ▸ Advanced ▸ *Join the car's hotspot* (the scan's switch and stored keys,
+renamed) now also sends the hotspot's password when it has a usable one (8–63 printable, no quote
+or backslash; `StaUplink.conf`). Without one the adapter only scans, as in 256–258.
+
+*First design, refuted on the bench.* Access point first on a remembered channel, then a background
+join. This driver's client is the **wext** one, which cannot scan a single channel: the join scanned
+every channel for seconds while the phone was being handed over. One session in three never
+connected, one took 37 s to its first picture, and the join often did not see the 5 GHz network
+at all while the access point ran.
+
+*What is built* (`radio_hal.sh`, "THE CAR'S HOTSPOT"; `session_supervisor.sh`):
+- the join runs **before** the access point starts, for at most 10 s, on the channel it last joined
+  on (`/script/sta_uplink.channel`), or with none remembered on any 5 GHz channel that is not DFS
+  (`freq_list`), so the car's 2.4 GHz side is never taken;
+- the remembered channel is written into `hostapd.conf` before the join starts, because the phone can
+  ask for the handoff details (iAP2 0x5702) at any moment, and the supervisor keeps it there
+  (`/tmp/.radio_uplink_ap_channel`). Without this the handoff named the app's channel 149, the
+  access point came up on 48, and the phone never arrived;
+- with a join configured, the supervisor starts `btd` only once the Wi-Fi start is done. Even with
+  the right channel, a phone handed a network not yet on the air did not wait for it (one session
+  in four needed a restart);
+- the access point runs on the driver's other interface (`wlan0`), joined or not. On `sta0` after a
+  failed join hostapd came up and the phone could not join it;
+- after the join the client never searches: no address in 10 s, the car's network on the access
+  point's own /24, the link lost (one missed 2 s check), or Wi-Fi off, and it is stopped until the
+  next Wi-Fi start;
+- a failed join's reason comes from `uplink_why_not` (pure, tested). The hotspot seen where it was
+  looked for is a password question and changes nothing. Not on the remembered channel but on
+  another usable one means the car moved it, and that channel is remembered. A wrong password once
+  moved the memory to the home network's other access point;
+- the streamed box log carries `uplink: joined on channel N in N s, signal N dBm`,
+  `address: yes`, `[sup] waited N s for the access point`, `client stopped after N s joined`,
+  `link lost`, and the not-joined reasons.
+
+*Bench, 2026-11-16* (home Wi-Fi standing in for the car, the owner's iPhone through the emulator, a
+fresh adapter boot each cycle):
+- with a channel remembered and the wait in place, **five of five** join-on cycles connected first
+  time: joined in 4–6 s, address in 0–1 s, `btd` waited 8–9 s, handoff named the access point's
+  real channel, CarPlay live 5–8 s after the handoff;
+- a wrong password: the "password" reason, memory unchanged, client gone, `btd` waited 16 s, and
+  CarPlay connected;
+- the very first start with nothing remembered names the app's channel and needs one restart, once;
+- setting off: unchanged (CarPlay live 5–13 s after the handoff);
+- the bench's "no picture 5 s after the video connected" check fired with the setting on and off
+  alike, so it is not from this.
+
+*Not checked:* the link lost under a live session (the home network could not be switched off; the
+path is covered by the structural test only), throughput, and anything in the car.
+
+*The cost:* up to about 9 s more before the phone can be handed over when the join succeeds, and
+about 16 s when it fails. The car's hotspot was up 2 s after the app started, and the adapter's Wi-Fi
+start comes later than that, so the join should usually find it.
+
+*If that is too slow (the fallback, not built).* Build `wpa_supplicant` with the **nl80211** driver
+(it needs libnl, statically linked, a few hundred KB more on the adapter) and check that the IW416's
+`moal` driver offers cfg80211 for its client interface. nl80211 scans a given frequency only, in a
+fraction of a second, so the join could again run beside the access point without taking the radio
+away from the phone, and the wait before `btd` could go. Measure the join time on one channel and the
+size first.
 
 **Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
 route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join

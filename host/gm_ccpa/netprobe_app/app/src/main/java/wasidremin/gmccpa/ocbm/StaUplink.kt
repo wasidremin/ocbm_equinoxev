@@ -15,10 +15,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * On, with an adapter whose `MGMT_INFO` says `"sta_uplink":true`, the app writes
  * `/script/sta_uplink.conf` with the car hotspot's name and, when it has a usable one, its
- * passphrase. The radio layer (`radio_hal.sh`, "THE CAR'S HOTSPOT") scans once to learn the
- * hotspot's channel, then at each Wi-Fi start puts its own access point on that channel at once
- * and joins in the background, stopping the client completely if the join fails or the link is
- * lost. Without a passphrase it is the scan-only diagnostic of 2026-11-16 (Play 256-258). The app
+ * passphrase. At each Wi-Fi start the radio layer (`radio_hal.sh`, "THE CAR'S HOTSPOT") joins
+ * first, for up to 10 s, then starts its own access point on the joined channel; the client is
+ * stopped completely if the join fails or the link is lost. Joining after the access point was up
+ * took the radio away from the phone's handoff (bench 2026-11-16). Without a passphrase it is the scan-only diagnostic of 2026-11-16 (Play 256-258). The app
  * also logs when the car's own hotspot interface comes up after the app starts ([watchHotspot]).
  *
  * Off, the app writes `enabled=0`. Changing the setting or the name reaches a connected adapter at
