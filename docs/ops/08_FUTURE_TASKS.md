@@ -77,7 +77,7 @@ wideband HFP, non-standard display sizes, and a cluster video stream. The macOS 
 were removed from this fork on 2026-10-27, and these tasks went with them. Git history has the text.
 Later tasks keep their numbers.
 
-## T6. Car GPS into Maps — iAP2 LocationInformation (raised 2026-09-22; BUILT 2026-11-13, waiting for an adapter reflash; not yet tried on a phone)
+## T6. Car GPS into Maps — iAP2 LocationInformation (raised 2026-09-22; BUILT 2026-11-13; ON and accepted by the phone in the car, 2026-11-18 log)
 
 **Why.** Maps is using the phone's own fix. The car has a better one: a roof antenna, and wheel
 speed that keeps the position moving where satellites drop out. The phone asks for it with `0xFFFA`
@@ -129,6 +129,15 @@ in for a dilution figure, and the satellite count is the receiver's own or 8.
 is off (the existing fallback). Whether Maps uses the car's fix over wireless CarPlay is not known
 until it is tried; the visible test is a tunnel or a parking structure. iOS may ask for sentences
 the car cannot source (gyro, accelerometer); those stay undeclared.
+
+**In the car (log of 2026-11-18, 22:11 UTC, adapter firmware 547d0db9c8e7).** The setting is on
+(`car_gps:true`). The app declared `[gpgga, gprmc, gphdt, pascd]` and sent its first fix 0.6 s after
+the receiver started; no `0x1D03` in the evening's sessions. The phone sent `0xFFFA`
+StartLocationInformation (fix data and recommended-minimum selected), the adapter answered with
+`0xFFFB` (first update 4 sentences, 223 B), and after 7 updates the phone sent `0xFFFC`
+StopLocationInformation. The app kept feeding the adapter (276 fixes in 300 s). Not known: why the
+phone stopped after 7 (it may stop when its own fix is good enough), and whether Maps used the car's
+position. The owner reports everything but the hotspot join working.
 
 **Done means.** With the setting on, the Identify is accepted with param 22, the phone sends
 `0xFFFA`, the adapter's log counts `0xFFFB` updates with no coordinates in it, and Maps holds its

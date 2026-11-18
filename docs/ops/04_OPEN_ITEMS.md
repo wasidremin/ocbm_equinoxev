@@ -174,9 +174,11 @@ high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/do
   taking touch input with it. The app still has to be published.
 - **T7 and T23 work on the car (owner, 2026-11-18).** EV routing in Apple Maps and Apple's turn
   card on the driver display both work as expected, on the firmware the app delivers. Reported by
-  the owner from driving; no log read for it. Left from that batch: **T6** (car GPS for the
-  iPhone) has not been tried. T7 now works, so T6 can be turned on by itself, and a rejected
-  Identify after that is T6's. Owner: `08_FUTURE_TASKS.md` T6, T7, T23.
+  the owner from driving. The 2026-11-18 evening log agrees: `TX 0xA101` (772 B) carries the
+  charging (392 B) and consumption (288 B) models, min and max range, with no `0x1D03`; route
+  guidance and lane data reach the app. **T6** (car GPS) is on too and the phone accepted it: it
+  started location updates, took 7 and stopped them. Whether Maps uses the car's position is not
+  known. Owner: `08_FUTURE_TASKS.md` T6, T7, T23.
 - **HEVC render stalls — mitigated, cause unknown.** `HevcRenderer` releases the codec's output
   buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
   `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s),
