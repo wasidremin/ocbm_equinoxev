@@ -310,12 +310,14 @@ uplink_state_rank() {
 
 # Pure: what the furthest state a failed join reached says about why. The car's hotspot refused
 # every join of Play 259 (2026-11-17) and the old log could not tell a wrong password from a
-# refusal: this is the line that tells them apart.
+# refusal: this is the line that tells them apart. ASSOCIATED with no 4WAY_HANDSHAKE after it means
+# the hotspot never began the exchange (the car with Play 260, 2026-11-18): not a password question.
 uplink_state_note() {
   case "$(uplink_state_rank "$1")" in
     0|1) echo "never tried to connect" ;;
     2|3) echo "the hotspot did not accept the connection" ;;
-    4|5) echo "the password exchange failed" ;;
+    4) echo "connected, then dropped before the password exchange began" ;;
+    5) echo "the password exchange failed" ;;
     6) echo "failed after the password exchange" ;;
     *) echo "joined" ;;
   esac
@@ -475,7 +477,7 @@ uplink_join() {
   if ! uplink_joined || ! uplink_channel_ok "$UPLINK_CH"; then
     _upj_why=$(printf '%s\n' "$_upj_res" | uplink_why_not "$(uplink_key ssid)" "$_upj_fl" "$_upj_m")
     case "$_upj_why" in
-      password*) scan_log "uplink: the car's hotspot was seen on ${_upj_why#* } MHz but not joined within ${UPLINK_JOIN_S} s: is the password right? client stopped" ;;
+      password*) scan_log "uplink: the car's hotspot was seen on ${_upj_why#* } MHz but not joined within ${UPLINK_JOIN_S} s (see the furthest step); client stopped" ;;
       moved*)    uplink_remember "${_upj_why#* }"
                  scan_log "uplink: the car's hotspot is not on channel $_upj_m but on ${_upj_why#* }; remembered for the next Wi-Fi start; client stopped" ;;
       elsewhere*) scan_log "uplink: not joined: the car's hotspot was seen only on ${_upj_why#* } MHz (joins only on 5 GHz, not DFS); client stopped" ;;

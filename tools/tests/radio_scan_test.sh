@@ -71,7 +71,7 @@ is "no state at all never tried" "$(uplink_state_note '')" "never tried to conne
 is "associating is the hotspot not accepting" "$(uplink_state_note ASSOCIATING)" "the hotspot did not accept the connection"
 is "authenticating too" "$(uplink_state_note AUTHENTICATING)" "the hotspot did not accept the connection"
 is "the 4-way handshake is the password" "$(uplink_state_note 4WAY_HANDSHAKE)" "the password exchange failed"
-is "associated but no further is the password too" "$(uplink_state_note ASSOCIATED)" "the password exchange failed"
+is "associated but no handshake is a drop before the exchange, not the password (car 2026-11-18)" "$(uplink_state_note ASSOCIATED)" "connected, then dropped before the password exchange began"
 is "group handshake is after the password" "$(uplink_state_note GROUP_HANDSHAKE)" "failed after the password exchange"
 is "the handshake ranks above associating" "$( [ "$(uplink_state_rank 4WAY_HANDSHAKE)" -gt "$(uplink_state_rank ASSOCIATING)" ] && echo yes)" yes
 is "disconnected ranks below scanning" "$( [ "$(uplink_state_rank DISCONNECTED)" -lt "$(uplink_state_rank SCANNING)" ] && echo yes)" yes

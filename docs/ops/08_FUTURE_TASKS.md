@@ -899,6 +899,17 @@ logs the furthest `wpa_state` it reached and the order of states (names only):
 tested; the loop run against a fake client for a wrong password, a refusal and a success; not run on
 the adapter, which was in the car). Next: one drive with the setting on.
 
+*In the car with Play 260 (2026-11-18).* Update confirmed. 12:03 UTC: seen on 5765 MHz, states
+`DISCONNECTED>SCANNING>ASSOCIATING>SCANNING>ASSOCIATED>SCANNING`: associated, and dropped with no
+4-way handshake ever begun. A wrong password begins the handshake and fails in it. The same code
+joined the home network on every bench cycle, so **the car's hotspot is turning the adapter away
+after association**: a device allowlist or approval, a full client limit, or the hotspot refusing
+clients while the car's data entitlement is inactive (the owner reported a data problem on the car,
+2026-11-15). 12:08: `SCANNING` only, not found within 10 s. CarPlay connected both times. The log's
+label for this case said "the password exchange failed"; corrected to "connected, then dropped
+before the password exchange began" (not yet published). Next, the owner's test: does a phone or
+laptop join the car's hotspot with the same password? Off until then.
+
 *If that is too slow (the fallback, not built).* Build `wpa_supplicant` with the **nl80211** driver
 (it needs libnl, statically linked, a few hundred KB more on the adapter) and check that the IW416's
 `moal` driver offers cfg80211 for its client interface. nl80211 scans a given frequency only, in a
