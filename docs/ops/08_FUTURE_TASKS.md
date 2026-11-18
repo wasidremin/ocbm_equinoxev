@@ -134,7 +134,7 @@ the car cannot source (gyro, accelerometer); those stay undeclared.
 `0xFFFA`, the adapter's log counts `0xFFFB` updates with no coordinates in it, and Maps holds its
 position through a place where the phone alone loses it.
 
-## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28; why Maps shows nothing FOUND 2026-11-13; the fix BUILT the same day and waiting for an adapter reflash)
+## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28; why Maps shows nothing FOUND 2026-11-13; the fix BUILT the same day; EV routing WORKS on the car, owner 2026-11-18)
 
 **Why.** The Equinox is electric. Maps will not treat it as one until Identify says so and a status
 update follows.
@@ -363,6 +363,11 @@ Mac and a paid developer account, and it borrows Porsche's identifier. This fork
 
 **Licences.** egmp-carplay-ev-routing is GPL-3.0-or-later and augard/evmaps states no licence. Use
 their facts and ideas only, never their code, and credit both in `NOTICE.md` when this is built.
+
+**On the car (owner, 2026-11-18): EV routing works as expected** in Apple Maps, with the adapter
+firmware the app has delivered since Play 256 (the 2026-11-13 fix included). This is the owner's
+report from driving; no log was read for it, so the `TX 0xA101` ids 26/27 line below is still the
+check to run if it ever regresses.
 
 **Done means.** Apple Maps ▸ Vehicles lists the car. A route longer than the remaining range shows
 charging stops and the battery on arrival. During a drive the percentage in Maps follows the
@@ -1126,7 +1131,7 @@ pane unaffected.
 **Done means.** Each choice in the setting moves CarPlay's status bar at the next connect, and the
 media pane and view-area switching still work.
 
-## T23. Apple's own turn card on the driver display (raised 2026-11-12; step 1 BUILT 2026-11-13, app only; step 2 built and waiting for the reflash)
+## T23. Apple's own turn card on the driver display (raised 2026-11-12; step 1 BUILT 2026-11-13, app only; step 2 built; Apple's turn card WORKS on the car, owner 2026-11-18)
 
 **Why.** The driver display shows Apple's map with the app's own turn card over it. Apple draws
 its own maneuver card, with its lane and junction graphics, as a different kind of cluster content.

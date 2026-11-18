@@ -172,21 +172,11 @@ high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/do
   dropped its input connection on any `CH_INPUT` sub-frame over 64 bytes, which a location fix, a
   `CMD_NAV_URL` with a query, or a `CMD_REQUEST_UI_URL` longer than 62 bytes would have triggered,
   taking touch input with it. The app still has to be published.
-- **Built 2026-11-13, not yet on the car (one adapter reflash and one publish cover all three).**
-  T7's battery models for Apple Maps, T6's car GPS for the iPhone, and T23's "Driver display
-  shows" setting with the `CMD_NAV_URL` command. T7 and T6 are off or unchanged until the adapter
-  says `"ev_models":true` / `"car_gps":true`; T23's setting works on the firmware in the car now.
-  None has been tried against a phone. Turn T6 on only after T7 has been seen working, so a
-  rejected Identify can be pinned on one of them. Owner: `08_FUTURE_TASKS.md` T6, T7, T23.
-- **EV status for Apple Maps (T7): Maps shows no battery.** The phone accepts the EV Identify
-  and the status (2026-10-28, 11-03), and cluster turn-by-turn works with the setting on (11-03).
-  The battery percentage reaches the phone, but the owner sees nothing about it in Maps
-  (2026-11-04). The reason was found on 2026-11-13: Maps does not count the car as electric until
-  the charging and consumption models arrive (0xA101 ids 26 and 27), and T7 sends neither. Their
-  format and a working example on Hyundai head units are public now. The fix was built on
-  2026-11-13 (adapter firmware and app). It is not on the car: the adapter needs a reflash, the app
-  a publish, and the iPhone has to be paired again. The phone was also told CCS2
-  instead of the car's CCS1 (fixed in 229, 2026-11-04). Owner: `08_FUTURE_TASKS.md` T7.
+- **T7 and T23 work on the car (owner, 2026-11-18).** EV routing in Apple Maps and Apple's turn
+  card on the driver display both work as expected, on the firmware the app delivers. Reported by
+  the owner from driving; no log read for it. Left from that batch: **T6** (car GPS for the
+  iPhone) has not been tried. T7 now works, so T6 can be turned on by itself, and a rejected
+  Identify after that is T6's. Owner: `08_FUTURE_TASKS.md` T6, T7, T23.
 - **HEVC render stalls — mitigated, cause unknown.** `HevcRenderer` releases the codec's output
   buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
   `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s),
