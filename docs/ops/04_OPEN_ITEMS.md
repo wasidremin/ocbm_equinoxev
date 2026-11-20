@@ -490,8 +490,12 @@ high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/do
   unknown-sources screen is the same "not supported" stub as the emulator's: every connect since 232
   logs `usb bridge: not installed, unknown-sources screen …Stubs$ManageExternalSourcesActivityStub`,
   so Files cannot install the bridge. It waits on GM shipping a real install screen. A second
-  route that installs nothing on the car, the adapter link over the car's hotspot, is recorded in
-  `08_FUTURE_TASKS.md` T15 (2026-11-13) and not started. A sideloaded app named
+  route that installs nothing on the car, the adapter link over the car's hotspot, is T15 route B.
+  Step 1 (the adapter joins, nothing uses the link) failed every join in the car with Play 259 and
+  260 (2026-11-17/18). The wext client may be the cause (enigy/ocbm PR #2: RSNXE mismatch at
+  message 3/4). An nl80211 client with a reason line from the client's own log was built on
+  2026-11-20: not yet on the bench adapter or the car. To check in the car's next log: the
+  `uplink:` lines' `driver` and `the client's log:` lines. A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
   the Equinox lets Files install an app (the AAOS 14 emulator does not: its unknown-sources screen is a

@@ -24,6 +24,12 @@ came from in their header comments.
 - **wpa_supplicant 2.11** (w1.fi, BSD licence) — the adapter's Wi-Fi client for joining the car's
   hotspot (T15). Not in this repository: `tools/build_wpa_supplicant.sh` downloads the release,
   checks its pinned SHA-256 and builds it; the binary ships in the adapter firmware.
+- **libnl 3.12.0** (github.com/thom311/libnl, LGPL-2.1) — `libnl-3` and `libnl-genl-3`, linked
+  statically into that `wpa_supplicant` for its nl80211 driver (2026-11-20). Not in this repository:
+  the same script downloads the release, checks its pinned SHA-256 and builds it unmodified. As
+  the LGPL requires of a static link, the script and the public `wpa_supplicant` source are
+  everything needed to relink the binary against a changed libnl. The build follows **enigy/ocbm**
+  PR #2 (github.com/enigy/ocbm/pull/2, Unlicense), which first built this pair for the CCPA.
 
 ## Ideas, no code
 

@@ -914,22 +914,53 @@ tested; the loop run against a fake client for a wrong password, a refusal and a
 the adapter, which was in the car). Next: one drive with the setting on.
 
 *In the car with Play 260 (2026-11-18).* Update confirmed. 12:03 UTC: seen on 5765 MHz, states
-`DISCONNECTED>SCANNING>ASSOCIATING>SCANNING>ASSOCIATED>SCANNING`: associated, and dropped with no
-4-way handshake ever begun. A wrong password begins the handshake and fails in it. The same code
-joined the home network on every bench cycle, so **the car's hotspot is turning the adapter away
-after association**: a device allowlist or approval, a full client limit, or the hotspot refusing
-clients while the car's data entitlement is inactive (the owner reported a data problem on the car,
-2026-11-15). 12:08: `SCANNING` only, not found within 10 s. CarPlay connected both times. The log's
-label for this case said "the password exchange failed"; corrected to "connected, then dropped
-before the password exchange began" (not yet published). Next, the owner's test: does a phone or
-laptop join the car's hotspot with the same password? Off until then.
+`DISCONNECTED>SCANNING>ASSOCIATING>SCANNING>ASSOCIATED>SCANNING`: associated, then dropped.
+12:08: `SCANNING` only, not found within 10 s. CarPlay connected both times. This was first read as
+the car turning the adapter away before any 4-way handshake. **Corrected 2026-11-20: the log
+cannot show that.** The states are sampled every 0.2 s, and a handshake that fails at message 3/4
+is over in milliseconds, so `ASSOCIATED>SCANNING` is also what a failed handshake looks like.
+enigy/ocbm PR #2 (github.com/enigy/ocbm/pull/2, mammut3, open) measured exactly such a failure on
+IW416 against a router: the **wext** driver does not pass a beacon's RSNXE up from the scan, and
+the handshake fails with "RSNXE mismatch … msg 3/4". The car's hotspot reads WPA2-PSK-CCMP, but
+an access point may send an RSNXE regardless. The home network the bench joined evidently does
+not. Both readings fit; the nl80211 build below settles it. The label for the case now says only
+"connected, then dropped".
 
-*If that is too slow (the fallback, not built).* Build `wpa_supplicant` with the **nl80211** driver
-(it needs libnl, statically linked, a few hundred KB more on the adapter) and check that the IW416's
-`moal` driver offers cfg80211 for its client interface. nl80211 scans a given frequency only, in a
-fraction of a second, so the join could again run beside the access point without taking the radio
-away from the phone, and the wait before `btd` could go. Measure the join time on one channel and the
-size first.
+*The nl80211 client (built 2026-11-20, issue #1 on wasidremin/ocbm_equinoxev, from enigy/ocbm
+PR #2).*
+- `tools/build_wpa_supplicant.sh` now builds `wpa_supplicant` 2.11 with nl80211 and wext.
+  - It links libnl 3.12.0 (`libnl-3` and `libnl-genl-3` only) statically. libnl is LGPL-2.1, used
+    unmodified, and its release hash is pinned (NOTICE.md).
+  - The build is stripped, with gc-sections and `CONFIG_DEBUG_FILE`.
+  - Measured sizes: `wpa_supplicant` 710,096 B and `wpa_cli` 95,176 B, against 577,560 B and
+    130,704 B unstripped with wext alone: 97 KB more in all.
+- `radio_hal.sh` starts the client with nl80211 and falls back to wext (`uplink_wpa_start`). The
+  driver used is named in the scan line, the joined line and the failure line.
+- Each start keeps `wpa_supplicant`'s own info-level log in `/tmp` and deletes it when the client
+  stops.
+- A failed join, or a lost link, logs one more line built from that log (`uplink_log_reason`):
+  - fixed words only: `RSNXE mismatch at message 3/4`, `RSN element mismatch`,
+    `4-way handshake failed`, `disabled WRONG_KEY`;
+  - the 802.11 association status codes and disconnect reason codes (`L` marks one the client
+    sent itself, for example `17L` for an RSN element that differs);
+  - never the network's name or an address.
+- The join design is otherwise unchanged. It still joins before the access point starts, with
+  `freq_list` and no `scan_freq`: keeping the full scan keeps the "moved" detection, which needs to
+  see the other channels.
+- *Verified:* the parser and the driver order, by unit test (`tools/tests/radio_scan_test.sh`, also
+  under BusyBox awk). The binary is checked to contain both drivers.
+- *Not yet checked:*
+  - whether `moal` accepts nl80211 on `sta0` (the bench adapter was not connected);
+  - a bench join;
+  - the car.
+- *What the car's next log decides:*
+  - `RSNXE mismatch` under wext, or a join under nl80211: PR #2's cause, and the join works;
+  - a refusal with a reason or status code and no handshake words: the car is turning the adapter
+    away;
+  - `WRONG_KEY`: the password.
+
+Kept from the old fallback note: nl80211 can scan one given frequency, so a later design could join
+beside the access point and drop the `btd` wait. Not started: first a join has to work in the car.
 
 **Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
 route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join

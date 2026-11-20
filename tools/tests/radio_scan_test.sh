@@ -5,7 +5,7 @@ set -u
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
 F="$HERE/ccpa/rootfs/script/radio_hal.sh"
 eval "$(sed -n '/^freq_to_channel() {/,/^}/p; /^channel_note() {/,/^}/p; /^uplink_ifname_ok()/p;
-  /^channel_to_freq() {/,/^}/p; /^uplink_channel_ok() {/,/^}/p; /^uplink_freq_list() {/,/^}/p; /^uplink_pick_channel() {/,/^}/p; /^uplink_why_not() {/,/^}/p; /^uplink_state_rank() {/,/^}/p; /^uplink_state_note() {/,/^}/p;
+  /^channel_to_freq() {/,/^}/p; /^uplink_channel_ok() {/,/^}/p; /^uplink_freq_list() {/,/^}/p; /^uplink_pick_channel() {/,/^}/p; /^uplink_why_not() {/,/^}/p; /^uplink_state_rank() {/,/^}/p; /^uplink_state_note() {/,/^}/p; /^uplink_log_reason() {/,/^}/p;
   /^uplink_psk_ok() {/,/^}/p; /^same_24()/p' "$F")"
 fails=0
 is() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got '$2' want '$3'"; fails=$((fails+1)); fi; }
@@ -71,7 +71,7 @@ is "no state at all never tried" "$(uplink_state_note '')" "never tried to conne
 is "associating is the hotspot not accepting" "$(uplink_state_note ASSOCIATING)" "the hotspot did not accept the connection"
 is "authenticating too" "$(uplink_state_note AUTHENTICATING)" "the hotspot did not accept the connection"
 is "the 4-way handshake is the password" "$(uplink_state_note 4WAY_HANDSHAKE)" "the password exchange failed"
-is "associated but no handshake is a drop before the exchange, not the password (car 2026-11-18)" "$(uplink_state_note ASSOCIATED)" "connected, then dropped before the password exchange began"
+is "associated is a drop, not a claim about the exchange the sampling may have missed" "$(uplink_state_note ASSOCIATED)" "connected, then dropped"
 is "group handshake is after the password" "$(uplink_state_note GROUP_HANDSHAKE)" "failed after the password exchange"
 is "the handshake ranks above associating" "$( [ "$(uplink_state_rank 4WAY_HANDSHAKE)" -gt "$(uplink_state_rank ASSOCIATING)" ] && echo yes)" yes
 is "disconnected ranks below scanning" "$( [ "$(uplink_state_rank DISCONNECTED)" -lt "$(uplink_state_rank SCANNING)" ] && echo yes)" yes
@@ -85,6 +85,38 @@ is "spaces are fine" "$(ok uplink_psk_ok 'my car pass')" yes
 is "the access point's own /24 is a clash" "$(ok same_24 192.168.43.20 192.168.43.1)" yes
 is "another /24 is not" "$(ok same_24 192.168.44.20 192.168.43.1)" no
 is "no address is not a clash" "$(ok same_24 '' 192.168.43.1)" no
+# The client's own log, read for the reason a join failed. The lines are wpa_supplicant 2.11's own
+# formats (events.c, wpa.c, wpa_supplicant.c); the name and the address must never come out.
+LOGF=$(mktemp)
+cat > "$LOGF" <<'L'
+wlan: Trying to associate with SSID 'My reason=99 Car'
+wlan: Associated with 02:11:22:33:44:55
+WPA: RSNXE mismatch between Beacon/ProbeResp and EAPOL-Key msg 3/4
+RSNXE in Beacon/ProbeResp - hexdump(len=3): f4 01 20
+wlan: CTRL-EVENT-DISCONNECTED bssid=02:11:22:33:44:55 reason=17 locally_generated=1
+wlan: WPA: 4-Way Handshake failed - pre-shared key may be incorrect
+wlan: CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="My reason=99 Car" auth_failures=1 duration=10 reason=WRONG_KEY
+wlan: CTRL-EVENT-ASSOC-REJECT bssid=02:11:22:33:44:55 status_code=17
+wlan: CTRL-EVENT-DISCONNECTED bssid=02:11:22:33:44:55 reason=15
+L
+r=$(uplink_log_reason < "$LOGF")
+is "the reason line names the RSNXE mismatch, the handshake, the codes (PR #2's failure)" "$r" \
+  "RSNXE mismatch at message 3/4; 4-way handshake failed; disabled WRONG_KEY; association rejected, status 17; disconnect reason 17L,15"
+case "$r" in *Car*|*02:11*|*99*) r=leaked ;; *) r=clean ;; esac
+is "no network name or address in the reason line" "$r" clean
+printf 'wlan: WPA: IE in 3/4 msg does not match with IE in Beacon/ProbeResp (src=02:11:22:33:44:55)\n' > "$LOGF"
+is "an RSN element mismatch" "$(uplink_log_reason < "$LOGF")" "RSN element mismatch at message 3/4"
+: > "$LOGF"
+is "an empty log says so" "$(uplink_log_reason < "$LOGF")" "nothing logged"
+is "no log at all says so" "$(uplink_log_reason < /dev/null)" "nothing logged"
+i=0; : > "$LOGF"; while [ "$i" -lt 12 ]; do echo "wlan: CTRL-EVENT-DISCONNECTED bssid=02:11:22:33:44:55 reason=3" >> "$LOGF"; i=$((i+1)); done
+is "a long run of disconnects is cut at eight" "$(uplink_log_reason < "$LOGF")" "disconnect reason 3,3,3,3,3,3,3,3"
+rm -f "$LOGF"
+# nl80211 first: wext alone failed every join in the car (Play 259, 260) and cannot pass RSNXE.
+d=$(sed -n '/^uplink_wpa_start() {/,/^}/p' "$F" | sed -n 's/^  for UPLINK_DRV in //p')
+is "the client tries nl80211, then wext" "$d" "nl80211 wext; do"
+n=$(grep -c '"$UPLINK_WPA" -B' "$F")
+is "every wpa_supplicant start goes through uplink_wpa_start" "$n" 1
 # A join that fails or loses its link must leave nothing running (car, 2026-11-15).
 for fn in uplink_join uplink_watch; do
   n=$(sed -n "/^$fn() {/,/^}/p" "$F" | grep -w return | grep -vc "uplink_stop guard; return")
@@ -110,7 +142,7 @@ is "Wi-Fi off stops the client" "$n" 1
 # radio_hal.sh runs under set -u, and uplink_stop runs at every Wi-Fi start and stop, the setting on
 # or off: an unset name in it took the access point down on the bench (2026-11-16, `$1` unset).
 T=$(mktemp -d)
-out=$( set -u; LOGP=x; UPLINK_DIR=$T/d; UPLINK_JOINED_AT=$T/j
+out=$( set -u; LOGP=x; UPLINK_DIR=$T/d; UPLINK_JOINED_AT=$T/j; UPLINK_WPA_LOG=$T/l
   eval "$(sed -n '/^uplink_ifname_ok()/p; /^uplink_log()/p; /^uplink_stop() {/,/^}/p' "$F" | sed "s#/tmp/#$T/#g")"
   uplink_stop && uplink_stop guard && echo survived 2>&1 )
 is "uplink_stop with nothing running, and no argument, under set -u" "$out" survived
