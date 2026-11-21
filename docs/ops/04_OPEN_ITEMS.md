@@ -55,18 +55,18 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 261 (`4.0+nl80211-timeline`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 262 (`4.0+ap-dhcp`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
-- **The access point's DHCP server and hostapd's lines: benched, not yet in the car (built 2026-11-21,
-  from enigy/ocbm; not published).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
+- **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
+  2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
   lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and
   `hostapd` runs in the foreground so the box log shows each phone joining and leaving, with the
   reason (`docs/wireless/01_BT_AND_RADIO.md`). Bench: the phone got its address 11 ms after its WPA
   handshake, and the teardown was clean. To check in the first upload after it is published:
   `udhcpd: sending ACK` after each `AP-STA-CONNECTED`; no `still there after SIGTERM`; and, the next
   time a session drops, the `AP-STA-DISCONNECTED` line that says why.
-- **The same host re-attaching re-keys the A/V seams: benched, not yet in the car (built 2026-11-21,
-  from enigy/ocbm 1.0.6; not published).** The adapter half works on the bench (`ocbm_blip`); the app
+- **The same host re-attaching re-keys the A/V seams: benched, not yet in the car (Play 262,
+  2026-11-21, from enigy/ocbm 1.0.6).** The adapter half works on the bench (`ocbm_blip`); the app
   still ends its own session on any link drop and recovers through its ladder in about a minute
   (`docs/carplay/02_SESSION_LIFECYCLE.md`). In the car it shows as `HELLO … reattached=true`; none has
   happened yet (every re-attach to 2026-11-18 was a replacement).

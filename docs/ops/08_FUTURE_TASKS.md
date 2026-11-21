@@ -1496,7 +1496,7 @@ for example) plays full screen on the car's screen while the car is parked. The 
 2026-11-21, to be built once the features just added have been tested in the car.
 
 **Order (owner, 2026-11-21).** Not before the car has exercised Play 261 (the nl80211 hotspot join,
-the connect timeline, the headset key) and the 262 adapter fixes (BusyBox DHCP server, its teardown
+the connect timeline, the headset key) and Play 262's adapter fixes (BusyBox DHCP server, its teardown
 wait, hostapd's station events, the re-attach re-key); see `04_OPEN_ITEMS.md`.
 
 **What enigy built** (`docs/carplay/01_OCBM_PROTOCOL.md` "Route A" in enigy/ocbm at 801074f,
