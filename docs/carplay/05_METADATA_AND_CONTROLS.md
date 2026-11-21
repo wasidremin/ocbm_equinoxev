@@ -647,6 +647,18 @@ dataPort  = <TCP port>     // when wantsDedicatedSocket
   > "does not branch on this at all", consuming the key only for a log line, and the absent-key arm has
   > never been observed because every capture sends it `true`. Do not cite this as established.
 - `streamConnectionID` is never read back from our response; only `streamID` and `dataPort` are.
+- **A shared channel exists (2026-11-21, route A).** The phone's video Playback channel (UrlFling,
+  `A6B27562`) asks for no socket: its messages ride `POST /command` with the `streamID` in an
+  `X-Apple-StreamID` header and a `{params: {data}}` body, and answers go back the same way on the event
+  channel (enigy/ocbm's bench, 2026-11-10; LIVI's receiver plays it). The receiver relays it to the app
+  (`receiver::playback`, `01_OCBM_PROTOCOL.md` "Route A"); the "shared transport not implemented" arm is
+  gone.
+- **A partial TEARDOWN names its channel (2026-11-21).** Once two channels share type 130, the type names
+  nothing: the receiver stops the channel the entry names by `channelID`, else by `streamID`, else every
+  channel but the iAP one, and never the iAP one on a guess (`rcs_channels_named`, unit-tested). It used to
+  stop every channel of the type, and on enigy/ocbm's bench the phone's TEARDOWN of its two video channels
+  took the iAP2 channel with it: metadata, call state and location gone for the rest of the session
+  (a86e552).
 - The phone's RCS-creation log line reports `clientTypeUUID=(-)`. That is a creation-time view; the SETUP
   request carries the real value. Gate on the request, not the log line.
 

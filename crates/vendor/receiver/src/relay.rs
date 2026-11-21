@@ -772,6 +772,11 @@ impl SessionDelegate for RemoteSession {
         self.inner.command(request_plist)
     }
 
+    fn stream_message(&mut self, stream: i64, body: &[u8]) -> Option<Vec<u8>> {
+        // Box-side, as COMMAND is: route A's relay (playback.rs) already hands the app every message.
+        self.inner.stream_message(stream, body)
+    }
+
     fn teardown(&mut self, request_plist: &[u8]) {
         // Box first: teardown + answer immediately (the single reset owner, AvSession::reset, stays
         // untouched). Then a fire-and-forget NOTIFY so the host can reset its authoring state — no

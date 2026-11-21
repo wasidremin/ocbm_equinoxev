@@ -39,6 +39,14 @@ pub const CH_MEDIA_AUDIO: u16 = 0x0021; // box->host A/V: media audio, same forw
 pub const CH_ALT_AUDIO: u16 = 0x0022; // box->host A/V: voice-sink streams (telephony/speechRecognition/alert/default), same seam framing as media
 pub const CH_METADATA: u16 = 0x0023; // box->host: session metadata (Metadata window). Seam :9004, framing [u32 BE "META"][u32 BE len][marker][payload] (v2, audit Fix #17); META_* markers below
 pub const CH_ALT_VIDEO: u16 = 0x0024; // box->host: the ALT / navigation (instrument-cluster) screen stream. Same seq+SEAM_MAGIC forward-encrypted framing as CH_VIDEO; the host decodes it on a DEDICATED decoder. Box seam :9005.
+// box->host: route A's tunnels to the phone's proxy (`setProxyParameters`), so the video the phone hands
+// the car is fetched over the phone's own network (T34; enigy/ocbm 9b1f636, Unlicense, same number and
+// framing). Box seam :9006, `[u32 BE "TUNL"][u32 BE len][op][id][data]`, len = 2 + data; TUNNEL_* ops
+// below. The bytes are the host's TLS stream with the phone's proxy, so ocbmd read-gates the seam on its
+// own queue and never drops a frame. Host->box rides CH_INPUT as INPUT_TUNNEL. A tunnel reaches only the
+// phone (receiver::tunnel), never the box's network: the retired CH_IP was a general relay; this is not.
+pub const CH_TUNNEL: u16 = 0x0025;
+pub const TUNNEL_SEAM_MAGIC: [u8; 4] = *b"TUNL";
 
 // CH_METADATA seam markers (wire values; producers declare their own local consts — iap2d does not
 // link this crate). Payloads are PLAINTEXT (the box decrypts the control connection; the host is
@@ -595,6 +603,17 @@ pub const REQUEST_UI_URL_MAX: usize = 255;
 // app can try a query such as `maneuverLayout=…` without a firmware change but cannot address
 // anything except Maps' instrument-cluster surfaces. `MGMT_INFO` says `"nav_url":true`.
 pub const CMD_NAV_URL: u8 = 0x13;
+// Route A (T34): whether the phone's video may play now, as the app decides it (only while the car is
+// known to be parked), with the play queue's status:
+// `[INPUT_COMMAND][CMD_VIDEO_ALLOWED][allowed 0|1][VIDEO_STATUS_*]` -> `setVideoPlaybackAllowed
+// {videoPlaybackAllowed, playbackStatus}` to the phone in a session that negotiated videoPlayback, at
+// RECORD and on each change; before RECORD the word is kept; until the app has said, nothing goes out
+// (receiver::playback). A missing status byte is idle. enigy/ocbm numbers this 0x13, which is
+// CMD_NAV_URL here.
+pub const CMD_VIDEO_ALLOWED: u8 = 0x14;
+pub const VIDEO_STATUS_IDLE: u8 = 0; // "idle": nothing queued
+pub const VIDEO_STATUS_VIDEO: u8 = 1; // "video": a queued video allowed to show
+pub const VIDEO_STATUS_AUDIO_ONLY: u8 = 2; // "audioOnly": one queued that may not show
 /// The three cluster content URLs `/info` advertises in `altScreenURLs` all start with this.
 pub const CLUSTER_URL_PREFIX: &str = "maps:/car/instrumentcluster";
 
@@ -621,6 +640,34 @@ pub const LOCATION_MAX: usize = 1024;
 /// or a `CMD_REQUEST_UI_URL` past 62 bytes was read as a desync and the ingest connection dropped,
 /// taking touch input with it until ocbmd reconnected (39 times in a 2-minute bench session).
 pub const INPUT_FRAME_MAX: usize = 1 + LOCATION_MAX;
+// Route A (T34; enigy/ocbm c3f21fc and 9b1f636, same numbers): the host's side of the phone's video
+// Playback DataStream, and its tunnel to the phone's proxy. The only sub-frames longer than
+// INPUT_FRAME_MAX, each up to its own cap; carplayd's reader takes them by type
+// (`input_sub_frame_max`). `MGMT_INFO` says `"video":true`.
+/// `[INPUT_DATASTREAM][stream u32 LE][JSON object]` -> the message, as a binary plist, on that shared
+/// DataStream (receiver::playback).
+pub const INPUT_DATASTREAM: u8 = 0x0A;
+pub const MAX_INPUT_DATASTREAM: usize = 16_384;
+/// `[INPUT_TUNNEL][op][id u8][data]` -> carplayd opens, writes to or closes tunnel `id` (CH_TUNNEL);
+/// TUNNEL_DATA carries up to MAX_INPUT_TUNNEL bytes.
+pub const INPUT_TUNNEL: u8 = 0x0B;
+pub const MAX_INPUT_TUNNEL: usize = 16_384;
+/// CH_TUNNEL / INPUT_TUNNEL ops.
+pub const TUNNEL_OPEN: u8 = 0x01; // host->box: data = [port u16 BE][the proxy URL's host, UTF-8]; the box answers OPENED or CLOSE
+pub const TUNNEL_DATA: u8 = 0x02; // both ways: the stream's bytes
+pub const TUNNEL_CLOSE: u8 = 0x03; // host->box: close it; box->host: it closed, data = the reason (UTF-8, may be empty)
+pub const TUNNEL_OPENED: u8 = 0x04; // box->host: connected to the phone's proxy
+/// The longest sub-frame of type `ty` carplayd's input reader takes: route A's two at their caps, every
+/// other at [`INPUT_FRAME_MAX`]. Longer is a desync.
+pub const fn input_sub_frame_max(ty: u8) -> usize {
+    match ty {
+        INPUT_DATASTREAM => 1 + 4 + MAX_INPUT_DATASTREAM,
+        INPUT_TUNNEL => 1 + 2 + MAX_INPUT_TUNNEL,
+        _ => INPUT_FRAME_MAX,
+    }
+}
+/// The longest sub-frame of any type, for the reader's first length check.
+pub const INPUT_SUB_FRAME_MAX: usize = 1 + 4 + MAX_INPUT_DATASTREAM;
 pub const APPEARANCE_STREAM_MAIN: u8 = 0x00;
 pub const APPEARANCE_STREAM_ALT: u8 = 0x01;
 pub const APPEARANCE_MODE_LIGHT: u8 = 0x00;
@@ -1291,7 +1338,7 @@ mod tests {
             CMD_REQUEST_UI, CMD_REQUEST_SIRI, CMD_SIRI_DOWN, CMD_SIRI_UP, CMD_NAV_START, CMD_NAV_STOP,
             CMD_NAV_CARD, CMD_LIMITED_UI_ON, CMD_LIMITED_UI_OFF, CMD_NAV_APP, CMD_NAV_APPEARANCE,
             CMD_NAV_ZOOM_IN, CMD_NAV_ZOOM_OUT, CMD_UI_APPEARANCE, CMD_MAP_APPEARANCE, CMD_NIGHT_MODE,
-            CMD_VIEW_AREA, CMD_REQUEST_UI_URL,
+            CMD_VIEW_AREA, CMD_REQUEST_UI_URL, CMD_NAV_URL, CMD_VIDEO_ALLOWED,
         ];
         let mut sorted = ids.to_vec();
         sorted.sort_unstable();
@@ -1299,6 +1346,42 @@ mod tests {
         assert_eq!(sorted.len(), ids.len(), "duplicate CMD_* id");
         assert_eq!(CMD_VIEW_AREA, 0x11);
         assert_eq!(CMD_REQUEST_UI_URL, 0x12);
+        assert_eq!(CMD_NAV_URL, 0x13);
+        assert_eq!(CMD_VIDEO_ALLOWED, 0x14);
+    }
+
+    #[test]
+    fn route_as_numbers_are_fresh() {
+        // Never a retired channel: CH_IP (0x0010) was a general relay, and an older client would read it so.
+        let channels = [
+            CH_CTRL, CH_MFI, CH_CONSOLE, CH_IP, CH_FILE, CH_ETH, CH_VIDEO, CH_MEDIA_AUDIO, CH_ALT_AUDIO,
+            CH_METADATA, CH_ALT_VIDEO, CH_MGMT, CH_RTSP, CH_INPUT, CH_MIC, CH_LOG, CH_ECHO, CH_DISCARD,
+        ];
+        assert!(!channels.contains(&CH_TUNNEL));
+        let inputs = [
+            INPUT_TOUCH, INPUT_KEYFRAME, INPUT_MEDIA_BTN, INPUT_COMMAND, INPUT_NAV, INPUT_KEYFRAME_ALT,
+            INPUT_KNOB, INPUT_TELEPHONY, INPUT_LOCATION, INPUT_DATASTREAM, INPUT_TUNNEL,
+        ];
+        let mut sorted = inputs.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), inputs.len(), "duplicate INPUT_* id");
+        let ops = [TUNNEL_OPEN, TUNNEL_DATA, TUNNEL_CLOSE, TUNNEL_OPENED];
+        for (i, a) in ops.iter().enumerate() {
+            assert!(ops[i + 1..].iter().all(|b| b != a), "duplicate TUNNEL_* op {a:#04x}");
+        }
+        assert_eq!(&TUNNEL_SEAM_MAGIC, b"TUNL");
+    }
+
+    #[test]
+    fn only_route_as_sub_frames_run_past_the_input_frame_cap() {
+        assert_eq!(input_sub_frame_max(INPUT_TOUCH), INPUT_FRAME_MAX);
+        assert_eq!(input_sub_frame_max(INPUT_LOCATION), INPUT_FRAME_MAX);
+        assert_eq!(input_sub_frame_max(INPUT_DATASTREAM), 1 + 4 + MAX_INPUT_DATASTREAM);
+        assert_eq!(input_sub_frame_max(INPUT_TUNNEL), 1 + 2 + MAX_INPUT_TUNNEL);
+        assert!(INPUT_SUB_FRAME_MAX >= input_sub_frame_max(INPUT_TUNNEL));
+        // ocbmd frames each sub-frame with a u16 length.
+        assert!(INPUT_SUB_FRAME_MAX <= u16::MAX as usize);
     }
 
     #[test]

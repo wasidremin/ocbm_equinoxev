@@ -50,6 +50,12 @@ data class VehicleConfigSpec(
     val wireless: Boolean = true,
     val pairing: String = "just_works",
     val enablesHevc: Boolean = true,
+    /**
+     * `enablesVideoPlayback`: ask the adapter to offer the phone's video inside CarPlay (T34, route A). From
+     * adapter firmware 263 the box reads it (before, it was emitted and ignored, and this line said `true`).
+     * False until the app can play it, so the phone is never offered what nothing here plays.
+     */
+    val videoPlayback: Boolean = false,
     /** Steering-wheel media keys reach CarPlay through this HID, not a steering-wheel device. */
     val mediaButtonsSupport: Boolean = true,
     val dPadSupport: Boolean = false,
@@ -385,7 +391,7 @@ object VehicleConfigYaml {
         line("  enablesUIAppearance: true")
         line("  enablesMapAppearance: true")
         line("  enablesCornerMasks: false")
-        line("  enablesVideoPlayback: true")
+        line("  enablesVideoPlayback: ${s.videoPlayback}")
         line("  enablesViewAreas: ${s.viewArea2 != null}")
         line("  enablesEnhancedSiri: false")
         line("  enablesFocusTransfer: false")
@@ -562,7 +568,7 @@ object VehicleConfigYaml {
             "  enablesUIAppearance: true\n" +
             "  enablesMapAppearance: true\n" +
             "  enablesCornerMasks: false\n" +
-            "  enablesVideoPlayback: true\n" +
+            "  enablesVideoPlayback: false\n" +
             "  enablesViewAreas: false\n" +
             "  enablesEnhancedSiri: false\n" +
             "  enablesFocusTransfer: false\n" +

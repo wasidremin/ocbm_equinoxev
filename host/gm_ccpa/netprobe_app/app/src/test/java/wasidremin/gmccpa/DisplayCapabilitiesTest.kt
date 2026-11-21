@@ -11,6 +11,11 @@ class DisplayCapabilitiesTest {
         assertTrue(VehicleConfigYaml.defaultIsPinned())
     }
 
+    @Test fun theVideoOfferIsOffUntilTheAppCanPlayIt() {
+        assertTrue("  enablesVideoPlayback: false\n" in VehicleConfigYaml.render(VehicleConfigSpec()))
+        assertTrue("  enablesVideoPlayback: true\n" in VehicleConfigYaml.render(VehicleConfigSpec(videoPlayback = true)))
+    }
+
     @Test fun physicalCalibrationChangesOnlyPanelMetadata() {
         val base = VehicleConfigSpec(width = 1024, height = 1100)
         val original = VehicleConfigYaml.render(base)

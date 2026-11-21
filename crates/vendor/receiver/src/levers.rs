@@ -62,6 +62,7 @@ const UNSET: i64 = i64::MIN;
 
 static SEED: Once = Once::new();
 static HEVC: AtomicBool = AtomicBool::new(false);
+static VIDEO_PLAYBACK: AtomicBool = AtomicBool::new(false);
 static DPAD: AtomicBool = AtomicBool::new(false);
 static KNOB: AtomicBool = AtomicBool::new(false);
 static MULTITOUCH: AtomicBool = AtomicBool::new(false);
@@ -117,6 +118,17 @@ pub fn hevc() -> bool {
 pub fn set_hevc(on: bool) {
     seed();
     HEVC.store(on, Ordering::Relaxed);
+}
+
+/// Route A lever (T34): the app's `accessoryConfig.enablesVideoPlayback`. `/info`'s `videoPlaybackInfo` and
+/// `playbackCapabilities`, and the SETUP `videoPlayback` echo when the phone proposes it. No env lever: only
+/// the app turns it on.
+pub fn video_playback() -> bool {
+    VIDEO_PLAYBACK.load(Ordering::Relaxed)
+}
+
+pub fn set_video_playback(on: bool) {
+    VIDEO_PLAYBACK.store(on, Ordering::Relaxed);
 }
 
 /// D-Pad lever (was `CARPLAY_DPAD` presence): the uid-3 `hidDevices[]` entry + the display features

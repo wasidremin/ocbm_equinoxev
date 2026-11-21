@@ -36,6 +36,16 @@ came from in their header comments.
   - `ocbmd`'s re-key of the A/V seams when the same host re-attaches over a live session, with its
     four tests (76d0c71).
   `tools/tests/radio_ap_test.sh` is written here after enigy's `tools/radio_ap_up_test.sh`.
+- **enigy/ocbm**, route A, the phone's video inside CarPlay (2026-11-21, from 801074f, OCBM 2.0):
+  - the offer (`/info`'s `videoPlaybackInfo` and `playbackCapabilities`, the SETUP echo) and the log's
+    shape helpers, from `probe.rs`, in `crates/vendor/receiver/src/video.rs`;
+  - the shared-DataStream relay and its JSON reader (`playback.rs`) and the tunnel to the phone's proxy
+    (`tunnel.rs`), each in the file of the same name;
+  - a partial TEARDOWN that stops only the DataStream it names (a86e552);
+  - the stream message on the event channel, carplayd's `INPUT_DATASTREAM`, `INPUT_TUNNEL` and
+    video-allowed handling, and ocbmd's `CH_TUNNEL` queue, with their tests.
+  Here the offer waits for the app's `enablesVideoPlayback`, a URL's host never reaches the log, and
+  the phone's `setProxyParameters` reaches the app by a sender that waits for the seam.
 
 ## Built from upstream source
 

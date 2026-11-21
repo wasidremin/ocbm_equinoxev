@@ -17,14 +17,17 @@ pub mod iap_tunnel;
 pub mod info;
 pub mod levers;
 pub mod net;
+pub mod playback;
 pub mod relay;
 pub mod server;
 pub mod session;
 pub mod stream;
 pub mod timeline;
+pub mod tunnel;
 pub mod vehicle_config;
 pub mod vehicle_status;
 pub mod location;
+pub mod video;
 #[cfg(feature = "mic-uplink")]
 pub mod uplink;
 

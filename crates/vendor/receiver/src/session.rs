@@ -318,6 +318,12 @@ pub trait SessionDelegate: Send {
     fn command(&mut self, _request_plist: &[u8]) -> Vec<u8> {
         Vec::new()
     }
+    /// A POST /command that is a shared DataStream's message (its `X-Apple-StreamID` header named `stream`):
+    /// the response body when this delegate relays it (route A, `playback.rs`), else `None` and it is handled
+    /// as an ordinary command. A delegate that wraps another must pass this on.
+    fn stream_message(&mut self, _stream: i64, _body: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
     /// Tear the session down. The request plist may carry a `streams` array (partial teardown of only
     /// those streams — the session stays alive) or none (full teardown of the whole session).
     fn teardown(&mut self, _request_plist: &[u8]) {}
@@ -404,6 +410,42 @@ pub struct AvSession {
     /// `(width, height, max_fps)` from the advertised `DeviceConfig`, via [`SessionDelegate::set_resolution`].
     /// `(0, 0, 0)` = unset (never threaded in — e.g. under `NoSession`/tests).
     resolution: (i64, i64, i64),
+    /// Each RCS (type-130) channel this connection SETUP, by `channelID`: what a partial TEARDOWN is matched
+    /// against ([`rcs_channels_named`]), so tearing down one channel never takes the others with it.
+    rcs_channels: HashMap<String, RcsChannel>,
+}
+
+/// One RCS (type-130) channel as its SETUP made it: the transport token returned for it (`streamID`), whether it
+/// is the iAP channel, which carries the session's metadata, calls and location, and its `clientTypeUUID`, which
+/// a shared channel's relayed messages are labelled with (`playback.rs`).
+#[derive(Debug, Clone)]
+struct RcsChannel {
+    stream_id: i64,
+    iap: bool,
+    client_type: String,
+}
+
+/// The RCS channels one partial-TEARDOWN entry names, and how it named them: by its `channelID`, else by its
+/// `streamID` (the transport token SETUP returned), else, with neither, every channel but the iAP one.
+///
+/// The type alone names nothing once two channels share 130, which route A's video channels do. Stopping every
+/// channel of the type is what lost the iAP2 link for the rest of a session when the phone tore its two video
+/// channels down (enigy/ocbm a86e552, their bench of 10 Nov: metadata, call state and location gone).
+fn rcs_channels_named(entry: &Dictionary, channels: &HashMap<String, RcsChannel>) -> (Vec<String>, &'static str) {
+    if let Some(ch) = entry.get("channelID").and_then(Value::as_string) {
+        return (vec![ch.to_string()], "channelID");
+    }
+    let stream_id = entry.get("streamID").and_then(|v| {
+        v.as_signed_integer()
+            .or_else(|| v.as_unsigned_integer().and_then(|u| i64::try_from(u).ok()))
+    });
+    let mut named: Vec<String> = match stream_id {
+        Some(sid) => channels.iter().filter(|(_, c)| c.stream_id == sid).map(|(k, _)| k.clone()).collect(),
+        None => channels.iter().filter(|(_, c)| !c.iap).map(|(k, _)| k.clone()).collect(),
+    };
+    named.sort();
+    let how = if stream_id.is_some() { "streamID" } else { "no channelID or streamID: every channel but the iAP one" };
+    (named, how)
 }
 
 /// How often stream threads wake from a blocking socket read to check the session-liveness flag.
@@ -467,6 +509,7 @@ impl AvSession {
             activity: Arc::new(AtomicU64::new(0)),
             av_streams: Mutex::new(HashMap::new()),
             negotiated_features: Vec::new(),
+            rcs_channels: HashMap::new(),
             resolution: (0, 0, 0),
         }
     }
@@ -511,6 +554,8 @@ impl AvSession {
         #[cfg(feature = "mic-uplink")]
         crate::uplink::clear();
         crate::events::clear();
+        crate::playback::session_ended();
+        crate::tunnel::close_all();
         clear_sinks();
     }
 
@@ -518,6 +563,8 @@ impl AvSession {
     /// uplink can target it on the correct interface. Pass the full `peer_addr()`, not `.ip()`.
     pub fn set_peer_addr(&mut self, addr: std::net::SocketAddr) {
         self.peer_addr = Some(addr);
+        // Route A's tunnel may reach only this phone (tunnel.rs).
+        crate::tunnel::set_phone(addr);
     }
 
     /// Read back the recorded peer address (see [`Self::set_peer_addr`]). Added for the app-driven
@@ -527,7 +574,8 @@ impl AvSession {
         self.peer_addr
     }
 
-    fn setup_phase1(&mut self, keep_alive: bool) -> Result<Vec<u8>, SetupError> {
+    /// `echo_video`: the app offered video and the phone proposed `videoPlayback` ([`crate::video::echoes_video`]).
+    fn setup_phase1(&mut self, keep_alive: bool, echo_video: bool) -> Result<Vec<u8>, SetupError> {
         // Idempotent, per Apple's reference (see `control_setup`). A repeat phase-1 SETUP with no
         // intervening TEARDOWN returns the SAME ports rather than re-binding: the phone is already
         // using them, and re-binding both breaks that and strands the previous threads.
@@ -706,6 +754,13 @@ impl AvSession {
         // env var (docs/wireless/00_WIRELESS_CARPLAY.md #2.1), not shared with CARPLAY_WIRELESS_METADATA — see info.rs's comment.
         if std::env::var("CARPLAY_SESSION_MGMT").is_ok() {
             feats.push(Value::String("sessionManagement".into()));
+        }
+        // videoPlayback: route A (T34, video.rs), when the app pushed `enablesVideoPlayback` and the phone
+        // proposed it, so any other session echoes what it always did. The /info half is
+        // `videoPlaybackInfo` + `playbackCapabilities` (info.rs).
+        if echo_video {
+            feats.push(Value::String("videoPlayback".into()));
+            crate::video::line(format_args!("SETUP phase1: echoing videoPlayback, which the phone proposed"));
         }
         if crate::relay::features_reverse() {
             feats.reverse();
@@ -1133,6 +1188,17 @@ impl AvSession {
                              → streamID={stream_id}{}",
                             if is_iap { "  [iAP channel]" } else { "  [NON-iAP channel]" }
                         );
+                        // What a partial TEARDOWN of this channel is matched against.
+                        self.rcs_channels.insert(
+                            channel_id.clone(),
+                            RcsChannel { stream_id, iap: is_iap, client_type: client_type.clone() },
+                        );
+                        if !is_iap {
+                            crate::video::line(format_args!(
+                                "DataStream SETUP: {}, streamID {stream_id}, dedicated socket {wants_socket}",
+                                crate::video::channel_name(&client_type)
+                            ));
+                        }
                         let mut r = Dictionary::new();
                         r.insert("type".into(), Value::Integer(ty.into()));
                         r.insert(
@@ -1532,19 +1598,13 @@ impl AvSession {
                                 }
                             }
                         } else {
-                            // Every capture on record requests a dedicated socket
-                            // (wantsDedicatedSocket=true), so this arm has never been exercised on
-                            // hardware — and the shared-connection transport it implies (RCS frames
-                            // multiplexed onto the control connection, addressed by the transport
-                            // token) is NOT implemented. Be loud about it rather than silently
-                            // returning a streamID the phone will talk into a void.
+                            // A shared channel: once route A offers video, the phone's video Playback
+                            // channel asks for no socket, and its messages ride POST /command with this
+                            // streamID in X-Apple-StreamID (enigy/ocbm's bench, 10 Nov). The relay
+                            // (playback.rs) carries them to the app and back.
                             eprintln!(
-                                "[session] *** DataStream(130) wantsDedicatedSocket=false — the \
-                                 SHARED-CONNECTION transport is NOT IMPLEMENTED ***"
-                            );
-                            eprintln!(
-                                "[session] *** streamID {stream_id} is returned, but inbound \
-                                 delivery for this channel will be DROPPED ***"
+                                "[session] DataStream(130) streamID {stream_id} shares the control connection: \
+                                 its messages ride POST /command, relayed to the app (playback.rs)"
                             );
                         }
                         resp.push(Value::Dictionary(r));
@@ -1599,6 +1659,13 @@ impl SessionDelegate for AvSession {
         self.resolution = (w, h, fps);
     }
 
+    /// Route A (`playback.rs`): a shared DataStream's message goes to the app, labelled with its channel's
+    /// client type.
+    fn stream_message(&mut self, stream: i64, body: &[u8]) -> Option<Vec<u8>> {
+        let client = self.rcs_channels.values().find(|c| c.stream_id == stream).map(|c| c.client_type.clone());
+        Some(crate::playback::on_phone_message(stream, client.as_deref(), body))
+    }
+
     /// Capture: log + dump every POST /command (duckAudio/unduckAudio/flushAudio/setVolume/… — the
     /// audio-focus signalling iOS uses during feature overlap). `CARPLAY_CMD_DUMP` writes full plists.
     fn command(&mut self, request_plist: &[u8]) -> Vec<u8> {
@@ -1650,7 +1717,17 @@ impl SessionDelegate for AvSession {
         // used to open a second, independent socket to the same port; ocbmd keeps one producer per
         // channel, so the two connections evicted each other in a loop and both sides silently lost
         // records. See `metadata::emit_command_plist`.
-        iap2_core::metadata::emit_command_plist(request_plist);
+        //
+        // Route A's `setProxyParameters` goes by the relay thread instead, which waits for a busy seam: the
+        // phone sends it once per session and the app cannot fetch the video without it. It is also kept for an
+        // app that subscribes later in the session (`tunnel::replay_proxy`).
+        if ty == "setProxyParameters" {
+            crate::tunnel::remember_proxy(request_plist);
+            crate::playback::send_proxy(request_plist);
+            crate::video::line(format_args!("setProxyParameters: to the app ({} B)", request_plist.len()));
+        } else {
+            iap2_core::metadata::emit_command_plist(request_plist);
+        }
         if let Ok(p) = std::env::var("CARPLAY_CMD_DUMP") {
             use std::io::Write as _;
             if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -1761,21 +1838,29 @@ impl SessionDelegate for AvSession {
             {
                 let mut m = crate::plock(&self.av_streams);
                 for s in &streams {
-                    if let Some(ty) = s
-                        .as_dictionary()
-                        .and_then(|sd| sd.get("type"))
-                        .and_then(|v| v.as_signed_integer())
-                    {
-                        // Reap every channel of this type. With one instance per type — every
-                        // path any capture shows — this is bit-identical to the old
-                        // `m.remove(&ty)`; it only differs once a second RCS channel exists.
-                        let keys: Vec<(i64, String)> =
-                            m.keys().filter(|(k, _)| *k == ty).cloned().collect();
-                        for k in keys {
-                            if let Some(flag) = m.remove(&k) {
-                                flag.store(false, Ordering::Release);
-                                stopped.push(ty);
-                            }
+                    let Some(sd) = s.as_dictionary() else {
+                        continue;
+                    };
+                    let Some(ty) = sd.get("type").and_then(|v| v.as_signed_integer()) else {
+                        continue;
+                    };
+                    let keys: Vec<(i64, String)> = if ty == 130 {
+                        // RCS channels share the type: stop the one(s) the entry names, never all
+                        // (`rcs_channels_named`).
+                        let (named, how) = rcs_channels_named(sd, &self.rcs_channels);
+                        eprintln!("[session] partial TEARDOWN of DataStream(130) by {how}: {} channel(s)", named.len());
+                        named.into_iter().map(|ch| (ty, ch)).collect()
+                    } else {
+                        // An A/V stream: one instance per type, so every stream of the type.
+                        m.keys().filter(|(k, _)| *k == ty).cloned().collect()
+                    };
+                    for k in keys {
+                        if ty == 130 {
+                            self.rcs_channels.remove(&k.1);
+                        }
+                        if let Some(flag) = m.remove(&k) {
+                            flag.store(false, Ordering::Release);
+                            stopped.push(ty);
                         }
                     }
                 }
@@ -1862,7 +1947,8 @@ impl SessionDelegate for AvSession {
             }
             Ok(self.setup_phase2(dict.as_ref().unwrap()))
         } else {
-            self.setup_phase1(keep_alive)
+            let echo_video = crate::video::echoes_video(crate::levers::video_playback(), dict.as_ref());
+            self.setup_phase1(keep_alive, echo_video)
         }
     }
 
@@ -1975,6 +2061,12 @@ impl SessionDelegate for AvSession {
         }
         if control_started {
             crate::events::mark_session_started(true);
+            // Route A: from RECORD on, the phone hears whether video may play, as the app decides it (the car
+            // known to be parked), and again at each change (playback.rs). Only in a session that negotiated
+            // videoPlayback.
+            if self.negotiated_features.iter().any(|f| f == "videoPlayback") {
+                crate::playback::on_record();
+            }
         }
         eprintln!("[session] RECORD done");
         Vec::new()
@@ -3201,6 +3293,65 @@ mod tests {
         assert!(!iap.load(Ordering::Acquire), "re-SETUP of the same channel must supersede");
         assert!(iap2.load(Ordering::Acquire));
         assert!(log.load(Ordering::Acquire), "superseding one channel must not touch another");
+    }
+
+    /// A partial TEARDOWN stops the RCS channel it names. By type alone it stopped every one, and the phone's
+    /// TEARDOWN of its video channels took the iAP2 link with them (enigy/ocbm a86e552).
+    #[test]
+    fn a_partial_teardown_stops_only_the_rcs_channel_it_names() {
+        let mut s = AvSession::new();
+        let iap = s.stream_flag_keyed(130, "RCS-1".into());
+        let settings = s.stream_flag_keyed(130, "RCS-2".into());
+        let playback = s.stream_flag_keyed(130, "RCS-3".into());
+        for (ch, stream_id, iap) in [("RCS-1", 1, true), ("RCS-2", 2, false), ("RCS-3", 3, false)] {
+            s.rcs_channels.insert(ch.into(), RcsChannel { stream_id, iap, client_type: String::new() });
+        }
+        let req = |id: Option<(&str, Value)>| {
+            let mut e = Dictionary::new();
+            e.insert("type".into(), Value::Integer(130.into()));
+            if let Some((k, v)) = id {
+                e.insert(k.into(), v);
+            }
+            let mut d = Dictionary::new();
+            d.insert("streams".into(), Value::Array(vec![Value::Dictionary(e)]));
+            let mut b = Vec::new();
+            Value::Dictionary(d).to_writer_binary(&mut b).unwrap();
+            b
+        };
+        s.teardown(&req(Some(("streamID", Value::Integer(3.into())))));
+        assert!(!playback.load(Ordering::Acquire), "named by its streamID");
+        assert!(iap.load(Ordering::Acquire) && settings.load(Ordering::Acquire));
+        s.teardown(&req(Some(("channelID", Value::String("RCS-2".into())))));
+        assert!(!settings.load(Ordering::Acquire), "named by its channelID");
+        assert!(iap.load(Ordering::Acquire), "the iAP channel stays");
+        let other = s.stream_flag_keyed(130, "RCS-4".into());
+        s.rcs_channels.insert("RCS-4".into(), RcsChannel { stream_id: 4, iap: false, client_type: String::new() });
+        s.teardown(&req(None));
+        assert!(!other.load(Ordering::Acquire), "no id: every channel but the iAP one");
+        assert!(iap.load(Ordering::Acquire), "never the iAP channel on a guess");
+        assert!(s.alive.load(Ordering::Acquire), "partial: the session stays");
+    }
+
+    /// Route A: `videoPlayback` is echoed whenever the phone proposed it, and only then; RECORD reads the
+    /// negotiated list to start telling the phone whether video may play.
+    #[test]
+    fn video_playback_is_echoed_when_the_phone_proposes_it() {
+        // Only route A's tests set the lever, and only on (`info_offers_video_and_leaves_the_features`).
+        crate::levers::set_video_playback(true);
+        let echoed = |resp: &[u8]| -> bool {
+            let d = Value::from_reader(std::io::Cursor::new(resp)).unwrap().into_dictionary().unwrap();
+            d["enabledFeatures"].as_array().unwrap().iter().any(|f| f.as_string() == Some("videoPlayback"))
+        };
+        let mut req = Dictionary::new();
+        req.insert("features".into(), Value::Array(vec![Value::String("videoPlayback".into())]));
+        let mut body = Vec::new();
+        Value::Dictionary(req).to_writer_binary(&mut body).unwrap();
+        let mut s = AvSession::new();
+        assert!(echoed(&s.setup(&body).unwrap()), "proposed: echoed");
+        assert!(s.negotiated_features.iter().any(|f| f == "videoPlayback"));
+        let mut quiet = Vec::new();
+        Value::Dictionary(Dictionary::new()).to_writer_binary(&mut quiet).unwrap();
+        assert!(!echoed(&AvSession::new().setup(&quiet).unwrap()), "not proposed: not echoed");
     }
 
     /// A/V streams keep supersede-by-type exactly as before — one screen, one alt-screen.

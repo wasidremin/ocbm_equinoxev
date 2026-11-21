@@ -53,7 +53,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
 | T25 Faster connect | New 2026-11-14, not started; **the owner's first annoyance**. May be app only, depending on where the time goes |
-| T34 Video from the iPhone while parked | New 2026-11-21, not started; **after** the car has tested Play 261 and the 262 adapter fixes (owner, 2026-11-21) |
+| T34 Video from the iPhone while parked | Adapter half BUILT 2026-11-21 (ported from enigy/ocbm, bench: the phone takes the offer); app half not started, waiting on the owner's choice of dependencies (TLS with a pre-shared key, an HLS player) |
 
 *Done*
 
@@ -1488,7 +1488,7 @@ thing (the adapter's link to the app, not the phone's) and is not affected.
 
 **Done means.** The app builds and connects as before with the mode gone, and its tests pass.
 
-## T34. Video from the iPhone while parked (raised 2026-11-21; start after the car has tested 261 and 262)
+## T34. Video from the iPhone while parked (raised 2026-11-21; the adapter's half BUILT 2026-11-21, the app's half not started)
 
 **Why.** iOS 26 and later let a CarPlay head unit play the phone's AirPlay video. enigy/ocbm shipped
 it in OCBM 2.0.0 with Carlink 3.00 (2026-11-12) as "route A": a video sent from the iPhone (Safari,
@@ -1524,6 +1524,34 @@ reads. Two things to check first: that the Equinox's GM build lets a Play app pl
 
 **Done means.** Parked, a video sent from the iPhone plays on the centre screen; shifting out of Park
 stops it; CarPlay carries on normally afterwards.
+
+**State (2026-11-21): the adapter's half is built; the app's half is not.** Started the day the car
+tested 261 and 262 (owner, 2026-11-21).
+- *Built, ported from enigy/ocbm* (`NOTICE.md`; the wire is `docs/carplay/01_OCBM_PROTOCOL.md`
+  "Route A"): the offer, the Playback DataStream relay, the tunnel, `CH_TUNNEL 0x0025`,
+  `INPUT_DATASTREAM 0x0A`, `INPUT_TUNNEL 0x0B`, `CMD_VIDEO_ALLOWED 0x14` (enigy's `0x13` is
+  `CMD_NAV_URL` here) and `MGMT_INFO` `"video":true`; a partial TEARDOWN that stops only the
+  DataStream it names.
+- *Changed from enigy's:* the offer waits for the app's `enablesVideoPlayback` (the app pushed `true`
+  through 262 and pushes `false` from 263 until it has the player); `setProxyParameters` goes to the app
+  by a sender that waits for the seam; the log shows a URL's scheme and size, never its host; and at
+  RECORD the box tells the phone video may not play when the app hasn't said.
+- *Why the RECORD word (bench, 2026-11-21, the owner's second iPhone on iOS 27.2.1, the AAOS emulator
+  with the adapter passed through):* with the offer on and nothing said, two sessions in a row ended
+  60 s after RECORD, one with the phone going silent and one with it leaving the adapter's Wi-Fi. With
+  "may not play" sent at RECORD, the next session ran past 6 minutes. The bench was noisy (the server
+  at load 20; a 262 session with no offer also ended after about 6 minutes, and the emulator missed
+  heartbeats), so this is likely, not proven.
+- *Verified:* unit tests (ocbm-proto, receiver, carplayd, ocbmd; `tools/run_tests.sh`), and on the
+  bench: the phone proposed `videoPlayback`, took the echo, opened its SenderSettingsData DataStream and
+  sent `setProxyParameters` (350 B), which reached the app; `setVideoPlaybackAllowed(false, idle)` went
+  out at RECORD. carplayd grew 101 KB (2.25 to 2.35 MB); the adapter had 3.4 MB free.
+- *Not yet run:* the play queue, the tunnel and a video playing, which need the app's half.
+- *The app's half, waiting on the owner's choice of dependencies:* TLS 1.3 with an external pre-shared
+  key, which Android's own TLS lacks (enigy uses Bouncy Castle), and a player for the phone's HLS stream
+  (enigy uses Media3 ExoPlayer). This app does not shrink its code (no R8), so both would ship whole.
+  Then the parked gate from `GEAR_SELECTION`, the play queue, the tunnel and the screen, ported from
+  enigy/carlink `com.carlink.video`.
 
 ## Left off this plan
 

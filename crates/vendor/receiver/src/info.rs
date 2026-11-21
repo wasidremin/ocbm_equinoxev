@@ -1128,6 +1128,15 @@ fn build_info_with_view_area_2(cfg: &DeviceConfig, second: Option<ViewArea2>) ->
         d.insert("sessionManagementInfo".into(), Value::Dictionary(smi));
     }
 
+    // Route A (T34, `video.rs`), when the app pushed `enablesVideoPlayback`: the /info half of offering the
+    // phone's video in the CarPlay session. The SETUP half is the `videoPlayback` echo (session.rs); the app
+    // gates playback on parked.
+    if crate::levers::video_playback() {
+        for (k, v) in crate::video::info_keys(cfg.features) {
+            d.insert(k.into(), v);
+        }
+    }
+
     if cfg.features != 0 {
         d.insert(
             "features".into(),
@@ -1824,5 +1833,26 @@ mod tests {
         assert_eq!(a1["widthPixels"].as_signed_integer().unwrap(), 1200);
         assert_eq!(a1["heightPixels"].as_signed_integer().unwrap(), 960);
         assert_eq!(a1["viewAreaTransitionControl"].as_boolean(), Some(true));
+    }
+
+    /// Route A (T34): /info offers the phone's video and leaves `features` as it was.
+    #[test]
+    fn info_offers_video_and_leaves_the_features() {
+        // Only this test sets the lever, and only on: a test that read it off would race this one.
+        crate::levers::set_video_playback(true);
+        let cfg = DeviceConfig::default();
+        let d = Value::from_reader(Cursor::new(build_info_with_view_area_2(&cfg, None)))
+            .unwrap()
+            .into_dictionary()
+            .unwrap();
+        let info = d["videoPlaybackInfo"].as_dictionary().unwrap();
+        assert_eq!(info["videoPlaybackAllowed"].as_boolean(), Some(true));
+        assert_eq!(info["featuresEx"].as_string(), Some(crate::video::features_ex(cfg.features).as_str()));
+        let caps = d["playbackCapabilities"].as_dictionary().unwrap();
+        assert_eq!(caps["supportsFPSSecureStop"].as_boolean(), Some(false), "protected video stays on the phone");
+        assert_eq!(caps["supportsUIForAudioOnlyContent"].as_boolean(), Some(false));
+        if cfg.features != 0 {
+            assert_eq!(d["features"].as_signed_integer(), Some(cfg.features as i64), "features unchanged");
+        }
     }
 }

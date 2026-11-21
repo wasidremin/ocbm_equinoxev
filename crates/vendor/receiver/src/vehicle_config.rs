@@ -307,6 +307,7 @@ impl Default for AccessoryConfig {
     fn default() -> Self {
         Self {
             enables_hevc: false,
+            enables_video_playback: false,
             enables_view_areas: false,
             enables_corner_masks: false,
             enables_log_transfer: false,
@@ -392,6 +393,12 @@ pub struct AccessoryConfig {
     /// app's dual-codec decoder is the third). Default false = the proven H.264 path.
     #[serde(default, rename = "enablesHEVC")]
     pub enables_hevc: bool,
+    /// Offer the phone's video inside the CarPlay session (route A, T34): `/info`'s `videoPlaybackInfo` and
+    /// `playbackCapabilities`, and the SETUP echo of `videoPlayback` when the phone proposes it. The app then
+    /// says when video may play (only while parked) and plays it. Default false: an app that does not push
+    /// it gets no offer, as before 2026-11-21.
+    #[serde(default, rename = "enablesVideoPlayback")]
+    pub enables_video_playback: bool,
     /// Advertise the `viewAreas` capability so iOS honors an inset `safeArea` (keeps CarPlay UI inside
     /// the safe rectangle for curved/occluded panels). Echoed in the SETUP `enabledFeatures` via the
     /// `CARPLAY_VIEWAREAS` lever. A real inset in the YAML also implies this on (see [`VehicleConfig::view_areas_enabled`]).
@@ -1237,6 +1244,15 @@ accessoryConfig:
     }
 
     #[test]
+    fn enables_video_playback_parses_true_and_defaults_false() {
+        let y = "accessoryConfig:\n  enablesVideoPlayback: true\n";
+        assert!(VehicleConfig::from_yaml(y.as_bytes()).unwrap().accessory_config.enables_video_playback);
+        assert!(!VehicleConfig::from_yaml(b"name: Minimum\n").unwrap().accessory_config.enables_video_playback);
+        let off = "accessoryConfig:\n  enablesVideoPlayback: false\n";
+        assert!(!VehicleConfig::from_yaml(off.as_bytes()).unwrap().accessory_config.enables_video_playback);
+    }
+
+    #[test]
     fn enables_log_transfer_parses_true_and_defaults_false() {
         let y = "accessoryConfig:\n  enablesLogTransfer: true\n";
         assert!(
@@ -2045,7 +2061,6 @@ metadata:
             "enablesUIContext",
             "enablesUISync",
             "enablesVehicleDataProtocol",
-            "enablesVideoPlayback",
             // Overlaps task #13 — the named capability is unimplemented, though the adjacent
             // `extendedFeatures` array is emitted unconditionally in /info.
             "enablesEnhancedSiri",

@@ -129,6 +129,18 @@ pub fn emit_json(json: &str) {
 /// a stalled control connection tears the CarPlay session down. A dropped command plist costs a line
 /// in the host's Metadata window; a stalled control thread costs the session.
 pub fn emit_command_plist(plist: &[u8]) {
+    emit_command_plist_or_drop(plist);
+}
+
+/// [`emit_command_plist`] that waits for a busy seam instead of dropping the record. Only for a command
+/// the host must not miss, and never on the control thread, for the reason above: route A's
+/// `setProxyParameters`, which the phone sends once per session and without which the host cannot fetch
+/// the video, goes through the receiver's DataStream relay thread (`receiver::playback`).
+pub fn emit_command_plist_waiting(plist: &[u8]) {
+    emit(META_CMD, plist);
+}
+
+fn emit_command_plist_or_drop(plist: &[u8]) {
     let mut guard = match SINK.try_lock() {
         Ok(g) => g,
         // A poisoned lock (a prior holder panicked) must be RECOVERED, not treated like "busy" — else

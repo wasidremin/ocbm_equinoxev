@@ -37,6 +37,8 @@ object Ocbm {
     const val CH_ALT_AUDIO: Int = 0x0022
     const val CH_METADATA: Int = 0x0023
     const val CH_ALT_VIDEO: Int = 0x0024
+    /** Route A's tunnels to the phone's proxy, box to app (T34; firmware whose `MGMT_INFO` says `"video":true`). */
+    const val CH_TUNNEL: Int = 0x0025
     const val CH_INPUT: Int = 0x0030
     const val CH_MIC: Int = 0x0031
     const val CH_MGMT: Int = 0x0040
@@ -364,6 +366,19 @@ object Ocbm {
     const val LOCATION_MAX: Int = 1024
     /** The largest CH_INPUT sub-frame the adapter reads (firmware from 2026-11-13; 64 before). */
     const val INPUT_FRAME_MAX: Int = 1 + LOCATION_MAX
+    /**
+     * Route A (T34), only for firmware whose `MGMT_INFO` says `"video":true`: `[INPUT_DATASTREAM][stream u32
+     * LE][JSON object]`, the app's answer on the phone's video Playback DataStream, and `[INPUT_TUNNEL][op][id]
+     * [data]`, its bytes for a tunnel to the phone's proxy. Each up to its own cap, past [INPUT_FRAME_MAX].
+     */
+    const val INPUT_DATASTREAM: Byte = 0x0A
+    const val MAX_INPUT_DATASTREAM: Int = 16_384
+    const val INPUT_TUNNEL: Byte = 0x0B
+    const val MAX_INPUT_TUNNEL: Int = 16_384
+    const val TUNNEL_OPEN: Byte = 0x01
+    const val TUNNEL_DATA: Byte = 0x02
+    const val TUNNEL_CLOSE: Byte = 0x03
+    const val TUNNEL_OPENED: Byte = 0x04
 
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.
@@ -450,6 +465,14 @@ object Ocbm {
      * `"nav_url":true` knows the command (2026-11-13, T23).
      */
     const val CMD_NAV_URL: Byte = 0x13
+    /**
+     * Route A (T34): `[INPUT_COMMAND][CMD_VIDEO_ALLOWED][allowed 0|1][VIDEO_STATUS_*]`, whether the phone's video
+     * may play now (only while the car is known to be parked). enigy/ocbm numbers it 0x13.
+     */
+    const val CMD_VIDEO_ALLOWED: Byte = 0x14
+    const val VIDEO_STATUS_IDLE: Byte = 0
+    const val VIDEO_STATUS_VIDEO: Byte = 1
+    const val VIDEO_STATUS_AUDIO_ONLY: Byte = 2
     const val CLUSTER_URL_PREFIX: String = "maps:/car/instrumentcluster"
 
     const val APPEARANCE_STREAM_MAIN: Byte = 0x00 // lib.rs:275

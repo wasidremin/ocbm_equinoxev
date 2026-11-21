@@ -751,6 +751,7 @@ fn appsetup_override() -> Option<bool> {
 /// so nothing here can decide anything for a configured connection.
 fn clear_levers() {
     levers::set_hevc(false);
+    levers::set_video_playback(false); // route A: never offered without an app that asked for it
     // mainBuffered falls back to the bench env on these no-config / parse-failure paths only (NOT
     // plain false, and NOT the cornerMasks OR-force-arm shape — a stale bench flag must never
     // override an app's pushed `false`, which the config path below guarantees by setting the
@@ -837,6 +838,8 @@ fn load_device_config() -> (DeviceConfig, u32) {
                 // strictly after this — so the declaration and the subscribes share one snapshot.
                 iap2_core::config::Iap2Config::from_slice(&bytes).arm_metadata_policy();
                 levers::set_hevc(vc.accessory_config.enables_hevc);
+                // Route A (T34): offer the phone's video only when the app asked to.
+                levers::set_video_playback(vc.accessory_config.enables_video_playback);
                 // mainBuffered from the pushed config alone (docs/carplay/04_CAPABILITIES_AND_CONFIG.md B4) — deliberately NO env OR:
                 // a stale bench flag must never override an app that said `false` (media-silence
                 // hazard). The bench env applies only on the no-config paths via clear_levers.
@@ -1089,8 +1092,9 @@ fn read_input(mut stream: TcpStream, gen: u32) {
             break;
         }
         let len = u16::from_le_bytes(hdr) as usize;
-        // Sized by the protocol, not by HID: location and URL frames are hundreds of bytes.
-        if len == 0 || len > ocbm_proto::INPUT_FRAME_MAX {
+        // Sized by the protocol, not by HID: location and URL frames are hundreds of bytes, and route A's
+        // DataStream answers and tunnel bytes up to 16 KiB (checked by type below).
+        if len == 0 || len > ocbm_proto::INPUT_SUB_FRAME_MAX {
             // implausible sub-frame length → treat as desync and drop the connection
             eprintln!("[input] implausible sub-frame length {len} — desync, dropping the ingest connection");
             break;
@@ -1098,6 +1102,14 @@ fn read_input(mut stream: TcpStream, gen: u32) {
         let mut pl = vec![0u8; len];
         if let Err(e) = read_input_exact(&mut stream, &mut pl, gen) {
             eprintln!("[input] ingest connection closed mid-payload ({len} B expected: {e})");
+            break;
+        }
+        // Only route A's sub-frames run past INPUT_FRAME_MAX; any other that does is a desync.
+        if len > ocbm_proto::input_sub_frame_max(pl[0]) {
+            eprintln!(
+                "[input] a {len} B sub-frame of type 0x{:02x}, past its type's cap — desync, dropping the ingest connection",
+                pl[0]
+            );
             break;
         }
         // Re-checked HERE, not just before the reads: this is the last instant before the frame
@@ -1110,12 +1122,33 @@ fn read_input(mut stream: TcpStream, gen: u32) {
     }
 }
 
+/// `setVideoPlaybackAllowed`'s `playbackStatus` for a `VIDEO_STATUS_*` byte: nothing queued, a queued video
+/// allowed to show, one queued that may not. None for a byte the box doesn't know.
+fn video_status_word(status: u8) -> Option<&'static str> {
+    match status {
+        ocbm_proto::VIDEO_STATUS_IDLE => Some("idle"),
+        ocbm_proto::VIDEO_STATUS_VIDEO => Some("video"),
+        ocbm_proto::VIDEO_STATUS_AUDIO_ONLY => Some("audioOnly"),
+        _ => None,
+    }
+}
+
 /// Turn one CH_INPUT sub-frame into a HID report to the iPhone. Single-touch MVP (uid 1): DOWN/MOVE =
 /// tip down, UP = tip up; normalized 0..=65535 coords scaled to the advertised resolution (`DISPLAY_WH`).
 fn handle_input_frame(pl: &[u8]) {
     use std::sync::atomic::{Ordering};
     use portable_atomic::{AtomicU64};
     static N: AtomicU64 = AtomicU64::new(0);
+    // Route A (T34, receiver::playback): the app's answer on a shared DataStream, on its way to the phone.
+    if pl.first() == Some(&ocbm_proto::INPUT_DATASTREAM) {
+        receiver::playback::send_reply(&pl[1..]);
+        return;
+    }
+    // Route A's tunnel to the phone's proxy: open, write to or close one (receiver::tunnel).
+    if pl.first() == Some(&ocbm_proto::INPUT_TUNNEL) {
+        receiver::tunnel::on_input(&pl[1..]);
+        return;
+    }
     // Host-detected video-loss keyframe request (task #33): relay ForceKeyFrame to iOS over the event
     // channel — the box owns that channel, so only it can issue the command. No-op between sessions.
     if pl.first() == Some(&ocbm_proto::INPUT_KEYFRAME) {
@@ -1466,6 +1499,24 @@ fn handle_input_frame(pl: &[u8]) {
             // limitedUI (Drive/Park) — restrict / release the CarPlay UI at runtime.
             ocbm_proto::CMD_LIMITED_UI_ON => ("setLimitedUI(true)", events::send_set_limited_ui(true)),
             ocbm_proto::CMD_LIMITED_UI_OFF => ("setLimitedUI(false)", events::send_set_limited_ui(false)),
+            // Route A (T34): whether the phone's video may play (the car known to be parked) and the play
+            // queue's status, `[cmd][allowed][status]`. Sent now in a session past RECORD that negotiated
+            // videoPlayback, else kept for RECORD (receiver::playback).
+            ocbm_proto::CMD_VIDEO_ALLOWED => {
+                let Some(&allowed) = pl.get(2) else {
+                    eprintln!("[input] videoAllowed frame too short ({} B) — dropped", pl.len());
+                    return;
+                };
+                let status = pl.get(3).copied().unwrap_or(ocbm_proto::VIDEO_STATUS_IDLE);
+                let Some(word) = video_status_word(status) else {
+                    eprintln!("[input] videoAllowed status {status} is not one the box knows — dropped");
+                    return;
+                };
+                (
+                    if allowed != 0 { "setVideoPlaybackAllowed(true)" } else { "setVideoPlaybackAllowed(false)" },
+                    receiver::playback::host_allows(allowed != 0, word),
+                )
+            }
             other => {
                 eprintln!("[input] unknown INPUT_COMMAND 0x{other:02x} — dropped");
                 return;
@@ -1787,6 +1838,11 @@ fn start_host_present_watcher() {
             let now = read();
             if now && !last {
                 pending = true; // host just (re)subscribed — it needs a fresh IDR
+                // Route A: the phone's setProxyParameters went by once, at the session's start; this host
+                // needs it too.
+                if receiver::tunnel::replay_proxy() {
+                    eprintln!("[tunnel] host subscribed mid-session → the phone's setProxyParameters sent again");
+                }
             }
             last = now;
             if !now {
@@ -1850,6 +1906,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Route A's playbackStatus words; a byte past them is refused, never guessed.
+    #[test]
+    fn video_status_bytes_are_the_three_words() {
+        assert_eq!(video_status_word(ocbm_proto::VIDEO_STATUS_IDLE), Some("idle"));
+        assert_eq!(video_status_word(ocbm_proto::VIDEO_STATUS_VIDEO), Some("video"));
+        assert_eq!(video_status_word(ocbm_proto::VIDEO_STATUS_AUDIO_ONLY), Some("audioOnly"));
+        assert_eq!(video_status_word(3), None);
+    }
 
     const ID: &[u8] = b"0D4C5E7A-1111-2222-3333-444455556666";
 
