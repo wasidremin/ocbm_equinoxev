@@ -342,7 +342,7 @@ stays (serves Capture Current).
   `versionName = AAB_VERSION_NAME env ?: "4.0+…"`.
 - **Doc 14 owns the running record** (its "versionCode is not
   `git rev-list --count`" bullet); read it there instead of trusting a number in
-  this file, which went stale three times. Last copied here: **262
-  `4.0+ap-dhcp`** (2026-11-21, PUBLISH_OK).
+  this file, which went stale three times. Last copied here: **263
+  `4.0+video-voice`** (2026-11-21, PUBLISH_OK).
 - Track: `automotive:internal`, status COMPLETED. Publishing only happens via
   `tools/build_aab.sh --publish` (`AAB_VERSION_CODE` env); nothing auto-publishes.

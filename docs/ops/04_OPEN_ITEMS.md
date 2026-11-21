@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 262 (`4.0+ap-dhcp`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 263 (`4.0+video-voice`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
   2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
