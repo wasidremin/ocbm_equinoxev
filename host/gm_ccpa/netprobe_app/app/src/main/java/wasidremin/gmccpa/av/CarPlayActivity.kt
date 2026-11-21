@@ -679,6 +679,16 @@ class CarPlayActivity : Activity() {
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.START))
         }
+        // Below the call pill, so a call that rings over the video can still be answered.
+        wasidremin.gmccpa.video.RouteA.load(applicationContext)
+        videoOverlay = wasidremin.gmccpa.video.VideoOverlayView(this) { wasidremin.gmccpa.video.RouteA.playback?.close() }.also {
+            it.visibility = View.GONE
+            it.elevation = dp(24).toFloat()
+            root.addView(it, android.widget.FrameLayout.LayoutParams(-1, -1))
+        }
+        wasidremin.gmccpa.video.RouteA.engine?.onPictureChanged = { root.post { if (!isDestroyed) bindVideo() } }
+        wasidremin.gmccpa.video.RouteA.playback?.onShowing = { _ -> root.post { if (!isDestroyed) bindVideo() } }
+        bindVideo()
         // Hardware-free look at the in-call pill: `call_preview` = ring | active | muted.
         if (previewOnly) intent.getStringExtra("call_preview")?.let { v ->
             callPill?.bind(if (v == "ring") CallPhase.RINGING else CallPhase.ACTIVE, v == "muted", {}, {}, {})
@@ -1019,6 +1029,18 @@ class CarPlayActivity : Activity() {
     private var railPlayButton: RailButton? = null
     /** Movable in-call overlay. Null until onCreate; the pill itself hides when idle. */
     private var callPill: CallPillView? = null
+    /** Route A's screen (T34): the phone's video over CarPlay while it plays, parked only. */
+    private var videoOverlay: wasidremin.gmccpa.video.VideoOverlayView? = null
+
+    /** Show or hide the phone's video, and draw the player into it while it shows. Main thread. */
+    private fun bindVideo() {
+        val v = videoOverlay ?: return
+        val routeA = wasidremin.gmccpa.video.RouteA
+        val showing = routeA.playback?.showing == true
+        v.visibility = if (showing) View.VISIBLE else View.GONE
+        val size = routeA.engine?.size
+        v.bind(routeA.engine?.player?.takeIf { showing }, size?.let { it.width * it.pixelWidthHeightRatio / it.height })
+    }
     /** Last mute state we sent via TEL_MUTE — iOS sends no mute read-back, so this is the label. */
     private var pillMuted = false
 
@@ -1361,11 +1383,11 @@ class CarPlayActivity : Activity() {
         if (mts != null) {
             servers.add(mts)
             SessionTrace.Board.up(BOARD_META, "bound :9004, listening")
-            val seam = MetadataSeam(ProbeLog.sub("meta")) { m, pl ->
+            val seam = MetadataSeam(ProbeLog.sub("meta"), onMessage = { m, pl ->
                 // /command plists are a different plane from now-playing; keep NowPlayingState purely
                 // about media rather than teaching it about view areas.
                 if (m == MetadataSeam.META_CMD) onCommandPlist(pl) else nowPlaying.dispatch(m, pl)
-            }
+            })
             serve(gen, mts, "meta") { ins -> seam.consume(gen, ins) }
         } else {
             log.e("metadata seam :9004 could not be bound — the now-playing card stays empty; continuing")
@@ -2083,8 +2105,11 @@ class CarPlayActivity : Activity() {
         // unconditionally would leave the LIVE screen unreachable from [onSessionEnded].
         if (live?.get() === this) {
             nowPlaying.onCallChanged = null
+            wasidremin.gmccpa.video.RouteA.engine?.onPictureChanged = null
+            wasidremin.gmccpa.video.RouteA.playback?.onShowing = null
             live = null
         }
+        videoOverlay?.bind(null, null)
         if (wasidremin.gmccpa.pane.SplitPane.listener === paneListener) wasidremin.gmccpa.pane.SplitPane.listener = null
         stopSession("activity destroyed")
         touchThread?.quitSafely(); touchThread = null; touchHandler = null

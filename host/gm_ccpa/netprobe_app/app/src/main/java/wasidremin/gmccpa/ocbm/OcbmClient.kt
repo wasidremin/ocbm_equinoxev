@@ -156,6 +156,13 @@ class OcbmClient(
     var onLanesArmed: ((OcbmAvLanes) -> Unit)? = null
     var onLanesRetired: ((OcbmAvLanes) -> Unit)? = null
     var onMetadata: ((marker: Int, payload: ByteArray) -> Unit)? = null
+
+    /** CH_TUNNEL messages `(op, [id][data])`: route A's tunnels to the phone's proxy (T34). Read thread: hand off only. */
+    @Volatile var onTunnel: ((op: Int, payload: ByteArray) -> Unit)? = null
+
+    /** CH_TUNNEL's framing: the metadata seam's, with its own magic. Lives as long as this client. */
+    private val tunnelSeam = wasidremin.gmccpa.av.MetadataSeam(log, { op, payload -> onTunnel?.invoke(op, payload) },
+        wasidremin.gmccpa.av.MetadataSeam.TUNNEL_MAGIC)
     var onSessionKeyed: (() -> Unit)? = null
     /** `CT_UPLINK` — mic gate. `(on, rateHz, channels)`. */
     var onUplinkGate: ((Boolean, Int, Int) -> Unit)? = null
@@ -298,6 +305,8 @@ class OcbmClient(
             Ocbm.CH_METADATA -> if (adapterMode) deliverAv(f) { it.feedMetadata(f.payload) } else unexpected(f)
             // The driver display's map; dropped by its seam while no window shows it.
             Ocbm.CH_ALT_VIDEO -> if (adapterMode) deliverAv(f) { it.feedClusterVideo(f.payload) } else unexpected(f)
+            // Route A's tunnel bytes: not an A/V lane, so they flow whatever the lanes' state.
+            Ocbm.CH_TUNNEL -> if (adapterMode) tunnelSeam.feed(f.payload) else unexpected(f)
             else -> unexpected(f)
         }
     }
@@ -1560,6 +1569,41 @@ class OcbmClient(
 
     fun sendMediaButton(index: Byte): Boolean {
         enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_MEDIA_BTN, index))
+        return subscribed
+    }
+
+    /**
+     * `[INPUT_DATASTREAM][stream u32 LE][JSON]`: route A's answer on the phone's video Playback DataStream (T34). False
+     * when not subscribed or the JSON is over [Ocbm.MAX_INPUT_DATASTREAM].
+     */
+    fun sendDataStream(stream: Int, json: String): Boolean {
+        val body = json.toByteArray(Charsets.UTF_8)
+        if (body.size > Ocbm.MAX_INPUT_DATASTREAM) return false
+        val p = java.nio.ByteBuffer.allocate(1 + 4 + body.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .put(Ocbm.INPUT_DATASTREAM).putInt(stream).put(body).array()
+        enqueueInput(Ocbm.CH_INPUT, p)
+        return subscribed
+    }
+
+    /**
+     * `[INPUT_TUNNEL][op][id][data]`: open, write to or close route A's tunnel [id] to the phone's proxy (T34). The
+     * input queue is one thread, so a tunnel's bytes stay in order. False when not subscribed or the data is over
+     * [Ocbm.MAX_INPUT_TUNNEL].
+     */
+    fun sendTunnel(op: Byte, id: Int, data: ByteArray): Boolean {
+        if (data.size > Ocbm.MAX_INPUT_TUNNEL) return false
+        val p = ByteArray(3 + data.size)
+        p[0] = Ocbm.INPUT_TUNNEL
+        p[1] = op
+        p[2] = id.toByte()
+        data.copyInto(p, 3)
+        enqueueInput(Ocbm.CH_INPUT, p)
+        return subscribed
+    }
+
+    /** `[INPUT_COMMAND][CMD_VIDEO_ALLOWED][allowed][status]`: whether the phone's video may play now (T34). */
+    fun sendVideoAllowed(allowed: Boolean, status: Byte): Boolean {
+        enqueueInput(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_VIDEO_ALLOWED, if (allowed) 1 else 0, status))
         return subscribed
     }
 

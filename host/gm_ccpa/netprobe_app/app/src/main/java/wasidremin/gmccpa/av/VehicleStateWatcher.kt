@@ -125,6 +125,8 @@ class VehicleStateWatcher(private val ctx: Context) {
             else -> true
         }
         wasidremin.gmccpa.lyrics.BarLyrics.parked = limited?.not()
+        // Route A (T34): the phone's video plays only while the gear reads PARK; unknown is not parked.
+        wasidremin.gmccpa.video.RouteA.onGear(limited == false)
         if (limited != gearLimited) {
             gearLimited = limited
             log.i("gear=${gearName(g)} -> limitedUI=${limited ?: "no opinion"}")
@@ -140,6 +142,7 @@ class VehicleStateWatcher(private val ctx: Context) {
         override fun onErrorEvent(propId: Int, zone: Int) {
             log.w("gear property error propId=0x${propId.toString(16)} zone=$zone — leaning on UXR")
             gearLimited = null
+            wasidremin.gmccpa.video.RouteA.onGear(false)
         }
     }
 

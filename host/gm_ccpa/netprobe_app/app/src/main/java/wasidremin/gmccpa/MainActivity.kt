@@ -781,6 +781,7 @@ class MainActivity : Activity() {
         wasidremin.gmccpa.nav.ClusterNav.load(applicationContext)
         wasidremin.gmccpa.ev.CarPlayEv.load(applicationContext)
         wasidremin.gmccpa.gps.CarGps.load(applicationContext)
+        wasidremin.gmccpa.video.RouteA.load(applicationContext)
         wasidremin.gmccpa.nav.ClusterContent.load(applicationContext)
         // One line: can the wheel's voice button be made to start Siri on this car (voice/SiriAssistant.kt).
         runCatching { wasidremin.gmccpa.voice.AssistantRole.probe(applicationContext) }
@@ -1478,6 +1479,12 @@ class MainActivity : Activity() {
             "capture_whole_os" -> setCaptureScope(LogCapture.Scope.WHOLE_OS)
             "capture_own" -> setCaptureScope(LogCapture.Scope.OWN_PROCESS)
             "ocbm_selftest" -> runAsync { ocbm().selfTest() }
+            // T34 bench: a small page over the phone's network, as route A's player fetches (Apple's own
+            // captive-portal check page, which every iPhone fetches anyway).
+            "video_net_test" -> Thread({
+                val r = wasidremin.gmccpa.video.RouteA.netTest("https://captive.apple.com/hotspot-detect.html")
+                wasidremin.gmccpa.ProbeLog.sub("video").i("net test: $r")
+            }, "video-net-test").start()
             // Bench: capture the driver display as Settings ▸ Cluster does; the result goes to the log.
             // Bench: the lyrics package, as Settings ▸ Lyrics ▸ Download now. `--es car <id>` (and
             // `--es base <url>`) name the receiver first, which the car learns from an upload.

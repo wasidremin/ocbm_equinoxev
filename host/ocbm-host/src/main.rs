@@ -954,11 +954,19 @@ fn mode_session(link: &mut Link, secs: u64, cfg_path: Option<&str>) {
         + Duration::from_secs(
             std::env::var("OCBM_SESSION_UI_URL_AT").ok().and_then(|s| s.parse().ok()).unwrap_or(25),
         );
+    // Bench lever (T34): OCBM_SESSION_TUNNEL=1 opens route A's tunnel to the phone's proxy once the phone's
+    // setProxyParameters arrives, and reports what comes back on CH_TUNNEL, over this server's own USB (no
+    // emulator in the way). Prints the proxy's port, ops and sizes only: never its address or its key.
+    let mut tunnel = std::env::var("OCBM_SESSION_TUNNEL").ok().filter(|v| v == "1").map(|_| TunnelBench::default());
     loop {
         if let Some(d) = deadline {
             if Instant::now() >= d {
                 break;
             }
+        }
+        if let Some(open) = tunnel.as_mut().and_then(TunnelBench::take_open) {
+            link.send(p::CH_INPUT, p::F_SOM | p::F_EOM, &open);
+            println!("[tunnel-bench] sent TUNNEL_OPEN for tunnel 1");
         }
         if Instant::now() >= ui_url_at {
             if let Some(url) = ui_url.take() {
@@ -970,6 +978,12 @@ fn mode_session(link: &mut Link, secs: u64, cfg_path: Option<&str>) {
         }
         // drain any SESSION_EVENTs (short wait so heartbeats stay ~1/s)
         if let Some((ch, _, l)) = link.recv(&mut out, Instant::now() + Duration::from_millis(250)) {
+            if let Some(t) = tunnel.as_mut() {
+                if let Some(close) = t.on_frame(ch, &out[..l]) {
+                    link.send(p::CH_INPUT, p::F_SOM | p::F_EOM, &close);
+                    println!("[tunnel-bench] sent TUNNEL_CLOSE");
+                }
+            }
             if ch == p::CH_CTRL && l >= 2 && out[0] == p::CT_SESSION_EVENT {
                 let ev = match out[1] {
                     x if x == p::SEV_HOST_PRESENT => "HOST_PRESENT",
@@ -986,6 +1000,95 @@ fn mode_session(link: &mut Link, secs: u64, cfg_path: Option<&str>) {
     }
     link.send(p::CH_CTRL, p::F_SOM | p::F_EOM, &[p::CT_STOP]);
     println!("[session] STOP sent — clean exit");
+}
+
+/// [`mode_session`]'s route A tunnel bench (`OCBM_SESSION_TUNNEL=1`): reassembles the metadata and tunnel seams
+/// (`[magic][u32 BE len][marker][payload]`), opens one tunnel once the phone's `setProxyParameters` arrives, and
+/// closes it once the box has answered.
+#[derive(Default)]
+struct TunnelBench {
+    meta: Vec<u8>,
+    tun: Vec<u8>,
+    open: Option<Vec<u8>>,
+    sent_at: Option<Instant>,
+    answered: bool,
+}
+
+impl TunnelBench {
+    fn take_open(&mut self) -> Option<Vec<u8>> {
+        let f = self.open.take()?;
+        self.sent_at = Some(Instant::now());
+        Some(f)
+    }
+
+    /// Whole seam messages in `buf`, `(marker, payload)`, consumed from its front.
+    fn messages(buf: &mut Vec<u8>, magic: &[u8; 4]) -> Vec<(u8, Vec<u8>)> {
+        let mut out = Vec::new();
+        loop {
+            let Some(at) = buf.windows(4).position(|w| w == magic) else {
+                buf.clear();
+                return out;
+            };
+            buf.drain(..at);
+            if buf.len() < 9 {
+                return out;
+            }
+            let len = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+            if len == 0 || len > 16 << 20 {
+                buf.drain(..1);
+                continue;
+            }
+            if buf.len() < 8 + len {
+                return out;
+            }
+            out.push((buf[8], buf[9..8 + len].to_vec()));
+            buf.drain(..8 + len);
+        }
+    }
+
+    /// One frame from the box; a TUNNEL_CLOSE to send once the box has answered the open.
+    fn on_frame(&mut self, ch: u16, pl: &[u8]) -> Option<Vec<u8>> {
+        if ch == p::CH_METADATA {
+            self.meta.extend_from_slice(pl);
+            for (marker, payload) in Self::messages(&mut self.meta, b"META") {
+                if marker != 0x01 || self.sent_at.is_some() || self.open.is_some() {
+                    continue;
+                }
+                let Ok(plist::Value::Dictionary(d)) = plist::Value::from_reader(std::io::Cursor::new(&payload)) else { continue };
+                if d.get("type").and_then(plist::Value::as_string) != Some("setProxyParameters") {
+                    continue;
+                }
+                let params = d.get("params").and_then(plist::Value::as_dictionary);
+                let url = params.and_then(|p| p.get("proxyUrl")).and_then(plist::Value::as_string);
+                let port = params.and_then(|p| p.get("proxyPort")).and_then(plist::Value::as_unsigned_integer);
+                if let (Some(url), Some(port)) = (url, port) {
+                    println!("[tunnel-bench] the phone offers its proxy (port {port}, a {} B address)", url.len());
+                    let mut f = vec![p::INPUT_TUNNEL, p::TUNNEL_OPEN, 1];
+                    f.extend_from_slice(&(port as u16).to_be_bytes());
+                    f.extend_from_slice(url.as_bytes());
+                    self.open = Some(f);
+                }
+            }
+        } else if ch == p::CH_TUNNEL {
+            self.tun.extend_from_slice(pl);
+            for (op, payload) in Self::messages(&mut self.tun, &p::TUNNEL_SEAM_MAGIC) {
+                let ms = self.sent_at.map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                let name = match op {
+                    p::TUNNEL_OPENED => "OPENED",
+                    p::TUNNEL_CLOSE => "CLOSE",
+                    p::TUNNEL_DATA => "DATA",
+                    _ => "?",
+                };
+                println!("[tunnel-bench] CH_TUNNEL {name} for tunnel {} ({} B) {ms} ms after the open",
+                    payload.first().copied().unwrap_or(0), payload.len().saturating_sub(1));
+                if op == p::TUNNEL_OPENED && !self.answered {
+                    self.answered = true;
+                    return Some(vec![p::INPUT_TUNNEL, p::TUNNEL_CLOSE, 1]);
+                }
+            }
+        }
+        None
+    }
 }
 
 /// `av` — receive the box's A/V over OCBM (CH_VIDEO / CH_MEDIA_AUDIO), count it, and save the video

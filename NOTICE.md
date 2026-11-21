@@ -46,6 +46,12 @@ came from in their header comments.
     video-allowed handling, and ocbmd's `CH_TUNNEL` queue, with their tests.
   Here the offer waits for the app's `enablesVideoPlayback`, a URL's host never reaches the log, and
   the phone's `setProxyParameters` reaches the app by a sender that waits for the seam.
+- **enigy/carlink**, route A's app half (2026-11-21, from a04f4c0, `com.carlink.video`): the play queue
+  (`VideoPlayback`), the player (`ExoVideoEngine`, `VideoEngine`), the phone's proxy offer, its TLS-PSK
+  handshake, the tunnels, the HTTP/1.1 client, the origin's TLS and the Media3 data source
+  (`video/proxy/`), and their tests, in `host/gm_ccpa/.../video/`. The screen (`VideoOverlayView`) and the
+  wiring (`RouteA`) are written here after enigy's Compose overlay and `CarlinkManager`. Here the log
+  carries no part of a video's address or host.
 
 ## Built from upstream source
 
@@ -124,6 +130,16 @@ redistributed here: the reference tree is outside this repository and excluded f
 
 **Gradle wrapper** (`host/CarlinkAndroid/gradlew`, `gradle-wrapper.properties`) — Apache-2.0,
 unmodified, retaining its own license header.
+
+## Bundled in the app, fetched at build time (not in this repository)
+
+Both are downloaded from Maven by the app's Gradle build and ship inside the APK, unmodified, for
+route A (T34; the owner chose them on 2026-11-21 over writing a TLS client here):
+
+- **AndroidX Media3** 1.8.0 (`media3-exoplayer`, `media3-exoplayer-hls`; Apache-2.0) — the player for the
+  phone's HLS video.
+- **Bouncy Castle** 1.80 (`bcprov`, `bctls`, `bcutil`, `-jdk18on`; the Bouncy Castle licence, MIT-style) —
+  TLS 1.3 with the external pre-shared key the phone's proxy requires, which Android's own TLS lacks.
 
 ## Linked at build time, not vendored
 

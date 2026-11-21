@@ -262,6 +262,14 @@ high-water mark: versionCode 262 (`4.0+ap-dhcp`, 2026-11-21; `host/gm_ccpa/docs/
   Bluetooth range for 20 s or the screen comes back with no picture, and ends a session the box no
   longer has. Why the frame was lost is open; 233 logs resync bytes once a minute. Unverified on the
   car. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
+- **Video from the iPhone while parked (T34, both halves built 2026-11-21, not yet on the car).** Needs
+  the app and the adapter firmware of the same build (Settings ▸ Advanced ▸ Adapter firmware); CarPlay ▸
+  Video is on by default. To check, parked: in Safari on the iPhone, play a video and choose the car from
+  AirPlay; it should play full screen over CarPlay, its sound on the car's media volume, with ✕ to
+  close; shifting out of Park should pause it and close the screen. The log shows `[video]` lines: the
+  phone's proxy offer, `the phone is told video may play`, `the phone queued an item`, `a tunnel is open`.
+  Protected video (the TV app's) stays on the phone. Bench limits and what has not run: `08_FUTURE_TASKS.md`
+  T34.
 - **The voice button ends a CarPlay call (263, issue #4).** The 2026-11-21 drive test (262) settled
   the wheel: the voice button answered a ringing call, and the phone toggle, tried during the calls
   ("the call buttons did nothing"), reached no app. The voice button during a call went to iOS

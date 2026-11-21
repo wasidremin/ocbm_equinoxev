@@ -1270,6 +1270,7 @@ class OcbmProbe(context: Context) {
                 mainBufferedProbe = ctx.getSharedPreferences("bench", android.content.Context.MODE_PRIVATE)
                     .getBoolean("main_buffered_probe", false)
                     .also { if (it) log.w("T8 bench probe: advertising buffered audio — media may be silent this session") },
+                videoPlayback = videoOfferFor(c),
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)
@@ -1279,6 +1280,7 @@ class OcbmProbe(context: Context) {
             splitArea?.takeIf { sent.contains("\n  enablesViewAreas: true\n") },
             startsSplit = sent.contains("\n      initial: true\n"))
         wasidremin.gmccpa.nav.DriverDisplay.onSubscribe(cluster?.takeIf { sent.contains("\n  - videoStreamID: VideoStream.Alt1\n") })
+        wasidremin.gmccpa.video.RouteA.offered = sent.contains("\n  enablesVideoPlayback: true\n")
         c.subscribe(doc)
         if (doc.toString(Charsets.UTF_8).contains("\nwifi_ap: true\n")) armWifiWatch()
         c.startHeartbeat()
@@ -1389,6 +1391,14 @@ class OcbmProbe(context: Context) {
         }
         return out
     }
+
+    /**
+     * Whether this subscribe asks the adapter to offer the phone's video (T34, route A): the setting is on, and the
+     * adapter's firmware says `"video":true` (an older adapter never reads the key, and the app pushed it as a
+     * never-read `true` through 262).
+     */
+    private fun videoOfferFor(c: OcbmClient): Boolean =
+        wasidremin.gmccpa.video.RouteA.enabled && c.mgmtGetInfo(1_500).orEmpty().contains("\"video\":true")
 
     /**
      * The subscribe document's `iapConfig:` block: the EV identity and the car's GPS, each only as far

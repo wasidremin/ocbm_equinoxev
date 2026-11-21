@@ -594,6 +594,17 @@ class LauncherUi(private val act: Activity) {
             },
         )
         page.addView(EqCard(act).addRow(evRow).addRow(nacsRow).addRow(gpsRow))
+        page.addView(eqSectionLabel(act, "Video"))
+        val routeA = wasidremin.gmccpa.video.RouteA
+        lateinit var videoRow: EqRow
+        videoRow = EqRow(
+            act, "Video from the iPhone while parked", routeA.statusText(),
+            trailing = EqToggle(act, routeA.enabled) { on ->
+                routeA.setEnabled(act, on)
+                videoRow.setSubtitle(routeA.statusText())
+            },
+        )
+        page.addView(EqCard(act).addRow(videoRow))
         page.addView(eqSectionLabel(act, "Visual app launcher"))
         launcherStatusRow = EqRow(act, "Visual app launcher", launcherStatusSubtitle())
         page.addView(EqCard(act).addRow(launcherStatusRow))

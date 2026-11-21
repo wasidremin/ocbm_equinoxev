@@ -790,8 +790,10 @@ offers and carries; the play queue, the player and the parked rule are the app's
 **Verified (2026-11-21, bench adapter, the owner's second iPhone on iOS 27.2.1):** the phone proposed
 `videoPlayback`, the box echoed it, the phone opened its SenderSettingsData DataStream (dedicated
 socket) and sent `setProxyParameters` (350 B), which went to the app; `setVideoPlaybackAllowed(false,
-idle)` went out at RECORD. Unit tests cover the rest. **Not yet run:** the play queue, the tunnel and a
-video playing, which need the app's half.
+idle)` went out at RECORD. With the app's half (same day): the app's word went out as
+`setVideoPlaybackAllowed(true, idle)`, and a `TUNNEL_OPEN` reached the phone's proxy; with `ocbm-host` as
+the host, `TUNNEL_OPENED` came back on `CH_TUNNEL` 34 ms after the open. **Not yet run:** TLS through the
+phone's proxy, the play queue with a real video, and a video playing (`08_FUTURE_TASKS.md` T34).
 
 ## Self-describing streams (how features stay data, not protocol)
 

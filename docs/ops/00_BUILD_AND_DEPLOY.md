@@ -224,7 +224,12 @@ and the GM host application was **not** part of this installation report.
    and `host`/`swangle` would not start; `swangle_indirect` held. `adb emu geo fix <lon> <lat>`
    feeds the GPS. Uploads stay off the server through the `upload_center_prefs.xml` override.
    This needs `ocbm-host` to let go of the adapter first, and the emulator to stop before the next
-   push.
+   push. **Throughput limit (2026-11-21):** the emulator decodes CarPlay's HEVC in software, and the app's
+   USB read waits on the decoder, so on a loaded server (load 15 to 190, swap full, with Gradle daemons
+   resident) ocbmd's queues to the app grew to hundreds of KB and everything below video in its drain
+   order (route A's tunnel, the box log) stopped arriving; the box log going quiet is the sign. Stop the
+   Gradle daemons (`gradle --stop`) before booting the emulator, and test a low-priority path with
+   `ocbm-host` as the host instead, which reads the link without decoding.
 
 ### Backup artifact
 

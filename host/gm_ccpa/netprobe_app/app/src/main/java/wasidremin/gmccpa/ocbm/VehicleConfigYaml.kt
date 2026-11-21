@@ -637,6 +637,8 @@ object VehicleConfigYaml {
         statusBarEdge: String = "auto",
         /** Bench only: advertise buffered audio to record the iPhone's request (T8). */
         mainBufferedProbe: Boolean = false,
+        /** Ask the adapter to offer the phone's video (T34, route A); only for firmware that says `"video":true`. */
+        videoPlayback: Boolean = false,
     ): ByteArray {
         require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
             "iapConfig must be a whole top-level block ending in a newline"
@@ -665,7 +667,8 @@ object VehicleConfigYaml {
         // the adapter network. [structuralError] checks the result before it is sent.
         val inset = safeRight.coerceIn(0, width - 2) and 1.inv()
         val doc = if (width == 2400 && height == 960 && inset == 0 && !telephony && physicalWidthMm == 0 && physicalHeightMm == 0 &&
-            viewArea2 == null && cluster == null && metadataTier == "proven" && statusBarEdge == "auto" && !mainBufferedProbe) pinned
+            viewArea2 == null && cluster == null && metadataTier == "proven" && statusBarEdge == "auto" && !mainBufferedProbe &&
+            !videoPlayback) pinned
             else render(VehicleConfigSpec(
                 name = "CarLink GM ${width}x${height}",
                 width = width,
@@ -683,6 +686,7 @@ object VehicleConfigYaml {
                 metadataTier = metadataTier,
                 statusBarEdge = statusBarEdge.takeIf { it in STATUS_BAR_EDGES } ?: "auto",
                 mainBufferedProbe = mainBufferedProbe,
+                videoPlayback = videoPlayback,
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.

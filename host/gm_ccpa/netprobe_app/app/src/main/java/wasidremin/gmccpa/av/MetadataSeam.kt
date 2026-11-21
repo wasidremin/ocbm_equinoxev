@@ -34,9 +34,15 @@ import java.util.concurrent.atomic.AtomicLong
 class MetadataSeam(
     private val log: ProbeLog.Logger,
     private val onMessage: (marker: Int, payload: ByteArray) -> Unit,
+    /**
+     * The seam's magic: "META" here, "TUNL" for route A's tunnel seam (`CH_TUNNEL`), which has the same framing with
+     * the tunnel op in the marker's place and `[id][data]` as the payload.
+     */
+    private val magic: ByteArray = META_MAGIC,
 ) {
     companion object {
-        private val MAGIC = byteArrayOf(0x4D, 0x45, 0x54, 0x41) // "META"
+        val META_MAGIC = byteArrayOf(0x4D, 0x45, 0x54, 0x41) // "META"
+        val TUNNEL_MAGIC = byteArrayOf(0x54, 0x55, 0x4E, 0x4C) // "TUNL"
 
         /** Inbound iPhone `/command` plist. Not consumed here — see [NowPlayingState.dispatch]. */
         const val META_CMD = 0x01
@@ -117,8 +123,8 @@ class MetadataSeam(
             ((buf[off + 2].toInt() and 0xFF) shl 8) or (buf[off + 3].toInt() and 0xFF)
 
     private fun magicAt(off: Int): Boolean =
-        off + 4 <= end && buf[off] == MAGIC[0] && buf[off + 1] == MAGIC[1] &&
-            buf[off + 2] == MAGIC[2] && buf[off + 3] == MAGIC[3]
+        off + 4 <= end && buf[off] == magic[0] && buf[off + 1] == magic[1] &&
+            buf[off + 2] == magic[2] && buf[off + 3] == magic[3]
 
     private fun drain() {
         while (true) {

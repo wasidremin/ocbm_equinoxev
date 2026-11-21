@@ -89,6 +89,7 @@ object AdapterSession {
         c.onUplinkGate = { on, rate, ch -> if (epoch.get() == e) mic?.onGate(on, rate, ch) }
         c.onLanesArmed = { armed -> if (epoch.get() == e) startAudio(app, armed) }
         c.onLanesRetired = { retired -> if (epoch.get() == e) stopAudio(retired) }
+        c.onTunnel = { op, payload -> if (epoch.get() == e) wasidremin.gmccpa.video.RouteA.onTunnel(op, payload) }
         c.onSessionKeyed = keyed@{
             if (epoch.get() != e) return@keyed
             sessionUp = true
@@ -96,6 +97,7 @@ object AdapterSession {
             // and the activity launch is a main-thread post that can lose the first title.
             CarPlayMediaBrowserService.onSessionUp()
             log.i("session keyed — media card session up")
+            wasidremin.gmccpa.video.RouteA.onSessionUp()
             StartupClock.note("keyed")
             main.post { if (epoch.get() == e) onKeyed?.invoke() }
         }
@@ -396,6 +398,7 @@ object AdapterSession {
             clearResourceLog()
             CarPlayMediaBrowserService.onSessionDown()
             CarPlayActivity.nowPlaying.clear("A/V lanes retired")
+            wasidremin.gmccpa.video.RouteA.onSessionDown("the CarPlay session ended")
             log.i("lanes retired — media card cleared")
             main.post { if (epoch.get() == e) onRetired?.invoke() }
         }
@@ -407,8 +410,17 @@ object AdapterSession {
             when (BPlist.str(root, "type")) {
                 "modesChanged" -> onModes(root, payload.size)
                 "requestViewArea" -> CarPlayActivity.onAdapterViewArea(root)
-                "requestUI" -> CarPlayActivity.openSettingsFromIcon()
+                // Route A (T34): `videoplayback:` asks for the car's video screen, not the app's own UI.
+                "requestUI" -> if (BPlist.str(root, "params", "url") == wasidremin.gmccpa.video.RouteA.VIDEO_PLAYBACK_URL) {
+                    wasidremin.gmccpa.video.RouteA.showRequested()
+                } else {
+                    CarPlayActivity.openSettingsFromIcon()
+                }
+                "setProxyParameters" -> wasidremin.gmccpa.video.RouteA.onProxyParameters((root as? Map<*, *>)?.get("params") as? Map<*, *>)
             }
+        } else if (marker == MetadataSeam.META_JSON && wasidremin.gmccpa.video.RouteA.isDataStreamRecord(payload)) {
+            runCatching { org.json.JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull()
+                ?.let { wasidremin.gmccpa.video.RouteA.onDataStream(it) }
         } else {
             CarPlayActivity.nowPlaying.dispatch(marker, payload)
         }

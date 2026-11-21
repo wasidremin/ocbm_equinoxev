@@ -327,6 +327,15 @@ stays (serves Capture Current).
 - **Drive line smoothing** (Cluster ▸ Cards, 2026-11-16): ½ / 1 / 2 / 3 miles, default 1.
 - **USB network trial** (Advanced): arms one adapter start with a USB network link beside OCBM (T15 route A).
 
+## 2026-11-21 deltas (route A, the phone's video while parked; T34)
+
+- **Video from the iPhone while parked** (CarPlay ▸ Video, on by default; owner, 2026-11-21, asked for
+  the feature): `route_a/enabled`. On, and with adapter firmware whose `MGMT_INFO` says `"video":true`,
+  the subscribe carries `enablesVideoPlayback: true`, so the adapter offers the phone's video; the
+  video plays over CarPlay only while the gear reads PARK, fetched over the iPhone's own network
+  (`video/RouteA.kt`). Takes effect at the next connect. New key, nothing to carry over. Not yet on the
+  car.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

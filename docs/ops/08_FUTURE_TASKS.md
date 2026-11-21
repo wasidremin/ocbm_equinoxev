@@ -53,7 +53,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
 | T25 Faster connect | New 2026-11-14, not started; **the owner's first annoyance**. May be app only, depending on where the time goes |
-| T34 Video from the iPhone while parked | Adapter half BUILT 2026-11-21 (ported from enigy/ocbm, bench: the phone takes the offer); app half not started, waiting on the owner's choice of dependencies (TLS with a pre-shared key, an HLS player) |
+| T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
 
 *Done*
 
@@ -1488,7 +1488,7 @@ thing (the adapter's link to the app, not the phone's) and is not affected.
 
 **Done means.** The app builds and connects as before with the mode gone, and its tests pass.
 
-## T34. Video from the iPhone while parked (raised 2026-11-21; the adapter's half BUILT 2026-11-21, the app's half not started)
+## T34. Video from the iPhone while parked (raised 2026-11-21; BUILT 2026-11-21, both halves; not yet on the car)
 
 **Why.** iOS 26 and later let a CarPlay head unit play the phone's AirPlay video. enigy/ocbm shipped
 it in OCBM 2.0.0 with Carlink 3.00 (2026-11-12) as "route A": a video sent from the iPhone (Safari,
@@ -1525,8 +1525,8 @@ reads. Two things to check first: that the Equinox's GM build lets a Play app pl
 **Done means.** Parked, a video sent from the iPhone plays on the centre screen; shifting out of Park
 stops it; CarPlay carries on normally afterwards.
 
-**State (2026-11-21): the adapter's half is built; the app's half is not.** Started the day the car
-tested 261 and 262 (owner, 2026-11-21).
+**State (2026-11-21): both halves built; not yet on the car.** Started the day the car tested 261 and
+262 (owner, 2026-11-21).
 - *Built, ported from enigy/ocbm* (`NOTICE.md`; the wire is `docs/carplay/01_OCBM_PROTOCOL.md`
   "Route A"): the offer, the Playback DataStream relay, the tunnel, `CH_TUNNEL 0x0025`,
   `INPUT_DATASTREAM 0x0A`, `INPUT_TUNNEL 0x0B`, `CMD_VIDEO_ALLOWED 0x14` (enigy's `0x13` is
@@ -1546,12 +1546,30 @@ tested 261 and 262 (owner, 2026-11-21).
   bench: the phone proposed `videoPlayback`, took the echo, opened its SenderSettingsData DataStream and
   sent `setProxyParameters` (350 B), which reached the app; `setVideoPlaybackAllowed(false, idle)` went
   out at RECORD. carplayd grew 101 KB (2.25 to 2.35 MB); the adapter had 3.4 MB free.
-- *Not yet run:* the play queue, the tunnel and a video playing, which need the app's half.
-- *The app's half, waiting on the owner's choice of dependencies:* TLS 1.3 with an external pre-shared
-  key, which Android's own TLS lacks (enigy uses Bouncy Castle), and a player for the phone's HLS stream
-  (enigy uses Media3 ExoPlayer). This app does not shrink its code (no R8), so both would ship whole.
-  Then the parked gate from `GEAR_SELECTION`, the play queue, the tunnel and the screen, ported from
-  enigy/carlink `com.carlink.video`.
+- *The app's half (2026-11-21), ported from enigy/carlink `com.carlink.video` (NOTICE.md):* the play
+  queue, the Media3 player, the phone's proxy offer, the TLS-PSK handshake, the tunnels, the HTTP/1.1
+  client and the origin's TLS, in `video/`; the wiring (`video/RouteA.kt`) and the screen
+  (`video/VideoOverlayView.kt`, a View over the CarPlay picture with a Close button, below the call pill)
+  are this app's. The owner chose the two libraries enigy uses (2026-11-21, "option 1": accept the
+  larger app): Media3 1.8.0, the newest that builds against compileSdk 35 (enigy's 1.10.1 needs 36), and
+  Bouncy Castle 1.80. The debug APK went from 10.7 to 16.1 MB. Setting: CarPlay ▸ Video, on by default
+  (`SETTINGS_AUDIT.md`). Parked is the gear reading PARK (`VehicleStateWatcher`); unknown is not parked.
+  The subscribe asks for the offer only with the setting on and firmware that says `"video":true`.
+  Logs carry no part of a video's address.
+- *Verified:* unit tests (31 for route A: the play queue's 19, the proxy's 7, a real TLS 1.3 PSK
+  handshake against Bouncy Castle's server set up as the phone's, and the screen's fit, the record test
+  and the FairPlay check). On the AAOS emulator with the bench adapter and the owner's second iPhone:
+  the app saw `"video":true` and asked for the offer, the box echoed it, the app told the phone video may
+  play (the emulator's gear reads PARK), the phone's proxy offer reached the app, and the adapter took
+  the app's tunnel open and connected to the phone's proxy. Over this server's USB with `ocbm-host` as
+  the host (`OCBM_SESSION_TUNNEL=1 ocbm-host session 1314 2d00 150 <cfg>`), the adapter's answer came
+  back on `CH_TUNNEL` 34 ms after the open.
+- *Not verified:* on the emulator the adapter's answer never reached the app. The emulator decodes
+  CarPlay's HEVC in software on this server (load 15 to 190, swap full), the app's read waits on the
+  decoder, and ocbmd's queues to it stood at 115 to 466 KB, so nothing behind them got through
+  (`00_BUILD_AND_DEPLOY.md` item 9). So the app's TLS through the phone's real proxy, a video playing,
+  the screen, and Park/Drive changes have not run. `--es run video_net_test` fetches a small page over
+  the phone's network as the player does, for the next bench or a car log.
 
 ## Left off this plan
 
