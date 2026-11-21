@@ -1368,7 +1368,15 @@ in brackets:
 - *Verified:*
   - unit tests: `box-common`, `btd`, `ocbmd`, and `carplayd`, whose tests now run in
     `tools/run_tests.sh`;
-  - the adapter build.
+  - the adapter build;
+  - *bench adapter, 2026-11-20/21*, via the emulator and the app:
+    - `btd`'s record held the origin and every radio and `btd` stamp, in order, on one clock:
+      `sup_radios` 1,354, `bt_power` 2,074, `btd_start` 2,200, `ap_start` 2,294, `ap_up` 2,644,
+      `bt_up` 3,154, `page_start` 3,159 (ms after the app arrived);
+    - this chip took **1,645 ms** to sign and 150 ms to read its certificate, matching enigy's
+      figures.
+- *Not yet seen:* the printed line. The iPhone stopped after the handoff that day, with or without
+  this build (T15's bench note), so no session reached a first frame.
 
 **Step 2, enigy's speedups, not started.** What each would buy here, from enigy's measurements:
 - *Armed Bluetooth (A1):* the page about 0.1 s after the app arrives instead of about 1.2 s.
