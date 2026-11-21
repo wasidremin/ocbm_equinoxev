@@ -783,6 +783,11 @@ wireless_up() {
     # anything else. hostapd runs in the background — the SoftAP is only needed at WIFI_HANDOFF,
     # ~2.5 s after the phone connects, by which time the parallel bring-up has finished. If BT
     # fails below, the backgrounded AP bring-up still completes (idempotent on retry).
+    # The connect timeline (crates/box-common/src/timeline.rs): the radios start now, as uptime ms
+    # appended to the record btd carries into its session. One append, no fork; a failed one is ignored.
+    _tl_up=""
+    read -r _tl_up _tl_idle 2>/dev/null </proc/uptime
+    case "$_tl_up" in *.*) echo "t sup_radios ${_tl_up%.*}${_tl_up#*.}0" 2>/dev/null >>/tmp/startup_marks ;; esac
     if [ "$BOX_WIFI_AP" = "0" ]; then
       echo "[sup] wifi_ap:false -> box SoftAP SUPPRESSED (BT-only bridge role; the head-unit app owns Wi-Fi)" >/tmp/wlan.log
     else

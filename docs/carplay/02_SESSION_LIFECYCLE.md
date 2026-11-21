@@ -31,6 +31,79 @@ settle, three attempts). Recovery from **40113 to 945 bytes is measured; the
 chip/bus diagnosis. See [Bluetooth/radio notes](../wireless/01_BT_AND_RADIO.md)
 for the bench record and the other signer implementations' exposure.
 
+## The connect timeline (2026-11-20)
+
+One line per wireless connect, printed by `carplayd` at the first video frame it hands to the host
+(in `/tmp/carplayd_wl.log`, streamed as `[box:airplayd-wl]`, so it reaches the uploaded logs). It
+gives every critical-path event of the connect in ms since the app's arrival, on the adapter's own
+clock. The app's `[startup]` stages are only good to about half a second for the adapter's events,
+which reach it in batches. Task T25, issue #2 on wasidremin/ocbm_equinoxev.
+
+    [timeline] v1 sup_radios=406 bt_armed=0 bt_power=1246 btd_start=1276 bt_up=1286 page_start=1296 acl=1556 sdp=1716 rfcomm=1866 cert_req=1946 sign1_start=2066 sign1_end=2376 ident=2566 wifi_req=2666 wifi_rsp=2696 ap_start=1666 ap_up=1876 ap_enabled=- sta_assoc=- dhcp_ack=- carplayd_start=3166 svc_seen=3866 dial_ok=- dial=3916 pv_done=4366 auth_in=4416 auth_out=4766 record_in=4846 record=5066 screen_setup=5116 first_frame=5466 chip1_ms=298 cert1_ms=41 chip2_ms=301 cert2_ms=40 usb_edge_s=-
+
+That is a unit test's line, not a measurement.
+
+**From enigy/ocbm.** The format, the keys and their order, the grammar
+(`^\[timeline\] v1( [a-z0-9_]+=(-|\d+))+$`) and `crates/box-common/src/timeline.rs` are ported
+unchanged from enigy/ocbm 2.6.1 and 2.6.5 (Unlicense, NOTICE.md), so lines from the two forks
+compare directly. The stamp sites are this fork's own.
+
+**What reads `-` here, always.** Four keys:
+- `ap_enabled`, `sta_assoc` and `dhcp_ack`: enigy reads these from `hostapd`'s and `udhcpd`'s
+  lines with a watcher that is not ported;
+- `dial_ok`: it belongs to enigy's early `carplayd`.
+
+`bt_armed` is always `0`: armed Bluetooth is not ported. `usb_edge_s` is `-`: the supervisor does not
+stamp the USB edge.
+
+**Reading a value.** Every event is whole ms since the origin. `-` means one of three things: not
+stamped, stamped before the origin (another host's), or no origin at all. Durations are ms.
+
+**One clock.** Every stamp is the uptime on CLOCK_BOOTTIME, which is the clock `/proc/uptime` shows:
+the shell's stamps to its 10 ms, the daemons' to the ms. Never the wall clock, which the app sets
+mid-session. The origin is when `ocbmd` raises `/tmp/host_present` to 1; it writes that uptime to
+`/tmp/host_present_uptime` each time (`write_presence_flag`).
+
+**Where the stamps live.** `btd`'s record, `/tmp/startup_marks`, one `t <key> <ms>` or
+`d <key> <ms>` line per write:
+- `btd` begins it at each session (`wireless/src/timeline_marks.rs`, `begin`) with the origin and
+  `btd_start`. It carries over the radio bring-up's stamps that the scripts appended since the last
+  `sup_radios`.
+- The first stamp of each key in a session stands.
+- `carplayd` keeps its own stamps in memory (`ccpa/carplayd/src/timeline_own.rs`); the receiver
+  crate only names the events, through a hook (`receiver::timeline`).
+- `btd` sets `CARPLAY_TIMELINE=1` on the wireless `carplayd` alone, so a wired session's first frame
+  prints nothing.
+
+| Key | The event | Stamped in |
+|---|---|---|
+| `sup_radios` | the supervisor starts the radios | `tools/session_supervisor.sh`, the wireless bring-up block |
+| `bt_power` | `bt_on` has the controller up and answering | `radio_hal.sh`, `do_bt_on` (both success paths) |
+| `btd_start` | `btd` begins the session's record | `timeline_marks::begin` |
+| `bt_up` | `btd`'s Bluetooth bring-up done ("discoverable as") | `wireless/src/main.rs`, `run_active_session` |
+| `page_start`, `acl` | the SDP connect that pages the phone starts, and returns | `sdp_client.rs`, `query` |
+| `sdp` | the phone's iAP2 RFCOMM channel known | `sdp_client.rs`, `query` |
+| `rfcomm` | RFCOMM up, out (reconnect) or in (accept) | `reconnect.rs`; `main.rs` accept loop |
+| `cert_req` | RX 0xAA00 | `bt_driver.rs`, `execute` |
+| `sign1_start`, `sign1_end` | `btd`'s signature goes to the chip, and is back (retries inside) | `bt_driver.rs`, `execute` |
+| `ident` | 0x1D02, Identified | `bt_driver.rs`, `process` |
+| `wifi_req`, `wifi_rsp` | RX 0x5702; the 0x5703 written | `bt_driver.rs` |
+| `ap_start`, `ap_up` | `hostapd` launched; the first `ap_serving` pass | `radio_ap_up.sh` |
+| `carplayd_start` | `carplayd`'s `main` (spawned at the 0x5703) | `ccpa/carplayd/src/main.rs` |
+| `svc_seen` | the first `_carplay-ctrl` resolved | `discovery.rs` |
+| `dial` | the last accepted connect-out before the control connection that made the picture (`-`: the phone came by itself) | `discovery.rs` |
+| `pv_done` | pair-verify OK | `receiver/src/server.rs`, `feed` |
+| `auth_in`, `auth_out` | `POST /auth-setup` received; answered | `server.rs`, `handle` |
+| `record_in`, `record` | RECORD received; answered | `server.rs`, `handle` |
+| `screen_setup` | the main screen's (type 110) SETUP | `session.rs`, `setup_phase2` |
+| `first_frame` | the main screen's first encrypted frame handed on (not the cluster lane, :9005) | `session.rs`, the screen loop |
+| `chip1_ms`, `cert1_ms` | `btd`'s signature (trigger to ready) and certificate read (under the lock), ms | `wireless/src/mfi_local.rs` |
+| `chip2_ms`, `cert2_ms` | the same two in auth-setup, for the control connection that made the picture | `carplayd`'s `LocalMfiSigner` |
+
+Each chip call also logs its time: `[mfi-local] signature ready in N ms` and `[carplayd] mfi:
+certificate read in N ms`. enigy measured 1,640–1,651 ms per signature on this chip, and 110–170 ms
+per certificate read.
+
 ## Session management — current model
 
 <!-- absorbed: ../carplay/02_SESSION_LIFECYCLE.md -->

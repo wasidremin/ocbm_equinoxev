@@ -216,6 +216,7 @@ fn run(dev_id: &str, pi: &str) -> Result<(), Box<dyn std::error::Error>> {
                     "[rx] resolved _carplay-ctrl {} -> {host}:{port} addrs={addrs:?} scope={iface}({scope})",
                     info.get_fullname()
                 );
+                crate::timeline_own::event("svc_seen");
                 // Dial the resolved ADDRESS(es), not the hostname (box has no .local resolver). Mark a
                 // peer dialed only on SUCCESS, retrying transient failures with a short backoff (the
                 // source address can lag the mDNS resolve by a few seconds right after association).
@@ -234,6 +235,7 @@ fn run(dev_id: &str, pi: &str) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         tried = true;
                         if connect_out(sa, dev_dec) {
+                            crate::timeline_own::event("dial");
                             dialed.insert(sa.to_string());
                             break 'rounds;
                         }

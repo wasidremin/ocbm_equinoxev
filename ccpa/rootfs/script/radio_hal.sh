@@ -975,6 +975,17 @@ do_wifi_ap_off() {
 # =============================================================================================
 # BLUETOOTH
 # =============================================================================================
+# The connect timeline's bt_power (crates/box-common/src/timeline.rs): bt_on has the controller up and
+# answering. For the bt_on verb only (bt_prewarm shares do_bt_on and is no connect). One append, no
+# fork; a failed one is ignored. From enigy/ocbm (801074f).
+bt_power_stamp() {
+  [ "$VERB" = bt_on ] || return 0
+  _bps_up=""
+  read -r _bps_up _bps_idle 2>/dev/null </proc/uptime
+  case "$_bps_up" in *.*) echo "t bt_power ${_bps_up%.*}${_bps_up#*.}0" 2>/dev/null >>/tmp/startup_marks ;; esac
+  return 0
+}
+
 do_bt_on() {
   caps || { publish "$BT_STATE" "result=unsupported" "detail=no-descriptor"; return 3; }
 
@@ -1007,6 +1018,7 @@ do_bt_on() {
     hci_rt "$_d" up 2>/dev/null
     if bt_responsive_confirmed "$_d"; then
       log "$_d was only powered down - up and responsive, no reset needed"
+      bt_power_stamp
       publish "$BT_STATE" "result=ok" "backend=$RADIO_BACKEND" "hci_dev=$_d" \
               "bt_mac=$(cat /sys/class/bluetooth/$_d/address 2>/dev/null)"
       return 0
@@ -1201,6 +1213,7 @@ do_bt_on() {
         publish "$BT_STATE" "result=ok" "backend=mapped" "chipset=$RADIO_SDIO_DEVICE" "hci_dev=$_d" \
                 "bt_mac=$(cat /sys/class/bluetooth/$_d/address 2>/dev/null)"
         log "BT converged: $_d responsive on attempt $_try"
+        bt_power_stamp
         return 0
       fi
       log "BT attach did not converge in 60s (device ${_d:-absent}); last log:"

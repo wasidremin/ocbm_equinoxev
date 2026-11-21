@@ -60,6 +60,7 @@ dependencies = [
 name = "box-common"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "ocbm-proto",
 ]
 
@@ -106,6 +107,7 @@ dependencies = [
 name = "carplayd"
 version = "0.1.0"
 dependencies = [
+ "box-common",
  "carplay-iap2-core",
  "libc",
  "mdns-sd",

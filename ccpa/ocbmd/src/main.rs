@@ -958,6 +958,12 @@ fn pair_answer_request(accept: bool) -> String {
 const HOST_PRESENT_FLAG: &str = "/tmp/host_present";
 #[cfg(test)]
 const HOST_PRESENT_FLAG: &str = "/tmp/ocbmd_selftest_host_present";
+/// The connect timeline's origin (`box_common::timeline::ORIGIN`): the uptime at which the flag above
+/// last went to 1. Aliased under test for the same reason as the flag.
+#[cfg(not(test))]
+const HOST_PRESENT_UPTIME: &str = box_common::timeline::ORIGIN;
+#[cfg(test)]
+const HOST_PRESENT_UPTIME: &str = "/tmp/ocbmd_selftest_host_present_uptime";
 /// Marks a synthetic re-arm edge so the supervisor's wireless_up bypasses its idempotent guard.
 #[cfg(not(test))]
 const HOST_REARMED_FLAG: &str = "/tmp/host_rearmed";
@@ -1655,6 +1661,18 @@ fn clear_cfg_file() {
     let _ = std::fs::remove_file(CARPLAY_CFG_FILE);
 }
 
+/// [`write_flag_atomic`] for [`HOST_PRESENT_FLAG`], and when it goes to 1 the uptime it did so at
+/// ([`HOST_PRESENT_UPTIME`], the connect timeline's origin): the clock is read before the flag is
+/// written, the file after, so the origin is when the flag went out. Instrumentation: a failed stamp
+/// costs the timeline its values only. From enigy/ocbm's `write_presence_flag` (801074f).
+fn write_presence_flag(present: bool) {
+    let at = if present { box_common::timeline::now_ms() } else { None };
+    write_flag_atomic(HOST_PRESENT_FLAG, present);
+    if let Some(ms) = at {
+        box_common::timeline::write_origin(HOST_PRESENT_UPTIME, ms);
+    }
+}
+
 /// Write the presence flag atomically (`.tmp` + rename) so a concurrent shell `cat` in the supervisor
 /// never reads an empty/partial file (which it would misread as "gone" and tear down a live session).
 fn write_flag_atomic(path: &str, present: bool) {
@@ -2038,7 +2056,7 @@ impl Daemon {
             return;
         }
         self.present = present;
-        write_flag_atomic(HOST_PRESENT_FLAG, present);
+        write_presence_flag(present);
         if !present {
             self.present_cleared_at = Some(std::time::Instant::now());
         }
@@ -2064,7 +2082,7 @@ impl Daemon {
     /// once per attempt. The host is left with the `SEV_HOST_PRESENT` the SUBSCRIBE handler already
     /// sends it, which is true and sufficient.
     fn rearm_presence_silently(&mut self) {
-        write_flag_atomic(HOST_PRESENT_FLAG, false);
+        write_presence_flag(false);
         // This 1->0->1 is a re-arm, not a real disconnect: the supervisor's wireless_up must
         // bypass its idempotent guard and ALWAYS rebuild. (2026-10-02: the guard saw btd still
         // mid-SIGTERM from the synthetic teardown, skipped CLEAN bring-up, and btd then died —
@@ -2145,7 +2163,7 @@ impl Daemon {
             // Same state change as `set_present(false)` — flag file included, since the supervisor
             // does need the GONE edge — minus the CH_CTRL send.
             self.present = false;
-            write_flag_atomic(HOST_PRESENT_FLAG, false);
+            write_presence_flag(false);
             self.present_cleared_at = Some(std::time::Instant::now());
             eprintln!("[ocbmd] session: host GONE (not signalled — it sent CT_STOP and left)");
         }
@@ -2209,7 +2227,7 @@ impl Daemon {
                 self.rearm_deadline = None;
                 // Mirror `present`, do NOT hardcode true: the flag is a view of daemon state, and a
                 // deadline that outlived its session (see go_idle) must not be able to invent one.
-                write_flag_atomic(HOST_PRESENT_FLAG, self.present);
+                write_presence_flag(self.present);
                 eprintln!(
                     "[ocbmd] session: presence flag restored to {} — supervisor should be re-ARMing",
                     self.present
@@ -4400,7 +4418,7 @@ fn touch_alive_file() {
 /// file effects `go_idle` and `main()`'s startup perform; the `SEV_HOST_GONE` frame is deliberately
 /// NOT sent, because the accessory fd that would carry it is precisely what just died.
 fn clear_session_state_for_exit() {
-    write_flag_atomic(HOST_PRESENT_FLAG, false);
+    write_presence_flag(false);
     clear_cfg_file();
     let _ = std::fs::remove_file(RADIO_OFF_FLAG);
     // These paths exit on purpose, for respawn — the supervisor must read "gone", not "wedged".
@@ -4578,7 +4596,7 @@ fn main() {
     let mut avbuf = vec![0u8; p::MAX_PAYLOAD];
     // Initialize the presence flag to "0" at startup: `present` starts false but set_present is
     // edge-guarded, so without this an ocbmd restart could leave a stale "1" from a prior crash.
-    write_flag_atomic(HOST_PRESENT_FLAG, false);
+    write_presence_flag(false);
     // Drop any config left by a prior (crashed) session so carplayd never reads a stale one at idle.
     clear_cfg_file();
     // Same for a stale CT_RADIO inhibit from a crashed prior ocbmd (tmpfs, but a daemon respawn
@@ -5033,6 +5051,30 @@ mod tests {
     fn presence_flag_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The connect timeline's origin (box_common::timeline::ORIGIN): the uptime each time the flag goes
+    /// to 1, when it really goes (a held raise at its deadline), and never as it goes to 0. From
+    /// enigy/ocbm (801074f).
+    #[test]
+    fn the_timeline_origin_is_stamped_as_the_flag_goes_to_1() {
+        let _flag = presence_flag_lock(); // shares HOST_PRESENT_FLAG with every other presence test
+        let origin = || box_common::timeline::read_origin(HOST_PRESENT_UPTIME);
+        let _ = std::fs::remove_file(HOST_PRESENT_UPTIME);
+        let mut d = td();
+        let before = box_common::timeline::now_ms().unwrap();
+        d.handle(p::CH_CTRL, p::F_SOM | p::F_EOM, &[p::CT_SUBSCRIBE, b'x']);
+        let first = origin().expect("stamped as the flag went to 1");
+        assert!(first >= before && first <= box_common::timeline::now_ms().unwrap());
+        d.handle(p::CH_CTRL, p::F_SOM | p::F_EOM, &[p::CT_STOP]);
+        assert_eq!(origin(), Some(first), "not as it went to 0");
+        let gone_at = d.present_cleared_at.expect("CT_STOP must stamp the GONE edge");
+        let _ = std::fs::remove_file(HOST_PRESENT_UPTIME);
+        d.handle(p::CH_CTRL, p::F_SOM | p::F_EOM, &[p::CT_SUBSCRIBE, b'x']);
+        assert_eq!(origin(), None, "a raise held for REARM_HOLD has not reached the flag");
+        d.presence_tick(gone_at + REARM_HOLD);
+        assert!(origin().is_some(), "stamped when the held raise reaches the flag");
+        let _ = std::fs::remove_file(HOST_PRESENT_UPTIME);
     }
 
     /// A Daemon with no MFi chip, no listeners and a /dev/null accessory fd.

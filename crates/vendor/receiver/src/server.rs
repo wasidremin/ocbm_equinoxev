@@ -191,6 +191,7 @@ impl<'a, P: Pairings, S: MfiSigner> ControlServer<'a, P, S> {
                 self.channel = Some(ControlChannel::new(derive_control_keys(&secret)));
                 self.shared = Some(secret);
                 self.session.on_paired(secret);
+                crate::timeline::event("pv_done");
                 if self.verbose {
                     eprintln!("[receiver] pair-verify OK → control channel encrypted");
                 }
@@ -344,8 +345,12 @@ impl<'a, P: Pairings, S: MfiSigner> ControlServer<'a, P, S> {
                     }
                 }
             }
-            Route::AuthSetup => match self.sap.exchange(&req.body, &mut self.signer) {
+            Route::AuthSetup => match {
+                crate::timeline::event("auth_in");
+                self.sap.exchange(&req.body, &mut self.signer)
+            } {
                 Ok(body) => {
+                    crate::timeline::event("auth_out");
                     if self.verbose {
                         eprintln!("[receiver] auth-setup (MFi-SAP) OK → {} B M2", body.len());
                     }
@@ -394,7 +399,9 @@ impl<'a, P: Pairings, S: MfiSigner> ControlServer<'a, P, S> {
                 }
             }
             Route::Record => {
+                crate::timeline::event("record_in");
                 let resp = self.session.record();
+                crate::timeline::event("record");
                 Ok(Response::ok(req, None, resp))
             }
             Route::Teardown => {

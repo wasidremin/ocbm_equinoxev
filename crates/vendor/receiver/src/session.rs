@@ -842,6 +842,7 @@ impl AvSession {
                 }
                 match ty {
                     110 => {
+                        crate::timeline::event("screen_setup");
                         let listener = match TcpListener::bind("[::]:0") {
                             Ok(l) => l,
                             Err(e) => {
@@ -2445,6 +2446,11 @@ fn spawn_screen(
                     enc_seq += 1;
                     if out.is_some() {
                         fwd_video += 1; // reached the seam (BF)
+                        // The connect timeline's last event: the main screen's first video frame went on
+                        // to the host (the cluster lane, :9005, is not the picture the driver waits for).
+                        if fwd_video == 1 && sink_port != 9005 {
+                            crate::timeline::event("first_frame");
+                        }
                     }
                 }
                 frames += 1;

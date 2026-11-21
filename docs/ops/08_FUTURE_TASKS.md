@@ -590,6 +590,34 @@ logs `phones: 2 paired, … choose=true`, so Settings ▸ CarPlay ▸ Phones sho
 upload yet has an order change or a Connect, so "Done means" is still unchecked: reorder the two
 phones, then try Connect on the one not connected, with both in the car.
 
+**enigy/ocbm's two-phone fix (issue #3 on wasidremin/ocbm_equinoxev; assessed 2026-11-20, not
+ported).**
+- *What enigy's fix repairs.* The issue asks for enigy/ocbm PR #4's fix (`2769b69`, `8787548`,
+  `711e584`: "a change of phone in about 5 s, instead of 40–90 s"). That fix repairs enigy's own
+  **phone gate**: `carplayd` serves only the phone `btd` names in `/tmp/carplay_expect_phone`
+  (`b31b7bc`, `b2c92d9`, `d73a098`, 1–2 Nov). The name was written only at the 0x5703, so a phone
+  already on the access point before its 0x5703 was refused, and waited 40–90 s.
+- *What this fork has.* It never had the gate. Its `carplayd` dials every `_carplay-ctrl` it
+  resolves (`discovery.rs`), so it cannot have that delay.
+- *What it is exposed to instead.* The older problem the gate was built for (enigy's two-iPhone
+  bench, 2026-11-01): the phone a switch dropped stays on the access point, the new `carplayd`
+  dials it first, and the two phones take the session from each other.
+- *Whether that happens here.* Our Connect restarts the whole wireless stack, access point
+  included, so the dropped phone must rejoin first. Unknown: Connect has never been used in the car.
+- *What to do.*
+  1. First the test above with both phones: does Connect land on the chosen phone and stay there?
+  2. Only if the dropped phone takes the session back, port the gate in its smallest form for this
+     design. `carplayd` starts at the 0x5703 here, after `btd` knows the phone, so the name can be
+     written before `carplayd` exists. The early-naming and re-query machinery the issue describes
+     is then not needed. The gate's parts:
+     - `btd` writes the phone's address before spawning `carplayd`;
+     - discovery dials only a `_carplay-ctrl` whose TXT `id` is that address, and dials a record
+       without an `id` as before;
+     - a SETUP whose `deviceID` is another phone is refused.
+- *Why not port it now.* It cannot be checked without two iPhones at the bench. A gate that
+  misreads a phone's identity would keep that phone off CarPlay, which is the one-phone drive's
+  failure. enigy/ocbm's code (Unlicense) is the reference when it is built.
+
 ## T13. GM app: CarPlay turn-by-turn in the instrument cluster — DONE (works on the car since 2026-10-27)
 
 Moved to `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16: the Car App Library route, the album art in
@@ -1298,7 +1326,7 @@ package refused. **Not verified:** on the car.
 **Open.** *Look up online* still defaults to Always, so nothing changed unasked; Wi-Fi only is the
 setting for this car. The first download on the car has not been seen.
 
-## T25. Faster connect (raised 2026-11-14; the owner's first annoyance)
+## T25. Faster connect (raised 2026-11-14; the owner's first annoyance; step 1, the connect timeline, built 2026-11-20)
 
 **Why.** From starting the adapter to the first CarPlay picture is a median 10.7 s on the car (44
 sessions, `[startup]` lines; fastest 8.1 s). The owner named it first when asked what still annoys.
@@ -1309,6 +1337,48 @@ month's lines, find which stage holds most of the time and how much it varies, a
 The Allow tap (T15) sits inside this time too.
 
 **Done means.** The median on the car drops by a stated amount, measured by the same lines.
+
+**Measured 2026-11-20** (the app's `[startup]` lines in the uploaded logs, 20 Oct–14 Nov: 29
+sessions that reached a picture, before the hotspot-join builds). Medians, with the 75th percentile
+in brackets:
+
+| Stage | Median (p75) |
+|---|---|
+| attach → permission (the Allow tap, T15) | 2.7 s (7.0 s) |
+| subscribe → discoverable (radios up, `btd` started) | 3.1 s (6.4 s) |
+| discoverable → Bluetooth connected | 1.0 s (5.4 s) |
+| Bluetooth connected → Wi-Fi handoff | 3.0 s (3.0 s): nearly constant |
+| handoff → auth-setup OK | 2.8 s (3.8 s) |
+| auth-setup → first picture | under 1 s |
+
+- *Attach to picture:* median 20.7 s, fastest 8.6 s.
+- *With the hotspot join on (15–18 Nov, 13 sessions):* subscribe → discoverable rose to 16.8 s.
+  That is the join's own cost (T15).
+- *Why the two 3 s stages are nearly fixed:* each holds one MFi signature. enigy/ocbm measured
+  1.64–1.65 s for every signature on this chip, and 0.11–0.17 s per certificate read (release
+  v2.6.1). The chip cannot be made faster.
+- *Why this is not finer:* the app reads the adapter's events from a batched log, ±0.5 s.
+
+**Step 1, built 2026-11-20 (issue #2 on wasidremin/ocbm_equinoxev): the `[timeline] v1` line**
+(`docs/carplay/02_SESSION_LIFECYCLE.md`, "The connect timeline").
+- It is enigy/ocbm's 2.6.1 instrumentation with the same keys: one line per wireless connect, every
+  step in adapter ms since the app arrived, plus the chip's own times.
+- It changes no timing, order or protocol byte.
+- *Not ported:* the `hostapd`/`udhcpd` watcher (`ap_enabled`, `sta_assoc`, `dhcp_ack` read `-`).
+- *Verified:*
+  - unit tests: `box-common`, `btd`, `ocbmd`, and `carplayd`, whose tests now run in
+    `tools/run_tests.sh`;
+  - the adapter build.
+
+**Step 2, enigy's speedups, not started.** What each would buy here, from enigy's measurements:
+- *Armed Bluetooth (A1):* the page about 0.1 s after the app arrives instead of about 1.2 s.
+- *Access point ahead (A3):* about 0.8 s.
+- *Early `carplayd` (A2):* not yet measured.
+- *Certificate cache (A4):* 0.2–0.3 s. It needs a checked cache: this adapter once read a
+  40,113-byte certificate (`docs/wireless/01_BT_AND_RADIO.md`), and a cache would keep such a read.
+
+Choose with the timeline from the car, not from enigy's bench: its line says which of these stages
+is long on this car.
 
 ## T26. "Try this drive" card (raised 2026-11-14)
 

@@ -21,6 +21,7 @@ pub mod relay;
 pub mod server;
 pub mod session;
 pub mod stream;
+pub mod timeline;
 pub mod vehicle_config;
 pub mod vehicle_status;
 pub mod location;

@@ -380,6 +380,9 @@ pub fn ensure_av_layer() {
             // Apple's own validated-feature-key cluster while iAPChannelInfo is NOT, so isolating
             // them is what makes it possible to tell which one (if either) is the real gate.
             ("CARPLAY_SESSION_MGMT", "1"),
+            // The connect timeline: this carplayd prints the `[timeline] v1` line at its first frame
+            // (carplayd's timeline_own); the wired one, which the supervisor starts, never does.
+            ("CARPLAY_TIMELINE", "1"),
         ];
         // cornerMask experiment (Phase 1): opt-in via the on-box flag file /tmp/cornermask_test (tmpfs,
         // so a reboot disarms it — same gate the wired supervisor uses). When present, advertise

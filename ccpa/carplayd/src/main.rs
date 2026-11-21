@@ -11,6 +11,7 @@
 //! `MfiSigner` trait, proving the remote→local redirection and the crate reuse compile + work.
 
 mod discovery;
+mod timeline_own;
 
 use mfi::auth_client::MfiSigner;
 use pairing::setup::PeerSaver;
@@ -243,6 +244,8 @@ impl MfiSigner for LocalMfiSigner {
     /// CopyCertificate: reg 0x30 = length (2 BE), reg 0x31 = cert bytes (the genuine ~945-byte cert).
     fn copy_certificate(&mut self) -> io::Result<Vec<u8>> {
         let _lock = MfiLock::acquire()?; // held for the whole 0x30→0x31 transaction
+        // How long the chip took, under the lock: the connect timeline's `cert2_ms`.
+        let under = std::time::Instant::now();
         let mut lb = [0u8; 2];
         if !self.rd(0x30, &mut lb) {
             return Err(io::Error::other("MFi cert length read failed"));
@@ -255,6 +258,9 @@ impl MfiSigner for LocalMfiSigner {
         if !self.rd(0x31, &mut cert) {
             return Err(io::Error::other("MFi cert read failed"));
         }
+        let ms = under.elapsed().as_millis() as u64;
+        eprintln!("[carplayd] mfi: certificate read in {ms} ms");
+        timeline_own::chip("cert2_ms", ms);
         Ok(cert)
     }
 
@@ -286,6 +292,8 @@ impl MfiSigner for LocalMfiSigner {
         if !self.wr(0x10, &[0x01]) {
             return Err(io::Error::other("MFi sign trigger failed"));
         }
+        // From the trigger to "signature ready": the connect timeline's `chip2_ms`.
+        let triggered = std::time::Instant::now();
         unsafe { libc::usleep(100_000) };
         // Bounded by WALL CLOCK, not iteration count — the same fix `mfi-i2c-local` already carries
         // (`SIGN_POLL_DEADLINE`). `for _ in 0..200` with a 10 ms sleep looks like ~2.1 s, and is, but
@@ -309,6 +317,9 @@ impl MfiSigner for LocalMfiSigner {
         if !done {
             return Err(io::Error::other("MFi sign poll timeout"));
         }
+        let ms = triggered.elapsed().as_millis() as u64;
+        eprintln!("[carplayd] mfi: signature ready in {ms} ms");
+        timeline_own::chip("chip2_ms", ms);
         let mut sl = [0u8; 2];
         if !self.rd(0x11, &mut sl) {
             return Err(io::Error::other("MFi sig length read failed"));
@@ -1664,6 +1675,7 @@ fn run_pairing_server() -> io::Result<()> {
         }
         let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
         println!("[carplayd] ── control connection from {peer} ──");
+        timeline_own::new_connection();
         // Already registered as the current (hijackable) session by the accept thread; publish the
         // bearer here, before the per-connection setup (config read, MFi open). The registration is
         // cleared on EVERY exit below (serve end or the signer-open early-out), but only if it is
@@ -1813,6 +1825,10 @@ fn main() {
                 "ON-BOX DECODE — OCBM_FWD_ENC explicitly disabled (dev/legacy fallback)"
             }
         );
+        // The connect timeline (box_common::timeline): the receiver names its events, this binary
+        // stamps them, and prints the line at the wireless session's first frame.
+        receiver::timeline::set_hook(timeline_own::event);
+        timeline_own::event("carplayd_start");
         start_input_listener(); // HID input ingest (task #20) — process-lifetime, before the accept loop
         start_host_present_watcher(); // wireless: keyframe-on-host-subscribe (fn doc)
         // Mic-uplink ingest seam — a DEDICATED port, separate from the :9110 HID seam so the working HID

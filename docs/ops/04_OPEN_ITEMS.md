@@ -57,6 +57,14 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
+- **Connect timeline: nothing checked on a live connect (built 2026-11-20, not published).** Each
+  wireless connect should log one `[timeline] v1` line under `[box:airplayd-wl]` at the first
+  picture (`docs/carplay/02_SESSION_LIFECYCLE.md`, "The connect timeline"). To check in the first
+  upload after it is published:
+  - the line is there once per connect;
+  - its `first_frame` is close to the app's `startup: first-video`;
+  - `chip1_ms` and `chip2_ms` are about 1,650.
+  Then T25 picks its first speedup from it.
 - **Data budget: nothing checked on the car (Play 246).** The app
   used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
   telemetry (about 50 MB a month by replay) under a monthly limit

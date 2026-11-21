@@ -25,6 +25,7 @@ mod control;
 mod mfi_local;
 mod reconnect;
 mod sdp_client;
+mod timeline_marks;
 mod wifi_handoff;
 
 // The Bluetooth primitives live in `bt-common` (moved 2026-09-01). Re-exported at the crate root, so every existing
@@ -118,6 +119,9 @@ fn run_active_session(
     ctrl: &Arc<control::Control>,
     session_active: &Arc<AtomicBool>,
 ) {
+    // The connect timeline's record for this session (box_common::timeline): the origin, btd_start
+    // and the radio bring-up's stamps.
+    timeline_marks::begin();
     // Per-device name derived once per session (reads the Wi-Fi MAC / SoC serial). Used for the EIR
     // Complete Local Name (what the iPhone shows) and the wireless iAP2 identify.
     let accessory_name = carplay_iap2_core::message::accessory_name(ACCESSORY_BRAND);
@@ -135,6 +139,7 @@ fn run_active_session(
     log(&format!(
         "discoverable as \"{accessory_name}\" -- waiting for pairing or preempt"
     ));
+    timeline_marks::stamp("bt_up");
 
     let ssp_shutdown = Arc::new(AtomicBool::new(false));
     let t = ssp_shutdown.clone();
@@ -211,6 +216,7 @@ fn run_active_session(
         match rfcomm_accept(RFCOMM_CHANNEL, &t) {
             Ok(Some(sock)) => {
                 log("RFCOMM client connected -- starting iAP2 handshake");
+                timeline_marks::stamp("rfcomm");
                 // Claim the single-session slot ATOMICALLY (compare_exchange, not a plain store) so the
                 // accept path and the Model-B reconnect path can never run two concurrent bt_driver::run
                 // sessions against the same phone, and neither clobbers the other's flag. If a reconnect

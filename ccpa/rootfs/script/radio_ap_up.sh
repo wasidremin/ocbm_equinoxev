@@ -224,7 +224,16 @@ if ps | grep -v grep | grep -qw hostapd; then
   _n=0
   while ps | grep -v grep | grep -qw hostapd && [ "$_n" -lt 25 ]; do _n=$((_n+1)); sleep 0.1; done
 fi
+# The connect timeline's ap_start and ap_up (crates/box-common/src/timeline.rs): `t <key> <uptime ms>`
+# appended to btd's record. One append, no fork; a failed one is ignored. From enigy/ocbm (801074f).
+tl_stamp() {
+  _tls_up=""
+  read -r _tls_up _tls_idle 2>/dev/null </proc/uptime
+  case "$_tls_up" in *.*) echo "t $1 ${_tls_up%.*}${_tls_up#*.}0" 2>/dev/null >>/tmp/startup_marks ;; esac
+  return 0
+}
 echo "[radio] hostapd starting on $IF ssid=$NAME" >> /tmp/box.log
+tl_stamp ap_start
 hostapd /etc/hostapd.conf -B >>/tmp/box.log 2>&1
 
 # The AP's DHCP server, explicitly scoped. The stock script masked this behind a global udhcpd
@@ -260,7 +269,8 @@ ap_serving() {
   return 0
 }
 n=0
-while [ "$n" -lt 50 ]; do ap_serving && break; n=$((n+1)); sleep 0.2; done
+# The first pass is the connect timeline's ap_up: the AP serving.
+while [ "$n" -lt 50 ]; do ap_serving && { tl_stamp ap_up; break; }; n=$((n+1)); sleep 0.2; done
 # Re-test the FULL predicate after the loop: falling out of it on the bound is not success, and
 # re-checking only hostapd here would let a missing address or a dead DHCP server report as up.
 if ! ap_serving; then

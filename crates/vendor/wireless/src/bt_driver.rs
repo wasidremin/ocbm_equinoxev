@@ -418,6 +418,7 @@ fn process_one(
             log("RX 0x5702 RequestAccessoryWiFiConfig -- no AP config readable; not replying");
             return false;
         };
+        crate::timeline_marks::stamp("wifi_req");
         log(&format!(
             "RX 0x5702 RequestAccessoryWiFiConfig -> replying 0x5703 (ssid={:?} ch={:?} sec={:?})",
             cfg.ssid, cfg.channel, cfg.security_type
@@ -434,6 +435,7 @@ fn process_one(
             abort,
         );
         if sent && !abort() {
+            crate::timeline_marks::stamp("wifi_rsp");
             // The iPhone now has the AP credentials and will associate to wlan0, then look for the
             // AirPlay receiver via mDNS. Bring up that layer (carplayd RTSP :5000 + rx-connect
             // advertise/browse/connect-out on wlan0) so it's discoverable the moment the phone joins.
@@ -512,8 +514,9 @@ fn process_one(
             // budget the instant Identify commits. IdentificationAccepted can arrive coalesced with
             // a following frame, and the ACK for that following frame is written inside THIS
             // `process` call -- at ~120 s the budget would still abort it.
-            if *st >= State::Identified {
-                identified.store(true, Ordering::Relaxed);
+            // The timeline's `ident` as the flag first goes up: the phone accepted the identification (0x1D02).
+            if *st >= State::Identified && !identified.swap(true, Ordering::Relaxed) {
+                crate::timeline_marks::stamp("ident");
             }
             publish_bt_phase(phase_for(*st));
             log(&format!("RX 0x{msg_id:04X} -> {st:?}"));
@@ -560,7 +563,11 @@ fn execute(
     abort: &dyn Fn() -> bool,
 ) -> ExecResult {
     match action {
-        Action::SendCert => match mfi_retry("cert", mfi::cert) {
+        Action::SendCert => match {
+            // The timeline's `cert_req`: the phone asked for the certificate (0xAA00).
+            crate::timeline_marks::stamp("cert_req");
+            mfi_retry("cert", mfi::cert)
+        } {
             Some(cert) => {
                 // AuthenticationCertificate (0xAA01, Source::Accessory): param 0 = AuthenticationCertificate (blob).
                 let body = message::group_one(0x0000, &cert);
@@ -576,8 +583,13 @@ fn execute(
             }
             None => ExecResult::NoCommit,
         },
-        Action::SignChallenge(chal) => match mfi_retry("sign", || mfi::sign(&chal)) {
+        Action::SignChallenge(chal) => match {
+            // The timeline's first signature: `sign1_start` as it goes to the chip, `sign1_end` once signed.
+            crate::timeline_marks::stamp("sign1_start");
+            mfi_retry("sign", || mfi::sign(&chal))
+        } {
             Some(sig) => {
+                crate::timeline_marks::stamp("sign1_end");
                 // AuthenticationResponse (0xAA03, Source::Accessory): param 0 = AuthenticationResponse (blob).
                 let body = message::group_one(0x0000, &sig);
                 if write_interruptible(

@@ -1,8 +1,9 @@
-//! box-common — box-side foundation shared by `ocbmd` and `btd`: the projection-owner flag, the
-//! SoftAP gateway address, and the env-lever helper.
+//! box-common — box-side foundation shared by `ocbmd`, `btd` and `carplayd`: the projection-owner
+//! flag, the SoftAP gateway address, the env-lever helper and the connect timeline.
 
 pub mod flags;
 pub mod net;
+pub mod timeline;
 
 /// The OCBM framing/channel layer, re-exported from `ocbm-proto` so every box crate references ONE
 /// definition of the channel ids and frame codec.

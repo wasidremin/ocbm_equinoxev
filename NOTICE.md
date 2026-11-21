@@ -18,6 +18,14 @@ came from in their header comments.
   navigation-focus claiming, and parts of the split-screen view-area configuration.
 - **enigy/ocbm** (github.com/enigy/ocbm) — adapter-side startup fixes and the route-guidance
   additions (exit labels, junction and lane detail).
+- **enigy/ocbm**, the connect timeline (2026-11-20, from 801074f, OCBM 2.6.1 and 2.6.5):
+  - `crates/box-common/src/timeline.rs` itself;
+  - the session record's radio carry-over (`crates/vendor/wireless/src/timeline_marks.rs`);
+  - `ocbmd`'s origin stamp;
+  - the scripts' stamp helpers;
+  - the format and keys of the `[timeline] v1` line.
+  `carplayd`'s own stamps (`ccpa/carplayd/src/timeline_own.rs`) and the receiver's hook are written
+  here after its design.
 
 ## Built from upstream source
 

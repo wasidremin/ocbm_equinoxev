@@ -196,6 +196,9 @@ fn i2c_wr(reg: u8, data: &[u8]) -> bool {
 /// return shape as `carplay_iap2_core::mfi::cert()` (the auth op `0x01`), fed to iAP2 0xAA01.
 pub fn cert() -> Option<Vec<u8>> {
     let _lock = MfiLock::acquire()?; // serialize vs iap2d for the whole cert read (#109)
+    // How long the chip took, under the lock: the connect timeline's `cert1_ms`. enigy/ocbm measured
+    // 0.11 to 0.17 s a read on this chip (release v2.6.1).
+    let under = Instant::now();
     let mut lb = [0u8; 2];
     if !i2c_rd(0x30, &mut lb) {
         return None;
@@ -208,6 +211,9 @@ pub fn cert() -> Option<Vec<u8>> {
     if !i2c_rd(0x31, &mut o) {
         return None;
     }
+    let ms = under.elapsed().as_millis() as u64;
+    eprintln!("[mfi-local] certificate read in {ms} ms");
+    crate::timeline_marks::duration("cert1_ms", ms);
     Some(o)
 }
 
@@ -226,6 +232,9 @@ pub fn sign(chal: &[u8]) -> Option<Vec<u8>> {
     if !i2c_wr(0x10, &[0x01]) {
         return None;
     }
+    // From the trigger to "signature ready": the connect timeline's `chip1_ms`. enigy/ocbm measured
+    // 1.64 to 1.65 s every time on this chip (release v2.6.1).
+    let triggered = Instant::now();
     unsafe { libc::usleep(100_000) };
     let mut done = false;
     // Bounded by WALL CLOCK, not iteration count — the same defect audit #8 fixed in
@@ -256,6 +265,9 @@ pub fn sign(chal: &[u8]) -> Option<Vec<u8>> {
     if !done {
         return None;
     }
+    let ms = triggered.elapsed().as_millis() as u64;
+    eprintln!("[mfi-local] signature ready in {ms} ms");
+    crate::timeline_marks::duration("chip1_ms", ms);
     let mut sl = [0u8; 2];
     if !i2c_rd(0x11, &mut sl) {
         return None;

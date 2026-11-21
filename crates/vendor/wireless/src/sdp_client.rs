@@ -250,7 +250,10 @@ pub fn query(peer: [u8; 6], timeout_secs: i64) -> std::io::Result<Services> {
     disp.reverse(); // human-readable bdaddr for the log only
     let human = disp.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":");
     log(&format!("querying SDP on {human} (PSM 0x{SDP_PSM:04x})"));
+    // The connect timeline: the L2CAP connect is what pages the phone, and its return is the link.
+    crate::timeline_marks::stamp("page_start");
     let mut sock = connect_sdp(peer, timeout_secs)?;
+    crate::timeline_marks::stamp("acl");
     log("L2CAP SDP channel up (phone paged)");
 
     // (1) Targeted: the phone-side iAP2 UUID. An iPhone is done here.
@@ -258,6 +261,7 @@ pub fn query(peer: [u8; 6], timeout_secs: i64) -> std::io::Result<Services> {
     log(&format!("iAP2-UUID search -> {} bytes: {}", iap2.len(), hex(&iap2)));
     if let Some(ch) = scan_rfcomm_channel(&iap2) {
         log(&format!("iAP2 RFCOMM channel on the phone = {ch}"));
+        crate::timeline_marks::stamp("sdp");
         return Ok(Services { iap2: Some(ch) });
     }
 

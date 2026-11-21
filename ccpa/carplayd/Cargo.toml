@@ -30,6 +30,8 @@ iap2-core = { package = "carplay-iap2-core", path = "../../crates/vendor/iap2-co
 # HID input wire format (task #20): the CH_INPUT sub-frame consts ocbmd relays; carplayd turns them into
 # hidSendReport. Shared source so the box's two daemons never disagree on the format.
 ocbm-proto = { path = "../../crates/ocbm-proto" }
+# The connect timeline's clock, record and line (box_common::timeline, 2026-11-20).
+box-common = { path = "../../crates/box-common" }
 libc = "0.2"
 # Merged in from the retired `rx-connect` binary (see src/discovery.rs). mdns-sd is synchronous
 # (flume + polling + socket2), so folding discovery in here dropped tokio from the project's box

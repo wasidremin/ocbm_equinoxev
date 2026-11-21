@@ -9,9 +9,11 @@ license = "Unlicense"
 #   box-common
 #   ├── ocbm   — OCBM framing/channels (re-exports ocbm-proto)
 #   ├── flags  — the projection-owner flag the supervisor writes and ocbmd forwards
-#   └── net    — the SoftAP gateway address
+#   ├── net    — the SoftAP gateway address
+#   └── timeline — the connect timeline's clock, record and line (from enigy/ocbm, 2026-11-20)
 #
 # The Android Auto pieces (usb, phone, cfg) were removed on 2026-10-27.
 
 [dependencies]
 ocbm-proto = { path = "../ocbm-proto" }
+libc = "0.2"

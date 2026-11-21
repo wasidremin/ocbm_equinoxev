@@ -41,6 +41,9 @@ run "wireless"   cargo test -p btd --quiet
 run "bt-common"  cargo test -p bt-common --quiet
 # box-common carries the shared owner flag and AP-address definitions ocbmd and btd depend on.
 run "box-common" cargo test -p box-common --quiet
+# carplayd's own tests (discovery, the connect timeline) were run by nothing until 2026-11-20. Without
+# the AAC-ELD feature: its libfdk-aac is cross-built for the box and the app, not for this host.
+run "carplayd"   cargo test -p carplayd --no-default-features --quiet
 run "pairing"    cargo test --manifest-path crates/vendor/pairing/Cargo.toml --quiet
 run "rtsp"       cargo test --manifest-path crates/vendor/rtsp/Cargo.toml --quiet
 run "mfi"        cargo test --manifest-path crates/vendor/mfi/Cargo.toml --quiet

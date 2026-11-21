@@ -291,6 +291,7 @@ fn attempt(
         }
     };
     log(&format!("RFCOMM connected OUT to the phone (ch {channel}) — starting iAP2 handshake"));
+    crate::timeline_marks::stamp("rfcomm");
     // The real success signal is iAP2 progress inside bt_driver::run, NOT the mgmt DEVICE_CONNECTED
     // for our own outbound connect (docs/wireless/01_BT_AND_RADIO.md §Design notes — the Model-A latching gotcha).
     // Claim the single-session slot ATOMICALLY, immediately before running the driver. compare_exchange
