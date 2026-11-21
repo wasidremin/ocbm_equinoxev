@@ -989,12 +989,25 @@ PR #2).*
       handshake failed; disabled WRONG_KEY; disconnect reason 2`. Nothing was left running and the
       access point came up.
     - Forced to wext, the same binary joined in 5 s.
+  - *CarPlay end to end, bench, 2026-11-21* (the iPhone beside the server, the app on the emulator,
+    a fresh adapter boot each run):
+    - Run 1: joined on channel 48 in 6 s over nl80211, address in 1 s; the access point came up on
+      48 beside it, the handoff named 48, and CarPlay ran for 4 minutes with no `link lost`, until
+      the run was ended.
+    - Run 2: the home router had moved to channel 161. The scan saw it, logged `not on channel 48
+      but on 161; remembered`, and stopped the client; the access point came up on 48 after the
+      16 s wait, and CarPlay went live. On the next Wi-Fi start the client joined on 161 in 6 s,
+      and the access point and the handoff both used 161; the phone joined. The memory works end to
+      end.
+    - Run 2's first session ended after 1.5 minutes with `TEARDOWN reason=link-loss` (the control
+      keepalive): the phone's Bluetooth link had timed out (`DEVICE_DISCONNECTED reason=0x01`) about
+      a minute before. The client was not running then, so it is not the join. The phone also
+      answered pages slowly (6–8 s, and about a minute after the restart, against the car's median
+      of 1.0 s), so the bench's radio path to the phone is the likelier cause. Not explained; the
+      app restarted the session by itself.
+    - On 2026-11-20 the iPhone had never taken a DHCP lease, with the setting on or off: the
+      phone's state that day.
 - *Not yet checked:*
-  - CarPlay end to end with the new client. On the bench on 2026-11-20 the iPhone completed
-    Bluetooth (70–130 s after discoverable, against about 10 s on 11-16) and the handoff, then
-    never took a DHCP lease from the adapter. That happened **with the setting on and with it off
-    alike**, so it was the phone's state that day, not this change. To repeat with the phone awake
-    by the bench;
   - an access point that sends an RSNXE;
   - the car.
 - *What the car's next log decides:*
@@ -1375,8 +1388,16 @@ in brackets:
       `bt_up` 3,154, `page_start` 3,159 (ms after the app arrived);
     - this chip took **1,645 ms** to sign and 150 ms to read its certificate, matching enigy's
       figures.
-- *Not yet seen:* the printed line. The iPhone stopped after the handoff that day, with or without
-  this build (T15's bench note), so no session reached a first frame.
+  - *a live connect, bench, 2026-11-21* (the iPhone beside the server): the line printed once per
+    connect under `[box:airplayd-wl]`, every stamped key in order, both chips at 1,644–1,656 ms
+    (`docs/carplay/02_SESSION_LIFECYCLE.md` has the line and its reading). The first line read
+    `bt_power=-`: two of `bt_on`'s four success paths, Bluetooth already up among them, did not
+    stamp. Fixed, with a test (`radio_scan_test.sh`), and the next run read `bt_power=735`.
+- *Bench numbers, with the hotspot join on:* 24.0 s and 32.6 s from the app's arrival to the first
+  frame. The join held back the access point, and so `btd`, which started at 10.0 s and 17.6 s (the
+  second run found the router on another channel); the phone took 6.2 s and 8.1 s to answer the page; the two
+  signatures took 3.3 s. The car's numbers will differ: its page median is 1.0 s.
+- *Not yet seen:* a line from the car.
 
 **Step 2, enigy's speedups, not started.** What each would buy here, from enigy's measurements:
 - *Armed Bluetooth (A1):* the page about 0.1 s after the app arrives instead of about 1.2 s.

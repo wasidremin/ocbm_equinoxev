@@ -996,6 +996,7 @@ do_bt_on() {
   # between-sessions state (enigy/ocbm measured bt_on at 9.5 s from DOWN vs 0.4 s for the power-up).
   if [ -n "$_d" ] && bt_powered_up "$_d" && bt_responsive_confirmed "$_d"; then
     log "BT already converged — skipping preload"
+    bt_power_stamp
     publish "$BT_STATE" "result=ok" "backend=$RADIO_BACKEND" "hci_dev=$_d" \
             "bt_mac=$(cat /sys/class/bluetooth/$_d/address 2>/dev/null)"
     return 2
@@ -1038,6 +1039,7 @@ do_bt_on() {
       sh /script/bt_on.sh; _rc=$?
       _d=$(hci_dev 2>/dev/null) || _d=""
       if [ -n "$_d" ] && bt_responsive_confirmed "$_d"; then
+        bt_power_stamp
         publish "$BT_STATE" "result=ok" "backend=owned" "hci_dev=$_d" \
                 "bt_mac=$(cat /sys/class/bluetooth/$_d/address 2>/dev/null)"
         return 0

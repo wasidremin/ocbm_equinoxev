@@ -57,10 +57,11 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
-- **Connect timeline: nothing checked on a live connect (built 2026-11-20, not published).** Each
-  wireless connect should log one `[timeline] v1` line under `[box:airplayd-wl]` at the first
-  picture (`docs/carplay/02_SESSION_LIFECYCLE.md`, "The connect timeline"). To check in the first
-  upload after it is published:
+- **Connect timeline: checked on the bench, not yet in the car (built 2026-11-20, not published).**
+  Each wireless connect logs one `[timeline] v1` line under `[box:airplayd-wl]` at the first
+  picture (`docs/carplay/02_SESSION_LIFECYCLE.md`, "The connect timeline"). On the bench
+  (2026-11-21, the iPhone through the emulator) it printed once per connect, every key in order,
+  chips at about 1,650 ms. To check in the first upload after it is published:
   - the line is there once per connect;
   - its `first_frame` is close to the app's `startup: first-video`;
   - `chip1_ms` and `chip2_ms` are about 1,650.
@@ -248,12 +249,18 @@ high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/do
   Bluetooth range for 20 s or the screen comes back with no picture, and ends a session the box no
   longer has. Why the frame was lost is open; 233 logs resync bytes once a minute. Unverified on the
   car. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
-- **Wheel answer button: Android sends it to the car's dialer.** Stock AAOS 14 keeps `KEYCODE_CALL`
-  from every app and opens the dialer when Android's Telecom has no ringing call, and the iPhone is
-  not on the car's Bluetooth. From 233 (published 2026-11-07) the wheel's voice button answers a ringing CarPlay call, a phone
-  key that does reach the app answers or ends it, and every key and every focus loss during a call is
-  logged. The next ring with a rocker press shows what GM does with the key. Owner:
-  `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key".
+- **The wheel's phone keys during a CarPlay call: none tried yet (issue #4).** The wheel has a phone
+  toggle (up answers; down declines, ends, or with no call mutes the car) and a voice button that
+  answers a ringing call (2026 owner manual). Stock AAOS 14 keeps `KEYCODE_CALL` from every app and
+  opens the car's dialer when Android's Telecom has no ringing call, and the iPhone is not on the
+  car's Bluetooth. From 233 (published 2026-11-07) the voice button answers a ringing CarPlay call, a
+  phone key that does reach the app answers or ends it, and every key and every focus loss during a
+  call is logged. After 260 (not published) `HEADSETHOOK` during a live call ends it instead of
+  reaching the iPhone as play/pause. The adapter's Answer and End work in the car (the pill, five
+  days to 11-12). To 2026-11-18, three calls rang and no wheel phone key reached the app. To check:
+  the three-step drive test in the owner document (voice button during a ring; toggle up during a
+  ring; toggle down during a call). Until then, end calls with the pill: toggle-down may mute the car
+  instead. Owner: `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key".
 - **Slow starts on 2026-11-07.** From the adapter attaching to CarPlay live: 20 s, 35 s, 19 s and 81 s,
   6–9 s of each for the Allow tap. At 10:16 the phone reset the adapter's first Bluetooth connect and
   the box's reconnect loop waited its fixed 10 s (`BACKOFF_START_SECS`) to try again. At 11:19 the
@@ -502,7 +509,8 @@ high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/do
   Step 1 (the adapter joins, nothing uses the link) failed every join in the car with Play 259 and
   260 (2026-11-17/18). The wext client may be the cause (enigy/ocbm PR #2: RSNXE mismatch at
   message 3/4). An nl80211 client with a reason line from the client's own log was built on
-  2026-11-20: not yet on the bench adapter or the car. To check in the car's next log: the
+  2026-11-20 and works on the bench adapter: it joined a home network, and on 2026-11-21 carried
+  two CarPlay sessions beside the access point (T15). Not yet in the car. To check in the car's next log: the
   `uplink:` lines' `driver` and `the client's log:` lines. A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether

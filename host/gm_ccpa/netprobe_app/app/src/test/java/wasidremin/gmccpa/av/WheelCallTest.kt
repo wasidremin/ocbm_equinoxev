@@ -16,8 +16,9 @@ class WheelCallTest {
         assertNull(WheelCall.actionFor(KeyEvent.KEYCODE_CALL, null))
     }
 
-    @Test fun headsetHookAnswersARingingCallAndIsPlayPauseOtherwise() {
+    @Test fun headsetHookAnswersARingingCallEndsALiveOneAndIsPlayPauseWithNoCall() {
         assertEquals(Ocbm.TEL_ANSWER, WheelCall.actionFor(KeyEvent.KEYCODE_HEADSETHOOK, ringing))
+        assertEquals(Ocbm.TEL_END, WheelCall.actionFor(KeyEvent.KEYCODE_HEADSETHOOK, inCall))
         assertNull(WheelCall.actionFor(KeyEvent.KEYCODE_HEADSETHOOK, null))
     }
 

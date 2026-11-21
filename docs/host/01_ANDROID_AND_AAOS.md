@@ -384,8 +384,18 @@ guard different resources and neither substitutes for the other.
 
 ### The steering-wheel call key never reaches a Play app (verified 2026-11-06)
 
-The Equinox's answer/end rocker cannot answer a CarPlay call, because of where stock AAOS 14 sends
-the key. `CarInputService.dispatchKeyEventForDriver` (android14-release) handles `KEYCODE_CALL` itself,
+**The wheel** (2026 Equinox EV owner manual, "Steering Wheel Controls", read 2026-11-21):
+- *A phone toggle.* Up answers a ringing call. Down declines a ringing call, ends a live one, or,
+  with no call, mutes or unmutes the infotainment system.
+- *The voice button.* Held, it starts a Bluetooth phone's assistant. Pressed and released while a
+  call rings, it answers the call; during a call, it answers a second, waiting one.
+- *The favourite switch,* on the back: next or previous track.
+
+"No call" there means none on the car's Bluetooth: the iPhone's CarPlay calls are never on it.
+
+If GM hands the toggle's up to Android as `KEYCODE_CALL`, it cannot answer a CarPlay call, because of
+where stock AAOS 14 sends that key. Whether GM does is not yet known (the car evidence below).
+`CarInputService.dispatchKeyEventForDriver` (android14-release) handles `KEYCODE_CALL` itself,
 ahead of every app. `handleCallKey`, on key up:
 
 1. answers a ringing call that Android's Telecom knows about (`acceptCallIfRinging`);
@@ -417,10 +427,44 @@ What the app does instead (`av/WheelCall.kt`, versionCode 233):
   rocker differently from AOSP: GM sends wheel media keys through its own `com.gm.rhmi` (uid 1000)
   rather than `CarInputService`'s media-key path. `input keyevent KEYCODE_CALL` reached the window on
   the emulator; `KEYCODE_ENDCALL` never reaches an app.
+- **`HEADSETHOOK` during a live call ends it** (after 260, not yet published; issue #4 on
+  wasidremin/ocbm_equinoxev). That is what Android's Telecom does with a headset's button
+  (`CallsManager.onMediaButton`, short press). Before, the press went on to the media session's
+  play/pause and reached the iPhone as a media key in the middle of the call. Unit test
+  (`WheelCallTest`) and the emulator self-test; GM has never sent this key.
 - **Logging.** Every key the app's windows or media session receive is logged as `[call ] key …`, and
-  the CarPlay screen losing focus during a call is logged too. If GM keeps AOSP's routing, a rocker press
+  the CarPlay screen losing focus during a call is logged too. If GM keeps AOSP's routing, a toggle press
   during a ring shows as `CarPlay screen lost window focus while a call rings`, followed by the car's
   dialer.
+
+**The car, 2026-11-07 to 11-18 (233–260; the uploaded logs, read 2026-11-21).**
+- *The adapter's half works.* The call pill's Answer and End reached the iPhone every time it was
+  used: `telephony idx=1` or `idx=3 sent=true`, then iOS opened or closed the call's audio (2026-10-20,
+  10-27, 11-03, 11-06, 11-12). On 11-12 the call audio started 0.3 s after Answer.
+- *No wheel phone key has been seen.* Three calls rang (11-08, 11-09, 11-12) and four were placed.
+  No `CALL`, `ENDCALL` or `HEADSETHOOK` reached a window or the media session. The voice button was not
+  pressed during a ring, and the CarPlay screen did not lose the foreground while a call rang. So
+  either the toggle was not used, or it did nothing the app can see. The 11-08 and 11-09 calls were
+  answered 4.6 and 4.8 s into the ring with nothing from the app or the adapter: on the iPhone.
+- *During a live call* the CarPlay screen lost the foreground on 11-09 and on 11-12 (for 31 s, 4 s
+  after the pill answered). What took it is not logged: an app cannot name another app's activity.
+- *What GM does deliver:* the voice button, as the assistant (`flags=0x23`, 14 presses since
+  2026-10-27), and the favourite switch. For a track skip `com.gm.rhmi` (uid 1201000) sends
+  `KEYCODE_F7` to the focused window, then skip-next on the media session 5–19 ms later (all 9
+  presses, 2026-11-08 to 11-14).
+
+**The drive test that settles it.** With CarPlay live, when a call rings:
+1. Press and release the voice button. Expected: the call is answered, and the log shows
+   `voice button (…) while a call rings -> answer sent=true`.
+2. On another call, push the toggle up during the ring. The log shows a `[call ] key …` line (GM
+   passes the key on), or `CarPlay screen lost … while a call rings` (the car's phone screen came up),
+   or neither.
+3. During a live call, push the toggle down, and note whether the call ends, the car goes silent, or
+   nothing happens.
+
+Until then, end a CarPlay call with the pill. The manual's "mutes the infotainment system" with no
+call is what toggle-down may do during a CarPlay call, since the car knows of none: the caller would
+go silent in the car while the call stays up. That is an inference from the manual, not observed.
 
 ### The steering-wheel voice button starts Siri (T14: raised 2026-10-26, works on the car since 2026-10-27)
 
@@ -474,7 +518,8 @@ is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on t
 **Answering calls (233, 2026-11-06).** The wheel's answer rocker cannot reach a Play app; stock AAOS
 opens the car's dialer with it (`docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key").
 So while a CarPlay call rings, this button answers it instead of starting Siri
-(`voice button (…) while a call rings -> answer sent=true`). Unverified on the car.
+(`voice button (…) while a call rings -> answer sent=true`), as the 2026 owner manual says it does
+for a Bluetooth phone's call. Unverified on the car: no ring has met a press yet (2026-11-18).
 
 ## GM AAOS USB permission handler
 

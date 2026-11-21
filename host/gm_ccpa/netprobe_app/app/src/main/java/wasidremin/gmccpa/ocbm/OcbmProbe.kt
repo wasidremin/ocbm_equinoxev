@@ -548,6 +548,12 @@ class OcbmProbe(context: Context) {
                     wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_DOWN, callKey), "self-test") &&
                         wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_UP, callKey), "self-test"))
                 check("the voice button answers a ringing call", wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers("self-test"))
+                np.onCallState(org.json.JSONObject("{\"callUuid\":\"self-test\",\"status\":4}"))
+                val hook = android.view.KeyEvent.KEYCODE_HEADSETHOOK
+                check("a headset press ends a live call instead of reaching the phone as play/pause",
+                    wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_DOWN, hook), "self-test") &&
+                        wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_UP, hook), "self-test"))
+                check("the voice button stays Siri during a live call", !wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers("self-test"))
             } finally {
                 np.onCallState(org.json.JSONObject("{\"callUuid\":\"self-test\",\"status\":0}"))
             }

@@ -8,8 +8,10 @@ import wasidremin.gmccpa.ocbm.Ocbm
 /**
  * The steering wheel's phone controls, for the CarPlay call on the iPhone.
  *
- * The Equinox's answer/end rocker reaches stock Android 14 as `KEYCODE_CALL`, and
- * `CarInputService.handleCallKey` keeps that key from every app: it answers a ringing call Android's
+ * The Equinox EV's wheel has a phone toggle (up answers a ringing call; down declines, ends, or with
+ * no call mutes the car) and a voice button whose press answers a ringing call (2026 owner manual,
+ * "Steering Wheel Controls"). If GM hands the toggle's up to Android as `KEYCODE_CALL`,
+ * `CarInputService.handleCallKey` keeps it from every app: it answers a ringing call Android's
  * Telecom knows about, else hands the key to a projection app holding the system-only
  * `CAR_PROJECTION`, else opens the car's dialer. The iPhone is not on the car's Bluetooth, so Telecom
  * knows of no call. Registering the CarPlay call with Telecom as a self-managed call does not get
@@ -18,9 +20,11 @@ import wasidremin.gmccpa.ocbm.Ocbm
  *
  * What is left, and what this does:
  *  - The wheel's voice button reaches this app as the digital assistant (T14). While a call rings it
- *    answers instead of starting Siri, the way GM's push-to-talk answers a Bluetooth phone's call.
- *  - A phone key that does reach a window or the media session answers or ends the call. GM sends
- *    media keys through its own `com.gm.rhmi`, so a GM build may route these keys differently too.
+ *    answers instead of starting Siri, as the manual says it does for a Bluetooth phone's call.
+ *  - A phone key that does reach a window or the media session answers or ends the call. GM routes
+ *    some wheel keys itself: the favourite switch arrives as `KEYCODE_F7` at the window from
+ *    `com.gm.rhmi`, then a skip-next on the media session (car, 2026-11-08 to 11-14), so the toggle
+ *    may also come by a route AOSP does not have.
  *
  * Every key that reaches the app is logged, so a drive shows which of these GM does.
  */
@@ -30,10 +34,17 @@ object WheelCall {
     /** The key whose down edge sent a call action, so its up edge is consumed too. */
     @Volatile private var actedKey = KeyEvent.KEYCODE_UNKNOWN
 
-    /** The telephony action [keyCode] asks for in call state [phoneAction], or null to leave the key alone. */
+    /**
+     * The telephony action [keyCode] asks for in call state [phoneAction], or null to leave the key
+     * alone. Pure.
+     */
     fun actionFor(keyCode: Int, phoneAction: Byte?): Byte? = when (keyCode) {
-        KeyEvent.KEYCODE_CALL, KeyEvent.KEYCODE_HEADSETHOOK ->
-            if (phoneAction == Ocbm.TEL_ANSWER) Ocbm.TEL_ANSWER else null
+        // The Equinox EV's toggle up answers a ringing call and does nothing else (owner manual, 2026).
+        KeyEvent.KEYCODE_CALL -> if (phoneAction == Ocbm.TEL_ANSWER) Ocbm.TEL_ANSWER else null
+        // A headset's one button: answers a ringing call, ends a live one (Android Telecom's
+        // `CallsManager.onMediaButton` short press, issue #4). Before 261 a press during a call went
+        // on to the media session's play/pause and reached the iPhone as a media key.
+        KeyEvent.KEYCODE_HEADSETHOOK -> phoneAction
         // Declines a ringing call and hangs up a live one, as the pill's End does.
         KeyEvent.KEYCODE_ENDCALL -> if (phoneAction != null) Ocbm.TEL_END else null
         else -> null

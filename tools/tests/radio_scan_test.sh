@@ -147,4 +147,16 @@ out=$( set -u; LOGP=x; UPLINK_DIR=$T/d; UPLINK_JOINED_AT=$T/j; UPLINK_WPA_LOG=$T
   uplink_stop && uplink_stop guard && echo survived 2>&1 )
 is "uplink_stop with nothing running, and no argument, under set -u" "$out" survived
 rm -rf "$T"
+# The connect timeline's bt_power: bt_on stamps it on whichever path brought Bluetooth up. The bench
+# run of 2026-11-21 printed bt_power=- because the already-up and owned-backend paths did not stamp.
+n_ok=$(sed -n '/^do_bt_on() {/,/^}/p' "$F" | grep -c 'publish "$BT_STATE" "result=ok"')
+n_st=$(sed -n '/^do_bt_on() {/,/^}/p' "$F" | grep -c '^ *bt_power_stamp$')
+is "every bt_on success stamps bt_power ($n_ok of them)" "$n_st" "$n_ok"
+T=$(mktemp -d)
+eval "$(sed -n '/^bt_power_stamp() {/,/^}/p' "$F" | sed "s#/tmp/#$T/#g")"
+VERB=bt_prewarm bt_power_stamp
+is "a prewarm stamps nothing" "$(cat "$T/startup_marks" 2>/dev/null)" ""
+VERB=bt_on bt_power_stamp
+is "bt_on stamps one line in milliseconds" "$(sed 's/[0-9]\{3,\}$/MS/' "$T/startup_marks")" "t bt_power MS"
+rm -rf "$T"
 [ "$fails" -eq 0 ] && echo "radio_scan: all passed" || { echo "radio_scan: $fails failed"; exit 1; }

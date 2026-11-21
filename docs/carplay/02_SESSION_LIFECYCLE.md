@@ -41,7 +41,18 @@ which reach it in batches. Task T25, issue #2 on wasidremin/ocbm_equinoxev.
 
     [timeline] v1 sup_radios=406 bt_armed=0 bt_power=1246 btd_start=1276 bt_up=1286 page_start=1296 acl=1556 sdp=1716 rfcomm=1866 cert_req=1946 sign1_start=2066 sign1_end=2376 ident=2566 wifi_req=2666 wifi_rsp=2696 ap_start=1666 ap_up=1876 ap_enabled=- sta_assoc=- dhcp_ack=- carplayd_start=3166 svc_seen=3866 dial_ok=- dial=3916 pv_done=4366 auth_in=4416 auth_out=4766 record_in=4846 record=5066 screen_setup=5116 first_frame=5466 chip1_ms=298 cert1_ms=41 chip2_ms=301 cert2_ms=40 usb_edge_s=-
 
-That is a unit test's line, not a measurement.
+That is a unit test's line, not a measurement. The first real one, from the bench adapter with the
+iPhone beside the server and the car-hotspot join pointed at a home network (2026-11-21, 06:29):
+
+    [timeline] v1 sup_radios=329 bt_armed=0 bt_power=- btd_start=9999 bt_up=10310 page_start=10313 acl=16542 sdp=16569 rfcomm=16968 cert_req=17108 sign1_start=17314 sign1_end=18994 ident=19136 wifi_req=19139 wifi_rsp=19141 ap_start=9169 ap_up=9479 ap_enabled=- sta_assoc=- dhcp_ack=- carplayd_start=19807 svc_seen=20881 dial_ok=- dial=20897 pv_done=21245 auth_in=21252 auth_out=23073 record_in=23247 record=23254 screen_setup=23530 first_frame=24034 chip1_ms=1652 cert1_ms=135 chip2_ms=1644 cert2_ms=116 usb_edge_s=-
+
+Read: 24.0 s to the first frame, of which
+- 10.0 s before `btd` started: the join (6 s) and its address (1 s), which the access point waits
+  for, then the access point;
+- 6.2 s for the phone to answer the page (the car's median for that stage is 1.0 s);
+- 3.3 s in the chip's two signatures.
+
+Its `bt_power=-` was a missing stamp, fixed the same day (the key table).
 
 **From enigy/ocbm.** The format, the keys and their order, the grammar
 (`^\[timeline\] v1( [a-z0-9_]+=(-|\d+))+$`) and `crates/box-common/src/timeline.rs` are ported
@@ -78,7 +89,7 @@ mid-session. The origin is when `ocbmd` raises `/tmp/host_present` to 1; it writ
 | Key | The event | Stamped in |
 |---|---|---|
 | `sup_radios` | the supervisor starts the radios | `tools/session_supervisor.sh`, the wireless bring-up block |
-| `bt_power` | `bt_on` has the controller up and answering | `radio_hal.sh`, `do_bt_on` (both success paths) |
+| `bt_power` | `bt_on` has the controller up and answering | `radio_hal.sh`, `do_bt_on`: all four success paths, including Bluetooth already up (until 2026-11-21 only two, so a line read `-`) |
 | `btd_start` | `btd` begins the session's record | `timeline_marks::begin` |
 | `bt_up` | `btd`'s Bluetooth bring-up done ("discoverable as") | `wireless/src/main.rs`, `run_active_session` |
 | `page_start`, `acl` | the SDP connect that pages the phone starts, and returns | `sdp_client.rs`, `query` |

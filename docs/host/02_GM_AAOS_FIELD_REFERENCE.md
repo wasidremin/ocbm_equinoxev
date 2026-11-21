@@ -27,8 +27,11 @@ this file is the *external* evidence and the platform map that write-up rests on
   default attach handler. Seen attach candidates: `com.gm.isaplugin`,
   `com.seekingthescenery.carlinknative`, and `wasidremin.gmccpa`.
 - The 2026-10-03 log distinguishes **`com.gm.car.media.gmcarmediaservice`**, GM's real media UI,
-  from **`com.android.car`**, which sends source-change pause/stop probes. Steering-wheel caller
-  identity is still not proven. The focus-pause implementation forwards real commands even in
+  from **`com.android.car`**, which sends source-change pause/stop probes. The wheel's track skip
+  is **`com.gm.rhmi`** (uid 1201000): it sends `KEYCODE_F7` to the focused window, then skip-next on
+  the media session 5–19 ms later (all 9 presses, 2026-11-08 to 11-14). Which caller carries a wheel
+  play/pause, if any, is not proven. The wheel's phone keys: `docs/host/01_ANDROID_AND_AAOS.md`, "The
+  steering-wheel call key". The focus-pause implementation forwards real commands even in
   the initial five-second arbitration window. Only `com.android.car` pause/stop callbacks or an
   opposite pause+stop callback pair within 100 ms are dropped; explicit media keys bypass filtering.
   A lone callback pause waits 100 ms to rule out a pair, then travels over CarPlay media HID.
