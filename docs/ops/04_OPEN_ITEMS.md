@@ -69,8 +69,8 @@ high-water mark: versionCode 263 (`4.0+video-voice`, 2026-11-21; `host/gm_ccpa/d
   ladder on a working adapter and the update rolled back unconfirmed. Check that a drive after an
   update shows no `adapter unhealthy` and `firmware … confirmed`.
 - **Route A: what the phone asks with `setVideoPlaybackParameters` (2026-11-21, not yet published).**
-  The adapter now logs its shape (`[video] phone's setVideoPlaybackParameters: {…}`); read it on the
-  next try of a video from Safari.
+  The adapter now logs its shape (`[video] phone's setVideoPlaybackParameters: {…}`). The 263 try was
+  YouTube in Safari; the next is Apple's example HLS stream in Safari (T34).
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
   2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
   lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and

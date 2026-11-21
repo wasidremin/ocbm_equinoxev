@@ -1610,9 +1610,13 @@ stops it; CarPlay carries on normally afterwards.
 **In the car with 263 (2026-11-21).** The offer was negotiated, the phone sent
 `setVideoPlaybackParameters` (111 B, three times) and never opened the play queue, so nothing played.
 The command was logged by size only. From the next build the adapter logs its shape (keys and types,
-no values: `[video] phone's setVideoPlaybackParameters: {…}`). Which app the owner tried, and whether
-CarPlay was offered as an AirPlay target, was asked and not yet answered (enigy: only Safari hands
-video to CarPlay today).
+no values: `[video] phone's setVideoPlaybackParameters: {…}`). The owner tried YouTube in Safari
+(owner, 2026-11-21). enigy found that only Safari's own player hands video over, with Apple's example
+HLS stream, and that YouTube offers CarPlay and then backs out; this drive matches the second. Next
+try: Apple's example stream in Safari
+(`devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8`, from
+developer.apple.com/streaming/examples), which separates "the phone never hands this player over"
+from "this adapter or app fails".
 
 ## Left off this plan
 
