@@ -1615,6 +1615,11 @@ class MainActivity : Activity() {
                 if (supervisor.blocksWirelessRestart()) emit("MGMT_RESTART_WIRELESS held — within 45s of CT_RADIO")
                 else ocbmProbe?.disconnectPhone() ?: emit("no OCBM link")
             }
+            // Bench: the app's link dropped (no CT_STOP) and claimed again with the same nonce under a live
+            // session, which the adapter answers by re-keying the A/V seams (OcbmProbe.blipForBench).
+            "ocbm_blip" -> runAsync {
+                ocbmProbe?.blipForBench()?.let { emit("blip: link back, subscribed=${it.subscribed}") } ?: emit("no OCBM link")
+            }
             "ocbm_forget" -> runAsync { ocbmProbe?.forgetPhone(i.getStringExtra("mac")) ?: emit("no OCBM link") }
             // Bench, no session: log the displays and open the driver display's (empty) map window
             // as a connect would. `--ez enabled true|false` sets the setting first; `--ez reopen true`

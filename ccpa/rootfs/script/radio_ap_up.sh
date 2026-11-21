@@ -35,6 +35,82 @@ set -u
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin:/tmp/bin:$PATH
 L="[radio_ap_up]"
 
+# ---- the AP's DHCP server and hostapd's own word (tools/tests/radio_ap_test.sh) ----------------
+# PORTED from enigy/ocbm (github.com/enigy/ocbm, Unlicense; 2.0.0 a009f90, 2.5.0 c4679c0, 2.6.5
+# d590834 and 39f7a13; NOTICE.md), adapted to this script, which always starts hostapd fresh.
+# AP_DHCP_MATCH, AP_PROC and AP_BOXLOG are test hooks.
+#
+# The AP's DHCP servers are found by CONFIG PATH, never by name: the NCM server,
+# `busybox udhcpd -f /tmp/udhcpd_ncm.conf`, is never one of them.
+AP_DHCP_MATCH=${AP_DHCP_MATCH:-udhcpd .*etc/udhcpd.conf}
+AP_PROC=${AP_PROC:-/proc}
+AP_BOXLOG=${AP_BOXLOG:-/tmp/box.log}
+ap_dhcp_pids() { ps 2>/dev/null | grep -v grep | grep "$AP_DHCP_MATCH" | awk '{print $1}'; }
+ap_pids_live() { for _apl in "$@"; do kill -0 "$_apl" 2>/dev/null && return 0; done; return 1; }
+# Stop every AP DHCP server and see it GONE: SIGTERM, up to $1 x 0.2 s for it to go, then SIGKILL
+# and up to 1 s more. 1 when one survived even that (a kernel wait): a server started now may not
+# bind. BusyBox's udhcpd writes its lease file (on the jffs2 root) as it exits on SIGTERM, and with
+# flash slow the last AP's server was still listed at the next AP start, which took it for its own
+# and started none; once it had gone the phone was on the Wi-Fi with no address (enigy/ocbm's bench,
+# 2026-11-16). This fork's teardown waited for hostapd only, the same exposure. Its pidfile is not
+# killed blind: a stale pidfile can name any process.
+ap_dhcp_stop() {
+  _ads=$(ap_dhcp_pids)
+  [ -n "$_ads" ] || return 0
+  for _adp in $_ads; do kill "$_adp" 2>/dev/null; done
+  _adn=0; while [ "$_adn" -lt "${1:-15}" ] && ap_pids_live $_ads; do _adn=$((_adn + 1)); sleep 0.2; done
+  ap_pids_live $_ads || return 0
+  echo "$L the last AP's DHCP server is still there after SIGTERM (its lease file on flash?) - SIGKILL"
+  for _adp in $_ads; do kill -9 "$_adp" 2>/dev/null; done
+  _adn=0; while [ "$_adn" -lt 10 ] && ap_pids_live $_ads; do _adn=$((_adn + 1)); sleep 0.1; done
+  ap_pids_live $_ads || return 0
+  echo "$L the last AP's DHCP server survived SIGKILL (a kernel wait?): this AP's may not bind"
+  return 1
+}
+# This AP's DHCP server serving: the one this start launched ($_dhcpd), alive (its stat not a zombie
+# this shell has not reaped); or, with none launched here, any found by config path. $! is the
+# server's own pid: setsid does not fork for a job that leads no process group, which a
+# non-interactive shell's never do. Were it setsid's, the config path answers instead.
+ap_dhcp_serving() {
+  if [ -n "${_dhcpd:-}" ]; then
+    _adx=""; _adx_name=""
+    read -r _adx_pid _adx_name _adx _adx_rest 2>/dev/null <"$AP_PROC/$_dhcpd/stat"
+    [ "$_adx_name" = "(setsid)" ] && { [ -n "$(ap_dhcp_pids)" ]; return; }
+    [ -n "$_adx" ] && [ "$_adx" != Z ]
+  else
+    [ -n "$(ap_dhcp_pids)" ]
+  fi
+}
+# The hostapd launched here ($_hapd) has exited: a zombie this shell has not reaped, which ps still
+# lists by name. Anything else, its being there included, is not "exited".
+hapd_exited() {
+  _hx_name=""; _hx_state=""
+  read -r _hx_pid _hx_name _hx_state _hx_rest 2>/dev/null <"$AP_PROC/${_hapd:-0}/stat"
+  [ "$_hx_name" = "(hostapd)" ] && [ "$_hx_state" = Z ]
+}
+# hostapd's AP-ENABLED after this start's own line ($_ae_mark) in the box log, which hostapd writes
+# itself. By that line, not by a count: ocbmd empties the box log at its cap in place, so with the
+# line gone the log was emptied after the launch, and every AP-ENABLED left in it is this hostapd's.
+ap_enabled_seen() {
+  [ -n "${_ae_mark:-}" ] || return 1
+  _ae_out=$(grep -F -e "$_ae_mark" -e "AP-ENABLED" "$AP_BOXLOG" 2>/dev/null)
+  case "$_ae_out" in *"$_ae_mark"*) _ae_out=${_ae_out##*"$_ae_mark"} ;; esac
+  case "$_ae_out" in *AP-ENABLED*) return 0 ;; esac
+  return 1
+}
+# Set udhcpd.conf key $2 to $3 in file $1: the line replaced where there is one, else appended.
+dhcp_conf_key() {
+  if grep -q "^[[:space:]]*$2[[:space:]]" "$1" 2>/dev/null; then
+    sed -i "s|^[[:space:]]*$2[[:space:]].*|$2	$3|" "$1"
+  else
+    printf '%s\t%s\n' "$2" "$3" >> "$1"
+  fi
+}
+
+# `sh radio_ap_up.sh dhcp_stop`: radio_hal.sh's Wi-Fi teardown, through the one copy above. Up to 3 s
+# for the lease file, before anything here touches the radio.
+if [ "${1:-}" = dhcp_stop ]; then ap_dhcp_stop 15; exit $?; fi
+
 IF=${RADIO_WLAN_IF:-wlan0}
 [ -e "/sys/class/net/$IF" ] || { echo "$L interface $IF does not exist - the driver must be up first"; exit 1; }
 # AND IT MUST ACTUALLY BE A WIRELESS INTERFACE. Existence alone is not enough: this script
@@ -198,15 +274,22 @@ base=${WLANIP%.*}
 sed -i "s/192\.168\.[0-9]*\.100/${base}.100/; s/192\.168\.[0-9]*\.200/${base}.200/" /etc/udhcpd.conf 2>/dev/null
 # Point udhcpd at the interface we are actually serving.
 grep -q '^interface' /etc/udhcpd.conf 2>/dev/null && sed -i "s/^interface.*/interface	$IF/" /etc/udhcpd.conf
-# THE LEASE FILE IS KEPT (enigy/ocbm bench, 2026-11-02). It used to be deleted here, as the vendor
-# script does, so after every AP restart udhcpd had no record of a phone. An iPhone rejoining a
-# network it knows keeps using its old address and asks for it again (INIT-REBOOT); udhcpd stays
-# silent on such a request from a client it has no lease for (upstream udhcp: "else remain silent"),
-# so the phone carried on at its old address, gave up asking, was handed a different one, and its
-# CarPlay sockets on the old address died. This udhcpd saves the file at every ACK ("save dhcp lease
-# file" in radio_ap_dhcp.log), on the jffs2 root, so kept it holds each phone's lease through AP
-# restarts and power cuts alike: a phone keeps its address from one drive to the next, and its
-# request is ACKed (one for another address is NAKed).
+# THE AP'S DHCP SERVER IS BUSYBOX'S udhcpd (1.32.1, the one serving NCM), NOT THE VENDOR'S v0.9.9-pre
+# (enigy/ocbm 2.0.0, a009f90). An iPhone rejoining a network it knows keeps its old address and asks
+# for it again (INIT-REBOOT). The vendor's server stays silent on such a request from a client it has
+# no lease for (upstream udhcp: "else remain silent"), so the phone ran CarPlay on its old address for
+# about 5 s, then asked afresh, and the session died when it was handed another. The lease file, kept
+# since 2026-11-07, covers AP restarts and power cuts, but not a phone with no lease yet. BusyBox's
+# udhcpd NAKs that request, and the phone takes a fresh address within a second, before CarPlay
+# starts. The vendor's also refused line 76 of the stock file (option 0x2b in hex) at every start.
+#
+# Same file, pool, lease time and interface. BusyBox writes leases on auto_time and as it exits, where
+# the vendor's wrote them at every ACK, and a drive ends in a power cut, so auto_time is 60 s. Its
+# lease file has another format: a vendor-format file reads as a timestamp far outside its window, is
+# ignored, and is rewritten in BusyBox's (the NAK covers that one start).
+dhcp_conf_key /etc/udhcpd.conf lease_file /var/lib/udhcpd.leases
+dhcp_conf_key /etc/udhcpd.conf pidfile /var/run/udhcpd.pid
+dhcp_conf_key /etc/udhcpd.conf auto_time 60
 
 echo 1 > "/proc/sys/net/ipv6/conf/$IF/disable_ipv6" 2>/dev/null
 ifconfig "$IF" "$WLANIP" netmask 255.255.255.0 mtu 1500 up || {
@@ -214,8 +297,6 @@ ifconfig "$IF" "$WLANIP" netmask 255.255.255.0 mtu 1500 up || {
 
 # ---- bring up ---------------------------------------------------------------------------------
 test -e /tmp/bin/hostapd || cp /usr/sbin/hostapd /tmp/bin/hostapd 2>/dev/null
-# Nothing reads /tmp/radio_ap_hostapd.log back (checked: no tail/cat/grep of it anywhere in the
-# scripts), so it folds straight into the universal log with a source prefix.
 # hostapd reads the conf once. A process left over from an earlier creds write keeps beaconing
 # that SSID while 0x5703 reads the file this script just rewrote, so a live hostapd is restarted
 # rather than trusted.
@@ -232,26 +313,39 @@ tl_stamp() {
   case "$_tls_up" in *.*) echo "t $1 ${_tls_up%.*}${_tls_up#*.}0" 2>/dev/null >>/tmp/startup_marks ;; esac
   return 0
 }
-echo "[radio] hostapd starting on $IF ssid=$NAME" >> /tmp/box.log
+# IN THE FOREGROUND, NOT -B (enigy/ocbm 2.0.0, c05d066). Daemonizing points hostapd's stdout at
+# /dev/null, so the station events after its start (AP-STA-CONNECTED, AP-STA-DISCONNECTED and the
+# IEEE 802.11 lines that say why a phone left) never reached the box log; a bench session's link was
+# lost on 2026-11-21 with nothing on the box to say why. Under setsid it appends to the box log
+# itself (O_APPEND, so ocbmd's in-place truncate at the cap is safe), and the converge step below
+# waits for its AP-ENABLED. The line before the launch is the mark that wait reads after.
+_ae_mark="[radio] hostapd starting on $IF ssid=$NAME"
+echo "$_ae_mark" 2>/dev/null >> "$AP_BOXLOG" || _ae_mark=""
 tl_stamp ap_start
-hostapd /etc/hostapd.conf -B >>/tmp/box.log 2>&1
+setsid hostapd /etc/hostapd.conf </dev/null >>"$AP_BOXLOG" 2>&1 &
+_hapd=$!
 
 # The AP's DHCP server, explicitly scoped. The stock script masked this behind a global udhcpd
 # check, so the always-running NCM instance satisfied it and the AP's own server never started -
 # the phone then associates and never gets an address. Match on the CONFIG PATH, not the process
-# name: the NCM server is `busybox udhcpd -f /tmp/udhcpd_ncm.conf` and must never be mistaken for
-# this one, nor killed with it.
+# name (ap_dhcp_pids, above).
 #
-# Redirect and detach. This udhcpd does not daemonise on this build (v0.9.9-pre, not busybox's),
-# so left alone it inherits the caller's stdout and holds the pipe open - which makes an ssh
-# invocation of the seam hang long after the script itself has finished, and would break the
-# HAL's convergent-on-return contract for any caller that reads our output.
-if ! ps | grep -v grep | grep -q "udhcpd .*etc/udhcpd.conf"; then
-  # radio_ap_dhcp.log stays a small `>`-truncated status file: this udhcpd is a setsid-backgrounded
-  # daemon (it does not fork/daemonise itself on this build), so piping its own stdout to tee would
-  # change its lifecycle. Only the readback below (on failure) is universal-logged.
-  setsid udhcpd /etc/udhcpd.conf </dev/null >/tmp/radio_ap_dhcp.log 2>&1 &
-fi
+# THE LAST AP'S SERVER IS NEVER THIS ONE'S. hostapd was started fresh just above, so any AP DHCP
+# server still listed is the last AP's on its way out: radio_hal.sh's teardown waits for it, and this
+# covers a caller that skipped the teardown. Up to 1 s here, then SIGKILL.
+#
+# Redirect and detach. It runs in the foreground (-f, as NCM's does) under setsid, so left alone it
+# would inherit the caller's stdout and hold the pipe open - which makes an ssh invocation of the
+# seam hang long after the script itself has finished, and would break the HAL's
+# convergent-on-return contract for any caller that reads our output. radio_ap_dhcp.log stays a
+# small `>`-truncated status file; only the readback below (on failure) is universal-logged.
+#
+# -a 250: the ARP probe before each offer waits 250 ms, not the default 2 s, which cost 1-1.9 s
+# whenever a phone had no lease (enigy/ocbm 2.5.0, c4679c0). A short probe still catches an address
+# in use. The adapter's BusyBox 1.32.1 has the udhcpd applet (checked 2026-11-21).
+ap_dhcp_stop 5
+setsid busybox udhcpd -f -a 250 /etc/udhcpd.conf </dev/null >/tmp/radio_ap_dhcp.log 2>&1 &
+_dhcpd=$!
 
 # ---- converge ---------------------------------------------------------------------------------
 # Return only when the AP is really serving: the seam's contract is that a 0 means up, so a
@@ -265,24 +359,43 @@ fi
 ap_serving() {
   ps | grep -v grep | grep -qw hostapd || return 1
   ifconfig "$IF" 2>/dev/null | grep -q "inet addr:$WLANIP" || return 1
-  ps | grep -v grep | grep -q "udhcpd .*etc/udhcpd.conf" || return 1
+  ap_dhcp_serving || return 1
   return 0
 }
-n=0
+n=0; _served=0
 # The first pass is the connect timeline's ap_up: the AP serving.
-while [ "$n" -lt 50 ]; do ap_serving && { tl_stamp ap_up; break; }; n=$((n+1)); sleep 0.2; done
+while [ "$n" -lt 50 ]; do ap_serving && { _served=1; tl_stamp ap_up; break; }; n=$((n+1)); sleep 0.2; done
+# CONFIRMED ON HOSTAPD'S OWN WORD (enigy/ocbm 2.6.5, 39f7a13). In the foreground hostapd is in the
+# process list before its start-up is through, so the loop above passes one that then refuses its
+# configuration, as hostapd refused channel 48 under HT40+ here on 2026-11-16. Its AP-ENABLED, after
+# this start's line, says it took the configuration and the driver started the AP: enigy measured it
+# about 0.65 s after the serving pass. Up to 2 s; with no AP-ENABLED by then, a hostapd still running
+# counts, as -B's return did.
+_ae_ms=""
+if [ "$_served" = 1 ]; then
+  n=0
+  while [ "$n" -lt 20 ] && ! hapd_exited; do
+    ap_enabled_seen && { _ae_ms=$((n * 100)); break; }
+    n=$((n+1)); sleep 0.1
+  done
+fi
 # Re-test the FULL predicate after the loop: falling out of it on the bound is not success, and
 # re-checking only hostapd here would let a missing address or a dead DHCP server report as up.
-if ! ap_serving; then
+if ! ap_serving || hapd_exited; then
   echo "$L AP did not converge (ssid=$NAME ch=$ch if=$IF):"
+  hapd_exited && echo "$L   hostapd exited during its start-up"
   ps | grep -v grep | grep -qw hostapd \
     || echo "$L   hostapd is not running"
   ifconfig "$IF" 2>/dev/null | grep -q "inet addr:$WLANIP" \
     || echo "$L   $IF does not hold $WLANIP"
-  ps | grep -v grep | grep -q "udhcpd .*etc/udhcpd.conf" \
-    || { echo "$L   the AP DHCP server is not running - a phone would associate and get no address"
-         tail -3 /tmp/radio_ap_dhcp.log 2>/dev/null | sed "s|^|$L     |" | tee -a /tmp/box.log; }
+  ap_dhcp_serving \
+    || { echo "$L   the AP DHCP server is not running (the one started here, pid $_dhcpd, exited) - a phone would associate and get no address"
+         tail -3 /tmp/radio_ap_dhcp.log 2>/dev/null | sed "s|^|$L     |" | tee -a "$AP_BOXLOG"; }
   exit 1
 fi
-echo "$L AP up: ssid=$NAME ip=$WLANIP ch=$ch if=$IF dhcp=yes"
+if [ -n "$_ae_ms" ]; then
+  echo "$L AP up: ssid=$NAME ip=$WLANIP ch=$ch if=$IF dhcp=yes (AP-ENABLED ${_ae_ms} ms after it was serving)"
+else
+  echo "$L AP up: ssid=$NAME ip=$WLANIP ch=$ch if=$IF dhcp=yes (hostapd running; no AP-ENABLED from it in 2 s)"
+fi
 exit 0

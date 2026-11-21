@@ -26,6 +26,16 @@ came from in their header comments.
   - the format and keys of the `[timeline] v1` line.
   `carplayd`'s own stamps (`ccpa/carplayd/src/timeline_own.rs`) and the receiver's hook are written
   here after its design.
+- **enigy/ocbm**, the access point and the host link (2026-11-21, from 801074f):
+  - the AP's DHCP server as BusyBox's `udhcpd` with a 250 ms ARP probe and `auto_time` (a009f90,
+    c4679c0);
+  - its stop, which waits for the last server to exit, and this AP's own server judged by its pid
+    (d590834), in `ccpa/rootfs/script/radio_ap_up.sh`, once, where enigy keeps a copy per script;
+  - `hostapd` in the foreground so its station events reach the box log, confirmed by its own
+    `AP-ENABLED` (c05d066, 39f7a13);
+  - `ocbmd`'s re-key of the A/V seams when the same host re-attaches over a live session, with its
+    four tests (76d0c71).
+  `tools/tests/radio_ap_test.sh` is written here after enigy's `tools/radio_ap_up_test.sh`.
 
 ## Built from upstream source
 

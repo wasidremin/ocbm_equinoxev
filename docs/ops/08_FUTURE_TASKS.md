@@ -53,6 +53,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
 | T25 Faster connect | New 2026-11-14, not started; **the owner's first annoyance**. May be app only, depending on where the time goes |
+| T34 Video from the iPhone while parked | New 2026-11-21, not started; **after** the car has tested Play 261 and the 262 adapter fixes (owner, 2026-11-21) |
 
 *Done*
 
@@ -1486,6 +1487,43 @@ describe the truck bring-up. A removal with no new behaviour; T15's hotspot rout
 thing (the adapter's link to the app, not the phone's) and is not affected.
 
 **Done means.** The app builds and connects as before with the mode gone, and its tests pass.
+
+## T34. Video from the iPhone while parked (raised 2026-11-21; start after the car has tested 261 and 262)
+
+**Why.** iOS 26 and later let a CarPlay head unit play the phone's AirPlay video. enigy/ocbm shipped
+it in OCBM 2.0.0 with Carlink 3.00 (2026-11-12) as "route A": a video sent from the iPhone (Safari,
+for example) plays full screen on the car's screen while the car is parked. The owner asked for it on
+2026-11-21, to be built once the features just added have been tested in the car.
+
+**Order (owner, 2026-11-21).** Not before the car has exercised Play 261 (the nl80211 hotspot join,
+the connect timeline, the headset key) and the 262 adapter fixes (BusyBox DHCP server, its teardown
+wait, hostapd's station events, the re-attach re-key); see `04_OPEN_ITEMS.md`.
+
+**What enigy built** (`docs/carplay/01_OCBM_PROTOCOL.md` "Route A" in enigy/ocbm at 801074f,
+Unlicense, so it may be ported with credit):
+- *The offer.* `/info` carries `videoPlaybackInfo` and `playbackCapabilities` (no FairPlay secure
+  stop), and the phase-1 SETUP echoes `videoPlayback` when the phone proposes it.
+- *The parked rule is the host's.* The app tells the box whether video may play
+  (`CMD_VIDEO_ALLOWED`), and carplayd sends the phone `setVideoPlaybackAllowed` at RECORD and on
+  each change. Carlink allows it only while the car is known to be parked.
+- *The play queue* rides the phone's shared DataStream (the Playback client). The box relays its
+  messages to the host as metadata records and back (`INPUT_DATASTREAM`).
+- *The phone's network, never the car's.* The phone's `setProxyParameters` reaches the host; the host
+  runs TLS 1.3 with the phone's pre-shared key and the proxy's CONNECT, and the box carries the bytes
+  on a new channel (`CH_TUNNEL 0x0025`, `INPUT_TUNNEL`), to the phone's own address only. Carlink
+  added Bouncy Castle for that TLS.
+- *What is declined.* FairPlay-protected video (the TV app's) stays on the iPhone.
+- *Fixes found on the way:* a partial TEARDOWN must stop only the DataStream it names, never the
+  iAP2 one (a86e552), and the proxy parameters are replayed to a host that re-attaches (c05d066).
+
+**What it takes here.** Adapter: the receiver's offer, playback and tunnel modules and the two new
+OCBM channels, announced in `MGMT_INFO` so an older app ignores them. App: the tunnel's TLS client,
+a video player, the play queue, and the parked gate from the car's gear property the app already
+reads. Two things to check first: that the Equinox's GM build lets a Play app play video while parked
+(a distraction-optimised restriction may apply), and that the extra dependencies fit.
+
+**Done means.** Parked, a video sent from the iPhone plays on the centre screen; shifting out of Park
+stops it; CarPlay carries on normally afterwards.
 
 ## Left off this plan
 

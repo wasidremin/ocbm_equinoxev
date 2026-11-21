@@ -1066,6 +1066,48 @@ observe a GONE→PRESENT edge, while the host itself is never sent `SEV_HOST_GON
 > die in. A predecessor that closed cleanly is never a replacement: `CT_STOP` already dropped both
 > flags. `host_replaced` is also cleared in `go_idle()`.
 
+**The same host re-attaching re-keys the A/V seams (2026-11-21, from enigy/ocbm 1.0.6, 76d0c71).**
+A HELLO with the *same* nonce while a session is live is the same app whose link died (no `CT_STOP`
+got through) and which claimed the adapter again inside `HEARTBEAT_GRACE`. A real cable drop is not
+this case: the gadget fd hangs up and ocbmd exits for respawn, so its state goes with it. The app's
+per-stream keys went with its old link, but carplayd's seams to ocbmd outlived it, so nothing handed
+the keys again. enigy measured the result on 2026-11-10: audio came back, video stayed undecryptable
+until the app restarted. Now:
+- that HELLO latches `host_reattached` (`present && subscribed && !host_replaced`);
+- its SUBSCRIBE, with presence never dropped, sets `rekey_av`;
+- after the dispatch pass ocbmd closes the keyed producers (main and cluster video, media and voice
+  audio; metadata carries no key and stays) and logs `the same host re-attached over a live session —
+  closed N keyed A/V seam(s)`;
+- carplayd's seam writers reconnect as for any seam reconnect, each re-sending its `SEAM_KEY` (audio
+  also `SEAM_FORMAT`), video asking the phone for a keyframe, and the first frame of each new
+  connection carrying `F_NEW_SOURCE`.
+
+A config re-push (SUBSCRIBE with no HELLO) keeps its keys; a replacement re-arms as before; `go_idle`
+clears both flags.
+
+**That HELLO also restarts the heartbeat grace (this fork's own, 2026-11-21).** This app subscribes
+only after re-proving the MFi link, and beats only after subscribing. On the bench its HELLO came
+5.3 s after the drop and its SUBSCRIBE 5.4 s after that, so the grace counted from the last beat ran
+out between them and tore the live session down before the re-key could run. A host that never
+subscribes still goes idle `HEARTBEAT_GRACE` after its HELLO. A replacement's HELLO does not restart
+it. enigy's app subscribed within about a second, so his bench never met this.
+
+**Bench, 2026-11-21** (the owner's iPhone through the emulator; `--es run ocbm_blip` drops the app's
+link with no `CT_STOP` and claims it again):
+- ocbmd logged `HELLO … reattached=true` 0.6 s after the drop, `SUBSCRIBE (… reattached=true)` 2.6 s
+  later, and `closed 3 keyed A/V seam(s)`;
+- carplayd reconnected them, handing the keys again and asking the phone for keyframes on both
+  screens;
+- the app decoded video again on the new keys (56 frames) and the adapter's session never dropped.
+
+**But this app ends its side of the session on any link drop.** Its receiver's control connection
+runs over the link, so it logs `session ended (control connection went away)`, waits its 10 s grace
+for the phone, then restarts the radios (rung 1, `CT_RADIO` off and on). On the bench CarPlay was back
+51 s after the drop (RECORD) and showed a picture at 63 s. Keeping the session through a re-link
+would need the app's side to survive it too; not attempted. In the car so far (to 2026-11-18) every
+re-attach was a replacement: the app had restarted, with a new nonce. Unit tests: five in
+`ccpa/ocbmd`.
+
 **Possible refinement, not done:** move teardown into carplayd as a graceful RTSP TEARDOWN (a
 presence-watchdog thread shutting the control socket) so carplayd stays a persistent daemon rather
 than being killed. Cleaner; the kill-based supervisor is correct and was lower-risk to ship.

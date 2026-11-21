@@ -55,9 +55,44 @@ the same 3.14.52 kernel as this unit. This car's logs showed the first, and the 
   is harmless). Scan-off is one helper, `hci_scan_off`, used by the prewarm and `bt_off`.
 - **The AP lease file is kept.** `radio_ap_up.sh` and `start_bluetooth_wifi.sh` deleted
   `/var/lib/udhcpd.leases` at every AP start. An iPhone rejoining a network it knows asks for its old
-  address (INIT-REBOOT); udhcpd stays silent on a client it has no lease for, so the phone waited, was
-  handed another address, and sockets on the old one died. This udhcpd saves the file at every ACK, so
-  kept, it holds each phone's address across AP restarts and power cuts.
+  address (INIT-REBOOT); the vendor's udhcpd stays silent on a client it has no lease for, so the phone
+  waited, was handed another address, and sockets on the old one died. Kept, the file holds each
+  phone's address across AP restarts and power cuts.
+- **The AP's DHCP server is BusyBox's `udhcpd` (2026-11-21, from enigy/ocbm 2.0.0 and 2.5.0).** A kept
+  file cannot help a phone with no lease yet: its INIT-REBOOT met the vendor server's silence. BusyBox
+  1.32.1's server, already on the adapter, NAKs that request, and the phone takes a fresh address
+  within a second, before CarPlay starts. `radio_ap_up.sh` starts it as
+  `busybox udhcpd -f -a 250 /etc/udhcpd.conf` on the same file, pool and lease, and sets
+  `lease_file`, `pidfile` and `auto_time 60` there: BusyBox writes leases on that timer and as it
+  exits, not at each ACK, and a drive ends in a power cut. `-a 250` cuts the ARP probe before each
+  offer from 2 s, which cost 1–1.9 s whenever a phone had no lease. Its lease file has another format
+  (a timestamp, then 36-byte records); the vendor's file is ignored once and rewritten. The vendor
+  server also refused line 76 of the stock file (option 43 in hex) at every start; BusyBox reads it.
+- **The last AP's DHCP server never counts as the next one's (2026-11-21, from enigy/ocbm 2.6.5).**
+  The teardown sent SIGTERM and waited for `hostapd` only. A server still writing its lease file at
+  the next AP start was taken for that AP's own, none was started, and once it had gone the phone was
+  on the Wi-Fi with no address (enigy's bench, 2026-11-16). `ap_dhcp_stop` in `radio_ap_up.sh`, the one
+  copy, now waits up to 3 s at the teardown (`radio_hal.sh wifi_ap_off` runs
+  `radio_ap_up.sh dhcp_stop`) and 1 s at a start, then SIGKILLs; it finds servers by config path,
+  never the NCM one, and no longer kills the pidfile's pid blind. The start keeps its own server's pid
+  and checks that process, not the name, for convergence.
+- **`hostapd` runs in the foreground (2026-11-21, from enigy/ocbm 2.0.0 and 2.6.5).** With `-B` its
+  output after start-up went to /dev/null, so nothing on the box said why a phone left the AP; a bench
+  session on 2026-11-21 was lost that way. Under `setsid` it now appends to the box log: the interface
+  states, `AP-ENABLED`, and per phone `authenticated`, `associated`, `AP-STA-CONNECTED`, the WPA
+  handshake and `AP-STA-DISCONNECTED` with the reason. The app's upload masks the MAC addresses in those
+  lines as it does in btd's. In the foreground `hostapd` is listed before it has taken its
+  configuration, so convergence waits up to 2 s for its own `AP-ENABLED` after this start's line in
+  the box log, and fails if it exits. The summary line in `/tmp/wlan.log` gives the wait: `AP up: …
+  (AP-ENABLED 400 ms after it was serving)`.
+- **Bench, 2026-11-21 (adapter on the server, the owner's iPhone through the emulator, the join on):**
+  the access point served 160 ms after `hostapd` started and was confirmed 400 ms later, against
+  310–350 ms to `-B`'s return that morning, so about 0.2 s more before the AP counts as up. The phone
+  authenticated, associated and finished its WPA handshake, and BusyBox's server sent the OFFER and
+  the ACK 11 ms after that; CarPlay came up. The lease file was rewritten in BusyBox's format (44
+  bytes, one lease). At the teardown the server was gone well inside the 3 s, with no SIGKILL. The
+  suite (`tools/tests/radio_ap_test.sh`) passes under the host's shell, the host's BusyBox and the
+  adapter's.
 - **The app-gone teardown killed itself.** `wireless_down` runs its kill list as `setsid sh -c '<text>'`,
   so a comment inside that text is part of the subshell's argv. The `[b]tmon` pkill line carried a
   comment with the plain word, so the pkill matched the teardown subshell and SIGTERMed it right after

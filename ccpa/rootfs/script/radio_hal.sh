@@ -960,10 +960,10 @@ do_wifi_ap_off() {
   # the management link - on a box with no UART that is the only way in, and it is exactly what
   # the vendor's close_bluetooth_wifi.sh does. Identify it by its CONFIG PATH, which is
   # unambiguous: the NCM server runs `busybox udhcpd -f /tmp/udhcpd_ncm.conf`.
-  for _p in $(ps 2>/dev/null | grep -v grep | grep "udhcpd .*etc/udhcpd.conf" | awk '{print $1}'); do
-    kill "$_p" 2>/dev/null
-  done
-  [ -e /var/run/udhcpd.pid ] && kill "$(cat /var/run/udhcpd.pid 2>/dev/null)" 2>/dev/null
+  # And see it GONE, up to 3 s for its lease file: one still exiting at the next AP start was that
+  # AP's DHCP server that never was (radio_ap_up.sh, ap_dhcp_stop, the one copy). Its pidfile's pid
+  # is no longer killed blind: a stale pidfile can name any process.
+  sh /script/radio_ap_up.sh dhcp_stop 2>&1 | sed "s/^/$LOGP   /"
   _i=$(wlan_iface 2>/dev/null) && ifconfig "$_i" down 2>/dev/null
   _n=0; while [ "$_n" -lt 25 ] && ap_running; do _n=$((_n+1)); sleep 0.2; done
   ap_running && { log "hostapd still running after teardown"; publish "$WLAN_STATE" "result=fail" "detail=ap-survived"; return 1; }

@@ -746,6 +746,22 @@ class OcbmProbe(context: Context) {
             }.get()
         }
 
+    /**
+     * Bench only (`--es run ocbm_blip`): the app's own link dropped and claimed again under a live
+     * session. The transport goes first, so the client's CT_STOP never reaches the adapter, and the
+     * device is claimed again at once with this probe's nonce. The gadget stays bound, so ocbmd keeps
+     * its session and sees the same host HELLO again inside its heartbeat grace: the re-attach that
+     * re-keys the A/V seams (ocbmd `rekey_av`, from enigy/ocbm 1.0.6).
+     */
+    fun blipForBench(): LinkResult =
+        trackAttempt {
+            ops.submit<LinkResult> {
+                log.w("bench: dropping the USB link with no CT_STOP, as a dead transport does, and claiming it again")
+                usb?.stop()
+                runAllLocked(subscribe = true)
+            }.get()
+        }
+
     /** Claim and HELLO only, for headless file operations without session bring-up. */
     fun connectForFiles(): LinkResult =
         trackAttempt { ops.submit<LinkResult> { runAllLocked(subscribe = false, helloOnly = true) }.get() }
