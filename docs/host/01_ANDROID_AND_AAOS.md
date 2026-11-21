@@ -427,7 +427,7 @@ What the app does instead (`av/WheelCall.kt`, versionCode 233):
   rocker differently from AOSP: GM sends wheel media keys through its own `com.gm.rhmi` (uid 1000)
   rather than `CarInputService`'s media-key path. `input keyevent KEYCODE_CALL` reached the window on
   the emulator; `KEYCODE_ENDCALL` never reaches an app.
-- **`HEADSETHOOK` during a live call ends it** (after 260, not yet published; issue #4 on
+- **`HEADSETHOOK` during a live call ends it** (Play 261, 2026-11-21; issue #4 on
   wasidremin/ocbm_equinoxev). That is what Android's Telecom does with a headset's button
   (`CallsManager.onMediaButton`, short press). Before, the press went on to the media session's
   play/pause and reached the iPhone as a media key in the middle of the call. Unit test

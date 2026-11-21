@@ -55,9 +55,9 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 261 (`4.0+nl80211-timeline`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
-- **Connect timeline: checked on the bench, not yet in the car (built 2026-11-20, not published).**
+- **Connect timeline: checked on the bench, not yet in the car (Play 261, 2026-11-21).**
   Each wireless connect logs one `[timeline] v1` line under `[box:airplayd-wl]` at the first
   picture (`docs/carplay/02_SESSION_LIFECYCLE.md`, "The connect timeline"). On the bench
   (2026-11-21, the iPhone through the emulator) it printed once per connect, every key in order,
@@ -255,7 +255,7 @@ high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/do
   opens the car's dialer when Android's Telecom has no ringing call, and the iPhone is not on the
   car's Bluetooth. From 233 (published 2026-11-07) the voice button answers a ringing CarPlay call, a
   phone key that does reach the app answers or ends it, and every key and every focus loss during a
-  call is logged. After 260 (not published) `HEADSETHOOK` during a live call ends it instead of
+  call is logged. From 261 (published 2026-11-21) `HEADSETHOOK` during a live call ends it instead of
   reaching the iPhone as play/pause. The adapter's Answer and End work in the car (the pill, five
   days to 11-12). To 2026-11-18, three calls rang and no wheel phone key reached the app. To check:
   the three-step drive test in the owner document (voice button during a ring; toggle up during a
@@ -510,7 +510,7 @@ high-water mark: versionCode 260 (`4.0+join-steps`, 2026-11-18; `host/gm_ccpa/do
   260 (2026-11-17/18). The wext client may be the cause (enigy/ocbm PR #2: RSNXE mismatch at
   message 3/4). An nl80211 client with a reason line from the client's own log was built on
   2026-11-20 and works on the bench adapter: it joined a home network, and on 2026-11-21 carried
-  two CarPlay sessions beside the access point (T15). Not yet in the car. To check in the car's next log: the
+  two CarPlay sessions beside the access point (T15). In Play 261 (2026-11-21); not yet in the car. To check in the car's next log: the
   `uplink:` lines' `driver` and `the client's log:` lines. A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
