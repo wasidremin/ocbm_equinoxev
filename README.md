@@ -123,7 +123,7 @@ Wi-Fi when they're large.
 ### And the rest
 
 - **More than one iPhone:** pair several and choose which connects first (new, needs the latest adapter firmware).
-- **Steering wheel:** the voice button starts Siri; media keys work; calls ring through GM's audio.
+- **Steering wheel:** the voice button starts Siri, and during a call answers or hangs up; media keys work; calls ring through GM's audio.
 - **Apple Maps knows it's an EV:** the car's battery, range and CCS1/J1772 connectors are sent to
   CarPlay. (Apple Maps doesn't show it yet; see [T7](docs/ops/08_FUTURE_TASKS.md).)
 - **Drive-restricted UI and day/night** follow the car's gear and lights.

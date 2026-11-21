@@ -18,9 +18,14 @@ import wasidremin.gmccpa.ocbm.Ocbm
  * past that: `TelecomServiceImpl.acceptRingingCallInternal` drops an accept aimed at a self-managed
  * call (android14-release), and Telecom would also take ring focus and set `MODE_RINGTONE`.
  *
+ * On the car the toggle reaches no app at all: tried during two calls, it put no key on a window or
+ * the media session and did not open the car's phone screen (owner and log, 2026-11-21, 262).
+ *
  * What is left, and what this does:
- *  - The wheel's voice button reaches this app as the digital assistant (T14). While a call rings it
- *    answers instead of starting Siri, as the manual says it does for a Bluetooth phone's call.
+ *  - The wheel's voice button reaches this app as the digital assistant (T14), and is the call's one
+ *    button: a press answers a ringing call, as the manual says it does for a Bluetooth phone's call,
+ *    and ends a live one (owner, 2026-11-21). During a call iOS ignores a Siri press: five on the car
+ *    on 2026-11-21 opened no Siri audio and changed no mode, so ending the call costs nothing.
  *  - A phone key that does reach a window or the media session answers or ends the call. GM routes
  *    some wheel keys itself: the favourite switch arrives as `KEYCODE_F7` at the window from
  *    `com.gm.rhmi`, then a skip-next on the media session (car, 2026-11-08 to 11-14), so the toggle
@@ -41,14 +46,20 @@ object WheelCall {
     fun actionFor(keyCode: Int, phoneAction: Byte?): Byte? = when (keyCode) {
         // The Equinox EV's toggle up answers a ringing call and does nothing else (owner manual, 2026).
         KeyEvent.KEYCODE_CALL -> if (phoneAction == Ocbm.TEL_ANSWER) Ocbm.TEL_ANSWER else null
-        // A headset's one button: answers a ringing call, ends a live one (Android Telecom's
-        // `CallsManager.onMediaButton` short press, issue #4). Before 261 a press during a call went
-        // on to the media session's play/pause and reached the iPhone as a media key.
-        KeyEvent.KEYCODE_HEADSETHOOK -> phoneAction
+        // A headset's one button (issue #4). Before 261 a press during a call went on to the media
+        // session's play/pause and reached the iPhone as a media key.
+        KeyEvent.KEYCODE_HEADSETHOOK -> oneButtonAction(phoneAction)
         // Declines a ringing call and hangs up a live one, as the pill's End does.
         KeyEvent.KEYCODE_ENDCALL -> if (phoneAction != null) Ocbm.TEL_END else null
         else -> null
     }
+
+    /**
+     * What a call's one button does in call state [phoneAction]: answers a ringing call (a waiting one
+     * too, ahead of the live call) and ends a live or dialling one; null with no call. Android's Telecom
+     * gives a headset's button the same short press (`CallsManager.onMediaButton`). Pure.
+     */
+    fun oneButtonAction(phoneAction: Byte?): Byte? = phoneAction
 
     /**
      * A key reached [where]. Logs its down edge and, for a phone key that means something in the
@@ -76,13 +87,14 @@ object WheelCall {
     }
 
     /**
-     * The voice button's press while a call rings. True when it answered; false leaves the press to
-     * Siri.
+     * The voice button's press, while there is a call: answers or ends it ([oneButtonAction]). True when
+     * the press went to the call; false, with no call, leaves it to Siri.
      */
-    fun voiceButtonAnswers(source: String): Boolean {
-        if (CarPlayActivity.nowPlaying.phoneAction() != Ocbm.TEL_ANSWER) return false
-        val sent = AdapterSession.sendTelephony(Ocbm.TEL_ANSWER)
-        log.i("voice button ($source) while a call rings -> answer sent=$sent")
+    fun voiceButtonActsOnCall(source: String): Boolean {
+        val phone = CarPlayActivity.nowPlaying.phoneAction()
+        val action = oneButtonAction(phone) ?: return false
+        val sent = AdapterSession.sendTelephony(action)
+        log.i("voice button ($source) while ${callWord(phone)} -> ${actionWord(action)} sent=$sent")
         return true
     }
 

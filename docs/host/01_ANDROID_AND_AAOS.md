@@ -382,7 +382,7 @@ This finding is orthogonal to, and does not upgrade, the USB-handler squat below
 the "workaround" section), never a signature|privileged `android.car` grant. The two mechanisms
 guard different resources and neither substitutes for the other.
 
-### The steering-wheel call key never reaches a Play app (verified 2026-11-06)
+### The steering-wheel call key never reaches a Play app (verified 2026-11-06; on the car 2026-11-21)
 
 **The wheel** (2026 Equinox EV owner manual, "Steering Wheel Controls", read 2026-11-21):
 - *A phone toggle.* Up answers a ringing call. Down declines a ringing call, ends a live one, or,
@@ -394,7 +394,7 @@ guard different resources and neither substitutes for the other.
 "No call" there means none on the car's Bluetooth: the iPhone's CarPlay calls are never on it.
 
 If GM hands the toggle's up to Android as `KEYCODE_CALL`, it cannot answer a CarPlay call, because of
-where stock AAOS 14 sends that key. Whether GM does is not yet known (the car evidence below).
+where stock AAOS 14 sends that key. On the car the toggle reaches no app at all (2026-11-21, below).
 `CarInputService.dispatchKeyEventForDriver` (android14-release) handles `KEYCODE_CALL` itself,
 ahead of every app. `handleCallKey`, on key up:
 
@@ -419,9 +419,13 @@ in the car's own phone UI.
 
 What the app does instead (`av/WheelCall.kt`, versionCode 233):
 
-- **The voice button answers a ringing call.** It reaches the app as the digital assistant (T14). While
-  a CarPlay call rings it sends Answer instead of Siri, the way GM's push-to-talk answers a Bluetooth
-  call. Emulator: `inject-key 231` reached the assistant session.
+- **The voice button is the call's one button.** It reaches the app as the digital assistant (T14).
+  While a CarPlay call rings it sends Answer instead of Siri, the way GM's push-to-talk answers a
+  Bluetooth call (233; on the car 2026-11-21). During a live or dialling call it sends End (263, owner
+  2026-11-21), because the toggle cannot. A waiting call takes the press ahead of the live one, so it
+  is answered, as the manual says the button does. With no call the press is Siri. The rule is
+  `WheelCall.oneButtonAction`, the same as a headset's button. Emulator: `inject-key 231` reached the
+  assistant session; the self-test answers, ends, and leaves Siri alone with no call.
 - **A phone key that reaches a window or the media session acts on the call.** `CALL` or
   `HEADSETHOOK` answers a ringing call; `ENDCALL` declines or hangs up. This covers GM if it routes the
   rocker differently from AOSP: GM sends wheel media keys through its own `com.gm.rhmi` (uid 1000)
@@ -453,18 +457,24 @@ What the app does instead (`av/WheelCall.kt`, versionCode 233):
   `KEYCODE_F7` to the focused window, then skip-next on the media session 5–19 ms later (all 9
   presses, 2026-11-08 to 11-14).
 
-**The drive test that settles it.** With CarPlay live, when a call rings:
-1. Press and release the voice button. Expected: the call is answered, and the log shows
-   `voice button (…) while a call rings -> answer sent=true`.
-2. On another call, push the toggle up during the ring. The log shows a `[call ] key …` line (GM
-   passes the key on), or `CarPlay screen lost … while a call rings` (the car's phone screen came up),
-   or neither.
-3. During a live call, push the toggle down, and note whether the call ends, the car goes silent, or
-   nothing happens.
+**The car, 2026-11-21 (262; the drive test, the uploaded log read the same day).** Two calls, one
+placed through Siri and one that rang.
+- *The voice button answers.* Pressed 6 s into the ring, it logged `voice button (wheel button
+  (assistant session, flags=0x23)) while a call rings -> answer sent=true`; `telephony idx=1` reached
+  the iPhone, which set up the call's audio 0.6 s after the press, and it played at 1.3 s.
+- *The toggle does nothing.* The owner tried it during the calls, following the drive test: "the
+  call buttons did nothing". No key reached a window, the settings screen or the media session (no
+  `[call ] key` line in the whole log), and the CarPlay screen kept focus through the ring, so the
+  car's phone screen did not open. GM keeps the toggle below every app and, with no Bluetooth phone,
+  does nothing with it. The one focus change during a call, 131 ms at 10:35:50 local, is not explained.
+- *The voice button during a call reached iOS as Siri, and iOS ignored it.* The owner pressed it four
+  times in the first call and once in the second, to see whether it would show: each logged `Siri
+  press sent=true` and `requestSiri` went out, but iOS opened no Siri audio and changed no mode. That
+  dead press is what 263 turns into End.
+- The first call was ended with the pill (`phone button 3`); the second from the phone's side.
 
-Until then, end a CarPlay call with the pill. The manual's "mutes the infotainment system" with no
-call is what toggle-down may do during a CarPlay call, since the car knows of none: the caller would
-go silent in the car while the call stays up. That is an inference from the manual, not observed.
+So the toggle is out of reach for this app, and the voice button carries the call: answer while it
+rings, end while it is up. Not yet on the car: the End press (263) and a waiting call.
 
 ### The steering-wheel voice button starts Siri (T14: raised 2026-10-26, works on the car since 2026-10-27)
 
@@ -515,11 +525,12 @@ request: `capture #N heard: VOICE_RECOGNITION …` shows a real peak, with no al
 was met on 2026-10-27. One question remains open: whether calls echo for the far end while the role
 is held (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). No echo was reported on that drive.
 
-**Answering calls (233, 2026-11-06).** The wheel's answer rocker cannot reach a Play app; stock AAOS
-opens the car's dialer with it (`docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key").
-So while a CarPlay call rings, this button answers it instead of starting Siri
-(`voice button (…) while a call rings -> answer sent=true`), as the 2026 owner manual says it does
-for a Bluetooth phone's call. Unverified on the car: no ring has met a press yet (2026-11-18).
+**Calls (233, 2026-11-06; 263, 2026-11-21).** The wheel's phone toggle never reaches a Play app
+("The steering-wheel call key" above). So while a CarPlay call rings, this button answers it instead
+of starting Siri (`voice button (…) while a call rings -> answer sent=true`), as the 2026 owner
+manual says it does for a Bluetooth phone's call: seen on the car on 2026-11-21. From 263 a press
+during a live call ends it (`… while a call is up -> end sent=true`); iOS ignored a Siri press during
+a call five times out of five that day, so nothing is lost. Not yet on the car.
 
 ## GM AAOS USB permission handler
 

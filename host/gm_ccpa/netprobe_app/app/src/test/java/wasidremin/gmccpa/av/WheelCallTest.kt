@@ -22,6 +22,12 @@ class WheelCallTest {
         assertNull(WheelCall.actionFor(KeyEvent.KEYCODE_HEADSETHOOK, null))
     }
 
+    @Test fun theVoiceButtonAnswersARingingCallEndsALiveOneAndIsSiriWithNoCall() {
+        assertEquals(Ocbm.TEL_ANSWER, WheelCall.oneButtonAction(ringing))
+        assertEquals(Ocbm.TEL_END, WheelCall.oneButtonAction(inCall))
+        assertNull(WheelCall.oneButtonAction(null))
+    }
+
     @Test fun endCallDeclinesOrHangsUp() {
         assertEquals(Ocbm.TEL_END, WheelCall.actionFor(KeyEvent.KEYCODE_ENDCALL, ringing))
         assertEquals(Ocbm.TEL_END, WheelCall.actionFor(KeyEvent.KEYCODE_ENDCALL, inCall))

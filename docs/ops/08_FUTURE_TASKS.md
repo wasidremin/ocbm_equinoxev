@@ -631,8 +631,8 @@ fields of route guidance arrive (adapter firmware; `docs/carplay/03_SDK_GROUND_T
 
 Moved to `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel voice button starts Siri". Still
 open from it, tracked in `04_OPEN_ITEMS.md`: whether calls echo for the far end while the app holds
-the assistant role, and the voice button answering a ringing call (built in 233, never yet seen in a
-car log).
+the assistant role, and the voice button ending a live call (263). Its answering a ringing call (233)
+was seen on the car on 2026-11-21.
 
 ## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; a second route over the car's hotspot recorded 2026-11-13, not started)
 

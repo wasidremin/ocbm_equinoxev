@@ -547,19 +547,19 @@ class OcbmProbe(context: Context) {
                 check("the wheel's call key answers a ringing call, down and up",
                     wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_DOWN, callKey), "self-test") &&
                         wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_UP, callKey), "self-test"))
-                check("the voice button answers a ringing call", wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers("self-test"))
+                check("the voice button answers a ringing call", wasidremin.gmccpa.av.WheelCall.voiceButtonActsOnCall("self-test"))
                 np.onCallState(org.json.JSONObject("{\"callUuid\":\"self-test\",\"status\":4}"))
                 val hook = android.view.KeyEvent.KEYCODE_HEADSETHOOK
                 check("a headset press ends a live call instead of reaching the phone as play/pause",
                     wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_DOWN, hook), "self-test") &&
                         wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_UP, hook), "self-test"))
-                check("the voice button stays Siri during a live call", !wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers("self-test"))
+                check("the voice button ends a live call", wasidremin.gmccpa.av.WheelCall.voiceButtonActsOnCall("self-test"))
             } finally {
                 np.onCallState(org.json.JSONObject("{\"callUuid\":\"self-test\",\"status\":0}"))
             }
             check("a media key is never taken for the call",
                 !wasidremin.gmccpa.av.WheelCall.onKey(key(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT), "self-test"))
-            check("the voice button stays Siri with no call", !wasidremin.gmccpa.av.WheelCall.voiceButtonAnswers("self-test"))
+            check("the voice button stays Siri with no call", !wasidremin.gmccpa.av.WheelCall.voiceButtonActsOnCall("self-test"))
         }
         val inset = runCatching {
             VehicleConfigYaml.renderAdapter("adapterpass1", width = 1996, height = 768, safeRight = 38)
