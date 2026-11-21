@@ -81,13 +81,18 @@ class AdapterFirmwareTest {
         assertNull(AdapterFirmware.parseApply("""{"ok":true,"nonce":"zz"}""", "5f"))
     }
 
-    /** Confirmed only with Bluetooth, the radio supervisor and the filesystem all healthy. */
+    /** Confirmed with Bluetooth and the radio supervisor up; low flash alone does not hold it back. */
     @Test fun healthThatConfirmsAnUpdate() {
         assertTrue(AdapterFirmware.healthy(0x73))   // HCI|SSP|btd|hostapd|rootfs-ok, the car's usual
         assertTrue(AdapterFirmware.healthy(0x51))
         assertFalse(AdapterFirmware.healthy(0x40))  // rootfs only: radios not up yet
         assertFalse(AdapterFirmware.healthy(0x42))
         assertFalse(AdapterFirmware.healthy(0x61))  // no btd
+    }
+
+    /** The car with 263 (2026-11-21): the update's kept copies left 1.8 MB free and rootfs-ok clear. */
+    @Test fun anUpdateThatLeavesFlashUnderTheFloorIsStillConfirmed() {
+        assertTrue(AdapterFirmware.healthy(0x33))   // HCI|SSP|btd|hostapd, rootfs-ok clear
     }
 
     @Test fun infoFlagsAreRead() {

@@ -9,16 +9,16 @@ import java.net.NetworkInterface
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Settings ▸ Advanced ▸ Join the car's hotspot (docs/ops/08_FUTURE_TASKS.md T15 route B, step 1),
- * off by default. Nothing uses the link yet: this finds out whether the adapter can hold it through
- * a drive without touching CarPlay.
+ * Settings ▸ Advanced ▸ Join the car's hotspot (docs/ops/08_FUTURE_TASKS.md T15 route B), off by
+ * default. From 2026-11-21 the link carries the app's connection to the adapter ([WifiLink]): the
+ * adapter's keeper (`radio_hal.sh sta_keep`) holds it from boot.
  *
  * On, with an adapter whose `MGMT_INFO` says `"sta_uplink":true`, the app writes
  * `/script/sta_uplink.conf` with the car hotspot's name and, when it has a usable one, its
- * passphrase. At each Wi-Fi start the radio layer (`radio_hal.sh`, "THE CAR'S HOTSPOT") joins
- * first, for up to 10 s, then starts its own access point on the joined channel; the client is
- * stopped completely if the join fails or the link is lost. Joining after the access point was up
- * took the radio away from the phone's handoff (bench 2026-11-16). Without a passphrase it is the scan-only diagnostic of 2026-11-16 (Play 256-258). The app
+ * passphrase. The radio layer (`radio_hal.sh`, "THE CAR'S HOTSPOT") joins before any access point
+ * is up and starts the access point on the joined channel; while one is up a client that is not
+ * joined is stopped. Joining after the access point was up took the radio away from the phone's
+ * handoff (bench 2026-11-16). Without a passphrase it is the scan-only diagnostic of 2026-11-16 (Play 256-258). The app
  * also logs when the car's own hotspot interface comes up after the app starts ([watchHotspot]).
  *
  * Off, the app writes `enabled=0`. Changing the setting or the name reaches a connected adapter at
@@ -68,6 +68,13 @@ object StaUplink {
     // Settings ▸ Advanced ▸ Vehicle hotspot (Ui's CRED_PREFS, KEY_SSID and KEY_PASS).
     private fun creds(ctx: Context) = ctx.applicationContext.getSharedPreferences("hotspot_credentials", Context.MODE_PRIVATE)
 
+    /** The file this app wants on the adapter now ([conf] of the setting and the Vehicle hotspot fields). */
+    fun wanted(ctx: Context): String =
+        conf(enabled(ctx), creds(ctx).getString("ssid", null), creds(ctx).getString("pass", null))
+
+    /** Pure: whether [file] makes the adapter join (not only scan): what the Wi-Fi link ([WifiLink]) rides. */
+    fun joins(file: String): Boolean = file.startsWith("enabled=1") && file.contains("\npsk=")
+
     /**
      * Write the file if what the adapter has differs. Blocking; off the main thread. Logs whether it
      * was written, never the name or the passphrase.
@@ -75,12 +82,12 @@ object StaUplink {
     fun sync(ctx: Context, c: OcbmClient, mgmtInfo: String?) {
         if (enabled(ctx)) watchHotspot()
         if (!supported(mgmtInfo)) return
-        val want = conf(enabled(ctx), creds(ctx).getString("ssid", null), creds(ctx).getString("pass", null))
+        val want = wanted(ctx)
         val have = c.fileRead(PATH).bytes?.toString(Charsets.UTF_8)
         if (have == want || (have == null && want == "enabled=0\n")) return
         val ok = c.filePush(PATH, want.toByteArray(Charsets.UTF_8), 384)
         val on = want.startsWith("enabled=1")
-        val join = want.contains("\npsk=")
+        val join = joins(want)
         log.i("hotspot-check: adapter set ${if (!on) "off" else if (join) "to join the car's hotspot at its next Wi-Fi start" else "to scan for the car's hotspot at its next boot (no usable password)"} written=$ok")
         if (enabled(ctx) && !on) log.w("hotspot-check: on, but the hotspot name is missing or unusable; left off")
     }

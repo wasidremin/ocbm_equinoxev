@@ -7,14 +7,20 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-private const val BH_REQUIRED_BRIDGE: Int = Ocbm.BH_HCI_PRESENT or Ocbm.BH_ROOTFS_OK
+private const val BH_REQUIRED_BRIDGE: Int = Ocbm.BH_HCI_PRESENT
 // The health bits THIS app requires before asking the box to wake its radios. Deployment policy, not
 // protocol, which is why it lives here and not in the shared OcbmProto.kt: `hostapd` is deliberately
 // not required because in the GM bridge role the head unit owns Wi-Fi and the box raises no AP —
 // BH_WLAN_AP being clear is correct here and would be a fault elsewhere. `iap2d` is wired-CarPlay
-// only. `rootfs-ok` is included because a full rootfs fails the session later, in ways that look
-// like anything but a full disk. A deliberately LOW bar: BH_HCI_PRESENT cannot see a controller that
-// was taken down, only one that was never there.
+// only. A deliberately LOW bar: BH_HCI_PRESENT cannot see a controller that was taken down, only one
+// that was never there.
+// `rootfs-ok` was required until 2026-11-21 and is now only logged ([onBoxHealth]). In the car with
+// 263, the app's own adapter update left 1.8 MB free, under ocbmd's 2 MB floor: the bit went clear on
+// a working adapter, the ladder took its radios down and up as "adapter unhealthy", and CarPlay
+// struggled to connect for the whole drive.
+
+/** Pure: the health bits this app requires that [flags] lacks (0: healthy enough to go on). */
+internal fun missingForBridge(flags: Int): Int = BH_REQUIRED_BRIDGE and flags.inv()
 
 
 /**
@@ -422,7 +428,10 @@ class SessionSupervisor(
         val was = boxHealth
         boxHealth = flags
         noteBtd(flags)
-        val missing = BH_REQUIRED_BRIDGE and flags.inv()
+        if (was >= 0 && was and Ocbm.BH_ROOTFS_OK != 0 && flags and Ocbm.BH_ROOTFS_OK == 0) {
+            log.w("adapter flash is low (rootfs-ok clear): reported, not acted on")
+        }
+        val missing = missingForBridge(flags)
         if (missing == 0) {
             // Green proves only that the HEALTH fault is gone. It says nothing whatever about a phone
             // that will not dial back, so it may only cancel a recovery that health itself started.
@@ -451,7 +460,7 @@ class SessionSupervisor(
         }
         // Otherwise act only on a CHANGE into the unhealthy set, or a standing fault would re-trigger
         // the ladder every couple of seconds.
-        val wasMissing = BH_REQUIRED_BRIDGE and was.inv()
+        val wasMissing = missingForBridge(was)
         if (missing == wasMissing) return@post
         val detail = "adapter is missing ${Ocbm.bhString(missing)} (has ${Ocbm.bhString(flags)})"
         // Rung 1 and the driver's Restart Wi-Fi both take the box's radios down and back up; the
@@ -462,11 +471,11 @@ class SessionSupervisor(
             return@post
         }
         // The box's own `bt_on` takes hci0 down while `btd` is already the process bringing it
-        // back. Required bits are HCI|rootfs, so this sample looks like "adapter is missing HCI"
+        // back. The required bit is HCI, so this sample looks like "adapter is missing HCI"
         // and rung 1 sends CT_RADIO off — which is `wireless_down` — into that bring-up.
         // Equinox 2026-09-23 22:16:11, mask 0x72 (btd still set, HCI clear), one second after
         // CLEAN bring-up. The deferred re-bring then saw the dying `btd` and returned without
-        // starting another. A missing rootfs is not this race and still escalates.
+        // starting another.
         if (flags and Ocbm.BH_CARPLAY_WIRELESS != 0 &&
             missing and Ocbm.BH_HCI_PRESENT != 0 &&
             missing and Ocbm.BH_ROOTFS_OK == 0
@@ -1358,7 +1367,7 @@ class SessionSupervisor(
     /**
      * Watch for the wireless advertiser disappearing after we have already seen it.
      *
-     * `BH_REQUIRED_BRIDGE` is only HCI and rootfs, so a mask of `0x63` (HCI up, no `btd`) reads as
+     * `BH_REQUIRED_BRIDGE` is only HCI, so a mask of `0x63` (HCI up, no `btd`) reads as
      * healthy and the ladder never moves. That is the state left behind when a host-replacement
      * re-arm tears `btd` down and the follow-up `wireless_up` no-ops. See [BTD_ABSENT_MS].
      */

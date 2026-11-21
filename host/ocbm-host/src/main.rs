@@ -22,7 +22,11 @@
 //!                                               local response, and send the host-authored bytes.
 //!                                               --mute-once: drop the FIRST RS_REQ (author/send nothing) to
 //!                                               exercise the box's timeout → sticky-local fallback.
+//!   ocbm-host wifi-link [vid pid] set|clear       over USB: give the box the Wi-Fi link's key (MGMT_WIFI_LINK),
+//!                                               ~/.config/ocbm/link_key (made if absent, 0600), or remove it
 //! Every connection also auto-pushes the host clock right after HELLO.
+//! With OCBM_TCP=<address>[:port] set, every mode runs over the box's Wi-Fi link instead of USB (OCBW v1,
+//! port 7020, ccpa/ocbmd/src/wifi.rs), with the key from OCBM_LINK_KEY or ~/.config/ocbm/link_key.
 
 mod setup_driver;
 
@@ -31,10 +35,14 @@ use rusb::{Context, Device, DeviceHandle, Direction, TransferType, UsbContext};
 use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 
+/// What carries the OCBM byte stream: the accessory's bulk pair, or the Wi-Fi link (OCBW v1).
+enum Wire {
+    Usb { h: DeviceHandle<Context>, ep_in: u8, ep_out: u8 },
+    Tcp { s: std::net::TcpStream, session: ocbm_link::Session, plain: std::collections::VecDeque<u8> },
+}
+
 struct Link {
-    h: DeviceHandle<Context>,
-    ep_in: u8,
-    ep_out: u8,
+    wire: Wire,
     seq: u32,
     reasm: p::Reassembler,
     /// The box left the bus (rebooted or unplugged). A gone device fails every read at once, so a
@@ -53,10 +61,58 @@ impl Link {
             }
         };
         self.seq = self.seq.wrapping_add(1);
-        self.h
-            .write_bulk(self.ep_out, &buf[..n], Duration::from_secs(2))
-            .map(|w| w == n)
-            .unwrap_or(false)
+        self.write_raw(&buf[..n]).map(|w| w == n).unwrap_or(false)
+    }
+    /// Bytes onto the wire as they are (a frame, or several).
+    fn write_raw(&mut self, buf: &[u8]) -> Result<usize, String> {
+        match &mut self.wire {
+            Wire::Usb { h, ep_out, .. } => h.write_bulk(*ep_out, buf, Duration::from_secs(2)).map_err(|e| e.to_string()),
+            Wire::Tcp { s, session, .. } => {
+                use std::io::Write;
+                for c in buf.chunks(ocbm_link::MAX_RECORD) {
+                    s.write_all(&session.tx.seal(c)).map_err(|e| e.to_string())?;
+                }
+                Ok(buf.len())
+            }
+        }
+    }
+    /// Up to `buf.len()` bytes of the box's stream, waiting at most `wait`; `Err` once the box is gone.
+    fn read_raw(&mut self, buf: &mut [u8], wait: Duration) -> Result<usize, ()> {
+        match &mut self.wire {
+            Wire::Usb { h, ep_in, .. } => match h.read_bulk(*ep_in, buf, wait) {
+                Ok(n) => Ok(n),
+                Err(rusb::Error::NoDevice) => Err(()),
+                Err(_) => Ok(0),
+            },
+            Wire::Tcp { s, session, plain } => {
+                use std::io::Read;
+                if plain.is_empty() {
+                    let _ = s.set_read_timeout(Some(wait.max(Duration::from_millis(1))));
+                    let mut tmp = [0u8; 16384];
+                    match s.read(&mut tmp) {
+                        Ok(0) => return Err(()),
+                        Ok(n) => session.rx.push(&tmp[..n]),
+                        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                        Err(_) => return Err(()),
+                    }
+                    loop {
+                        match session.rx.next() {
+                            Ok(Some(p)) => plain.extend(p),
+                            Ok(None) => break,
+                            Err(e) => {
+                                eprintln!("[ocbm] wifi: {e}; the link is unusable");
+                                return Err(());
+                            }
+                        }
+                    }
+                }
+                let n = buf.len().min(plain.len());
+                for (d, b) in buf.iter_mut().zip(plain.drain(..n)) {
+                    *d = b;
+                }
+                Ok(n)
+            }
+        }
     }
     fn recv(&mut self, out: &mut [u8], deadline: Instant) -> Option<(u16, u8, usize)> {
         loop {
@@ -67,12 +123,9 @@ impl Link {
                 return None;
             }
             let mut tmp = [0u8; 16384];
-            match self
-                .h
-                .read_bulk(self.ep_in, &mut tmp, Duration::from_millis(100))
-            {
+            match self.read_raw(&mut tmp, Duration::from_millis(100)) {
                 Ok(n) if n > 0 => self.reasm.push(&tmp[..n]),
-                Err(rusb::Error::NoDevice) => {
+                Err(()) => {
                     self.gone = true;
                     return None;
                 }
@@ -86,7 +139,93 @@ fn hex8(b: &[u8]) -> String {
     b.iter().take(8).map(|x| format!("{:02x}", x)).collect()
 }
 
+/// The Wi-Fi link's key: `OCBM_LINK_KEY` (64 hex), else `~/.config/ocbm/link_key`.
+fn link_key_file() -> String {
+    format!("{}/.config/ocbm/link_key", std::env::var("HOME").unwrap_or_default())
+}
+
+fn host_link_key() -> Option<ocbm_link::LinkKey> {
+    let text = std::env::var("OCBM_LINK_KEY").ok().or_else(|| std::fs::read_to_string(link_key_file()).ok())?;
+    text.lines().find_map(|l| ocbm_link::LinkKey::from_hex(l.trim()))
+}
+
+/// The box's Wi-Fi link at `target` (`address` or `address:port`), handshake done.
+fn open_tcp(target: &str) -> Link {
+    use std::net::ToSocketAddrs;
+    let with_port = if target.contains(':') { target.to_string() } else { format!("{target}:{}", ocbm_link::PORT) };
+    let addr = with_port.to_socket_addrs().ok().and_then(|mut a| a.next()).unwrap_or_else(|| {
+        eprintln!("[ocbm] wifi: cannot resolve {with_port}");
+        std::process::exit(1);
+    });
+    let key = host_link_key().unwrap_or_else(|| {
+        eprintln!("[ocbm] wifi: no link key (OCBM_LINK_KEY, or {})", link_key_file());
+        std::process::exit(1);
+    });
+    let mut s = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(5)).unwrap_or_else(|e| {
+        eprintln!("[ocbm] wifi: connect {addr}: {e}");
+        std::process::exit(1);
+    });
+    let _ = s.set_nodelay(true);
+    let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+    let t0 = Instant::now();
+    let session = ocbm_link::host_handshake(&mut s, &key, ocbm_link::random32().expect("randomness"))
+        .unwrap_or_else(|e| {
+            eprintln!("[ocbm] wifi: handshake failed: {e}");
+            std::process::exit(1);
+        });
+    eprintln!("[ocbm] wifi: linked (OCBW v1) in {} ms", t0.elapsed().as_millis());
+    Link {
+        wire: Wire::Tcp { s, session, plain: Default::default() },
+        seq: 0,
+        reasm: p::Reassembler::new(),
+        gone: false,
+    }
+}
+
+/// `wifi-link set|clear`: give the box this host's link key, made if there is none, or remove the box's.
+fn mode_wifi_link(link: &mut Link, what: &str) {
+    let body = match what {
+        "clear" => vec![p::MGMT_WIFI_LINK],
+        "set" => {
+            let key = host_link_key().unwrap_or_else(|| {
+                use std::os::unix::fs::OpenOptionsExt;
+                let k = ocbm_link::LinkKey(ocbm_link::random32().expect("randomness"));
+                let path = link_key_file();
+                let _ = std::fs::create_dir_all(std::path::Path::new(&path).parent().expect("a directory"));
+                let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path).unwrap_or_else(|e| {
+                    eprintln!("[ocbm] wifi: cannot write {path}: {e}");
+                    std::process::exit(1);
+                });
+                std::io::Write::write_all(&mut f, format!("{}\n", k.to_hex()).as_bytes()).expect("write the key");
+                eprintln!("[ocbm] wifi: made a link key in {path}");
+                k
+            });
+            eprintln!("[ocbm] wifi: the box's id for this key: {}", ocbm_link::box_id(&key));
+            let mut b = vec![p::MGMT_WIFI_LINK, 1];
+            b.extend_from_slice(&key.0);
+            b
+        }
+        _ => {
+            eprintln!("usage: ocbm-host wifi-link [vid pid] set|clear");
+            std::process::exit(64);
+        }
+    };
+    link.send(p::CH_MGMT, p::F_SOM | p::F_EOM, &body);
+    let mut out = vec![0u8; p::MAX_PAYLOAD];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while let Some((ch, _, l)) = link.recv(&mut out, deadline) {
+        if ch == p::CH_MGMT && l >= 3 && out[0] == p::MGMT_ACK && out[1] == p::MGMT_WIFI_LINK {
+            println!("MGMT_WIFI_LINK {what}: {}", if out[2] == 0 { "ok; from the box's next ocbmd start" } else { "refused" });
+            return;
+        }
+    }
+    println!("MGMT_WIFI_LINK {what}: no answer");
+}
+
 fn open(vid: u16, pid: u16) -> Link {
+    if let Ok(t) = std::env::var("OCBM_TCP") {
+        return open_tcp(&t);
+    }
     let ctx = Context::new().expect("libusb init");
     let devs = ctx.devices().expect("device list");
     let dev: Device<Context> = devs
@@ -152,9 +291,7 @@ fn open(vid: u16, pid: u16) -> Link {
         ifnum, ep_in, ep_out
     );
     Link {
-        h,
-        ep_in,
-        ep_out,
+        wire: Wire::Usb { h, ep_in, ep_out },
         seq: 0,
         reasm: p::Reassembler::new(),
         gone: false,
@@ -1854,11 +1991,9 @@ fn mode_srcbench(link: &mut Link, secs: u64) {
     let t0 = Instant::now();
     let end = t0 + Duration::from_secs(secs);
     while Instant::now() < end {
-        if let Ok(n) = link
-            .h
-            .read_bulk(link.ep_in, &mut buf, Duration::from_millis(500))
-        {
-            total += n as u64;
+        match link.read_raw(&mut buf, Duration::from_millis(500)) {
+            Ok(n) => total += n as u64,
+            Err(()) => break,
         }
     }
     let dt = t0.elapsed().as_secs_f64();
@@ -1887,10 +2022,7 @@ fn mode_sinkbench(link: &mut Link, secs: u64, xfer: usize) {
             &payload,
         );
         seq = seq.wrapping_add(1);
-        match link
-            .h
-            .write_bulk(link.ep_out, &frame[..n], Duration::from_secs(2))
-        {
+        match link.write_raw(&frame[..n]) {
             Ok(w) => total += w as u64,
             Err(_) => break,
         }
@@ -1920,6 +2052,10 @@ fn main() {
     push_time(&mut link);
     match mode {
         "settime" => {} // clock already pushed above; nothing more to do
+        "wifi-link" => mode_wifi_link(
+            &mut link,
+            args.iter().skip(2).map(String::as_str).find(|a| *a == "set" || *a == "clear").unwrap_or(""),
+        ),
         "echo" => mode_echo(&mut link, secs, xfer),
         "rtt" => mode_rtt(&mut link, secs),
         "mfi" => mode_mfi(&mut link),

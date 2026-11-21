@@ -117,34 +117,52 @@ d=$(sed -n '/^uplink_wpa_start() {/,/^}/p' "$F" | sed -n 's/^  for UPLINK_DRV in
 is "the client tries nl80211, then wext" "$d" "nl80211 wext; do"
 n=$(grep -c '"$UPLINK_WPA" -B' "$F")
 is "every wpa_supplicant start goes through uplink_wpa_start" "$n" 1
-# A join that fails or loses its link must leave nothing running (car, 2026-11-15).
-for fn in uplink_join uplink_watch; do
-  n=$(sed -n "/^$fn() {/,/^}/p" "$F" | grep -w return | grep -vc "uplink_stop guard; return")
-  is "every way out of $fn but success stops the client first" "$n" 0
-done
-n=$(sed -n '/^uplink_join() {/,/^}/p' "$F" | grep -c "uplink_stop guard; return 1")
+# A join that fails must leave nothing running (car, 2026-11-15).
+n=$(sed -n '/^uplink_join() {/,/^}/p' "$F" | grep -w return | grep -vc "uplink_stop; return")
+is "every way out of uplink_join but success stops the client first" "$n" 0
+n=$(sed -n '/^uplink_join() {/,/^}/p' "$F" | grep -c "uplink_stop; return 1")
 is "uplink_join's two failures (no start, not joined)" "$n" 2
-n=$(sed -n '/^uplink_watch() {/,/^}/p' "$F" | grep -c "uplink_stop guard; return")
-is "uplink_watch's three (no address, a clash, the link lost)" "$n" 3
 # The join runs before the access point starts (bench 2026-11-16: joining after it hurt CarPlay).
 body=$(sed -n '/^do_wifi_ap_on() {/,/^}/p' "$F")
-j=$(printf '%s\n' "$body" | grep -n 'uplink_join' | head -1 | cut -d: -f1)
+j=$(printf '%s\n' "$body" | grep -nw 'uplink_join' | head -1 | cut -d: -f1)
 a=$(printf '%s\n' "$body" | grep -n 'radio_ap_up.sh AP' | head -1 | cut -d: -f1)
 [ -n "$j" ] && [ -n "$a" ] && [ "$j" -lt "$a" ] && r=yes || r=no
 is "the join comes before the access point starts" "$r" yes
 # The phone can be handed over before the join is done, and is told the channel hostapd.conf names
 # (bench 2026-11-16: it named 149, the access point came up on 48, the phone never arrived).
-w=$(printf '%s\n' "$body" | grep -n 'sed -i "s/^channel=.*/channel=$_ap_ch/"' | head -1 | cut -d: -f1)
-[ -n "$w" ] && [ -n "$j" ] && [ "$w" -lt "$j" ] && r=yes || r=no
+m=$(printf '%s\n' "$body" | grep -n '_ap_ch=$(uplink_remembered)' | head -1 | cut -d: -f1)
+w=$(printf '%s\n' "$body" | sed -n "${m:-1},\$p" | grep -n 'sed -i "s/^channel=.*/channel=$_ap_ch/"' | head -1 | cut -d: -f1)
+[ -n "$m" ] && [ -n "$w" ] && [ -n "$j" ] && [ $((m + w - 1)) -lt "$j" ] && r=yes || r=no
 is "the remembered channel is in hostapd.conf before the join starts" "$r" yes
-n=$(sed -n '/^do_wifi_ap_off() {/,/^}/p' "$F" | grep -c '^  uplink_stop$')
-is "Wi-Fi off stops the client" "$n" 1
+# The keeper (2026-11-21): a Wi-Fi start keeps a joined client and makes no join of its own; one that
+# is not joined is stopped before the access point, as before.
+k=$(printf '%s\n' "$body" | grep -n 'if uplink_running && uplink_joined' | head -1 | cut -d: -f1)
+s1=$(printf '%s\n' "$body" | grep -n '^ *uplink_stop$' | head -1 | cut -d: -f1)
+[ -n "$k" ] && [ -n "$s1" ] && [ "$k" -lt "$s1" ] && [ "$s1" -lt "$j" ] && r=yes || r=no
+is "a Wi-Fi start keeps a joined client, and stops one that is not before joining" "$r" yes
+n=$(printf '%s\n' "$body" | grep -c '^ *uplink_keeper_start$')
+is "a Wi-Fi start with a join configured starts the keeper" "$n" 1
+n=$(sed -n '/^do_wifi_ap_off() {/,/^}/p' "$F" | grep -cw 'uplink_stop')
+is "Wi-Fi off leaves the client to the keeper" "$n" 0
+keep=$(sed -n '/^do_sta_keep() {/,/^}/p' "$F")
+n=$(sed -n '/^keeper_join() {/,/^}/p' "$F" | sed -n 2p)
+is "the keeper never joins while an access point is up" "$n" "  ap_running && return 1"
+n=$(printf '%s\n' "$keep" | grep -w 'keeper_join' | grep -vc 'keeper_locked keeper_join')
+is "every keeper join holds the wlan lock" "$n" 0
+n=$(printf '%s\n' "$keep" | grep -w 'uplink_stop' | grep -v 'keeper_locked uplink_stop || uplink_stop' | grep -vc 'keeper_locked uplink_stop')
+is "the keeper stops the client only under the wlan lock" "$n" 0
+n=$(printf '%s\n' "$keep" | grep -c 'keeper_locked uplink_stop &&')
+is "the keeper's three ways to drop a joined client (settings changed, no address, a clash)" "$n" 3
+n=$(printf '%s\n' "$keep" | grep -A1 '^ *if ap_running; then$' | grep -c 'keeper_locked keeper_stop_unjoined')
+is "under an access point a client that is not joined is stopped" "$n" 1
+n=$(sed -n '/^lock_take() {/,/^}/p' "$F" | grep -c '"${2:-60}"')
+is "lock_take takes a number of tries (the keeper tries once)" "$n" 2
 # radio_hal.sh runs under set -u, and uplink_stop runs at every Wi-Fi start and stop, the setting on
 # or off: an unset name in it took the access point down on the bench (2026-11-16, `$1` unset).
 T=$(mktemp -d)
-out=$( set -u; LOGP=x; UPLINK_DIR=$T/d; UPLINK_JOINED_AT=$T/j; UPLINK_WPA_LOG=$T/l
+out=$( set -u; LOGP=x; UPLINK_DIR=$T/d; UPLINK_JOINED_AT=$T/j; UPLINK_WPA_LOG=$T/l; UPLINK_CH_NOW=$T/c; UPLINK_CONF_SEEN=$T/s
   eval "$(sed -n '/^uplink_ifname_ok()/p; /^uplink_log()/p; /^uplink_stop() {/,/^}/p' "$F" | sed "s#/tmp/#$T/#g")"
-  uplink_stop && uplink_stop guard && echo survived 2>&1 )
+  uplink_stop && uplink_stop && echo survived 2>&1 )
 is "uplink_stop with nothing running, and no argument, under set -u" "$out" survived
 rm -rf "$T"
 # The connect timeline's bt_power: bt_on stamps it on whichever path brought Bluetooth up. The bench

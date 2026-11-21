@@ -13,6 +13,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::time::{Duration, Instant};
 
+mod mdns;
+mod wifi;
+
 const ACC_DEV: &str = "/dev/usb_accessory";
 
 /// carplayd's local HID-input ingest (task #20). ocbmd relays each CH_INPUT sub-frame here, length-
@@ -3797,6 +3800,28 @@ impl Daemon {
                 eprintln!("[ocbmd] mgmt: firmware {op:?} requested by host — started={started}");
                 self.mgmt_ack(verb, u8::from(!started));
             }
+            // The Wi-Fi link's key (wifi.rs). Never logged. It takes effect at ocbmd's next start (every
+            // drive's boot), so the USB session that delivered it carries on undisturbed.
+            p::MGMT_WIFI_LINK => {
+                let ok = match wifi::parse_provision(&pl[1..]) {
+                    Ok(prov) => match wifi::apply_provision(&prov) {
+                        Ok(()) => {
+                            let what = if prov == wifi::Provision::Clear { "cleared: USB only" } else { "link key set" };
+                            eprintln!("[ocbmd] wifi: {what}; from ocbmd's next start");
+                            true
+                        }
+                        Err(e) => {
+                            eprintln!("[ocbmd] wifi: the link key could not be written ({e})");
+                            false
+                        }
+                    },
+                    Err(why) => {
+                        eprintln!("[ocbmd] wifi: refused a MGMT_WIFI_LINK ({why})");
+                        false
+                    }
+                };
+                self.mgmt_ack(verb, u8::from(!ok));
+            }
             p::MGMT_SET_ORDER => {
                 let resp = parse_order_arg(&pl[1..]).and_then(|order| {
                     eprintln!("[ocbmd] mgmt: phone order from host: {} address(es)", order.len());
@@ -3872,7 +3897,11 @@ impl Daemon {
              \"daemons\":{{\"ocbmd\":{d0},\"iap2d\":{d1},\"airplayd\":{d2},\"carplay_wireless\":{d3}}},\
              \"host_name\":\"{host_name}\",\"phone_order\":true,\"ev_models\":true,\"car_gps\":true,\"nav_url\":true,\"video\":true,\
              \"fw_update\":{fw_update},\"fw\":\"{fw}\",\"fw_pending\":{fw_pending},\"fw_prev\":{fw_prev},\
-             {usb_net}\"sta_uplink\":{sta_uplink},\"devices\":[{devs}]}}",
+             {usb_net}\"sta_uplink\":{sta_uplink},\"wifi_link\":{{\"id\":\"{link_id}\",\"via\":\"{via}\"}},\"devices\":[{devs}]}}",
+            // T15, the Wi-Fi link: this box takes MGMT_WIFI_LINK. `id` is ocbm_link::box_id of the key it
+            // holds (empty: none), so the app can tell its own key is there without the key leaving it.
+            link_id = wifi::link_key().map(|k| ocbm_link::box_id(&k)).unwrap_or_default(),
+            via = if LINK_VIA_WIFI.load(std::sync::atomic::Ordering::Relaxed) { "wifi" } else { "usb" },
             // T15 route B: this box can join the car's hotspot (the app pushes sta_uplink.conf).
             sta_uplink = std::path::Path::new("/usr/sbin/wpa_supplicant").exists()
                 && std::path::Path::new("/usr/sbin/wpa_cli").exists(),
@@ -4466,6 +4495,56 @@ const ALIVE_FILE: &str = "/tmp/ocbmd_alive";
 /// the supervisor polls at ~1 Hz, so more than 1 Hz here is pure syscall overhead.
 const ALIVE_TOUCH_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Set once, before the loop, when the host came over the Wi-Fi link: `MGMT_INFO`'s `"via"` and the
+/// transport's exit lines.
+static LINK_VIA_WIFI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn transport_name() -> &'static str {
+    if LINK_VIA_WIFI.load(std::sync::atomic::Ordering::Relaxed) { "Wi-Fi link" } else { "accessory (USB)" }
+}
+
+/// The app's car-hotspot settings (radio_hal.sh's THE CAR'S HOTSPOT); the advert takes its interface.
+const STA_UPLINK_CONF: &str = "/script/sta_uplink.conf";
+
+/// The Wi-Fi race ([`wifi`]): the TCP listener and the hotspot advert up, then the loop's descriptor is
+/// whichever transport's host speaks first. Before the loop exists, so this keeps the supervisor's
+/// liveness stamp fresh itself, and clears a presence flag a crashed predecessor left. A listener that
+/// cannot start leaves this start USB only.
+fn race_transports(acc: File, key: ocbm_link::LinkKey) -> File {
+    let tcp = match wifi::start_tcp_transport(key.clone()) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[ocbmd] wifi: the listener could not start ({e}); USB only this start");
+            return acc;
+        }
+    };
+    let sta_if = wifi::sta_iface(&std::fs::read_to_string(STA_UPLINK_CONF).unwrap_or_default());
+    mdns::start(sta_if, ocbm_link::PORT, ocbm_link::box_id(&key));
+    write_presence_flag(false);
+    let _ = File::create(ALIVE_FILE);
+    eprintln!("[ocbmd] wifi: racing USB and Wi-Fi; the first host to speak gets the link");
+    let mut last_touch = Instant::now();
+    match wifi::wait_first_host(&acc, &tcp.loop_end, || {
+        if last_touch.elapsed() >= ALIVE_TOUCH_INTERVAL {
+            touch_alive_file();
+            last_touch = Instant::now();
+        }
+    }) {
+        wifi::Winner::Tcp => {
+            eprintln!("[ocbmd] transport: Wi-Fi (OCBW v1)");
+            LINK_VIA_WIFI.store(true, std::sync::atomic::Ordering::Relaxed);
+            // The accessory is closed: this start answers the Wi-Fi host only, and the next start races again.
+            drop(acc);
+            tcp.loop_end
+        }
+        wifi::Winner::Usb => {
+            tcp.usb_won.store(true, std::sync::atomic::Ordering::Release);
+            eprintln!("[ocbmd] transport: USB");
+            acc
+        }
+    }
+}
+
 /// Write the monotonic uptime (ms) into `ALIVE_FILE`. Atomic tmp+rename like
 /// [`write_flag_atomic`], so the supervisor never reads a torn stamp.
 fn touch_alive_file() {
@@ -4564,6 +4643,12 @@ fn main() {
         let fl = libc::fcntl(fd, libc::F_GETFL);
         libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
     }
+    // The Wi-Fi link (wifi.rs, T15): with a link key on flash, race the accessory against a host on
+    // the car's hotspot and run on whichever speaks first. Without one, the USB daemon it always was.
+    let acc = match wifi::link_key() {
+        Some(key) => race_transports(acc, key),
+        None => acc,
+    };
     // Local A/V seam listeners: the box session forwards video->:9001, media audio->:9002; ocbmd
     // muxes each onto its OCBM channel. Non-blocking so they slot into the poll loop.
     // A failed bind used to be dropped SILENTLY by a `filter_map(...ok())`, which is how a second
@@ -4852,7 +4937,7 @@ fn main() {
                             // fresh accessory fd once USB is back — the daemon's designed recovery path.
                             // (A host-app quit does NOT trigger this: it stops reading bulk but leaves the
                             // gadget bound; only a real cable/gadget teardown HUPs this fd.)
-                            eprintln!("[ocbmd] accessory POLLHUP/POLLERR — USB transport gone; exiting for respawn");
+                            eprintln!("[ocbmd] {} POLLHUP/POLLERR — transport gone; exiting for respawn", transport_name());
                             clear_session_state_for_exit();
                             std::process::exit(1);
                         }
@@ -4873,7 +4958,8 @@ fn main() {
                     match d.acc.read(&mut rbuf) {
                         Ok(0) => {
                             eprintln!(
-                                "[ocbmd] accessory EOF on read — USB transport gone; exiting for respawn"
+                                "[ocbmd] {} EOF on read — transport gone; exiting for respawn",
+                                transport_name()
                             );
                             clear_session_state_for_exit();
                             std::process::exit(1);
@@ -4894,7 +4980,8 @@ fn main() {
                             ) => {}
                         Err(e) => {
                             eprintln!(
-                                "[ocbmd] accessory read error ({e}) — USB transport gone; exiting for respawn"
+                                "[ocbmd] {} read error ({e}) — transport gone; exiting for respawn",
+                                transport_name()
                             );
                             clear_session_state_for_exit();
                             std::process::exit(1);

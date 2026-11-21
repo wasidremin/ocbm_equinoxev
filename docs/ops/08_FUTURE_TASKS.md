@@ -47,7 +47,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
-| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). A second route, the adapter link over the car's hotspot, is recorded in T15 (2026-11-13) and not started; its first step is app only |
+| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). The adapter link over the car's hotspot (the Wi-Fi link, from enigy's PR #2s) is **built and benched 2026-11-21**, not yet in the car |
 | T20 Update the adapter from the app | Built and benched 2026-11-14 (update, confirm, manual and automatic rollback). Needs one last bench install for the boot hook; app updates after that |
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
@@ -634,7 +634,7 @@ open from it, tracked in `04_OPEN_ITEMS.md`: whether calls echo for the far end 
 the assistant role, and the voice button ending a live call (263). Its answering a ringing call (233)
 was seen on the car on 2026-11-21.
 
-## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; a second route over the car's hotspot recorded 2026-11-13, not started)
+## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; the link over the car's hotspot BUILT 2026-11-21, benched, not yet in the car)
 
 **Priority (2026-11-14).** One of the two things the owner still finds annoying on every drive (the
 other is the time to connect, T25).
@@ -1044,6 +1044,42 @@ uploads use, and Android does not dependably stay on a network with no internet.
 **Done means (this route).** A drive starts CarPlay with no Allow tap and no USB claim, the time to
 the first picture is no worse than today's including the tap, and video stalls are no more frequent
 than over USB.
+
+**The Wi-Fi link: built 2026-11-21.** Owner, after the 263 drive still showed the dialog: "The
+permission prompt was the entire reason we went with wireless communications", then "all of this was
+already implemented in enigy's pr2 / Continue". Ported from mammut3's enigy/ocbm PR #2 (b76d210) and
+enigy/carlink PR #2 (aca4733), Unlicense (NOTICE.md); the wire format and the race are
+`docs/carplay/01_OCBM_PROTOCOL.md` "The Wi-Fi link", the keeper `docs/wireless/01_BT_AND_RADIO.md` §6e.
+
+- *Adapter.* `crates/ocbm-link` (OCBW v1), `ccpa/ocbmd/src/wifi.rs` (the race on one socketpair: this
+  ocbmd has no relay threads) and `mdns.rs` (`_ocbm._tcp`), `MGMT_WIFI_LINK 0x0E` (the key alone,
+  applied at the next start, no restart), `"wifi_link"` in `MGMT_INFO`; `radio_hal.sh sta_keep` keeps
+  the client joined from boot (`ocbm_boot.sh` starts it). `ocbmd` grows 38 KB (472,528 → 510,496 B).
+  `ocbm-host` takes `OCBM_TCP=<address>` for every mode and `wifi-link set|clear`.
+- *App.* `ocbm/OcbwLink.kt`, `WifiBulkTransport.kt`, `WifiLink.kt`. With Settings ▸ Advanced ▸ Join
+  the car's hotspot on (and the Vehicle hotspot's password), a USB connect to such firmware gives the
+  adapter this head unit's link key once; from the adapter's next start, every link attempt looks on the
+  hotspot first (the address that answered last, then mDNS, then every address of the hotspot's /24 on
+  port 7020, because GM's firewall may drop the mDNS answers) for up to 15 s after the hotspot is up and
+  never more than 30 s waiting for it, and asks for USB permission only if the adapter was not reached.
+  The early permission request at an attach is skipped while the link is on. A lost Wi-Fi link
+  reconnects 6 s later.
+- *Changed from enigy.* The key alone over `MGMT_WIFI_LINK` (the hotspot was already the app's
+  `sta_uplink.conf`); ocbmd applies it at the next start instead of restarting, so no session is cut to
+  switch links; the keeper is radio_hal's, under its existing rules; the app sweeps the hotspot's
+  subnet as well as asking mDNS.
+- *Verified.* `cargo test` (ocbm-link 7, ocbmd's new 7 including a hung-up accessory that must not win
+  the race), the app's 609 unit tests with the Rust crate's known answers, `radio_scan_test.sh`. Bench
+  (adapter on the server, home Wi-Fi as the hotspot): the keeper joined at boot; `ocbm-host` over Wi-Fi:
+  handshake 9–15 ms, 21.6 Mbps adapter to host; a session's access point came up beside the client on
+  its channel and the client outlived the teardown. The real app on the emulator: the USB connect gave
+  the key ("taken, used from its next start"); after the adapter restarted, the app linked over Wi-Fi in
+  about 1 s with "no USB claim, no permission" and subscribed. (The emulator's one HOST_GONE 10 s after
+  SUBSCRIBE was its slow logging delaying the first heartbeat, on USB as well; 0.1 s in the car.)
+- *Not verified.* Anything in the car: whether the app reaches the adapter on the Equinox's hotspot
+  (mDNS, the sweep), how soon the hotspot is up at a cold start, whether 21.6 Mbps carries CarPlay
+  video with the driver-display stream, and the first-picture time against today's with the tap. No
+  phone joined a session over the bench's Wi-Fi link.
 
 ## App only: T16–T19 (raised 2026-11-12)
 
@@ -1570,6 +1606,13 @@ stops it; CarPlay carries on normally afterwards.
   (`00_BUILD_AND_DEPLOY.md` item 9). So the app's TLS through the phone's real proxy, a video playing,
   the screen, and Park/Drive changes have not run. `--es run video_net_test` fetches a small page over
   the phone's network as the player does, for the next bench or a car log.
+
+**In the car with 263 (2026-11-21).** The offer was negotiated, the phone sent
+`setVideoPlaybackParameters` (111 B, three times) and never opened the play queue, so nothing played.
+The command was logged by size only. From the next build the adapter logs its shape (keys and types,
+no values: `[video] phone's setVideoPlaybackParameters: {…}`). Which app the owner tried, and whether
+CarPlay was offered as an AirPlay target, was asked and not yet answered (enigy: only Safari hands
+video to CarPlay today).
 
 ## Left off this plan
 

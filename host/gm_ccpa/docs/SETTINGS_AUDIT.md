@@ -327,6 +327,18 @@ stays (serves Capture Current).
 - **Drive line smoothing** (Cluster ▸ Cards, 2026-11-16): ½ / 1 / 2 / 3 miles, default 1.
 - **USB network trial** (Advanced): arms one adapter start with a USB network link beside OCBM (T15 route A).
 
+## 2026-11-21 deltas (the Wi-Fi link; T15, from enigy's PR #2s)
+
+- **Join the car's hotspot** (Advanced, same switch `sta_uplink/enabled`, same `hotspot_credentials`):
+  now also the Wi-Fi link. No setting changed shape and no new row. With a join configured, a USB
+  connect to firmware whose `MGMT_INFO` carries `"wifi_link"` gives the adapter this head unit's key,
+  and from the adapter's next start the app looks for it on the hotspot before claiming USB (no Allow
+  prompt when it is found). The row's text says so.
+- New store `wifi_link` (`ocbm/WifiLink.kt`), not a setting: `key` (the link key, 64 hex, made once),
+  `adapter_id` (the key id the adapter last reported; Wi-Fi first only while it is ours) and
+  `last_peer` (the address that answered last). Cleared with the app's data; a new key is then given
+  over USB at the next connect.
+
 ## 2026-11-21 deltas (route A, the phone's video while parked; T34)
 
 - **Video from the iPhone while parked** (CarPlay ▸ Video, on by default; owner, 2026-11-21, asked for

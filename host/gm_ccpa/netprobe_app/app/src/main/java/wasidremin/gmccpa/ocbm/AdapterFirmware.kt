@@ -108,11 +108,13 @@ object AdapterFirmware {
     }
 
     /**
-     * The health that proves an update good: Bluetooth up, the radio supervisor (btd) running and
-     * the root filesystem healthy. Reached only once the new ocbmd, btd and scripts are working.
+     * The health that proves an update good: Bluetooth up and the radio supervisor (btd) running,
+     * reached only once the new ocbmd, btd and scripts are working. Not `rootfs-ok`: the update's own
+     * kept copies of the old files took the car's adapter under ocbmd's 2 MB floor (263, 2026-11-21),
+     * so a good update was never confirmed and rolled back on its own.
      */
     fun healthy(bits: Int): Boolean {
-        val need = Ocbm.BH_HCI_PRESENT or Ocbm.BH_CARPLAY_WIRELESS or Ocbm.BH_ROOTFS_OK
+        val need = Ocbm.BH_HCI_PRESENT or Ocbm.BH_CARPLAY_WIRELESS
         return bits and need == need
     }
 

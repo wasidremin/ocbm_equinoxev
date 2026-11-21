@@ -53,6 +53,15 @@ came from in their header comments.
   wiring (`RouteA`) are written here after enigy's Compose overlay and `CarlinkManager`. Here the log
   carries no part of a video's address or host.
 
+- **enigy/ocbm** and **enigy/carlink**, the Wi-Fi link (2026-11-21, mammut3's PR #2 to each: enigy/ocbm
+  b76d210, enigy/carlink aca4733): `crates/ocbm-link` (OCBW v1) unchanged in its bytes; `ocbmd`'s
+  `wifi.rs` (the provisioning, the race, the TCP relay, with their tests) and `mdns.rs`; the app's
+  `ocbm/OcbwLink.kt`, `WifiBulkTransport.kt` and `OcbwLinkTest.kt`; `WifiLink.kt`'s discovery after
+  `WifiBoxFinder.kt` and `WifiLinkStore.kt`; `ocbm-host`'s `OCBM_TCP`. Here the key travels alone and
+  applies at the adapter's next start, the race runs on one socketpair, the client's keeper is
+  `radio_hal.sh`'s (`sta_keep`, after enigy's `wifi_sta.sh`), the app also sweeps the hotspot's subnet,
+  and no address reaches a log.
+
 ## Built from upstream source
 
 - **wpa_supplicant 2.11** (w1.fi, BSD licence) — the adapter's Wi-Fi client for joining the car's

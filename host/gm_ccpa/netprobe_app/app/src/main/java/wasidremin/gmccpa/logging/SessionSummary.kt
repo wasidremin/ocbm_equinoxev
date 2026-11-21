@@ -173,7 +173,8 @@ object SessionSummary {
      * device-identity fact, the same whenever it is read, and it is what lets a launch-origin session
      * be compared with an attach-origin one for the same box.
      */
-    fun beginLaunch(dev: UsbDevice): Session = begin(
+    /** [dev] null: a start over the Wi-Fi link (T15), with no USB device behind it; its fingerprint says `wifi`. */
+    fun beginLaunch(dev: UsbDevice?): Session = begin(
         AttachInfo(
             origin = Origin.LAUNCH,
             hasPermissionAtTrampoline = null,
@@ -181,7 +182,7 @@ object SessionSummary {
             userId = AndroidUser.id(),
             processAgeMs = SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime(),
             serialOutcome = SerialOutcome.UNKNOWN,
-            descriptorFingerprint = descriptorFingerprint(dev),
+            descriptorFingerprint = dev?.let { descriptorFingerprint(it) } ?: "wifi",
         )
     )
 

@@ -57,6 +57,20 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 263 (`4.0+video-voice`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
+- **The Wi-Fi link, no Allow prompt: benched, not yet in the car (2026-11-21, T15, not yet
+  published).** Needs Join the car's hotspot on with the hotspot's password, and the new firmware on
+  the adapter. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
+  unit's link key: taken`); the drive after should show `linked over the car's hotspot: no USB claim, no
+  permission`, or `wifi: the adapter was not reached … trying USB` with whether the hotspot was up. Also
+  check the adapter's `uplink: keeper` and `joined on channel` lines at boot, and stalls against USB
+  (21.6 Mbps adapter to host on the bench).
+- **Low flash no longer marks the adapter unhealthy (2026-11-21, not yet published).** In the car with
+  263 the update's kept copies left 1.8 MB free, under ocbmd's 2 MB floor; the app ran its recovery
+  ladder on a working adapter and the update rolled back unconfirmed. Check that a drive after an
+  update shows no `adapter unhealthy` and `firmware … confirmed`.
+- **Route A: what the phone asks with `setVideoPlaybackParameters` (2026-11-21, not yet published).**
+  The adapter now logs its shape (`[video] phone's setVideoPlaybackParameters: {…}`); read it on the
+  next try of a video from Safari.
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
   2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
   lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and

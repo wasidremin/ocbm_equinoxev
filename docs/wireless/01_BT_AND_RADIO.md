@@ -572,6 +572,31 @@ including IW416, whose own branch attaches in parallel. Broadcom BT attach is st
 `bd_addr "$bcmBTMac"` is command substitution (`bcmBTMac=\`set_wifi_mac | sed …\``), not a
 literal — which is why that family stays in §7.
 
+### 6e. The car-hotspot client and its keeper (T15, 2026-11-21)
+
+`radio_hal.sh` joins the car's hotspot when the app's `/script/sta_uplink.conf` says `enabled=1` with
+a passphrase: `wpa_supplicant` (nl80211, else wext) on the client interface the app names (`sta0` on the
+IW416, `drv_mode=3`), the session's access point on the driver's other interface (`wlan0`), on the
+client's channel because one radio serves both. The rules and their evidence are in the script's
+"THE CAR'S HOTSPOT" header; the ones that cost drives: the client never searches while an access point
+is up, a join is made before the access point starts, and the joined channel is remembered on flash
+and written into `hostapd.conf` before the phone is handed over.
+
+From 2026-11-21 the client is kept joined from boot, not per session: `radio_hal.sh sta_keep`, started
+by `ocbm_boot.sh` (and by any Wi-Fi start that finds it gone), so the app can reach the adapter over the
+hotspot before any session (the Wi-Fi link, `docs/carplay/01_OCBM_PROTOCOL.md`). The keeper takes the
+`wlan` lock for each join attempt, so an attempt and a Wi-Fi start never overlap; it searches only while
+no access point is up; a Wi-Fi start that finds the client joined starts the access point on its channel
+and makes no join of its own; a session's teardown leaves the client alone. After a failed attempt it
+waits 10 s longer each time (at most 2 minutes) and then looks on every usable channel, not only the
+remembered one. `tools/tests/radio_scan_test.sh` pins these rules.
+
+Bench, 2026-11-21 (home 5 GHz Wi-Fi standing in for the car's hotspot): the keeper started at boot, its
+first attempt on the remembered channel (149) found the network on 48 and remembered it, the second
+joined in 6 s with an address at once; a session's access point then came up on `wlan0` channel 48
+("already joined on channel 48; the access point follows it") and the client outlived the teardown.
+Not yet in the car.
+
 ### 7. Not yet done / not yet proven
 
 * Broadcom **BT attach** is still refused (§6d): `brcm_patchram_plus … --bd_addr "$bcmBTMac"`

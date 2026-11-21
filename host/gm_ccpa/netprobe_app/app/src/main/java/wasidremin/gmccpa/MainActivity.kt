@@ -233,6 +233,9 @@ class MainActivity : Activity() {
      */
     private fun primeUsbPermission(dev: UsbDevice?, beginClock: Boolean = true) {
         if (beginClock) wasidremin.gmccpa.ocbm.StartupClock.beginAttempt()
+        // T15: with the Wi-Fi link the adapter is looked for on the car's hotspot first, and the claim
+        // loop asks for USB only if it is not reached there. Asking now would raise the dialog anyway.
+        if (wasidremin.gmccpa.ocbm.WifiLink.active(applicationContext)) return
         wasidremin.gmccpa.ocbm.UsbBulkTransport.armPermissionWatch(applicationContext)
         val usb = getSystemService(USB_SERVICE) as UsbManager
         val d = dev ?: usb.deviceList.values.firstOrNull {
@@ -279,6 +282,9 @@ class MainActivity : Activity() {
             it.onBoxSessionEstablished = { supervisor.noteBoxSessionEstablished() }
             it.onDisplayReset = { ui.noteDisplayReset() }
             it.onSubscribeFault = { msg -> setStatus(LinkState.FAILED, msg) }
+            // T15: a Wi-Fi link that dies brings no USB attach to reclaim on. 6 s: past the heartbeat's
+            // 5 s, by which the dead client has stopped calling itself subscribed.
+            it.onLinkLost = { android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ reclaimDeadLink() }, 6_000L) }
             it.adapterWifi = wasidremin.gmccpa.ocbm.AdapterWifi.enabled(applicationContext)
             ocbmProbe = it
         }

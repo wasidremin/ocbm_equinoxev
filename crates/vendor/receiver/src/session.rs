@@ -1681,6 +1681,13 @@ impl SessionDelegate for AvSession {
             })
             .unwrap_or_else(|| "?".into());
         let is_iap = ty.contains("iAP") || ty.contains("iap");
+        // Route A (T34): the phone sent `setVideoPlaybackParameters` in the car with 263 (2026-11-21) and
+        // never opened the play queue; the size alone could not say what it asked for. Its shape, no values.
+        if ty.starts_with("setVideoPlayback") {
+            if let Some(d) = parsed.as_ref() {
+                crate::video::line(format_args!("phone's {ty}: {}", crate::video::dict_shape(d)));
+            }
+        }
         eprintln!(
             "[command] ← iPhone POST /command type='{ty}' ({} B){}",
             request_plist.len(),

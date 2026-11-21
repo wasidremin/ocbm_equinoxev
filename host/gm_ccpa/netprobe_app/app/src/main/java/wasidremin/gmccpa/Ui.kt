@@ -1421,16 +1421,16 @@ class LauncherUi(private val act: Activity) {
      * runs off the main thread.
      */
     /**
-     * Settings ▸ Advanced ▸ Join the car's hotspot (T15 route B, step 1), off by default. Tapping
+     * Settings ▸ Advanced ▸ Join the car's hotspot (T15: the join, and the Wi-Fi link, [wasidremin.gmccpa.ocbm.WifiLink]), off by default. Tapping
      * the row enters the hotspot's name and password: the Vehicle hotspot row is hidden while
      * Adapter Wi-Fi is on, which it always is on the Equinox.
      */
     private fun staUplinkText(): String =
-        "Experimental. Each time the adapter starts its Wi-Fi it first joins the car's hotspot, for up to 10 s, then " +
-            "starts its own on the same channel; if it cannot join, it stops trying until its next start. CarPlay can " +
-            "take up to about 10 s longer to connect. Nothing uses the link yet: the log says whether it held. Without " +
-            "a password it only looks for the hotspot. Turn on the car's hotspot first. Tap here to enter its name and " +
-            "password exactly as the car shows them. " +
+        "Experimental. The adapter joins the car's hotspot when it starts and stays on it, and this app then reaches " +
+            "the adapter over the hotspot instead of USB, with no Allow prompt; it uses USB, with the prompt, only " +
+            "when the adapter is not found there within about 15 s. The first connect after turning this on is over " +
+            "USB, and sets it up for the next drive. Without a password it only looks for the hotspot. Turn on the " +
+            "car's hotspot first. Tap here to enter its name and password exactly as the car shows them. " +
             (if (ssid.isBlank()) "Hotspot: not set." else "Hotspot: $ssid, password ${if (pass.length in 8..63) "set" else "not set"}.")
 
     private lateinit var joinHotspotRow: EqRow

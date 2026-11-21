@@ -4,7 +4,7 @@
 # the Rust daemons) asks for "wifi up" / "bt up" and never names a chip, a module, a firmware
 # path or an attach helper.
 #
-# VERBS   probe | status | wifi_ap_on | wifi_ap_off | bt_prewarm | bt_on | bt_off | sco_on
+# VERBS   probe | status | wifi_ap_on | wifi_ap_off | sta_keep | bt_prewarm | bt_on | bt_off | sco_on
 # EXIT    0 converged now   1 ran and failed   2 already converged   3 unsupported on this unit
 #
 # ---------------------------------------------------------------------------------------------
@@ -81,7 +81,7 @@ log() { echo "$LOGP $*"; }
 # So the holder records its PID and reclaim requires the holder to be GONE. The age check stays
 # only as a backstop for a PID that died and was recycled onto an unrelated process, and it is
 # now generous enough that it can never fire against a working bring-up.
-lock_take() {  # $1 = subsystem
+lock_take() {  # $1 = subsystem, $2 = tries 0.5 s apart (default 60: up to 30 s)
   _lk="/tmp/.radio_lock_$1"; _n=0
   while ! mkdir "$_lk" 2>/dev/null; do
     _holder=$(cat "$_lk/pid" 2>/dev/null)
@@ -93,8 +93,9 @@ lock_take() {  # $1 = subsystem
       log "lock $1 has no holder and is >20min old - reclaiming"
       rm -rf "$_lk"; continue
     fi
-    _n=$((_n+1)); [ "$_n" -ge 60 ] && {
-      log "lock $1 busy >30s (held by pid ${_holder:-unknown}) - refusing to stack bring-ups"; return 1; }
+    _n=$((_n+1)); [ "$_n" -ge "${2:-60}" ] && {
+      [ "${2:-60}" -gt 1 ] && log "lock $1 busy >30s (held by pid ${_holder:-unknown}) - refusing to stack bring-ups"
+      return 1; }
     sleep 0.5
   done
   echo $$ > "$_lk/pid" 2>/dev/null
@@ -202,8 +203,20 @@ caps() {
 #    phone could join it (bench 2026-11-16). Joined, on the joined channel: one radio, one channel.
 #    Not joined, the client is stopped completely first, and the access point uses the remembered
 #    channel, which the handoff has already named;
-#  - after that the client never searches: no address, an address clash, or the link lost, and it is
-#    stopped until the next Wi-Fi start.
+#  - while the access point is up the client never searches: a client that is not joined is stopped
+#    within one 2 s pass (no address, an address clash, the link lost) and stays stopped until the
+#    access point is down.
+# THE KEEPER (2026-11-21, for the Wi-Fi link: ocbmd's src/wifi.rs). `radio_hal.sh sta_keep` keeps the
+# client joined from boot and across sessions, so the app can reach the adapter over the car's
+# hotspot before any session and needs no USB permission. ocbm_boot.sh starts it, and so does any
+# Wi-Fi start that finds it gone. It obeys every rule here: it searches only while no access point is
+# up, each attempt is the join below holding the wlan lock (so an attempt and a Wi-Fi start never
+# overlap), it writes the joined channel into hostapd.conf at once (the next handoff names it), it
+# stops a client that is not joined under an access point, and after a failed attempt it waits 10 s
+# longer each time, up to 2 minutes, and then looks on every usable channel, not only the
+# remembered one. A Wi-Fi start that finds the client joined starts the access point on its channel
+# with no join of its own. The keeper ends, stopping the client, when the join is no longer
+# configured. A session's teardown leaves the client alone.
 # Why before: a join made while the access point was up scanned every channel for seconds while the
 # phone was being handed over (the wext client cannot scan a single channel): on the bench
 # (2026-11-16) one of three sessions never connected and one took 37 s to its first picture. In the
@@ -229,6 +242,11 @@ UPLINK_WPA=$(command -v wpa_supplicant 2>/dev/null || true)
 UPLINK_CLI=$(command -v wpa_cli 2>/dev/null || true)
 UPLINK_SCANNED=/tmp/.radio_hotspot_scanned
 UPLINK_WPA_LOG=/tmp/wpa_uplink.log
+# The channel the client is joined on now; gone with the client.
+UPLINK_CH_NOW=/tmp/.radio_uplink_channel
+UPLINK_KEEPER=/tmp/.radio_sta_keeper
+# The settings the running client was started with: a change rejoins.
+UPLINK_CONF_SEEN=/tmp/.radio_sta_conf
 
 uplink_key() {  # $1 = key; the value from the conf file, without surrounding space
   sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$UPLINK_CONF" 2>/dev/null | head -1 | tr -d '\r'
@@ -432,10 +450,15 @@ hotspot_scan() {
 
 # Whether this Wi-Fi start tries to join the car: sets UPLINK_STA_IF and UPLINK_AP_IF. Every
 # condition missing means the access point starts exactly as it does without this feature.
-uplink_plan() {
+# Whether the settings ask for a join at all (a passphrase; without one it is the scan).
+uplink_wanted() {
   [ -s "$UPLINK_CONF" ] && [ "$(uplink_key enabled)" = 1 ] || return 1
-  [ -n "$(uplink_key psk)" ] || return 1
-  [ -n "$UPLINK_WPA" ] && [ -n "$UPLINK_CLI" ] || return 1
+  [ -n "$(uplink_key psk)" ] && [ -n "$(uplink_key ssid)" ] || return 1
+  [ -n "$UPLINK_WPA" ] && [ -n "$UPLINK_CLI" ]
+}
+
+uplink_plan() {
+  uplink_wanted || return 1
   uplink_psk_ok "$(uplink_key psk)" || { scan_log "uplink: the passphrase cannot be used; not joining"; return 1; }
   [ -n "$(uplink_key ssid)" ] || return 1
   UPLINK_STA_IF=$(uplink_key sta_iface)
@@ -463,10 +486,8 @@ uplink_log() { echo "$LOGP uplink: $*" >> /tmp/box.log 2>/dev/null; }
 uplink_cli() { "$UPLINK_CLI" -p "$UPLINK_DIR" -i "$UPLINK_STA_IF" "$@" 2>/dev/null; }
 uplink_joined() { uplink_cli status | grep -q '^wpa_state=COMPLETED'; }
 
-# Stop the client completely: guard, DHCP client, wpa_supplicant, address. $1 = "guard" when the
-# guard itself calls it (it must not kill itself).
+# Stop the client completely: DHCP client, wpa_supplicant, address. Never the keeper.
 uplink_stop() {
-  [ "${1:-}" = guard ] || { _ups_g=$(cat /tmp/wpa_uplink.guard 2>/dev/null); [ -n "$_ups_g" ] && kill "$_ups_g" 2>/dev/null; }
   _ups_d=$(cat /tmp/udhcpc_uplink.pid 2>/dev/null); [ -n "$_ups_d" ] && kill "$_ups_d" 2>/dev/null
   _ups_p=$(cat /tmp/wpa_uplink.pid 2>/dev/null)
   [ -n "$_ups_p" ] && kill "$_ups_p" 2>/dev/null
@@ -478,20 +499,24 @@ uplink_stop() {
   fi
   _ups_if=$(cat /tmp/wpa_uplink.if 2>/dev/null)
   uplink_ifname_ok "$_ups_if" && ifconfig "$_ups_if" 0.0.0.0 down 2>/dev/null
-  rm -rf "$UPLINK_DIR" /tmp/wpa_uplink.conf /tmp/wpa_uplink.pid /tmp/wpa_uplink.guard /tmp/wpa_uplink.if \
-         /tmp/udhcpc_uplink.pid "$UPLINK_JOINED_AT" "$UPLINK_WPA_LOG"
+  rm -rf "$UPLINK_DIR" /tmp/wpa_uplink.conf /tmp/wpa_uplink.pid /tmp/wpa_uplink.if \
+         /tmp/udhcpc_uplink.pid "$UPLINK_JOINED_AT" "$UPLINK_WPA_LOG" "$UPLINK_CH_NOW" "$UPLINK_CONF_SEEN"
 }
+
+uplink_running() { _upr_p=$(cat /tmp/wpa_uplink.pid 2>/dev/null); [ -n "$_upr_p" ] && kill -0 "$_upr_p" 2>/dev/null; }
 
 # Pure: whether two dotted quads share their first three octets (the access point serves a /24).
 same_24() { [ -n "$1" ] && [ "${1%.*}" = "${2%.*}" ]; }
 
-# Join, before the access point starts. Joined: UPLINK_CH is the channel, 0 returned. Not joined:
-# the client is already stopped completely, 1 returned.
+# Join, with no access point up and the wlan lock held. Joined: UPLINK_CH is the channel, 0
+# returned. Not joined: the client is already stopped completely, 1 returned. $1 = "wide" looks on
+# every usable channel even with one remembered (the keeper, after a failed attempt).
 uplink_join() {
   _upj_t0=$(cut -d. -f1 /proc/uptime)
   _upj_m=$(uplink_remembered)
-  if [ -n "$_upj_m" ]; then _upj_fl=$(channel_to_freq "$_upj_m"); else _upj_fl=$(uplink_freq_list); fi
+  if [ -n "$_upj_m" ] && [ "${1:-}" != wide ]; then _upj_fl=$(channel_to_freq "$_upj_m"); else _upj_fl=$(uplink_freq_list); fi
   echo "$UPLINK_STA_IF" > /tmp/wpa_uplink.if
+  cat "$UPLINK_CONF" > "$UPLINK_CONF_SEEN" 2>/dev/null
   ( umask 077
     { echo "ctrl_interface=$UPLINK_DIR"
       echo "network={"
@@ -501,7 +526,7 @@ uplink_join() {
       echo "}"; } > /tmp/wpa_uplink.conf )
   ifconfig "$UPLINK_STA_IF" 0.0.0.0 up 2>/dev/null
   uplink_wpa_start "$UPLINK_STA_IF" /tmp/wpa_uplink.conf /tmp/wpa_uplink.pid "$UPLINK_WPA_LOG" \
-    || { scan_log "uplink: wpa_supplicant did not start with nl80211 or wext"; uplink_stop guard; return 1; }
+    || { scan_log "uplink: wpa_supplicant did not start with nl80211 or wext"; uplink_stop; return 1; }
   # Follow the client's state: the furthest it got, and the order of states (names only).
   _upj_n=0; _upj_far=""; _upj_path=""; _upj_last=""; _upj_hops=0
   while [ "$_upj_n" -lt $((UPLINK_JOIN_S * 5)) ]; do
@@ -529,40 +554,125 @@ uplink_join() {
     esac
     scan_log "uplink: furthest step ${_upj_far:-none} ($(uplink_state_note "$_upj_far")); states ${_upj_path:-none} (${_upj_hops} changes); driver ${UPLINK_DRV}"
     scan_log "uplink: the client's log: $(uplink_log_reason < "$UPLINK_WPA_LOG" 2>/dev/null)"
-    uplink_stop guard; return 1
+    uplink_stop; return 1
   fi
   _upj_sig=$(printf '%s\n' "$_upj_res" | awk -F'\t' -v b="$_upj_b" 'tolower($1)==tolower(b){print $3; exit}')
   uplink_remember "$UPLINK_CH"
+  echo "$UPLINK_CH" > "$UPLINK_CH_NOW"
   cut -d. -f1 /proc/uptime > "$UPLINK_JOINED_AT"
   scan_log "uplink: joined on channel $UPLINK_CH in $(( $(cut -d. -f1 /proc/uptime) - _upj_t0 )) s, signal ${_upj_sig:-?} dBm, driver ${UPLINK_DRV}"
 }
 
-# The background half, once the access point is up: an address, then watch the link. Its output
-# goes nowhere: callers of this script may read its output to the end, and a child left holding
-# that pipe would keep them waiting. Every way out stops the client: once joined it must never
-# search again under a session (see the section header).
-uplink_watch() {
-  _upw_t0=$(cut -d. -f1 /proc/uptime)
-  udhcpc -i "$UPLINK_STA_IF" -b -t 5 -T 2 -p /tmp/udhcpc_uplink.pid >/dev/null 2>&1 \
-    || uplink_log "W the DHCP client did not start"
-  _upw_n=0; _upw_ip=""
-  while [ "$_upw_n" -lt 25 ] && [ -z "$_upw_ip" ] && uplink_joined; do _upw_n=$((_upw_n+1)); sleep 0.4; _upw_ip=$(ap_ip_of "$UPLINK_STA_IF"); done
-  if [ -z "$_upw_ip" ]; then uplink_log "no address within 10 s; client stopped"; uplink_stop guard; return; fi
-  # The car's network on the access point's own /24 would leave two routes to one subnet.
-  if same_24 "$_upw_ip" "$(ap_ip_of "$UPLINK_AP_IF")"; then
-    uplink_log "the car's network uses the access point's own subnet; client stopped"; uplink_stop guard; return
-  fi
-  uplink_log "address: yes, in $(( $(cut -d. -f1 /proc/uptime) - _upw_t0 )) s"
-  # wpa_supplicant searches the moment the link drops: one missed 2 s check is enough to stop it.
-  while kill -0 "$(cat /tmp/wpa_uplink.pid 2>/dev/null)" 2>/dev/null; do
-    sleep 2
-    uplink_joined || { uplink_log "link lost ($(uplink_log_reason < "$UPLINK_WPA_LOG" 2>/dev/null)); client stopped until the next Wi-Fi start"; uplink_stop guard; return; }
-  done
+uplink_keeper_alive() { _uka_p=$(cat "$UPLINK_KEEPER/pid" 2>/dev/null); [ -n "$_uka_p" ] && [ -d "/proc/$_uka_p" ]; }
+
+# Start the keeper unless it runs. Its output goes nowhere (callers may read this script's output
+# to the end); it writes its lines to the box log itself.
+uplink_keeper_start() {
+  uplink_keeper_alive && return 0
+  setsid sh /script/radio_hal.sh sta_keep </dev/null >/dev/null 2>&1 &
 }
 
-uplink_watch_start() {
-  ( uplink_watch ) </dev/null >/dev/null 2>&1 &
-  echo $! > /tmp/wpa_uplink.guard
+keeper_trap() {
+  trap 'rm -rf "$UPLINK_KEEPER"' EXIT
+  trap 'rm -rf "$UPLINK_KEEPER"; trap - EXIT; exit 143' INT TERM HUP
+}
+
+# One action under the wlan lock, tried once: a Wi-Fi start or teardown holding it is left alone,
+# and the keeper looks again on its next pass.
+keeper_locked() {
+  lock_take wlan 1 || return 1
+  "$@"; _kl_r=$?
+  lock_drop wlan; keeper_trap
+  return $_kl_r
+}
+
+# The keeper's join: not while an access point is up (checked again under the lock), and the joined
+# channel written into hostapd.conf while none is.
+keeper_join() {
+  ap_running && return 1
+  uplink_plan || return 1
+  KP_TRIED=1
+  uplink_join "$1" || return 1
+  sed -i "s/^channel=.*/channel=$UPLINK_CH/" /etc/hostapd.conf
+}
+
+keeper_stop_unjoined() {
+  uplink_running && ! uplink_joined || return 0
+  uplink_log "$1"; uplink_stop
+}
+
+do_sta_keep() {
+  caps || return 3
+  if ! mkdir "$UPLINK_KEEPER" 2>/dev/null; then
+    uplink_keeper_alive && return 2
+    rm -rf "$UPLINK_KEEPER"; mkdir "$UPLINK_KEEPER" 2>/dev/null || return 1
+  fi
+  echo $$ > "$UPLINK_KEEPER/pid"
+  keeper_trap
+  uplink_log "keeper: started"
+  _kp_fail=0; _kp_wait=0; _kp_addr=""; _kp_t0=0; _kp_drv=0; _kp_n=0
+  while :; do
+    # The settings: every pass, but only every 30 s while the link is up and addressed (the pass
+    # runs every 2 s for the whole drive).
+    _kp_n=$((_kp_n+1))
+    if [ -z "$_kp_addr" ] || [ $((_kp_n % 15)) -eq 0 ]; then
+      uplink_wanted || break
+      UPLINK_STA_IF=$(uplink_key sta_iface)
+      uplink_ifname_ok "$UPLINK_STA_IF" || { uplink_log "keeper: the client interface name is unusable"; break; }
+      if uplink_running && [ "$(cat "$UPLINK_CONF" 2>/dev/null)" != "$(cat "$UPLINK_CONF_SEEN" 2>/dev/null)" ]; then
+        keeper_locked uplink_stop && { uplink_log "keeper: the hotspot settings changed; joining again"; _kp_fail=0; _kp_wait=0; _kp_addr=""; _kp_t0=0; }
+      fi
+    fi
+    if ! is_wireless "$UPLINK_STA_IF"; then
+      # The WLAN driver is loaded on demand; the client needs it before any session.
+      if [ "$_kp_drv" -lt 3 ]; then
+        keeper_locked wlan_driver_up >/dev/null 2>&1; _kp_drv=$((_kp_drv+1))
+        [ "$_kp_drv" -eq 3 ] && uplink_log "keeper: no client interface after loading the WLAN driver; waiting for one"
+      fi
+      sleep 2; continue
+    fi
+    if uplink_running && uplink_joined; then
+      if [ -z "$_kp_addr" ]; then
+        [ "$_kp_t0" -eq 0 ] && { _kp_t0=$(cut -d. -f1 /proc/uptime)
+          udhcpc -i "$UPLINK_STA_IF" -b -t 5 -T 2 -p /tmp/udhcpc_uplink.pid >/dev/null 2>&1 \
+            || uplink_log "W the DHCP client did not start"; }
+        _kp_addr=$(ap_ip_of "$UPLINK_STA_IF")
+        if [ -n "$_kp_addr" ]; then
+          uplink_log "address: yes, in $(( $(cut -d. -f1 /proc/uptime) - _kp_t0 )) s"
+        elif [ $(( $(cut -d. -f1 /proc/uptime) - _kp_t0 )) -ge 10 ]; then
+          keeper_locked uplink_stop && { uplink_log "no address within 10 s; client stopped"; _kp_fail=$((_kp_fail+1)); _kp_wait=$((_kp_fail*10)); }
+        fi
+      elif ap_running && same_24 "$_kp_addr" "$(ap_ip_of "$(wlan_iface 2>/dev/null)")"; then
+        # The car's network on the access point's own /24 would leave two routes to one subnet.
+        keeper_locked uplink_stop && uplink_log "the car's network uses the access point's own subnet; client stopped"
+      fi
+      sleep 2; continue
+    fi
+    _kp_addr=""; _kp_t0=0
+    if uplink_running; then
+      # Joined once and lost, or a join that is not the keeper's still under way (a Wi-Fi start
+      # holds the lock for that, so this waits). wpa_supplicant searches the moment the link drops.
+      if ap_running; then
+        keeper_locked keeper_stop_unjoined "link lost ($(uplink_log_reason < "$UPLINK_WPA_LOG" 2>/dev/null)); client stopped while the access point is up"
+      else
+        keeper_locked keeper_stop_unjoined "link lost ($(uplink_log_reason < "$UPLINK_WPA_LOG" 2>/dev/null)); joining again"
+      fi
+      sleep 2; continue
+    fi
+    if ap_running || [ "$_kp_wait" -gt 0 ]; then
+      ap_running || _kp_wait=$((_kp_wait-2))
+      sleep 2; continue
+    fi
+    KP_TRIED=0
+    if keeper_locked keeper_join "$([ "$_kp_fail" -gt 0 ] && echo wide)"; then
+      _kp_fail=0
+    elif [ "$KP_TRIED" = 1 ]; then
+      _kp_fail=$((_kp_fail+1)); _kp_wait=$((_kp_fail*10)); [ "$_kp_wait" -gt 120 ] && _kp_wait=120
+    fi
+    sleep 1
+  done
+  uplink_wanted || uplink_log "keeper: the join is no longer configured; stopped"
+  keeper_locked uplink_stop || uplink_stop
 }
 
 # The access point's interface: the one this boot's Wi-Fi start chose (the join puts it on the
@@ -896,7 +1006,6 @@ do_wifi_ap_on() {
       # starts; a join that fails leaves nothing running.
       hotspot_scan
       _ap_ch=""
-      uplink_stop
       rm -f "$UPLINK_AP_IF_FILE" "$UPLINK_AP_CH_FILE"
       _i=$(wlan_iface)
       if uplink_plan; then
@@ -904,25 +1013,32 @@ do_wifi_ap_on() {
         # the client's own interface, after a failed join, hostapd came up and no phone could join
         # it (bench 2026-11-16).
         _i=$UPLINK_AP_IF; echo "$_i" > "$UPLINK_AP_IF_FILE"
-        # The handoff may read hostapd.conf before the join is done: name the remembered channel now.
-        _ap_ch=$(uplink_remembered)
-        if [ -n "$_ap_ch" ]; then
-          echo "$_ap_ch" > "$UPLINK_AP_CH_FILE"
+        if uplink_running && uplink_joined && uplink_channel_ok "$(cat "$UPLINK_CH_NOW" 2>/dev/null)"; then
+          # The keeper's client: the access point follows it, and no join is made here.
+          _ap_ch=$(cat "$UPLINK_CH_NOW"); echo "$_ap_ch" > "$UPLINK_AP_CH_FILE"
           sed -i "s/^channel=.*/channel=$_ap_ch/" /etc/hostapd.conf
+          scan_log "uplink: already joined on channel $_ap_ch; the access point follows it"
+        else
+          # A client that is not joined must not search beside the access point.
+          uplink_stop
+          # The handoff may read hostapd.conf before the join is done: name the remembered channel now.
+          _ap_ch=$(uplink_remembered)
+          if [ -n "$_ap_ch" ]; then
+            echo "$_ap_ch" > "$UPLINK_AP_CH_FILE"
+            sed -i "s/^channel=.*/channel=$_ap_ch/" /etc/hostapd.conf
+          fi
+          if uplink_join; then
+            [ -n "$_ap_ch" ] && [ "$_ap_ch" != "$UPLINK_CH" ] && \
+              scan_log "uplink: joined on channel $UPLINK_CH, not the remembered $_ap_ch: this handoff may have named the old one"
+            _ap_ch=$UPLINK_CH; echo "$_ap_ch" > "$UPLINK_AP_CH_FILE"
+            sed -i "s/^channel=.*/channel=$_ap_ch/" /etc/hostapd.conf
+          fi
         fi
-        if uplink_join; then
-          [ -n "$_ap_ch" ] && [ "$_ap_ch" != "$UPLINK_CH" ] && \
-            scan_log "uplink: joined on channel $UPLINK_CH, not the remembered $_ap_ch: this handoff may have named the old one"
-          _ap_ch=$UPLINK_CH; echo "$_ap_ch" > "$UPLINK_AP_CH_FILE"
-          sed -i "s/^channel=.*/channel=$_ap_ch/" /etc/hostapd.conf
-        fi
+        uplink_keeper_start
       fi
       ONDEMAND_WIFI=1 RADIO_WLAN_IF="$_i" RADIO_BOX_NAME="$(box_name)" RADIO_AP_CHANNEL="$_ap_ch" \
         sh /script/radio_ap_up.sh AP 2>&1 | sed "s/^/$LOGP   /"
       _n=0; while [ "$_n" -lt 50 ]; do ap_running && break; _n=$((_n+1)); sleep 0.2; done
-      if [ -s "$UPLINK_JOINED_AT" ]; then
-        if ap_running; then uplink_watch_start; else uplink_stop; fi
-      fi
       if ap_running; then
         publish "$WLAN_STATE" "result=ok" "backend=mapped" "chipset=$RADIO_SDIO_DEVICE" \
                 "ap_iface=$_i" "ap_ip=$(ap_ip_of "$_i")" "wlan_mac=$(cat /sys/class/net/$_i/address 2>/dev/null)"
@@ -954,7 +1070,7 @@ do_wifi_ap_off() {
     publish "$WLAN_STATE" "result=ok" "backend=owned" "detail=wlan_off rc=$_rc"
     return 0
   fi
-  uplink_stop
+  # The car-hotspot client is left alone: the keeper owns it, and a host on the hotspot is on it.
   killall hostapd 2>/dev/null
   # Kill ONLY the AP's DHCP server. A killall udhcpd here would take down the NCM one serving
   # the management link - on a box with no UART that is the only way in, and it is exactly what
@@ -1301,11 +1417,13 @@ case "$VERB" in
     exit 0 ;;
   wifi_ap_on)  lock_take wlan || exit 1; do_wifi_ap_on;  _r=$?; lock_drop wlan; exit $_r ;;
   wifi_ap_off) lock_take wlan || exit 1; do_wifi_ap_off; _r=$?; lock_drop wlan; exit $_r ;;
+  # Long-lived: takes the wlan lock only for each join attempt (see THE KEEPER).
+  sta_keep)    do_sta_keep; exit $? ;;
   bt_prewarm)  lock_take bt   || exit 1; do_bt_prewarm;  _r=$?; lock_drop bt;   exit $_r ;;
   bt_on)       lock_take bt   || exit 1; do_bt_on;       _r=$?; lock_drop bt;   exit $_r ;;
   bt_off)      lock_take bt   || exit 1; do_bt_off;      _r=$?; lock_drop bt;   exit $_r ;;
   # Best-effort and idempotent: the daemon calls it after every bring-up DOWN->UP, and a unit
   # whose branch carries no SCO mapping must report that (3) rather than fail the caller.
   sco_on)      lock_take bt   || exit 1; do_sco_on;      _r=$?; lock_drop bt;   exit $_r ;;
-  *) echo "$LOGP usage: radio_hal.sh probe|status|wifi_ap_on|wifi_ap_off|bt_prewarm|bt_on|bt_off|sco_on" >&2; exit 64 ;;
+  *) echo "$LOGP usage: radio_hal.sh probe|status|wifi_ap_on|wifi_ap_off|sta_keep|bt_prewarm|bt_on|bt_off|sco_on" >&2; exit 64 ;;
 esac

@@ -60,6 +60,10 @@ class OcbmProbe(context: Context) {
     @Volatile private var bootLineSeen = false
     private val bootPullScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
     private var usb: UsbBulkTransport? = null
+    /** The link over the car's hotspot when this start took it instead of USB (T15, [WifiLink]). */
+    private var wifi: WifiBulkTransport? = null
+    /** The Wi-Fi link died under a session: no USB attach will follow, so the owner connects again. */
+    var onLinkLost: (() -> Unit)? = null
 
     /**
      * The CT_HELLO nonce every client this probe builds identifies itself with. Minted ONCE per
@@ -732,7 +736,7 @@ class OcbmProbe(context: Context) {
                 val prior = lastLinkResult
                 val age = android.os.SystemClock.elapsedRealtime() - lastLinkOkAtMs
                 if (subscribe && prior != null && prior.subscribed && client?.subscribed == true &&
-                    usb != null && age in 0 until DUPLICATE_LINK_MS) {
+                    (usb != null || wifi != null) && age in 0 until DUPLICATE_LINK_MS) {
                     log.i("link: duplicate bring-up ${age}ms after a healthy subscribed one — keeping the live session")
                     prior
                 } else {
@@ -1022,21 +1026,8 @@ class OcbmProbe(context: Context) {
         }
     }
 
-    private fun runAllLocked(subscribe: Boolean = true, helloOnly: Boolean = false): LinkResult {
-        var r = LinkResult()
-        sink("")
-        sink("==================== OCBM LINK (real adapter) ====================")
-        // Armed by UsbAttachActivity when it forwards an attach; a launcher-tap or scripted run
-        // never armed it and met() ignores unknown names.
-        SessionTrace.met(OcbmExpect.LINK_ATTEMPT)
-        // Tear down any live session FIRST. Without this, a second run (a button press, or a USB
-        // re-attach firing the intent) leaves the old read thread and heartbeat running: two readers
-        // race on bulk IN and two writers interleave frames with independent seq counters on bulk
-        // OUT. The box sees a corrupt stream, and on this gadget that can mean a power cycle.
-        if (client != null || usb != null) {
-            log.w("a session is already live — stopping it before re-claiming the device")
-            stopLocked()
-        }
+    /** The USB claim: wait for the adapter and its permission, then open it. Null when that failed (already reported). */
+    private fun usbTransport(helloOnly: Boolean): UsbBulkTransport? {
         val t = UsbBulkTransport(ctx, wasidremin.gmccpa.ProbeLog.sub("usb"))
         usb = t
         // If the read loop dies while we still think we are running, the device is gone.
@@ -1078,13 +1069,50 @@ class OcbmProbe(context: Context) {
                 abort("gave up waiting for a claimable OCBM accessory after ${CLAIM_WAIT_MS / 60_000} min (last state: $lastClaimState)")
                 SessionTrace.Board.failed(OcbmBoard.USB_CLAIM, "no claimable adapter in ${CLAIM_WAIT_MS / 60_000} min — last state: $lastClaimState")
             }
-            return r
+            return null
         }
         sink("found ${dev.deviceName} vid=0x%04x pid=0x%04x".format(dev.vendorId, dev.productId))
-        if (!t.open(dev)) { abort("claim failed (${t.lastError})"); return r }
+        if (!t.open(dev)) { abort("claim failed (${t.lastError})"); return null }
+        return t
+    }
+
+    private fun runAllLocked(subscribe: Boolean = true, helloOnly: Boolean = false): LinkResult {
+        var r = LinkResult()
+        sink("")
+        sink("==================== OCBM LINK (real adapter) ====================")
+        // Armed by UsbAttachActivity when it forwards an attach; a launcher-tap or scripted run
+        // never armed it and met() ignores unknown names.
+        SessionTrace.met(OcbmExpect.LINK_ATTEMPT)
+        // Tear down any live session FIRST. Without this, a second run (a button press, or a USB
+        // re-attach firing the intent) leaves the old read thread and heartbeat running: two readers
+        // race on bulk IN and two writers interleave frames with independent seq counters on bulk
+        // OUT. The box sees a corrupt stream, and on this gadget that can mean a power cycle.
+        if (client != null || usb != null || wifi != null) {
+            log.w("a session is already live — stopping it before re-claiming the device")
+            stopLocked()
+        }
+        // T15: the car's hotspot first, and no USB permission asked unless it is not reached.
+        val viaWifi = if (WifiLink.active(ctx)) {
+            sink("looking for the adapter on the car's hotspot first (Wi-Fi link)")
+            WifiLink.connect(ctx) { claimAbort || Thread.currentThread().isInterrupted }
+        } else null
+        val transport: RawBulkTransport = if (viaWifi != null) {
+            wifi = viaWifi
+            viaWifi.onTransportDead = {
+                log.e("!! the Wi-Fi link died — the adapter left the hotspot or restarted")
+                SessionTrace.Board.failed(OcbmBoard.LINK, "Wi-Fi link died — the adapter left the hotspot or restarted; connecting again")
+                onLinkLost?.invoke()
+            }
+            if (!helloOnly && wasidremin.gmccpa.logging.SessionSummary.current() == null) {
+                wasidremin.gmccpa.logging.SessionSummary.beginLaunch(null)
+            }
+            StartupClock.begin()
+            sink("linked over the car's hotspot: no USB claim, no permission")
+            viaWifi
+        } else usbTransport(helloOnly) ?: return r
         r = r.copy(claimed = true)
 
-        val c = OcbmClient(t, log, hostInstance)
+        val c = OcbmClient(transport, log, hostInstance)
         // Re-attach the UI observers to every new client (see their declaration above).
         c.onSessionEvent = { sev -> onSessionEvent?.invoke(sev) }
         c.onPairingCode = { code -> onPairingCode?.invoke(code) }
@@ -1122,7 +1150,7 @@ class OcbmProbe(context: Context) {
             return r
         }
         r = r.copy(helloOk = true)
-        sink("STEP 1 OK — claimed the accessory and completed the OCBM handshake.")
+        sink("STEP 1 OK — linked to the adapter (${if (wifi != null) "Wi-Fi" else "USB"}) and completed the OCBM handshake.")
         if (helloOnly) return r
 
         // Bonded-device snapshot at the top of the session. Taken HERE rather than at any of the
@@ -1134,6 +1162,8 @@ class OcbmProbe(context: Context) {
         startInfo?.let { UsbNet.probe(it) }
         // T15 route B: tell the adapter whether, and to which network, its client link should join.
         runCatching { StaUplink.sync(ctx, c, startInfo) }
+        // T15: the Wi-Fi link's key, given once over USB; and whether the adapter holds it.
+        runCatching { WifiLink.afterConnect(ctx, c, startInfo) }
 
         c.setTime()
 
@@ -1862,6 +1892,8 @@ class OcbmProbe(context: Context) {
         for (e in OcbmExpect.PROBE_OWNED) SessionTrace.cancel(e, "OCBM link stopped")
         client?.stop()
         usb?.stop()
+        wifi?.let { it.onTransportDead = null; it.stop() }
+        wifi = null
         // Read AFTER both stops: client.stop() already stopped the transport once, and the flag is
         // sticky, so the second stop() cannot un-set what the first one learned.
         if (usb?.releaseDeferred == true) usbReleaseDeferred = true

@@ -12,3 +12,7 @@ path = "src/main.rs"
 ocbm-proto = { path = "../../crates/ocbm-proto" }
 box-common = { path = "../../crates/box-common" }
 libc = "0.2"
+# The Wi-Fi link (src/wifi.rs, T15): OCBM over TCP behind a pre-shared-key handshake and
+# ChaCha20-Poly1305 records. Off unless /etc/ocbm/wifi_link holds a key. Its crypto crates are the
+# ones carplayd already links.
+ocbm-link = { path = "../../crates/ocbm-link" }
