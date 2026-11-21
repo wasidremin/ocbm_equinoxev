@@ -334,14 +334,16 @@ uplink_state_note() {
 # numbers only: the log also holds the network's name and addresses, which never leave it. Codes
 # are IEEE 802.11 reason and status codes; L marks a disconnect this client made itself.
 uplink_log_reason() {
+  # No awk functions and no `name (` before a parenthesis: the adapter's BusyBox 1.32 awk reads
+  # both as a call it cannot find ("Call to undefined function", bench 2026-11-20); the host's
+  # 1.37 accepts them. tools/tests/radio_scan_test.sh passes on the adapter itself.
   awk '
-    function add(list, v) { if (v == "") return list; n = split(list, a, ","); if (n >= 8) return list; return list (list == "" ? "" : ",") v }
     /RSNXE mismatch/ { rsnxe = 1 }
     /IE in 3\/4 msg does not match/ { ie = 1 }
     /4-Way Handshake failed/ { hs = 1 }
-    /CTRL-EVENT-SSID-TEMP-DISABLED/ { r = $0; if (sub(/.* reason=/, "", r)) { sub(/[^A-Z_].*/, "", r); tmp = add(tmp, r) } }
-    /CTRL-EVENT-DISCONNECTED/ { r = $0; if (sub(/.* reason=/, "", r)) { l = (r ~ /locally_generated=1/) ? "L" : ""; sub(/[^0-9].*/, "", r); if (r != "") dis = add(dis, r l) } }
-    /CTRL-EVENT-ASSOC-REJECT/ { r = $0; if (sub(/.* status_code=/, "", r)) { sub(/[^0-9].*/, "", r); rej = add(rej, r) } }
+    /CTRL-EVENT-SSID-TEMP-DISABLED/ { r = $0; if (sub(/.* reason=/, "", r)) { sub(/[^A-Z_].*/, "", r); if (r != "" && nt < 8) { c = nt ? "," : ""; tmp = tmp c r; nt++ } } }
+    /CTRL-EVENT-DISCONNECTED/ { r = $0; if (sub(/.* reason=/, "", r)) { l = (r ~ /locally_generated=1/) ? "L" : ""; sub(/[^0-9].*/, "", r); if (r != "" && nd < 8) { c = nd ? "," : ""; dis = dis c r l; nd++ } } }
+    /CTRL-EVENT-ASSOC-REJECT/ { r = $0; if (sub(/.* status_code=/, "", r)) { sub(/[^0-9].*/, "", r); if (r != "" && nr < 8) { c = nr ? "," : ""; rej = rej c r; nr++ } } }
     END {
       out = ""
       if (rsnxe) out = out "; RSNXE mismatch at message 3/4"

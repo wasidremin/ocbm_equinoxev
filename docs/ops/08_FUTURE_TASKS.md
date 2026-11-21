@@ -947,11 +947,27 @@ PR #2).*
 - The join design is otherwise unchanged. It still joins before the access point starts, with
   `freq_list` and no `scan_freq`: keeping the full scan keeps the "moved" detection, which needs to
   see the other channels.
-- *Verified:* the parser and the driver order, by unit test (`tools/tests/radio_scan_test.sh`, also
-  under BusyBox awk). The binary is checked to contain both drivers.
+- *Verified:*
+  - *Unit tests:* the parser and the driver order (`tools/tests/radio_scan_test.sh`). The suite
+    passes on the adapter itself. The first version did not: the adapter's BusyBox 1.32 `awk`
+    rejects awk functions and a `name (` before a parenthesis ("Call to undefined function"), which
+    the host's BusyBox 1.37 accepts. The suite also passes under the host's BusyBox.
+  - *Bench adapter, 2026-11-20* (IW416, home Wi-Fi standing in for the car, `radio_hal.sh
+    wifi_ap_on` run by hand):
+    - **`moal` accepts nl80211 on `sta0`.**
+    - Joined in 5 s on channel 48, with an address 5 s later. The access point came up on
+      `wlan0`, channel 48, beside the client (`wpa_state=COMPLETED`, WPA2-PSK, CCMP).
+    - A wrong password logged `furthest step 4WAY_HANDSHAKE` and `the client's log: 4-way
+      handshake failed; disabled WRONG_KEY; disconnect reason 2`. Nothing was left running and the
+      access point came up.
+    - Forced to wext, the same binary joined in 5 s.
 - *Not yet checked:*
-  - whether `moal` accepts nl80211 on `sta0` (the bench adapter was not connected);
-  - a bench join;
+  - CarPlay end to end with the new client. On the bench on 2026-11-20 the iPhone completed
+    Bluetooth (70–130 s after discoverable, against about 10 s on 11-16) and the handoff, then
+    never took a DHCP lease from the adapter. That happened **with the setting on and with it off
+    alike**, so it was the phone's state that day, not this change. To repeat with the phone awake
+    by the bench;
+  - an access point that sends an RSNXE;
   - the car.
 - *What the car's next log decides:*
   - `RSNXE mismatch` under wext, or a join under nl80211: PR #2's cause, and the join works;
