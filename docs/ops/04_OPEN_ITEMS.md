@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 263 (`4.0+video-voice`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 264 (`4.0+wifi-link`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **The Wi-Fi link, no Allow prompt: benched, not yet in the car (2026-11-21, T15, not yet
   published).** Needs Join the car's hotspot on with the hotspot's password, and the new firmware on
