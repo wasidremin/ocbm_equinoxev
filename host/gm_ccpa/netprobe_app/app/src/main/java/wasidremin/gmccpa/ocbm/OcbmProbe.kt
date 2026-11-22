@@ -1164,6 +1164,8 @@ class OcbmProbe(context: Context) {
         runCatching { StaUplink.sync(ctx, c, startInfo) }
         // T15: the Wi-Fi link's key, given once over USB; and whether the adapter holds it.
         runCatching { WifiLink.afterConnect(ctx, c, startInfo) }
+        // T35: the phone order for this moment, before CT_SUBSCRIBE starts the session's Bluetooth.
+        runCatching { wasidremin.gmccpa.PhoneSchedule.atConnect(ctx, c, startInfo) }
 
         c.setTime()
 
@@ -1565,26 +1567,19 @@ class OcbmProbe(context: Context) {
     fun bondedDevicesOrNull(timeoutMs: Long = 1500): List<String>? = bondsOrNull(timeoutMs)?.devices
 
     /**
-     * The adapter's bonds in the order it tries them, and whether it takes `MGMT_CONNECT_DEVICE`
-     * and `MGMT_SET_ORDER` (firmware from 2026-11-05 says `"phone_order":true`).
+     * The adapter's bonds in the order it tries them, whether it takes `MGMT_CONNECT_DEVICE` and
+     * `MGMT_SET_ORDER` (firmware from 2026-11-05 says `"phone_order":true`), and whether it keeps an
+     * order sent before Bluetooth starts, which the phone schedule needs (`"order_at_start":true`, T35).
      */
-    data class Bonds(val devices: List<String>, val canChoose: Boolean)
+    data class Bonds(val devices: List<String>, val canChoose: Boolean, val canSchedule: Boolean)
 
     fun bondsOrNull(timeoutMs: Long = 1500): Bonds? {
         val json = client?.mgmtGetInfo(timeoutMs) ?: return null
-        return Bonds(infoDevices(json), json.contains("\"phone_order\":true"))
-    }
-
-    private fun infoDevices(json: String): List<String> {
-        val i = json.indexOf("\"devices\"")
-        if (i < 0) return emptyList()
-        val open = json.indexOf('[', i)
-        val close = json.indexOf(']', open)
-        if (open < 0 || close < 0) return emptyList()
-        return json.substring(open + 1, close)
-            .split(',')
-            .map { it.trim().trim('"') }
-            .filter { it.isNotEmpty() }
+        return Bonds(
+            wasidremin.gmccpa.PhoneBook.devicesOf(json),
+            json.contains("\"phone_order\":true"),
+            json.contains("\"order_at_start\":true"),
+        )
     }
 
     /**

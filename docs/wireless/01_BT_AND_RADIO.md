@@ -765,6 +765,17 @@ accept-path as the fallback, and remember the "our own outbound connect fires `D
 peer bdaddr" gotcha — the real connect-success signal is the **RFCOMM accept / iAP2 progress**, not the
 mgmt `DEVICE_CONNECTED`.
 
+### The page timeout (2026-11-22)
+
+btd sends Write_Page_Timeout at every Bluetooth bring-up, after the scan enable: 3.2 s
+(`bt_common::hci::PAGE_TIMEOUT_SLOTS`, 0x1400 slots, raw like the scan enable, non-fatal), from the
+controller's 5.12 s default, which the controller's reset at every power-up restores. A phone first in
+the order but not in the car costs one page timeout (`CONNECT_FAILED … status=0x04`) before the next
+phone is called. In 17 car connects (2026-11-21 and 22, the `[timeline]` line's `page_start` to `acl`)
+a present iPhone answered 0.4 to 2.2 s after the page began, so 3.2 s leaves 1 s above the slowest seen.
+If a present phone ever times out at 3.2 s, raise it. Built with the phone schedule
+(`docs/ops/08_FUTURE_TASKS.md` T35); not yet on an adapter.
+
 ### Retries after a page that was answered and reset (2026-11-07)
 
 `reconnect.rs` used to sleep `BACKOFF_START_SECS` (10 s) after any failed round. Two cases cost that

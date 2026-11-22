@@ -54,6 +54,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
 | T25 Faster connect | **The owner's first annoyance.** Measured; 2026-11-22: about 6 s of every car connect was the adapter paging the absent second iPhone first; the owner reordered the phones and the Bluetooth step went from 11.1 to 4.7–5.3 s (266, 19:39:34 on). Next: where the adapter's ~22 s from power-on to the hotspot go |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
+| T35 Which iPhone first, by schedule | **Built 2026-11-22**, adapter firmware and app; unit-tested, not yet on the car |
 
 *Done*
 
@@ -1483,8 +1484,8 @@ starts; radios and `btd` up 3.4 to 3.7 s after the subscribe; then the adapter p
 Bluetooth link arrives 6.4 to 12.5 s after `page_start`, where a present phone answers in about a second.
 The box log says why: `CONNECT_FAILED … status=0x04` (page timeout) and `Host is down` for one bonded
 phone, then `DEVICE_CONNECTED` for the owner's. The stored order (`/etc/carplay/projection_policy.json`,
-two entries, set from Settings ▸ CarPlay ▸ Phones on 2026-11-08, 11-15 and 11-16) puts the owner's second
-iPhone, which is not in the car, first. Moving the owner's phone to the top is worth about 6 s of the 18 s;
+two entries, set from Settings ▸ CarPlay ▸ Phones on 2026-11-08, 11-15 and 11-16) puts the other bonded
+iPhone first, the owner's wife's (owner, 2026-11-22), which was not in the car. Moving the owner's phone to the top is worth about 6 s of the 18 s;
 the owner was told (2026-11-22). The rest: handoff to auth-setup about 2 s and the picture under 2 s
 after, the two MFi signatures fixed at about 1.7 s each.
 
@@ -1746,6 +1747,47 @@ Bluetooth-time Identify is byte-pinned (CLAUDE.md), so it needs its own plan and
 
 **On hold (owner, 2026-11-22: "I guess that is fine. The car has a browser that can be used in park").** No
 work on the simplified connection flow for video. The offer stays as built.
+
+## T35. Which iPhone connects first, by schedule (raised 2026-11-22; BUILT 2026-11-22, not yet on the car)
+
+**Why.** Two people drive the car with their own iPhones, both bonded. Owner, 2026-11-22: "I want my phone to
+be first priority all workdays until 6 and then weekends and evenings my wife's phone is first priority."
+T12's list order is fixed until someone changes it, and a phone first in the order but not in the car costs a
+page timeout at every connect (T25: about 6 s), while with both in the car the first one gets CarPlay.
+
+**Why the adapter had to change.** btd reads the order once, when it starts (`control::Control::new`,
+`load_policy`), and it starts on the session's host-present edge, right after the app's `CT_SUBSCRIBE`.
+`MGMT_SET_ORDER` reached only a running btd (its control port), so an order sent at connect time missed that
+start's first page. Now, with no btd to answer, ocbmd writes the order into btd's policy file itself
+(`store_order`: btd's layout, `autoConnect` kept as btd reads it, written only when it changes, atomically),
+and `MGMT_INFO` says `"order_at_start":true` (`docs/carplay/01_OCBM_PROTOCOL.md`).
+
+**Built 2026-11-22 (owner: "Yes and yes" to the schedule and the shorter page wait).**
+- *App.* `PhoneSchedule.kt`: each phone may have one window (days, from, to; past midnight belongs to the day
+  it starts; equal times are the whole day). The order for a moment is the phones whose window covers it, then
+  the rest, each in the driver's list order (`orderNow`, pure). The list (↑/↓) is now kept by the app
+  (`phone_schedule/base_order`), since the adapter's stored order becomes the last connect's; the first window
+  saved fixes it from the adapter's order. At every connect, before `CT_SUBSCRIBE`, the app sends the order for
+  that moment when it differs from the adapter's (`atConnect`; logs list positions and how many windows cover
+  now, never a name or address). Settings ▸ CarPlay ▸ Phones: a Schedule button per phone (seven day buttons,
+  From and To with the system time picker, Clear), each row says its window, and "connects first now" follows
+  the schedule. Shown only with firmware that says `order_at_start`. Nothing switches mid-drive.
+- *Adapter.* ocbmd as above. btd sets a 3.2 s page timeout at every Bluetooth bring-up
+  (`hci::PAGE_TIMEOUT_SLOTS`, raw Write_Page_Timeout), from the controller's 5.12 s: in 17 car connects
+  (2026-11-21 and 22) a present iPhone answered 0.4 to 2.2 s after the page began, and an absent one cost the
+  whole 5.12 s before the next phone was called.
+- *Verified.* `cargo test` (ocbmd: the order kept with no btd, `autoConnect` kept, no rewrite of the same
+  order; bt-common: the parameter and opcode), `tools/run_tests.sh`; the app's unit tests with the owner's
+  example (his phone Monday 7:30 and Friday 17:59, hers Friday 18:00, Saturday and Sunday), windows past
+  midnight and across Sunday into Monday, overlaps, the list against changed bonds, the row's words.
+- *Not verified.* Anything on an adapter or in the car: the order taken before Bluetooth starts
+  (`phone order kept for Bluetooth's next start` in the box log, then `[reconnect]` calling the scheduled
+  phone first), the page timeout (`[btd] page timeout 3200 ms`; a missing phone's `CONNECT_FAILED … 0x04`
+  about 3.2 s after `page_start`; a present phone still connecting), and the dialog on the car's screen.
+
+**Done means.** On a weekday morning the owner's phone connects first with both in the car, and on an evening
+or a weekend his wife's does; with only one phone in the car, it connects about 3 s after the other's page
+starts instead of 5.
 
 ## Left off this plan
 

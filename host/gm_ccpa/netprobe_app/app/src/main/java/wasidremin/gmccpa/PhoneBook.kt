@@ -21,6 +21,12 @@ object PhoneBook {
 
     fun normalize(mac: String): String = mac.trim().uppercase()
 
+    /** Pure: the bonds in `MGMT_INFO`'s `devices`, in the order the adapter calls them. */
+    fun devicesOf(mgmtInfo: String?): List<String> = runCatching {
+        val a = JSONObject(mgmtInfo ?: return emptyList()).optJSONArray("devices") ?: return emptyList()
+        (0 until a.length()).map { normalize(a.optString(it)) }.filter { it.isNotEmpty() }
+    }.getOrDefault(emptyList())
+
     /** Learn the name of the phone the adapter just identified. Ignores an empty or address-less identity. */
     fun remember(ctx: Context, identJson: String) {
         val o = runCatching { JSONObject(identJson) }.getOrNull() ?: return

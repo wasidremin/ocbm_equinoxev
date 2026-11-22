@@ -1554,7 +1554,10 @@ fn request_wireless_restart() {
 }
 
 /// btd's connection policy, beside the bond store (`wireless::control::policy_path`).
+#[cfg(not(test))]
 const BT_POLICY_FILE: &str = "/etc/carplay/projection_policy.json";
+#[cfg(test)]
+const BT_POLICY_FILE: &str = "/tmp/ocbmd_selftest_projection_policy.json";
 /// The app's Connect on one phone (`MGMT_CONNECT_DEVICE`), left for the btd that the wireless
 /// restart starts next (`wireless::control::take_connect_next`). tmpfs; btd ignores it after a minute.
 #[cfg(not(test))]
@@ -1614,6 +1617,36 @@ fn ordered_bonds(bonds: Vec<String>, order: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// Pure: btd's policy file with [order] in place of its order, in btd's own layout
+/// (`wireless::control::save_policy`). `autoConnect` is kept as btd would read it
+/// (`control::load_policy`): true with no file, false from a file it cannot parse.
+fn policy_with_order(existing: Option<&str>, order: &[String]) -> String {
+    let auto_connect = match existing {
+        None => true,
+        Some(s) => {
+            let compact: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+            compact.contains("\"autoConnect\":true")
+        }
+    };
+    let list: Vec<String> = order.iter().map(|m| format!("\"{m}\"")).collect();
+    format!("{{\"autoConnect\":{auto_connect},\"order\":[{}]}}", list.join(","))
+}
+
+/// The order for btd's next start, when btd is not running to take it (T35: the app sends the order
+/// before the session's Bluetooth starts, and btd reads the file once, when it starts). Written only
+/// when it changes, since it is flash, and atomically, like btd's own write. Ok(true): written.
+fn store_order(path: &str, order: &[String]) -> std::io::Result<bool> {
+    let existing = std::fs::read_to_string(path).ok();
+    let body = policy_with_order(existing.as_deref(), order);
+    if existing.as_deref() == Some(body.as_str()) {
+        return Ok(false);
+    }
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, &body)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(true)
 }
 
 /// A `policy` request that sets only the order, so btd keeps its stored `autoConnect`.
@@ -3823,14 +3856,38 @@ impl Daemon {
                 self.mgmt_ack(verb, u8::from(!ok));
             }
             p::MGMT_SET_ORDER => {
-                let resp = parse_order_arg(&pl[1..]).and_then(|order| {
-                    eprintln!("[ocbmd] mgmt: phone order from host: {} address(es)", order.len());
-                    wireless_control(&set_order_request(&order))
-                });
-                let ok = resp.as_deref().is_some_and(|r| r.contains("\"ok\":true"));
-                if !ok {
-                    eprintln!("[ocbmd] mgmt: phone order NOT set — btd answered {resp:?}");
-                }
+                let ok = match parse_order_arg(&pl[1..]) {
+                    None => {
+                        eprintln!("[ocbmd] mgmt: phone order NOT set — a malformed address");
+                        false
+                    }
+                    Some(order) => {
+                        eprintln!("[ocbmd] mgmt: phone order from host: {} address(es)", order.len());
+                        match wireless_control(&set_order_request(&order)) {
+                            Some(resp) => {
+                                let ok = resp.contains("\"ok\":true");
+                                if !ok {
+                                    eprintln!("[ocbmd] mgmt: phone order NOT set — btd answered {resp:?}");
+                                }
+                                ok
+                            }
+                            // No btd: the session's Bluetooth has not started yet, and its btd reads this.
+                            None => match store_order(BT_POLICY_FILE, &order) {
+                                Ok(changed) => {
+                                    eprintln!(
+                                        "[ocbmd] mgmt: phone order kept for Bluetooth's next start ({})",
+                                        if changed { "changed" } else { "as it was" }
+                                    );
+                                    true
+                                }
+                                Err(e) => {
+                                    eprintln!("[ocbmd] mgmt: phone order NOT set — btd not running and the file failed ({e})");
+                                    false
+                                }
+                            },
+                        }
+                    }
+                };
                 self.mgmt_ack(verb, u8::from(!ok));
             }
             _ => {}
@@ -3879,6 +3936,8 @@ impl Daemon {
         self.bt.request_ssp();
         // In btd's connect order. `phone_order` tells the app this box takes MGMT_CONNECT_DEVICE
         // and MGMT_SET_ORDER; an older box leaves it out and the app hides those controls.
+        // `order_at_start` says MGMT_SET_ORDER sent before the session's Bluetooth starts is kept for
+        // it (T35, the phone schedule, 2026-11-22); an older box answers 1 there and the app says so.
         // `ev_models` tells it this box relays the EV-routing models and the Maps display name
         // (T7, 2026-11-13); without it the app sends the Identify and status file it always did.
         // `car_gps` says carplayd takes INPUT_LOCATION (T6) and `nav_url` that it takes CMD_NAV_URL
@@ -3895,7 +3954,7 @@ impl Daemon {
              \"rootfs_free_kb\":{rt_free},\"ssp\":{ssp},\"hci_up\":{hci_up},\"wlan_ap\":{ap},\
              \"transport\":\"{transport}\",\"host_present\":{host},\"phone_present\":{phone},\
              \"daemons\":{{\"ocbmd\":{d0},\"iap2d\":{d1},\"airplayd\":{d2},\"carplay_wireless\":{d3}}},\
-             \"host_name\":\"{host_name}\",\"phone_order\":true,\"ev_models\":true,\"car_gps\":true,\"nav_url\":true,\"video\":true,\
+             \"host_name\":\"{host_name}\",\"phone_order\":true,\"order_at_start\":true,\"ev_models\":true,\"car_gps\":true,\"nav_url\":true,\"video\":true,\
              \"fw_update\":{fw_update},\"fw\":\"{fw}\",\"fw_pending\":{fw_pending},\"fw_prev\":{fw_prev},\
              {usb_net}\"sta_uplink\":{sta_uplink},\"wifi_link\":{{\"id\":\"{link_id}\",\"via\":\"{via}\"}},\"devices\":[{devs}]}}",
             // T15, the Wi-Fi link: this box takes MGMT_WIFI_LINK. `id` is ocbm_link::box_id of the key it
@@ -5789,6 +5848,44 @@ mod tests {
             "uppercase, repeats dropped, and no autoConnect so btd keeps its own"
         );
         assert_eq!(sent_mgmt(&mut d), vec![vec![p::MGMT_ACK, p::MGMT_SET_ORDER, 0]]);
+    }
+
+    #[test]
+    fn with_btd_not_running_the_order_is_kept_for_its_next_start() {
+        let _flag = presence_flag_lock(); // nothing may listen on the shared test control port
+        let _ = std::fs::remove_file(BT_POLICY_FILE);
+        let mut d = td();
+        let mut pl = vec![p::MGMT_SET_ORDER];
+        pl.extend_from_slice(b"aa:bb:cc:dd:ee:02,AA:BB:CC:DD:EE:01");
+        d.handle(p::CH_MGMT, p::F_SOM | p::F_EOM, &pl);
+        assert_eq!(sent_mgmt(&mut d), vec![vec![p::MGMT_ACK, p::MGMT_SET_ORDER, 0]]);
+        assert_eq!(
+            std::fs::read_to_string(BT_POLICY_FILE).unwrap(),
+            "{\"autoConnect\":true,\"order\":[\"AA:BB:CC:DD:EE:02\",\"AA:BB:CC:DD:EE:01\"]}"
+        );
+        assert_eq!(
+            policy_order(&std::fs::read_to_string(BT_POLICY_FILE).unwrap()),
+            vec!["AA:BB:CC:DD:EE:02".to_string(), "AA:BB:CC:DD:EE:01".to_string()],
+            "MGMT_INFO lists the phones in the order kept"
+        );
+        let _ = std::fs::remove_file(BT_POLICY_FILE);
+    }
+
+    #[test]
+    fn the_kept_order_leaves_auto_connect_as_btd_reads_it_and_rewrites_only_a_change() {
+        let order = vec!["AA:BB:CC:DD:EE:01".to_string()];
+        assert_eq!(policy_with_order(None, &order), "{\"autoConnect\":true,\"order\":[\"AA:BB:CC:DD:EE:01\"]}");
+        assert_eq!(
+            policy_with_order(Some("{\"autoConnect\": false, \"order\":[]}"), &order),
+            "{\"autoConnect\":false,\"order\":[\"AA:BB:CC:DD:EE:01\"]}",
+            "the driver's own off stays off"
+        );
+        assert!(policy_with_order(Some("garbage"), &order).starts_with("{\"autoConnect\":false"), "btd reads a bad file as off");
+        let path = "/tmp/ocbmd_selftest_policy_rewrite.json";
+        let _ = std::fs::remove_file(path);
+        assert!(store_order(path, &order).unwrap(), "first write");
+        assert!(!store_order(path, &order).unwrap(), "the same order is not written again");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

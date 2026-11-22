@@ -281,6 +281,12 @@ pub fn bring_up(hci_dev: &str, name: &str) -> std::io::Result<()> {
     let t0 = std::time::Instant::now();
     crate::hci::write_scan_enable(crate::hci::dev_id(hci_dev)?, crate::hci::SCAN_PAGE_AND_INQUIRY)?;
     eprintln!("[btd] hciconfig [{hci_dev:?}, \"piscan\"] took {}ms (raw Write_Scan_Enable)", t0.elapsed().as_millis());
+    // A shorter wait for a phone that is not there, so the next one in the order is called sooner
+    // (`hci::PAGE_TIMEOUT_SLOTS`). Non-fatal: the controller's 5.12 s default is what ran before.
+    match crate::hci::write_page_timeout(crate::hci::dev_id(hci_dev)?, crate::hci::PAGE_TIMEOUT_SLOTS) {
+        Ok(()) => eprintln!("[btd] page timeout {} ms", u32::from(crate::hci::PAGE_TIMEOUT_SLOTS) * 625 / 1000),
+        Err(e) => eprintln!("[btd] page timeout not set ({e}); the controller's default stands"),
+    }
     eprintln!("[btd] HCI bring-up OK dev={hci_dev} name={name}");
     Ok(())
 }

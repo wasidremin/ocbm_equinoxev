@@ -54,6 +54,7 @@ const OP_WRITE_CLASS_OF_DEV: u16 = 0x0C24;
 const OP_WRITE_EIR: u16 = 0x0C52;
 const OP_WRITE_SSP_MODE: u16 = 0x0C56;
 const OP_WRITE_SCAN_ENABLE: u16 = 0x0C1A;
+const OP_WRITE_PAGE_TIMEOUT: u16 = 0x0C18;
 
 /// `HCISETSCAN`, `_IOW('H', 221, int)`. Unlike the other operations this takes a POINTER to a
 /// `hci_dev_req`, matching BlueZ `tools/hciconfig.c`'s `cmd_scan`.
@@ -297,9 +298,33 @@ pub fn write_scan_enable(dev: u16, scan: u32) -> io::Result<()> {
     HciSocket::open_bound(dev)?.cmd(OP_WRITE_SCAN_ENABLE, &[scan as u8])
 }
 
+/// How long a page to one phone may take before the controller gives up (Page Timeout status 0x04),
+/// in 0.625 ms slots. The controller's default is 0x2000, 5.12 s. In the car (17 connects, 2026-11-21 and 22) a
+/// present iPhone answered 0.4 to 2.2 s after the page began (`[timeline]` `page_start` to `acl`),
+/// and an absent one cost the whole 5.12 s before the next phone was tried; 3.2 s keeps 1 s above the
+/// slowest answer seen and saves about 2 s for each absent phone ahead of the present one (T35).
+pub const PAGE_TIMEOUT_SLOTS: u16 = 0x1400;
+
+/// Pure: the Write_Page_Timeout parameter for [slots], little-endian.
+pub fn page_timeout_param(slots: u16) -> [u8; 2] {
+    slots.to_le_bytes()
+}
+
+/// Write_Page_Timeout as a raw command, fire-and-forget like [`write_scan_enable`]. The controller
+/// keeps it until its next reset, so the bring-up sends it every time.
+pub fn write_page_timeout(dev: u16, slots: u16) -> io::Result<()> {
+    HciSocket::open_bound(dev)?.cmd(OP_WRITE_PAGE_TIMEOUT, &page_timeout_param(slots))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_page_timeout_is_three_point_two_seconds_little_endian() {
+        assert_eq!(u32::from(PAGE_TIMEOUT_SLOTS) * 625 / 1000, 3200, "ms");
+        assert_eq!(page_timeout_param(PAGE_TIMEOUT_SLOTS), [0x00, 0x14]);
+    }
 
     #[test]
     fn dev_id_parses_hci_names() {
@@ -334,5 +359,6 @@ mod tests {
         assert_eq!(OP_WRITE_EIR, op(0x0052));
         assert_eq!(OP_WRITE_SSP_MODE, op(0x0056));
         assert_eq!(OP_WRITE_SCAN_ENABLE, op(0x001A));
+        assert_eq!(OP_WRITE_PAGE_TIMEOUT, op(0x0018));
     }
 }

@@ -198,6 +198,8 @@ class LauncherUi(private val act: Activity) {
     var onConnectPhone: (PhoneBook.Phone) -> Unit = {}
     /** The new connect order, every bonded address, first to connect first. */
     var onPhoneOrder: (List<String>) -> Unit = {}
+    /** One phone's schedule saved (null: cleared), T35. */
+    var onPhoneSchedule: (PhoneBook.Phone, PhoneSchedule.Window?) -> Unit = { _, _ -> }
     /** Advanced-page USB announce segment. Index 0 Off, 1 Image, 2 No medium. */
     var onUsbAnnounce: (Int) -> Unit = {}
     var onUsbAnnounceRetries: (Int) -> Unit = {}
@@ -557,7 +559,7 @@ class LauncherUi(private val act: Activity) {
         phonesCard = EqCard(act)
         page.addView(phonesCard)
         // The pages are rebuilt when the settings width settles; keep what was last shown.
-        fillPhones(shownPhones, shownPhonesNote, shownCanChoose)
+        fillPhones(shownPhones, shownPhonesNote, shownCanChoose, shownCanSchedule)
         page.addView(eqSectionLabel(act, "Voice"))
         val role = wasidremin.gmccpa.voice.AssistantRole
         voiceRow = EqRow(
@@ -789,6 +791,7 @@ class LauncherUi(private val act: Activity) {
     private var shownPhones: List<PhoneBook.Phone>? = null
     private var shownPhonesNote: String? = "Adapter not connected. Paired iPhones show here once it is."
     private var shownCanChoose = false
+    private var shownCanSchedule = false
 
     /**
      * The adapter's paired iPhones, in the order it connects them. Null [phones] shows [note] in
@@ -800,28 +803,40 @@ class LauncherUi(private val act: Activity) {
         if (::bridgeRow.isInitialized) bridgeRow.setSubtitle(text)
     }
 
-    fun setPhones(phones: List<PhoneBook.Phone>?, note: String? = null, canChoose: Boolean = false) = act.runOnUiThread {
-        uiLog.i("phones: ${phones?.let { l -> "${l.size} paired, connected=${l.count { it.connected }}, choose=$canChoose" } ?: note}")
+    fun setPhones(
+        phones: List<PhoneBook.Phone>?,
+        note: String? = null,
+        canChoose: Boolean = false,
+        canSchedule: Boolean = false,
+    ) = act.runOnUiThread {
+        uiLog.i("phones: ${phones?.let { l -> "${l.size} paired, connected=${l.count { it.connected }}, choose=$canChoose, schedule=$canSchedule" } ?: note}")
         shownPhones = phones
         shownPhonesNote = note
         shownCanChoose = canChoose
+        shownCanSchedule = canSchedule
         if (act.isFinishing || !::phonesCard.isInitialized) return@runOnUiThread
-        fillPhones(phones, note, canChoose)
+        fillPhones(phones, note, canChoose, canSchedule)
     }
 
-    private fun fillPhones(phones: List<PhoneBook.Phone>?, note: String?, canChoose: Boolean) {
+    /** [phones] arrive in the driver's list order (T35); "connects first now" follows the schedule. */
+    private fun fillPhones(phones: List<PhoneBook.Phone>?, note: String?, canChoose: Boolean, canSchedule: Boolean) {
         phonesCard.removeAllViews()
         if (phones == null) {
             phonesCard.addRow(EqRow(act, "Paired iPhones", note))
             return
         }
         val ordered = canChoose && phones.size > 1
+        val scheduled = ordered && canSchedule
         val macs = phones.map { it.mac }
+        val windows = if (scheduled) PhoneSchedule.windows(act) else emptyMap()
+        val firstNow = if (ordered) PhoneSchedule.forNow(act, macs).firstOrNull() else null
+        val h24 = android.text.format.DateFormat.is24HourFormat(act)
         for ((i, p) in phones.withIndex()) {
             val status = listOfNotNull(
                 if (p.connected) "Connected" else "Paired",
                 p.model,
-                if (ordered && i == 0) "connects first" else null,
+                if (p.mac == firstNow) (if (windows.isEmpty()) "connects first" else "connects first now") else null,
+                windows[p.mac]?.let { "Schedule: ${PhoneSchedule.describe(it, h24)}" },
             ).joinToString(" · ")
             val buttons = LinearLayout(act).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -836,6 +851,7 @@ class LauncherUi(private val act: Activity) {
                 add(arrowButton("↑", "Connect ${p.label} earlier", i > 0) { onPhoneOrder(PhoneBook.moved(macs, p.mac, -1)) })
                 add(arrowButton("↓", "Connect ${p.label} later", i < phones.lastIndex) { onPhoneOrder(PhoneBook.moved(macs, p.mac, 1)) })
             }
+            if (scheduled) add(eqButton(act, "Schedule", EqButtonStyle.SECONDARY) { showScheduleDialog(p, windows[p.mac], h24) })
             if (canChoose) {
                 add(eqButton(act, "Connect", EqButtonStyle.SECONDARY) { confirmConnect(p, phones.firstOrNull { it.connected }) }
                     .apply { visibility = if (p.connected) View.INVISIBLE else View.VISIBLE })
@@ -854,6 +870,94 @@ class LauncherUi(private val act: Activity) {
             act, if (phones.isEmpty()) "No iPhones paired" else "Add an iPhone",
             "On the iPhone: Settings ▸ General ▸ CarPlay ▸ Available Cars, then pick this car.",
         ))
+    }
+
+    /**
+     * Settings ▸ Phones ▸ Schedule (T35): the days and hours [p] connects first. A new one starts as the
+     * owner's example (weekdays until 6 PM, 2026-11-22). Save with no day ticked clears it.
+     */
+    private fun showScheduleDialog(p: PhoneBook.Phone, current: PhoneSchedule.Window?, h24: Boolean) {
+        var days = current?.days ?: PhoneSchedule.WEEKDAYS
+        var from = current?.fromMin ?: 0
+        var to = current?.toMin ?: (18 * 60)
+        val dialog = Dialog(act)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setDimAmount(0.6f)
+        val body = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            background = EqTheme.rounded(0xFF111826.toInt(), 28f, EqTheme.CARD_LINE)
+            setPadding(EqTheme.px(40f), EqTheme.px(36f), EqTheme.px(40f), EqTheme.px(28f))
+            addView(EqTheme.text(act, 28f, EqTheme.TEXT, EqTheme.Weight.LIGHT).apply { text = "When ${p.label} connects first" })
+        }
+        val summary = EqTheme.text(act, 18f, EqTheme.TEXT_DIM)
+        val dayRow = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        val timeRow = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        lateinit var redraw: () -> Unit
+        fun pick(minute: Int, set: (Int) -> Unit) {
+            android.app.TimePickerDialog(
+                act, android.R.style.Theme_DeviceDefault_Dialog_Alert,
+                { _, h, m -> set(h * 60 + m); redraw() }, minute / 60, minute % 60, h24,
+            ).show()
+        }
+        redraw = {
+            dayRow.removeAllViews()
+            for ((i, d) in listOf("M", "T", "W", "T", "F", "S", "S").withIndex()) {
+                val on = days and (1 shl i) != 0
+                dayRow.addView(
+                    eqButton(act, d, if (on) EqButtonStyle.PRIMARY else EqButtonStyle.SECONDARY) {
+                        days = days xor (1 shl i)
+                        redraw()
+                    }.apply {
+                        minWidth = EqTheme.px(72f)
+                        setPadding(0, 0, 0, 0)
+                        contentDescription = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[i]
+                    },
+                    LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = EqTheme.px(10f) },
+                )
+            }
+            timeRow.removeAllViews()
+            timeRow.addView(EqTheme.text(act, 19f, EqTheme.TEXT).apply { text = "From" })
+            timeRow.addView(
+                eqButton(act, PhoneSchedule.clock(from, h24), EqButtonStyle.SECONDARY) { pick(from) { from = it } },
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(16f) },
+            )
+            timeRow.addView(EqTheme.text(act, 19f, EqTheme.TEXT).apply { text = "to" },
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(24f) })
+            timeRow.addView(
+                eqButton(act, PhoneSchedule.clock(to, h24), EqButtonStyle.SECONDARY) { pick(to) { to = it } },
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(16f) },
+            )
+            summary.text = if (days == 0) "No day ticked: Save clears the schedule." else
+                "${PhoneSchedule.describe(PhoneSchedule.Window(days, from, to), h24)}. Outside these times the order of " +
+                    "the list decides. If ${p.label} is not in the car, the adapter calls the next iPhone a few seconds later. " +
+                    "It takes effect at the next connect."
+        }
+        redraw()
+        body.addView(dayRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(24f) })
+        body.addView(timeRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(20f) })
+        body.addView(summary.apply { setLineSpacing(0f, 1.15f) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(20f) })
+        val buttons = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        if (current != null) {
+            buttons.addView(eqButton(act, "Clear", EqButtonStyle.DANGER) {
+                dialog.dismiss()
+                onPhoneSchedule(p, null)
+            }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = EqTheme.px(16f) })
+        }
+        buttons.addView(eqButton(act, "Cancel", EqButtonStyle.SECONDARY) { dialog.dismiss() })
+        buttons.addView(eqButton(act, "Save", EqButtonStyle.PRIMARY) {
+            dialog.dismiss()
+            onPhoneSchedule(p, if (days == 0) null else PhoneSchedule.Window(days, from, to))
+        }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(16f) })
+        body.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(32f) })
+        dialog.setContentView(body, ViewGroup.LayoutParams(safeDialogWidth(EqTheme.px(760f)), ViewGroup.LayoutParams.WRAP_CONTENT))
+        dialog.show()
     }
 
     private fun arrowButton(label: String, description: String, enabled: Boolean, onClick: () -> Unit) =

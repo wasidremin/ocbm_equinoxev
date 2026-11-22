@@ -31,7 +31,7 @@ files (the drive log `trips.ndjson` and its checkpoint `open.json`, 2026-11-11).
 | Stop CarPlay | `buildConnection` stop row | action only | `onStop()` | Troubleshooting | move | Support action |
 | Start | `startRow`, shown only when IDLE/STOPPED | action only | `onStart()` | Troubleshooting | move | Support action |
 | Forget all iPhones (was "Forget pairing") | `buildAdvanced`, `confirmForget()` | action only (clears every box bond + app Ed25519 store) | Destructive, confirmed | Advanced | keep | Destructive radio/pairing op; keep confirm |
-| Phones (2026-10-25) | `buildCarPlay` ▸ Phones, `setPhones()`, `PhoneBook` | `phone_book/<MAC>` (name, model from `CT_PHONE_IDENT`) | Lists the adapter's bonds from `MGMT_GET_INFO` in its connect order, marks the live one; Forget per phone sends `MGMT_FORGET_DEVICE` (box restarts wireless). App peer store untouched. With adapter firmware that reports `phone_order` (2026-11-05): ↑/↓ send `MGMT_SET_ORDER` (kept on the box's flash), Connect sends `MGMT_CONNECT_DEVICE` after a confirm; older firmware shows a note instead | Settings | keep | `docs/ops/08_FUTURE_TASKS.md` T12; built 2026-11-05, unverified on the car |
+| Phones (2026-10-25) | `buildCarPlay` ▸ Phones, `setPhones()`, `PhoneBook`, `PhoneSchedule` | `phone_book/<MAC>` (name, model from `CT_PHONE_IDENT`); `phone_schedule/base_order`, `phone_schedule/window:<MAC>` (T35) | Lists the adapter's bonds from `MGMT_GET_INFO` in its connect order, marks the live one; Forget per phone sends `MGMT_FORGET_DEVICE` (box restarts wireless). App peer store untouched. With adapter firmware that reports `phone_order` (2026-11-05): ↑/↓ send `MGMT_SET_ORDER` (kept on the box's flash), Connect sends `MGMT_CONNECT_DEVICE` after a confirm; older firmware shows a note instead | Settings | keep | `docs/ops/08_FUTURE_TASKS.md` T12; built 2026-11-05, unverified on the car |
 
 ## Display page (`Ui.kt buildDisplay`)
 
@@ -357,6 +357,16 @@ stays (serves Capture Current).
   next start. This switch is the Wi-Fi link's off switch; the owner asked for one on 2026-11-22
   ("I prefer the USB method … let's not remove it totally"), and a second switch for the link alone
   would leave the adapter joining the hotspot for nothing.
+
+## 2026-11-22 deltas (which iPhone first, by schedule; T35)
+
+- **Phones ▸ Schedule** (CarPlay ▸ Phones, per phone; shown with two or more phones and adapter firmware
+  whose `MGMT_INFO` says `"order_at_start":true`): the days and hours that phone connects first. New store
+  `phone_schedule`: `window:<MAC>` = `days,from,to` (days bit 0 Monday … bit 6 Sunday; minutes after
+  midnight) and `base_order` (the list's order, the phones' addresses joined by ","). No window by default.
+- **Phones ▸ ↑/↓**: the order is now also kept by the app (`phone_schedule/base_order`), and the list shows
+  it in that order. Carried over: with none kept, the adapter's stored order is the list, as before; the
+  first window saved keeps it. A forgotten phone's window goes with it.
 
 ## Version high-water
 

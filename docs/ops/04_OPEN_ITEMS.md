@@ -65,6 +65,12 @@ high-water mark: versionCode 267 (`4.0+hotspot-window`, 2026-11-22; `host/gm_ccp
   Proposed, needs the bench: ocbmd restarting when its USB host leaves. The owner prefers USB with the
   tap meanwhile (Join the car's hotspot off). When it is back on, a cold start should show `linked over
   the car's hotspot`, or `wifi: the adapter was not reached … adapter on USB N s ago` with N near 30.
+- **Which iPhone first, by schedule (2026-11-22, T35; not yet published).** Needs the adapter update
+  it carries. Check in a drive: with a window set, `phones: list phone N first for this start` in the
+  app's log and `phone order kept for Bluetooth's next start` in the box log, then `[reconnect]` calling
+  that phone first; `[btd] page timeout 3200 ms` at the bring-up, and a missing phone's `CONNECT_FAILED
+  … status=0x04` about 3.2 s after `page_start` (the `[timeline]` line). Watch that a present phone never
+  times out at 3.2 s (it answered within 2.2 s in 17 connects).
 - **Connect speed and the stall sentence (2026-11-22, Play 266).** The phone order is seen working:
   after the owner moved their phone first, no `CONNECT_FAILED … status=0x04` and Bluetooth 4.7 to 5.3 s
   after the subscribe, from 11.1 (T25). Still to see: the keeper's at-once retry after a missed scan, and
@@ -201,9 +207,9 @@ high-water mark: versionCode 267 (`4.0+hotspot-window`, 2026-11-22; `host/gm_ccp
     (`CONNECT_FAILED … status=0x04`, `SDP query failed: Host is down`), and only then is the owner's
     phone tried. `bt-connected` has been 12.5 to 14.9 s after attach on every start since
     2026-11-10, and the first picture about 21 s. Today's fix is Settings ▸ CarPlay ▸ Phones: move
-    the phone that drives to the top (T12, on the car since 2026-11-11). Proposed, not built: the
-    app puts the phone that last connected first by itself (`MGMT_SET_ORDER`, no firmware change),
-    unless the owner has arranged the order by hand.
+    the phone that drives to the top (T12, on the car since 2026-11-11). The second phone is the owner's
+    wife's (2026-11-22), so the owner chose a schedule over "last connected first": T35, built
+    2026-11-22, with a 3.2 s page timeout that halves what a missing phone costs.
   - *Fixed, in the next build: a quiet screen rebuilt the video decoder.* The stall watchdog timed
     from the last access unit queued, and the decoder often holds that one until the next arrives.
     The first frame after a pause then looked like a stall of the pause's length (10.9 s and 6.2 s

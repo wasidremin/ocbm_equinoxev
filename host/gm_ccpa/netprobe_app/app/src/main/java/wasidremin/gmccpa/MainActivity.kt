@@ -424,7 +424,12 @@ class MainActivity : Activity() {
         val bonds = probe.bondsOrNull()
         if (!uiAlive()) return
         if (bonds == null) ui.setPhones(null, "The adapter did not answer. Open Settings again to retry.")
-        else ui.setPhones(PhoneBook.list(applicationContext, bonds.devices, connectedPhoneMac), canChoose = bonds.canChoose)
+        else ui.setPhones(
+            // The driver's list (T35): with a schedule the adapter holds the order of the last connect.
+            PhoneBook.list(applicationContext, PhoneSchedule.baseOrder(applicationContext, bonds.devices), connectedPhoneMac),
+            canChoose = bonds.canChoose,
+            canSchedule = bonds.canSchedule,
+        )
     }
 
     /**
@@ -449,11 +454,32 @@ class MainActivity : Activity() {
         refreshPhones()
     }
 
-    /** Settings ▸ Phones' arrows: the box keeps the order and tries the phones in it from now on. */
+    /**
+     * Settings ▸ Phones' arrows: the driver's list, kept here (T35), and the order for now, which the box
+     * keeps and tries the phones in from now on. With no schedule the two are the same.
+     */
     private fun setPhoneOrder(order: List<String>) {
-        val ok = ocbmProbe?.setPhoneOrder(order) == true
+        PhoneSchedule.setBaseOrder(applicationContext, order)
+        val ok = ocbmProbe?.setPhoneOrder(PhoneSchedule.forNow(applicationContext, order)) == true
         emit("phone order: ${order.size} phone(s) ${if (ok) "set" else "NOT set"}")
         if (!ok) ui.setDetail("the adapter did not take the new order — try again in a moment")
+        refreshPhones()
+    }
+
+    /**
+     * Settings ▸ Phones ▸ Schedule (T35): [p]'s window, or none. Saved here, and the order for now sent
+     * at once; every connect sends it again before Bluetooth starts.
+     */
+    private fun setPhoneSchedule(p: PhoneBook.Phone, w: PhoneSchedule.Window?) {
+        val bonded = ocbmProbe?.bondedDevicesOrNull()
+        if (bonded == null) {
+            ui.setDetail("Adapter not connected — the schedule was not saved")
+            return
+        }
+        PhoneSchedule.setWindow(applicationContext, p.mac, w, bonded)
+        val order = PhoneSchedule.forNow(applicationContext, bonded)
+        val ok = order == bonded || ocbmProbe?.setPhoneOrder(order) == true
+        emit("phone schedule: list phone ${PhoneSchedule.baseOrder(applicationContext, bonded).indexOf(p.mac) + 1} ${if (w == null) "cleared" else "set"}; order now ${if (ok) "set" else "NOT set"}")
         refreshPhones()
     }
 
@@ -477,6 +503,7 @@ class MainActivity : Activity() {
         emit("forget one: ${p.mac} ${if (ok) "cleared" else "NOT cleared"}")
         if (ok) {
             PhoneBook.forget(applicationContext, p.mac)
+            PhoneSchedule.forget(applicationContext, p.mac)
             if (p.connected) connectedPhoneMac = null
         }
         ui.setDetail(
@@ -837,6 +864,7 @@ class MainActivity : Activity() {
             onForgetOnePhone = { p -> runAsync { forgetOnePhone(p) } }
             onConnectPhone = { p -> runAsync { connectOnePhone(p) } }
             onPhoneOrder = { order -> runAsync { setPhoneOrder(order) } }
+            onPhoneSchedule = { p, w -> runAsync { setPhoneSchedule(p, w) } }
             onUsbAnnounce = { index -> runAsync { applyUsbAnnounce(index) } }
             onUsbAnnounceRetries = { index -> runAsync { applyUsbAnnounceRetries(index) } }
             onAdvancedOpened = {
@@ -1551,7 +1579,7 @@ class MainActivity : Activity() {
                         ui.setPhones(listOf(
                             PhoneBook.Phone("AA:BB:CC:DD:EE:01", "Preview iPhone", "iPhone17,1", connected = true),
                             PhoneBook.Phone("AA:BB:CC:DD:EE:02", null, null, connected = false),
-                        ), canChoose = i.getBooleanExtra("choose", true))
+                        ), canChoose = i.getBooleanExtra("choose", true), canSchedule = i.getBooleanExtra("choose", true))
                     }
                 }, 4_000L)
             }
