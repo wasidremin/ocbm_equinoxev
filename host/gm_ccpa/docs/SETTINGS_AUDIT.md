@@ -348,6 +348,16 @@ stays (serves Capture Current).
   (`video/RouteA.kt`). Takes effect at the next connect. New key, nothing to carry over. Not yet on the
   car.
 
+## 2026-11-22 deltas (the Wi-Fi link's search; T15)
+
+- **Join the car's hotspot** (Advanced, same switch `sta_uplink/enabled`): no setting changed shape.
+  The row's text now says the app looks for the adapter on the hotspot for about 30 s after the
+  adapter starts, and that off is USB with the Allow prompt, as before, with the hotspot's name and
+  password kept (and the `wifi_link` key on both sides), so on again uses the link from the adapter's
+  next start. This switch is the Wi-Fi link's off switch; the owner asked for one on 2026-11-22
+  ("I prefer the USB method … let's not remove it totally"), and a second switch for the link alone
+  would leave the adapter joining the hotspot for nothing.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

@@ -1430,9 +1430,11 @@ class LauncherUi(private val act: Activity) {
     private fun staUplinkText(): String =
         "Experimental. The adapter joins the car's hotspot when it starts and stays on it, and this app then reaches " +
             "the adapter over the hotspot instead of USB, with no Allow prompt; it uses USB, with the prompt, only " +
-            "when the adapter is not found there within about 15 s. The first connect after turning this on is over " +
-            "USB, and sets it up for the next drive. Without a password it only looks for the hotspot. Turn on the " +
-            "car's hotspot first. Tap here to enter its name and password exactly as the car shows them. " +
+            "when the adapter is not found there within about 30 s of starting. The first connect after turning this on " +
+            "is over USB, and sets it up for the next drive. Off, the app connects over USB with the prompt, as before; " +
+            "the hotspot's name and password are kept, so turning it back on works from the adapter's next start. " +
+            "Without a password it only looks for the hotspot. Turn on the car's hotspot first. Tap here to enter its " +
+            "name and password exactly as the car shows them. " +
             (if (ssid.isBlank()) "Hotspot: not set." else "Hotspot: $ssid, password ${if (pass.length in 8..63) "set" else "not set"}.")
 
     private lateinit var joinHotspotRow: EqRow

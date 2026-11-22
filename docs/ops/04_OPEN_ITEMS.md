@@ -57,29 +57,18 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 266 (`4.0+connect-stall`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
-- **The Wi-Fi link, no Allow prompt: benched, not yet in the car (2026-11-21, T15, Play 264; the
-  keeper's start at boot in Play 265).** Needs Join the car's hotspot on with the
-  hotspot's password, and the new firmware on the adapter. With 264 alone the adapter joins the hotspot
-  only with the first session (264 started the keeper from `ocbm_boot.sh`, which an update never
-  writes), so a cold start still asks for USB permission, after up to 30 s of looking on the hotspot;
-  265 starts it from the session supervisor. In the car with 264 (2026-11-22): the key was given
-  (`taken, used from its next start`) and the keeper joined the hotspot with the session, in 5 s; an app
-  restart later in that drive looked on the hotspot for 21.7 s and fell back to USB, because ocbmd had
-  not restarted since it took the key, so nothing was listening. In the car with 265 (2026-11-22): after
-  the update's restart the app linked over the hotspot by mDNS in 60 ms, `no USB claim, no permission`,
-  confirmed the update that way, and again after a relaunch; CarPlay ran over it (12 MB in, about 2.5
-  minutes). Right after the update's reboot the app gave up after 21.7 s and asked for USB permission once,
-  because the keeper's first scan saw the hotspot only on 2.4 GHz and waited 10 s before looking on every
-  channel. A cold start in the car with 265's firmware has not happened yet. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
-  unit's link key: taken`); the drive after should show `linked over the car's hotspot: no USB claim, no
-  permission`, or `wifi: the adapter was not reached … trying USB` with whether the hotspot was up. Also
-  check the adapter's `uplink: keeper` and `joined on channel` lines at boot, and stalls against USB
-  (21.6 Mbps adapter to host on the bench).
-- **Connect speed and the stall sentence (2026-11-22, Play 266).** Check in a drive: no
-  `CONNECT_FAILED … status=0x04` before the owner's phone once it is first in Settings ▸ CarPlay ▸
-  Phones (`acl` within about 2 s of `page_start` in the `[timeline]` line); after an adapter restart
-  the keeper's misses are retried at once; and a stalled connect shows its sentence on the startup
-  screen with `startup: stalled after …` in the log (T25, T27).
+- **The Wi-Fi link, no Allow prompt (T15): off by the owner's choice for now (2026-11-22).** In the car
+  it links when the adapter is already on the hotspot (265 and 266, mDNS, 16 to 60 ms) and CarPlay runs
+  over it; a cold start with 266 missed by about 4 s (the adapter joins about 22 s after it starts; the
+  app looked for 15 s from its own start), and after a USB start the adapter turns Wi-Fi away until it
+  restarts. Built, not yet published: the app looks until 30 s after the adapter's USB device comes up.
+  Proposed, needs the bench: ocbmd restarting when its USB host leaves. The owner prefers USB with the
+  tap meanwhile (Join the car's hotspot off). When it is back on, a cold start should show `linked over
+  the car's hotspot`, or `wifi: the adapter was not reached … adapter on USB N s ago` with N near 30.
+- **Connect speed and the stall sentence (2026-11-22, Play 266).** The phone order is seen working:
+  after the owner moved their phone first, no `CONNECT_FAILED … status=0x04` and Bluetooth 4.7 to 5.3 s
+  after the subscribe, from 11.1 (T25). Still to see: the keeper's at-once retry after a missed scan, and
+  a stalled connect's sentence on the startup screen with `startup: stalled after …` in the log (T27).
 - **Low flash no longer marks the adapter unhealthy (2026-11-21, Play 264): seen working in the car
   2026-11-22.** In the car with 263 the update's kept copies left 1.8 MB free, under ocbmd's 2 MB floor;
   the app ran its recovery ladder on a working adapter and the update rolled back unconfirmed. With 264

@@ -41,6 +41,21 @@ class WifiLinkTest {
         assertFalse(WifiLink.keepLooking(1_000, 15_000))
     }
 
+    /** The car's 19:38:40 start on 2026-11-22: the hotspot up at once, the adapter's USB device up 5.9 s in. */
+    @Test fun aStartKeepsLookingUntilThirtySecondsAfterTheAdapterCameUpOnUsb() {
+        val adapterAt = 5_900L
+        fun at(elapsed: Long) = WifiLink.keepLooking(elapsed, elapsed, elapsed - adapterAt)
+        assertTrue("where 266 gave up and asked for USB permission", at(18_915))
+        assertTrue("the adapter was on the hotspot about 24 s in", at(24_000))
+        assertFalse(at(adapterAt + 30_000))
+    }
+
+    @Test fun anAdapterThatCameUpLongAgoGetsTheUsualFifteenSeconds() {
+        assertFalse(WifiLink.keepLooking(15_000, 15_000, 60_000))
+        assertFalse("not seen on USB in this process", WifiLink.keepLooking(15_000, 15_000, null))
+        assertTrue("no hotspot yet: the adapter's start does not cut the wait for it", WifiLink.keepLooking(20_000, null, 40_000))
+    }
+
     @Test fun theSweepCoversTheRestOfTheSlash24NearestFirst() {
         val t = WifiLink.sweepTargets("192.168.230.1")
         assertEquals(253, t.size)

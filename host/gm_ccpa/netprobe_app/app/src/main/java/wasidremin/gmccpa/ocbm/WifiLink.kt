@@ -24,8 +24,12 @@ import java.util.concurrent.atomic.AtomicReference
  *    from its next start; the USB session carries on;
  *  - once the adapter has said it holds that key ([wifiFirst]), every start looks for it on the
  *    hotspot first ([connect]): the address that answered last, then mDNS (`_ocbm._tcp`, TXT `id=`),
- *    then every address on the hotspot's /24 on port 7020. The adapter's keeper (`radio_hal.sh
- *    sta_keep`) keeps it on the hotspot from boot. Not reached: the usual USB claim, with its dialog.
+ *    then every address on the hotspot's /24 on port 7020, for as long as [keepLooking]. The adapter's
+ *    keeper (`radio_hal.sh sta_keep`) keeps it on the hotspot from boot, about 22 s after it starts in
+ *    the car. Not reached: the usual USB claim, with its dialog.
+ *
+ * Off (the join off) it is USB with the dialog, as before; the key stays on both sides, so turning the
+ * join back on uses the link from the adapter's next start.
  *
  * The sweep is there because GM's firewall drops connections from hotspot clients into the head unit
  * (2026-09, versionCodes 21-32), which may include mDNS answers; connections from the app out to a
@@ -43,6 +47,13 @@ object WifiLink {
 
     /** How long a start keeps looking once the car's hotspot is up. */
     const val FIND_MS = 15_000L
+    /**
+     * How long a start keeps looking after the adapter appeared on USB, which is when it has just started.
+     * In the car with 266 (2026-11-22) a cold adapter was reachable on the hotspot 16.7 to about 19 s
+     * after its USB device came up, and the app, which had started looking with the car, gave up at 18.9 s
+     * and asked for USB permission three times; this leaves room for one missed scan on top.
+     */
+    const val BOOT_FIND_MS = 30_000L
     /** The longest a start waits for the car's hotspot to come up before it tries USB. */
     const val HOTSPOT_WAIT_MS = 30_000L
     private const val NSD_MS = 3_000L
@@ -69,10 +80,13 @@ object WifiLink {
 
     /**
      * Pure: keep looking? [elapsedMs] since the start, [hotspotUpForMs] since the car's hotspot was seen
-     * up (null: not yet). Up to [FIND_MS] once it is up, and never past [HOTSPOT_WAIT_MS] without it.
+     * up (null: not yet), [adapterUpForMs] since the adapter last appeared on USB (null: not in this
+     * process). Never past [HOTSPOT_WAIT_MS] without the hotspot; with it, up to [FIND_MS], or longer
+     * while the adapter is still within [BOOT_FIND_MS] of starting.
      */
-    fun keepLooking(elapsedMs: Long, hotspotUpForMs: Long?): Boolean =
-        if (hotspotUpForMs == null) elapsedMs < HOTSPOT_WAIT_MS else hotspotUpForMs < FIND_MS
+    fun keepLooking(elapsedMs: Long, hotspotUpForMs: Long?, adapterUpForMs: Long? = null): Boolean =
+        if (hotspotUpForMs == null) elapsedMs < HOTSPOT_WAIT_MS
+        else hotspotUpForMs < FIND_MS || (adapterUpForMs != null && adapterUpForMs < BOOT_FIND_MS)
 
     /** Pure: the other addresses of [own]'s /24, nearest first (DHCP pools start low). */
     fun sweepTargets(own: String): List<String> {
@@ -103,6 +117,16 @@ object WifiLink {
     }
 
     private fun ourId(ctx: Context): String? = key(ctx)?.let { OcbwLink.boxId(it) }
+
+    /** When the adapter last appeared on USB (its announce or its OCBM device), elapsed realtime; 0: not seen. */
+    @Volatile private var adapterOnUsbAt = 0L
+
+    /** The adapter's USB device came up: it has just started ([UsbDiagnostics]' hotplug watcher). */
+    fun noteAdapterOnUsb() {
+        adapterOnUsbAt = SystemClock.elapsedRealtime()
+    }
+
+    private fun adapterUpForMs(now: Long): Long? = adapterOnUsbAt.takeIf { it > 0L }?.let { now - it }
 
     private fun joinOn(ctx: Context): Boolean = StaUplink.joins(StaUplink.wanted(ctx))
 
@@ -144,7 +168,7 @@ object WifiLink {
             val now = SystemClock.elapsedRealtime()
             val own = hotspotAddresses()
             if (own.isNotEmpty() && hotspotSince == null) hotspotSince = now
-            if (!keepLooking(now - t0, hotspotSince?.let { now - it })) break
+            if (!keepLooking(now - t0, hotspotSince?.let { now - it }, adapterUpForMs(now))) break
             round++
             val found = parsePeer(prefs(ctx).getString(P_LAST, null))?.let { (h, p) -> link(h, p, key, "the last address") }
                 ?: nsd(ctx, id)?.let { (h, p) -> link(h, p, key, "mDNS") }
@@ -156,7 +180,11 @@ object WifiLink {
             }
             if (!cancelled()) Thread.sleep(1_000)
         }
-        log.w("wifi: the adapter was not reached in ${SystemClock.elapsedRealtime() - t0} ms ($round rounds; car hotspot ${if (hotspotSince != null) "up" else "not up"}): trying USB")
+        val end = SystemClock.elapsedRealtime()
+        log.w(
+            "wifi: the adapter was not reached in ${end - t0} ms ($round rounds; car hotspot ${if (hotspotSince != null) "up" else "not up"}; " +
+                "adapter on USB ${adapterUpForMs(end)?.let { "${it / 1000} s ago" } ?: "not seen"}): trying USB",
+        )
         return null
     }
 

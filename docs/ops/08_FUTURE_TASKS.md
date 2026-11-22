@@ -47,12 +47,12 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
-| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). The adapter link over the car's hotspot (the Wi-Fi link, from enigy's PR #2s) is **built and benched 2026-11-21**, not yet in the car |
+| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). The adapter link over the car's hotspot (the Wi-Fi link, from enigy's PR #2s) **works in the car when the adapter is already up**; a cold start missed it by about 4 s (266), fixed in the app, not yet on the car. **Off by the owner's choice for now** (2026-11-22: USB with the tap) |
 | T20 Update the adapter from the app | Built and benched 2026-11-14 (update, confirm, manual and automatic rollback). Needs one last bench install for the boot hook; app updates after that |
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
-| T25 Faster connect | **The owner's first annoyance.** Measured; the Allow tap gone with the Wi-Fi link (265); 2026-11-22: about 6 s of every car connect is the adapter paging the absent second iPhone first (the stored phone order), and the keeper retries a missed hotspot at once |
+| T25 Faster connect | **The owner's first annoyance.** Measured; 2026-11-22: about 6 s of every car connect was the adapter paging the absent second iPhone first; the owner reordered the phones and the Bluetooth step went from 11.1 to 4.7–5.3 s (266, 19:39:34 on). Next: where the adapter's ~22 s from power-on to the hotspot go |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
 
 *Done*
@@ -634,7 +634,7 @@ open from it, tracked in `04_OPEN_ITEMS.md`: whether calls echo for the far end 
 the assistant role, and the voice button ending a live call (263). Its answering a ringing call (233)
 was seen on the car on 2026-11-21.
 
-## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; the link over the car's hotspot BUILT 2026-11-21, benched, not yet in the car)
+## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; the link over the car's hotspot BUILT 2026-11-21, in the car 2026-11-22, off by the owner's choice for now)
 
 **Priority (2026-11-14).** One of the two things the owner still finds annoying on every drive (the
 other is the time to connect, T25).
@@ -1084,6 +1084,35 @@ enigy/carlink PR #2 (aca4733), Unlicense (NOTICE.md); the wire format and the ra
   video with the driver-display stream, and the first-picture time against today's with the tap. No
   phone joined a session over the bench's Wi-Fi link.
 
+**In the car with 266 (2026-11-22, 19:34 to 19:41 UTC, firmware 1b054880896f from 19:37:49).** The link
+works where the adapter is already on the hotspot (15:05 and 15:08 with 265, 60 and 16 ms; 19:37:27
+after the update's restart, 16.7 s), and CarPlay runs over it. Every other start asked for the Allow tap,
+for two reasons, both in the logs:
+
+- *A cold start misses by about 4 s.* The car's hotspot is up as soon as the head unit is, so the app
+  looked for `FIND_MS`, 15 s, from its own start, which at 19:38:40 was 3.6 s before the adapter's USB
+  announce. The adapter was on the hotspot about 22 s after its kernel started (`uptime_s` 21 at the USB
+  claim; `joined on channel 149 in 8 s` and `address: yes` arriving live at 19:39:04 to :05): 18.9 s of
+  looking ended about 5 s before that, at 19:38:59 and again at 19:40:25.
+- *Once USB wins, the adapter turns Wi-Fi away until it restarts.* An app restart on a running adapter
+  (the 266 install at 19:37:04, and 19:41:03) found it by mDNS and read EOF: `wifi: a host connected, but
+  USB holds the link this start; turned away` (12 lines at 19:37). By design in `ccpa/ocbmd/src/wifi.rs`
+  (the race is decided once per ocbmd start), and ocbmd does not restart when a USB host leaves.
+
+Even reached, a cold start's link would come at about the moment a quick tap does now: the adapter's
+~22 s to the hotspot is the wait either way, and the session (Bluetooth, the handoff) waits for the link.
+The owner prefers USB with the tap for now and keeps the link ("I prefer the USB method … it feels like
+it is much faster. I am not giving up on the other method yet", 2026-11-22): Join the car's hotspot off is
+its off switch, and keeps the name, password and key.
+
+*Built 2026-11-22, app only, not yet on the car:* the search runs until 30 s after the adapter's USB
+device came up (`BOOT_FIND_MS`, `WifiLink.keepLooking`, stamped by `UsbDiagnostics`' hotplug watcher on
+the 2d06 announce or the 2d00 device) as well as 15 s after the hotspot; an adapter that has been up longer
+gets the 15 s. The miss line says how long ago the adapter appeared. Unit tests, with the 19:38:40 start.
+*Proposed, not built (the adapter is in the car):* ocbmd restarts when its USB host leaves, so the race
+opens again; and the keeper's lines carry the adapter's uptime, to see where its 22 s go before choosing
+what to speed up (enigy 2.7.0's earlier radio load, T25, is one candidate).
+
 ## App only: T16–T19 (raised 2026-11-12)
 
 These need a Play update and nothing on the adapter.
@@ -1463,6 +1492,14 @@ after, the two MFi signatures fixed at about 1.7 s each.
 then the 10 s steps (`keeper_wait`, `docs/wireless/01_BT_AND_RADIO.md` §6e); benched on the adapter with
 no hotspot in range (the 4th to 5th miss 46 s apart, the new spacing), the adapter's script put back
 after. *Not on the car.*
+
+**In the car with 266 (2026-11-22, 19:34 to 19:41 UTC).** The owner moved their phone first at 19:39:34
+(`phone order: 2 phone(s) set`). Before, each connect had `CONNECT_FAILED … status=0x04` and 11.1 s from
+subscribe to Bluetooth connected; after, none, and 4.7 and 5.3 s. From the adapter's OCBM device to the
+picture on a cold start: 37.2 s at 19:38:46, 27.9 s at 19:40:14. Both started with the Allow tap after the
+hotspot search had missed (T15); the adapter joined the car's hotspot about 22 s after its kernel started
+(`joined on channel 149 in 8 s`), which on that path is the longest wait left. The keeper's at-once retry
+was not exercised.
 
 **enigy/ocbm 2.7.0 (2026-11-22, not ported).** Both radios loaded together and earlier in the boot, the
 radio description kept across boots: 13.8 to 16.9 s from power-on to picture on enigy's bench against
