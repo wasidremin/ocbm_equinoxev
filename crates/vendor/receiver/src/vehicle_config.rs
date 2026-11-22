@@ -106,6 +106,13 @@ pub struct VehicleConfig {
     /// is a serde type error and rejects the whole document, exactly as a mistyped Apple key does.
     #[serde(default)]
     pub view_area_anim_ms: Option<i64>,
+    /// `video_allowed` — OUR extension (top-level, snake_case), not an Apple `VehicleConfig` key: whether the
+    /// phone's video may play (route A, T34) as the app knew it at subscribe, the car's gear then. carplayd
+    /// tells the phone this at RECORD unless the app has spoken since (`playback::config_says`), so a phone
+    /// that starts its session parked hears "may play" first, as LIVI's receiver says it. Absent = the app
+    /// hasn't said (RECORD then says "may not play"). Read only when `enablesVideoPlayback` is true.
+    #[serde(default)]
+    pub video_allowed: Option<bool>,
 }
 
 /// One resolution of the OEM icon — a base64 PNG plus its pixel size.
@@ -1241,6 +1248,14 @@ accessoryConfig:
                 .accessory_config
                 .enables_hevc
         );
+    }
+
+    #[test]
+    fn video_allowed_is_the_apps_word_at_subscribe_and_absent_says_nothing() {
+        let parked = "accessoryConfig:\n  enablesVideoPlayback: true\nvideo_allowed: true\n";
+        assert_eq!(VehicleConfig::from_yaml(parked.as_bytes()).unwrap().video_allowed, Some(true));
+        assert_eq!(VehicleConfig::from_yaml(b"video_allowed: false\n").unwrap().video_allowed, Some(false));
+        assert_eq!(VehicleConfig::from_yaml(b"name: Minimum\n").unwrap().video_allowed, None);
     }
 
     #[test]

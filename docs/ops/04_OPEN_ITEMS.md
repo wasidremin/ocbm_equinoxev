@@ -79,7 +79,11 @@ high-water mark: versionCode 264 (`4.0+wifi-link`, 2026-11-21; `host/gm_ccpa/doc
   Safari, parked: the phone sent CarPlay the audio only and never opened the Playback DataStream.
   `setVideoPlaybackParameters` is `{fadeDuration: int}`. The one difference from enigy's working bench
   is the "may not play" each session's phone hears at RECORD before the app's "may play" (T34, "In the
-  car with 264"). Not yet known whether the phone ignored the later word.
+  car with 264"). Not yet known whether the phone ignored the later word. 265 sends "may play" at RECORD when the
+  session starts parked and logs the phone's answers. Check in a 265 drive, parked from the start:
+  `[video] the app's subscribe says video may play: kept for RECORD`, `setVideoPlaybackAllowed(true,
+  idle)` at RECORD, `the phone's answer to setVideoPlaybackAllowed: …`, and then whether Safari's
+  example stream opens the Playback DataStream (`A6B27562`) and plays on the car.
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
   2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
   lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and

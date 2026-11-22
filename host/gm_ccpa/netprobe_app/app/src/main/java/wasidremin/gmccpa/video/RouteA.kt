@@ -82,11 +82,15 @@ object RouteA {
     /** The phone's network for the player, while it has offered one; null otherwise. */
     private fun network(): TunnelDataSource.Factory? = phoneProxy?.let { TunnelDataSource.Factory(tunnels, it) }
 
-    /** The gear: parked when it reads PARK. The phone hears each change while a session that offered video is up. */
+    /**
+     * The gear: parked when it reads PARK. Each change goes to the adapter while the subscribe offered video, with a
+     * session up or not: before the session's RECORD the adapter keeps the newest word for it, so the phone's first
+     * word is the right one (the subscribe carries the gear at that moment, `video_allowed`).
+     */
     fun onGear(nowParked: Boolean) {
         if (parked == nowParked) return
         parked = nowParked
-        if (sessionUp && offered) playback?.onParked(nowParked)
+        if (offered) playback?.onParked(nowParked)
     }
 
     /** A keyed CarPlay session exists: the phone hears whether video may play now. */

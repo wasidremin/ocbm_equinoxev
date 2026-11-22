@@ -56,6 +56,13 @@ data class VehicleConfigSpec(
      * False until the app can play it, so the phone is never offered what nothing here plays.
      */
     val videoPlayback: Boolean = false,
+    /**
+     * The box's top-level `video_allowed` extension key: whether the phone's video may play as the session starts
+     * (the gear at subscribe); null omits it. The box tells the phone at RECORD unless the app has spoken since, so
+     * a session that starts parked hears "may play" first. In the 264 drive (2026-11-22) each phone heard "may not
+     * play" at RECORD and this app's "may play" after it, and kept Safari's video on itself.
+     */
+    val videoAllowed: Boolean? = null,
     /** Steering-wheel media keys reach CarPlay through this HID, not a steering-wheel device. */
     val mediaButtonsSupport: Boolean = true,
     val dPadSupport: Boolean = false,
@@ -259,6 +266,7 @@ object VehicleConfigYaml {
         // runtime /command (CMD_NIGHT_MODE), not a config value.
         line("nightMode: false")
         s.viewAreaAnimMs?.let { line("view_area_anim_ms: $it") }
+        s.videoAllowed?.let { line("video_allowed: $it") }
     }
 
     private fun displayPanels(
@@ -639,6 +647,8 @@ object VehicleConfigYaml {
         mainBufferedProbe: Boolean = false,
         /** Ask the adapter to offer the phone's video (T34, route A); only for firmware that says `"video":true`. */
         videoPlayback: Boolean = false,
+        /** Whether that video may play as the session starts (the car parked); sent only with [videoPlayback]. */
+        videoAllowed: Boolean = false,
     ): ByteArray {
         require(iapConfig.isEmpty() || (iapConfig.startsWith("iapConfig:\n") && iapConfig.endsWith("\n"))) {
             "iapConfig must be a whole top-level block ending in a newline"
@@ -687,6 +697,7 @@ object VehicleConfigYaml {
                 statusBarEdge = statusBarEdge.takeIf { it in STATUS_BAR_EDGES } ?: "auto",
                 mainBufferedProbe = mainBufferedProbe,
                 videoPlayback = videoPlayback,
+                videoAllowed = videoWord(videoPlayback, videoAllowed),
             ))
         // After the pinned body so a 2400 session still starts with that document. serde matches
         // keys by name, so the block does not have to sit between limitedUIConfig and audio.
@@ -695,6 +706,9 @@ object VehicleConfigYaml {
         val oem = if ((doc.length + oemRaw.length + extra.length + iapConfig.length) > 60_000) "" else oemRaw
         return (doc + oem + iapConfig + extra).toByteArray(Charsets.UTF_8)
     }
+
+    /** Pure: the document's `video_allowed`: the parked word, only when the document offers video. */
+    fun videoWord(offer: Boolean, parked: Boolean): Boolean? = parked.takeIf { offer }
 
     private fun oemIconYaml(images: List<OemIcon.Image>, label: String): String {
         if (images.isEmpty()) return ""

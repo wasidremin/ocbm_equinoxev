@@ -100,6 +100,10 @@ fn handle_inbound_event(pt: &[u8]) {
     let text = String::from_utf8_lossy(pt);
     let first = text.lines().next().unwrap_or("").trim();
     if let Some(rest) = first.strip_prefix("RTSP/1.0 ") {
+        if let Some(what) = inbound_cseq(&text).and_then(|c| c.parse::<u32>().ok()).and_then(take_asked) {
+            let body = pt.windows(4).position(|w| w == b"\r\n\r\n").map_or(&[][..], |i| &pt[i + 4..]);
+            crate::video::line(format_args!("the phone's answer to {what}: {}", answer_text(rest, body)));
+        }
         // Response to one of our commands. Log non-2xx always (a real problem); 2xx only when asked.
         let code = rest.split_whitespace().next().unwrap_or("");
         let ok = code.starts_with('2');
@@ -452,7 +456,8 @@ pub fn send_stream_message(stream_id: i64, data: &[u8]) -> bool {
     if Value::Dictionary(d).to_writer_binary(&mut body).is_err() {
         return false;
     }
-    send_command_with(&body, &format!("X-Apple-StreamID: {stream_id}\r\n"))
+    let cseq = send_command_cseq(&body, &format!("X-Apple-StreamID: {stream_id}\r\n"));
+    note_asked(cseq, &format!("a message on DataStream {stream_id}"))
 }
 
 /// One `POST /command` on the event channel, before encryption. `extra_headers` is whole lines, each ending
@@ -468,22 +473,70 @@ fn command_request(cseq: u32, extra_headers: &str, body_plist: &[u8]) -> Vec<u8>
 }
 
 fn send_command_with(body_plist: &[u8], extra_headers: &str) -> bool {
+    send_command_cseq(body_plist, extra_headers).is_some()
+}
+
+/// One `POST /command`; the `CSeq` it went out with, or None when it didn't go out.
+fn send_command_cseq(body_plist: &[u8], extra_headers: &str) -> Option<u32> {
     // Poison-tolerant: see `crate::plock` (this mutex is held across a bounded socket write).
     let mut guard = crate::plock(&EVENT);
-    let Some(ev) = guard.as_mut() else {
-        return false;
-    };
+    let ev = guard.as_mut()?;
     ev.cseq += 1;
-    let msg = command_request(ev.cseq, extra_headers, body_plist);
+    let cseq = ev.cseq;
+    let msg = command_request(cseq, extra_headers, body_plist);
     let frame = ev.chan.encrypt_frame(&msg);
     if write_frame_or_fail(&mut ev.stream, &frame) {
-        return true;
+        return Some(cseq);
     }
     // Fail closed: the counter is burned and the stream may carry a partial frame, so the channel is
     // unusable. Drop it rather than writing frame N+1 behind a truncated N.
     eprintln!("[events] dropping event channel — outbound frame could not be completed");
     *guard = None;
-    false
+    None
+}
+
+/// [`send_command`], with the phone's answer logged under `[video]` as the answer to `what` (route A).
+pub fn send_command_noting(body_plist: &[u8], what: &str) -> bool {
+    note_asked(send_command_cseq(body_plist, ""), what)
+}
+
+/// The commands whose answers are logged, by `CSeq`, newest last, at most [`ASKED_MAX`]. The 264 drive
+/// (2026-11-22) could not tell whether the phone took `setVideoPlaybackAllowed`: only a non-2xx answer was
+/// logged, and a 2xx answer may carry a `status` in its body (`{status, params?}`). enigy/ocbm logs it.
+static ASKED: Mutex<std::collections::VecDeque<(u32, String)>> = Mutex::new(std::collections::VecDeque::new());
+const ASKED_MAX: usize = 32;
+
+fn note_asked(cseq: Option<u32>, what: &str) -> bool {
+    let Some(cseq) = cseq else { return false };
+    let mut asked = crate::plock(&ASKED);
+    asked.push_back((cseq, what.to_string()));
+    while asked.len() > ASKED_MAX {
+        asked.pop_front();
+    }
+    true
+}
+
+fn take_asked(cseq: u32) -> Option<String> {
+    let mut asked = crate::plock(&ASKED);
+    let at = asked.iter().position(|(c, _)| *c == cseq)?;
+    asked.remove(at).map(|(_, what)| what)
+}
+
+/// Pure: an answer for the log, from its status line after `RTSP/1.0 ` and its body: the code and reason,
+/// then the body's `status`, its shape (keys and types only), or that it has none.
+pub(crate) fn answer_text(status_line: &str, body: &[u8]) -> String {
+    let head = status_line.trim();
+    if body.is_empty() {
+        return format!("{head}, no body");
+    }
+    match Value::from_reader(std::io::Cursor::new(body)) {
+        Ok(Value::Dictionary(d)) => match d.get("status").and_then(Value::as_signed_integer) {
+            Some(status) => format!("{head}, status {status}"),
+            None => format!("{head}, body {}", crate::video::dict_shape(&d)),
+        },
+        Ok(other) => format!("{head}, body {}", crate::video::shape(&other)),
+        Err(_) => format!("{head}, a {} B body that isn't a plist", body.len()),
+    }
 }
 
 
@@ -1239,6 +1292,33 @@ pub fn send_hid_report(uid: u32, report: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plist_body(d: Dictionary) -> Vec<u8> {
+        let mut b = Vec::new();
+        Value::Dictionary(d).to_writer_binary(&mut b).unwrap();
+        b
+    }
+
+    #[test]
+    fn an_answer_reads_as_its_code_and_its_status() {
+        assert_eq!(answer_text("200 OK", &[]), "200 OK, no body");
+        let mut d = Dictionary::new();
+        d.insert("status".into(), Value::Integer((-6705).into()));
+        assert_eq!(answer_text("200 OK", &plist_body(d)), "200 OK, status -6705");
+        let mut d = Dictionary::new();
+        d.insert("params".into(), Value::Dictionary(Dictionary::new()));
+        assert!(answer_text("200 OK", &plist_body(d)).starts_with("200 OK, body {"));
+        assert_eq!(answer_text("400 Bad Request ", b"junk"), "400 Bad Request, a 4 B body that isn't a plist");
+    }
+
+    #[test]
+    fn a_noted_command_is_named_by_its_cseq_once_and_an_unsent_one_is_not_noted() {
+        assert!(note_asked(Some(4_000_000_001), "setVideoPlaybackAllowed"));
+        assert!(!note_asked(None, "never sent"));
+        assert_eq!(take_asked(4_000_000_002), None);
+        assert_eq!(take_asked(4_000_000_001).as_deref(), Some("setVideoPlaybackAllowed"));
+        assert_eq!(take_asked(4_000_000_001), None, "an answer is named once");
+    }
 
     /// A plain command's request is unchanged by route A; a shared DataStream's names its stream in a header line
     /// the phone's own parser (and ours, `playback::stream_of`) reads.

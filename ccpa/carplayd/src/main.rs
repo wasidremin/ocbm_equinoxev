@@ -840,6 +840,10 @@ fn load_device_config() -> (DeviceConfig, u32) {
                 levers::set_hevc(vc.accessory_config.enables_hevc);
                 // Route A (T34): offer the phone's video only when the app asked to.
                 levers::set_video_playback(vc.accessory_config.enables_video_playback);
+                // ... and whether it may play at RECORD, as the app knew at subscribe (unless it has spoken since).
+                if vc.accessory_config.enables_video_playback {
+                    receiver::playback::config_says(vc.video_allowed);
+                }
                 // mainBuffered from the pushed config alone (docs/carplay/04_CAPABILITIES_AND_CONFIG.md B4) — deliberately NO env OR:
                 // a stale bench flag must never override an app that said `false` (media-silence
                 // hazard). The bench env applies only on the no-config paths via clear_levers.

@@ -45,10 +45,34 @@ pub fn host_allows(allowed: bool, status: &str) -> bool {
     tell_allowed(allowed, status)
 }
 
+/// The word in the app's subscribe document (`video_allowed`, armed per connection): whether video may play when
+/// the session starts. In the 264 drive (2026-11-22) both sessions' phones heard "may not play" at RECORD and the
+/// app's "may play" after it, and the phone kept Safari's video on itself; LIVI's receiver says "may play" at
+/// RECORD when parked. A word the app has sent since this carplayd started is newer, and stays.
+pub fn config_says(word: Option<bool>) {
+    let before = HOST_SAYS.load(Ordering::SeqCst);
+    let after = seeded(before, word);
+    if after != before && HOST_SAYS.compare_exchange(before, after, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        crate::video::line(format_args!(
+            "the app's subscribe says video {}: kept for RECORD",
+            if after == 2 { "may play" } else { "may not play" }
+        ));
+    }
+}
+
+/// Pure: the kept word ([`HOST_SAYS`]'s 0/1/2) after the subscribe document's. It fills in only a word not yet said.
+fn seeded(current: u8, config: Option<bool>) -> u8 {
+    match (current, config) {
+        (0, Some(true)) => 2,
+        (0, Some(false)) => 1,
+        _ => current,
+    }
+}
+
 /// RECORD, in a session that negotiated videoPlayback: the phone hears the app's word from now on, starting
-/// with the one already given (status `idle`: nothing is queued yet), and "may not play" when the app hasn't
-/// said. enigy/ocbm sends nothing until the app has said; here the phone ended both sessions that heard nothing,
-/// 60 s after RECORD (bench, 2026-11-21, iOS 27.2.1).
+/// with the one already given (its subscribe's, or a later one; status `idle`: nothing is queued yet), and "may
+/// not play" when the app hasn't said. enigy/ocbm sends nothing until the app has said; here the phone ended
+/// both sessions that heard nothing, 60 s after RECORD (bench, 2026-11-21, iOS 27.2.1).
 pub fn on_record() {
     TELLING.store(true, Ordering::SeqCst);
     let said = HOST_SAYS.load(Ordering::SeqCst);
@@ -64,7 +88,7 @@ pub fn session_ended() {
 }
 
 fn tell_allowed(allowed: bool, status: &str) -> bool {
-    let sent = crate::events::send_command(&crate::video::allowed_command(allowed, status));
+    let sent = crate::events::send_command_noting(&crate::video::allowed_command(allowed, status), "setVideoPlaybackAllowed");
     crate::video::line(format_args!("setVideoPlaybackAllowed({allowed}, {status}) sent={sent}"));
     sent
 }
@@ -431,6 +455,15 @@ mod tests {
         session_ended();
         assert!(!TELLING.load(Ordering::SeqCst));
         assert_eq!(HOST_SAYS.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_subscribes_word_fills_in_only_a_word_not_yet_said() {
+        assert_eq!(seeded(0, Some(true)), 2, "parked at subscribe: RECORD says may play");
+        assert_eq!(seeded(0, Some(false)), 1);
+        assert_eq!(seeded(0, None), 0, "no word in the document: RECORD says may not play, as before");
+        assert_eq!(seeded(1, Some(true)), 1, "the app spoke since: its newer word stays");
+        assert_eq!(seeded(2, Some(false)), 2);
     }
 
     fn insert_item() -> Value {

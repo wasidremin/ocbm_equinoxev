@@ -1636,6 +1636,17 @@ host has spoken, and LIVI sends "may play" at RECORD when parked. Whether the ph
 "may play" is not known: the adapter does not log the phone's reply bodies to its commands, only a
 non-2xx status, and there was none.
 
+**For 265 (2026-11-22, owner: "Go ahead with your recommendations").** (1) The phone's first word is the
+right one: the app puts the gear at subscribe in its document (`video_allowed`), carplayd tells the phone
+that at RECORD unless the app has spoken since, and the app sends each gear change from the subscribe on,
+not only once the session is keyed. A session that starts parked now hears "may play" at RECORD and
+never "may not play" first. (2) carplayd logs the phone's answer to each `setVideoPlaybackAllowed` and
+each DataStream message, by `CSeq`: the code and the body's `status`. *Verified:* unit tests (the
+document's key and its absence without the offer; the config's parse; a subscribe word fills in only a
+word not yet said; an answer's text and its `CSeq` match), all adapter suites, the app's unit tests.
+*Not verified:* anything on the adapter or in the car, and the app's send on a gear change before the
+session (RouteA needs a Context; no JVM test). Not benched: the adapter was in the car.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.

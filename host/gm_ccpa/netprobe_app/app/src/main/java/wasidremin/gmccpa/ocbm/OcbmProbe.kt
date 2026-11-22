@@ -1301,6 +1301,7 @@ class OcbmProbe(context: Context) {
                     .getBoolean("main_buffered_probe", false)
                     .also { if (it) log.w("T8 bench probe: advertising buffered audio — media may be silent this session") },
                 videoPlayback = videoOfferFor(c),
+                videoAllowed = wasidremin.gmccpa.video.RouteA.parked,
             )
         } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)

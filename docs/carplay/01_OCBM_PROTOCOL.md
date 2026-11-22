@@ -752,8 +752,13 @@ offers and carries; the play queue, the player and the parked rule are the app's
   0|1][VIDEO_STATUS_*]`, status `IDLE 0` / `VIDEO 1` / `AUDIO_ONLY 2` (a missing byte is idle).
   carplayd sends the phone `setVideoPlaybackAllowed{videoPlaybackAllowed, playbackStatus}` in a session
   that negotiated `videoPlayback`: at RECORD with the last word and status `idle`, then on each change.
-  Before RECORD the word is kept; until the app has said, nothing goes out. The app allows it only while
-  the car is known to be parked. enigy numbers this command `0x13`, which is `CMD_NAV_URL` here.
+  Before RECORD the word is kept. The app allows it only while the car is known to be parked. From 265
+  (2026-11-22) the app's first word rides its subscribe document as the top-level `video_allowed:
+  true|false` (our extension, read only with `enablesVideoPlayback: true`; absent = not said), and the app
+  sends each gear change from the subscribe on, not only once the session is keyed, so the word at RECORD
+  is the gear's then; a word sent since carplayd started wins over the document's. In the 264 drive each
+  phone heard "may not play" at RECORD and the app's "may play" after it, and kept Safari's video on
+  itself (`08_FUTURE_TASKS.md` T34); LIVI's receiver says "may play" at RECORD when parked. enigy numbers this command `0x13`, which is `CMD_NAV_URL` here.
 - **The play queue** rides the phone's shared DataStream (the Playback client,
   `A6B27562-B43A-4F2D-B75F-82391E250194`, `wantsDedicatedSocket=false`): each message is a
   `POST /command` with an `X-Apple-StreamID` header and a `{params: {data: <bplist>}}` body. Phone to
@@ -776,13 +781,16 @@ offers and carries; the play queue, the player and the parked rule are the app's
   `streamID`, else every channel but the iAP one): by type alone it stopped the iAP2 channel too
   (enigy a86e552; `02_SESSION_LIFECYCLE.md`).
 - **The log** (`[video]` lines in carplayd's) carries keys, types and sizes; a protocol name under
-  `type`, `kind` and the like; a URL's scheme and size, never its host.
+  `type`, `kind` and the like; a URL's scheme and size, never its host. From 265 it also names the phone's
+  answer to each `setVideoPlaybackAllowed` and each message on a DataStream, matched by `CSeq`: the code,
+  and the body's `status` or its shape (`the phone's answer to setVideoPlaybackAllowed: 200 OK, …`).
+  Before, a 2xx answer went unlogged and its body unread.
 - **Known limit, not seen:** ocbmd hands input to carplayd over a non-blocking socket and drops a
   sub-frame that doesn't fit, which is harmless for a touch and breaks a tunnel's TLS stream. App to
   box is requests only (small), so it is unlikely; the app's TLS error then closes the tunnel and it
   opens another.
 
-- **At RECORD, "may not play" when the app hasn't said.** enigy sends nothing until the app has said.
+- **At RECORD, "may not play" when neither the app nor its subscribe has said.** enigy sends nothing until the app has said.
   On the bench (2026-11-21) two sessions that negotiated video and heard nothing ended 60 s after
   RECORD; the one that heard `setVideoPlaybackAllowed(false, idle)` at RECORD ran past 6 minutes. The
   bench was noisy, so this is likely, not proven (`08_FUTURE_TASKS.md` T34).
