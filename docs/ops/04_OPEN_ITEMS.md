@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 265 (`4.0+keeper-video`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 266 (`4.0+connect-stall`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **The Wi-Fi link, no Allow prompt: benched, not yet in the car (2026-11-21, T15, Play 264; the
   keeper's start at boot in Play 265).** Needs Join the car's hotspot on with the
@@ -75,7 +75,7 @@ high-water mark: versionCode 265 (`4.0+keeper-video`, 2026-11-22; `host/gm_ccpa/
   permission`, or `wifi: the adapter was not reached … trying USB` with whether the hotspot was up. Also
   check the adapter's `uplink: keeper` and `joined on channel` lines at boot, and stalls against USB
   (21.6 Mbps adapter to host on the bench).
-- **Connect speed and the stall sentence (2026-11-22, not yet published).** Check in a drive: no
+- **Connect speed and the stall sentence (2026-11-22, Play 266).** Check in a drive: no
   `CONNECT_FAILED … status=0x04` before the owner's phone once it is first in Settings ▸ CarPlay ▸
   Phones (`acl` within about 2 s of `page_start` in the `[timeline]` line); after an adapter restart
   the keeper's misses are retried at once; and a stalled connect shows its sentence on the startup
