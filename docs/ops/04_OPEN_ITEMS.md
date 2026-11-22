@@ -65,7 +65,12 @@ high-water mark: versionCode 265 (`4.0+keeper-video`, 2026-11-22; `host/gm_ccpa/
   265 starts it from the session supervisor. In the car with 264 (2026-11-22): the key was given
   (`taken, used from its next start`) and the keeper joined the hotspot with the session, in 5 s; an app
   restart later in that drive looked on the hotspot for 21.7 s and fell back to USB, because ocbmd had
-  not restarted since it took the key, so nothing was listening. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
+  not restarted since it took the key, so nothing was listening. In the car with 265 (2026-11-22): after
+  the update's restart the app linked over the hotspot by mDNS in 60 ms, `no USB claim, no permission`,
+  confirmed the update that way, and again after a relaunch; CarPlay ran over it (12 MB in, about 2.5
+  minutes). Right after the update's reboot the app gave up after 21.7 s and asked for USB permission once,
+  because the keeper's first scan saw the hotspot only on 2.4 GHz and waited 10 s before looking on every
+  channel. A cold start in the car with 265's firmware has not happened yet. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
   unit's link key: taken`); the drive after should show `linked over the car's hotspot: no USB claim, no
   permission`, or `wifi: the adapter was not reached … trying USB` with whether the hotspot was up. Also
   check the adapter's `uplink: keeper` and `joined on channel` lines at boot, and stalls against USB
@@ -83,7 +88,9 @@ high-water mark: versionCode 265 (`4.0+keeper-video`, 2026-11-22; `host/gm_ccpa/
   session starts parked and logs the phone's answers. Check in a 265 drive, parked from the start:
   `[video] the app's subscribe says video may play: kept for RECORD`, `setVideoPlaybackAllowed(true,
   idle)` at RECORD, `the phone's answer to setVideoPlaybackAllowed: …`, and then whether Safari's
-  example stream opens the Playback DataStream (`A6B27562`) and plays on the car.
+  example stream opens the Playback DataStream (`A6B27562`) and plays on the car. With 265 (2026-11-22) the phone heard
+  "may play" first and still only moved Safari's audio, never opening that stream (T34, "In the car with
+  265").
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
   2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
   lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and

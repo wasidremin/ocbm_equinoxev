@@ -1647,6 +1647,19 @@ word not yet said; an answer's text and its `CSeq` match), all adapter suites, t
 *Not verified:* anything on the adapter or in the car, and the app's send on a gear change before the
 session (RouteA needs a Context; no JVM test). Not benched: the adapter was in the car.
 
+**In the car with 265 (2026-11-22, 15:05 to 15:08 UTC).** The first word worked: `the app's subscribe says
+video may play: kept for RECORD`, then `setVideoPlaybackAllowed(true, idle)` at RECORD, in both sessions.
+The owner saw the phone offer to play on CarPlay and nothing on the car's screen (owner, 2026-11-22). The
+phone again moved only Safari's audio: five times between 15:06:06 and 15:07:02 a `modesChanged` (287 B), a
+partial TEARDOWN of media stream 102 and its SETUP again. It never set up the UrlFling DataStream
+(`A6B27562`, Apple's name for the Playback client, `03_SDK_GROUND_TRUTH.md`), never asked for the video
+screen, and sent no other command. No answer to any of the adapter's commands was logged, here or in any
+upload: the phone appears not to answer them on the event channel. One thing is new since video was
+offered (first seen 2026-11-21): at each session's start the phone sends a 200 B `'sync'` on the
+SenderSettingsData DataStream that expects a `'rply'`, and carplayd logs `NOT IMPLEMENTED` and sends none
+(`05_METADATA_AND_CONTROLS.md` §5 item 1 holds why; enigy's adapter does the same, and its bench video
+played). What the `modesChanged` and the `'sync'` carry is not logged.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.
