@@ -1673,6 +1673,9 @@ of Bonjour (`docs/wireless/00_WIRELESS_CARPLAY.md` §2.3, `02_SESSION_LIFECYCLE.
 enigy's bench (iOS 27.2) played without it is not known. Not started: it touches the wireless handoff, whose
 Bluetooth-time Identify is byte-pinned (CLAUDE.md), so it needs its own plan and the owner's go-ahead.
 
+**On hold (owner, 2026-11-22: "I guess that is fine. The car has a browser that can be used in park").** No
+work on the simplified connection flow for video. The offer stays as built.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.
