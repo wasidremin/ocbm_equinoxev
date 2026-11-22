@@ -299,6 +299,8 @@ class LauncherUi(private val act: Activity) {
     private var logStatusText = ""
     private var adapterInfoText = ""
     private var displayResetDetail: String? = null
+    /** The overdue connect step's sentence (T27, [wasidremin.gmccpa.ocbm.ConnectStall]); null when on time. */
+    private var stallDetail: String? = null
     private var alwaysHint: String? = null
     private var settingsTouchedAt = 0L
     private var lastAnimStage: StartupAnimationView.Stage? = null
@@ -1912,6 +1914,7 @@ class LauncherUi(private val act: Activity) {
     private fun startupDetail(state: LinkState, detail: String): String? = when {
         alwaysHint != null -> alwaysHint
         state == LinkState.FAILED -> detail
+        stallDetail != null -> stallDetail
         displayResetDetail != null -> displayResetDetail
         else -> null
     }
@@ -1925,6 +1928,7 @@ class LauncherUi(private val act: Activity) {
         if (state == LinkState.LIVE) {
             displayResetDetail = null
             alwaysHint = null
+            stallDetail = null
         }
         refreshDynamic()
         if (sessionIsLive() || state == LinkState.LIVE) {
@@ -2001,6 +2005,16 @@ class LauncherUi(private val act: Activity) {
         if (act.isFinishing) return@runOnUiThread
         adapterInfoText = text
         if (::infoRow.isInitialized) infoRow.setSubtitle(text)
+    }
+
+    /** A connect step is overdue ([text]), or no longer ([text] null). Shown on the startup screen only. */
+    fun noteStall(text: String?) = act.runOnUiThread {
+        if (act.isFinishing || text == stallDetail) return@runOnUiThread
+        stallDetail = text
+        if (!sessionIsLive() && lastState != LinkState.LIVE) {
+            val status = introStatus(lastState, lastDetail)
+            intro.setStage(StartupAnimationView.stageFor(lastState), status, startupDetail(lastState, lastDetail))
+        }
     }
 
     fun noteDisplayReset() = act.runOnUiThread {

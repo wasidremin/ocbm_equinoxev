@@ -213,9 +213,9 @@ caps() {
 # finds it gone; with no join configured it returns at once. It obeys every rule here: it searches only while no access point is
 # up, each attempt is the join below holding the wlan lock (so an attempt and a Wi-Fi start never
 # overlap), it writes the joined channel into hostapd.conf at once (the next handoff names it), it
-# stops a client that is not joined under an access point, and after a failed attempt it waits 10 s
-# longer each time, up to 2 minutes, and then looks on every usable channel, not only the
-# remembered one. A Wi-Fi start that finds the client joined starts the access point on its channel
+# stops a client that is not joined under an access point, and after a failed attempt it looks on
+# every usable channel, not only the remembered one: at once after the first miss, then 10 s longer
+# each time, up to 2 minutes (keeper_wait). A Wi-Fi start that finds the client joined starts the access point on its channel
 # with no join of its own. The keeper ends, stopping the client, when the join is no longer
 # configured. A session's teardown leaves the client alone.
 # Why before: a join made while the access point was up scanned every channel for seconds while the
@@ -597,6 +597,15 @@ keeper_join() {
   sed -i "s/^channel=.*/channel=$UPLINK_CH/" /etc/hostapd.conf
 }
 
+# Pure: seconds the keeper waits before its next join after $1 failed attempts in a row. The first
+# miss is retried at once, on every channel: after the adapter's restart on 2026-11-22 the first scan
+# saw the car's hotspot only on 2.4 GHz, and the 10 s wait that followed outlasted the app's 21.7 s
+# look on the hotspot, so it asked for USB permission. From the second miss, 10 s more each time.
+keeper_wait() {
+  _kw=$(( ($1 - 1) * 10 )); [ "$_kw" -lt 0 ] && _kw=0; [ "$_kw" -gt 120 ] && _kw=120
+  echo "$_kw"
+}
+
 keeper_stop_unjoined() {
   uplink_running && ! uplink_joined || return 0
   uplink_log "$1"; uplink_stop
@@ -642,7 +651,7 @@ do_sta_keep() {
         if [ -n "$_kp_addr" ]; then
           uplink_log "address: yes, in $(( $(cut -d. -f1 /proc/uptime) - _kp_t0 )) s"
         elif [ $(( $(cut -d. -f1 /proc/uptime) - _kp_t0 )) -ge 10 ]; then
-          keeper_locked uplink_stop && { uplink_log "no address within 10 s; client stopped"; _kp_fail=$((_kp_fail+1)); _kp_wait=$((_kp_fail*10)); }
+          keeper_locked uplink_stop && { uplink_log "no address within 10 s; client stopped"; _kp_fail=$((_kp_fail+1)); _kp_wait=$(keeper_wait "$_kp_fail"); }
         fi
       elif ap_running && same_24 "$_kp_addr" "$(ap_ip_of "$(wlan_iface 2>/dev/null)")"; then
         # The car's network on the access point's own /24 would leave two routes to one subnet.
@@ -669,7 +678,7 @@ do_sta_keep() {
     if keeper_locked keeper_join "$([ "$_kp_fail" -gt 0 ] && echo wide)"; then
       _kp_fail=0
     elif [ "$KP_TRIED" = 1 ]; then
-      _kp_fail=$((_kp_fail+1)); _kp_wait=$((_kp_fail*10)); [ "$_kp_wait" -gt 120 ] && _kp_wait=120
+      _kp_fail=$((_kp_fail+1)); _kp_wait=$(keeper_wait "$_kp_fail")
     fi
     sleep 1
   done

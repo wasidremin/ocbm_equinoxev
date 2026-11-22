@@ -27,7 +27,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T19 Spotify hand-back | New, not started |
 | T23 Apple's own turn card on the driver display | Built and tried on the car 2026-11-14: Apple's card replaces the map on the one feed. Map and card together (a second feed) declined by the owner; settings reworked so Apple's card is a Turn card choice and the bottom-right panel can hold another card beside it |
 | T26 "Try this drive" card | New 2026-11-14, not started |
-| T27 "Why didn't CarPlay connect?" | New 2026-11-14, not started |
+| T27 "Why didn't CarPlay connect?" | Built 2026-11-22, app only; not yet on the car |
 | T28 After-drive summary | New 2026-11-14, not started |
 | T29 Charging card | New 2026-11-14, not started |
 | T30 Weather-aware arrival estimate | New 2026-11-14, not started |
@@ -52,7 +52,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
-| T25 Faster connect | New 2026-11-14, not started; **the owner's first annoyance**. May be app only, depending on where the time goes |
+| T25 Faster connect | **The owner's first annoyance.** Measured; the Allow tap gone with the Wi-Fi link (265); 2026-11-22: about 6 s of every car connect is the adapter paging the absent second iPhone first (the stored phone order), and the keeper retries a missed hotspot at once |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
 
 *Done*
@@ -1449,6 +1449,26 @@ in brackets:
 Choose with the timeline from the car, not from enigy's bench: its line says which of these stages
 is long on this car.
 
+**The car's timeline with 265 (2026-11-22, Wi-Fi link, three connects).** Subscribe 0.3 s after the app
+starts; radios and `btd` up 3.4 to 3.7 s after the subscribe; then the adapter pages the phones and the
+Bluetooth link arrives 6.4 to 12.5 s after `page_start`, where a present phone answers in about a second.
+The box log says why: `CONNECT_FAILED … status=0x04` (page timeout) and `Host is down` for one bonded
+phone, then `DEVICE_CONNECTED` for the owner's. The stored order (`/etc/carplay/projection_policy.json`,
+two entries, set from Settings ▸ CarPlay ▸ Phones on 2026-11-08, 11-15 and 11-16) puts the owner's second
+iPhone, which is not in the car, first. Moving the owner's phone to the top is worth about 6 s of the 18 s;
+the owner was told (2026-11-22). The rest: handoff to auth-setup about 2 s and the picture under 2 s
+after, the two MFi signatures fixed at about 1.7 s each.
+
+**The keeper's first miss (2026-11-22).** Built: a missed hotspot is retried at once on every channel,
+then the 10 s steps (`keeper_wait`, `docs/wireless/01_BT_AND_RADIO.md` §6e); benched on the adapter with
+no hotspot in range (the 4th to 5th miss 46 s apart, the new spacing), the adapter's script put back
+after. *Not on the car.*
+
+**enigy/ocbm 2.7.0 (2026-11-22, not ported).** Both radios loaded together and earlier in the boot, the
+radio description kept across boots: 13.8 to 16.9 s from power-on to picture on enigy's bench against
+16.2 and 17.4 s. About 4,000 changed lines against a `radio_hal.sh` that has diverged from this one, and
+`ocbm_boot.sh`, which only a bench install changes. Held for its own session (owner's call).
+
 ## T26. "Try this drive" card (raised 2026-11-14)
 
 **Why.** The car has no adb and the owner is the only tester, so a feature is "not yet on the car"
@@ -1468,6 +1488,20 @@ centre screen saying which stage stalled (the phone did not answer, the handoff 
 adapter was not there), with the fix that fits: wait, restart the adapter, forget the phone.
 
 **Done means.** The owner can say why a bad connect happened without a log.
+
+**Built 2026-11-22 (owner: "Let's do 1 and 2 now"), app only, not yet on the car.** `ocbm/ConnectStall.kt`
+(pure): from the steps `StartupClock` stamps, the last step reached and how long ago, against an allowance
+of about three times its usual time in the car (attach 45 s, permission and hello 15 s, subscribe 30 s,
+discoverable 30 s, Bluetooth connected 15 s, the Wi-Fi handoff 20 s, auth-setup and keyed 15 s); over it,
+one sentence naming what to do: the adapter is not answering (unplug it for ten seconds), its Bluetooth
+did not come up, the iPhone has not answered (its Bluetooth, or Settings ▸ CarPlay ▸ Phones), it has not
+joined the adapter's Wi-Fi, CarPlay has not started (forget the adapter on the iPhone), or no picture
+(restart the app). MainActivity looks every 3 s while it is in front and puts the sentence on the
+startup screen's detail line (after the Always hint and a failure); it clears at the picture. The log
+says `startup: stalled after <step> for <n> s` once per step, no names. *Verified:* `ConnectStallTest` (the
+car's 15:08 connect on 2026-11-22 says nothing at any step; a phone that never answers names Bluetooth and
+the Phones order; the adapter gets longer than the hotspot look; `bt-converged` is not progress) and the
+app's 618 unit tests. *Not verified:* on the emulator or in the car.
 
 ## T28. After-drive summary (raised 2026-11-14)
 

@@ -1866,8 +1866,33 @@ class MainActivity : Activity() {
     /** One prompt per process. A denial must not re-open the dialog on every return to the launcher. */
     private var micAsked = false
 
+    /**
+     * T27: while a connect is under way and this screen is in front, look every 3 s for an overdue step and say
+     * so on the startup screen. The log line names the step and the wait, once per step.
+     */
+    private var stallLogged: String? = null
+    private val stallTick = object : Runnable {
+        override fun run() {
+            val s = wasidremin.gmccpa.ocbm.StartupClock.stall()
+            if (s != null && s.after != stallLogged) {
+                stallLogged = s.after
+                ProbeLog.sub("startup").w("startup: stalled after ${s.after} for ${s.waitedS} s; told the driver")
+            }
+            if (s == null) stallLogged = null
+            if (::ui.isInitialized) ui.noteStall(s?.text)
+            window.decorView.postDelayed(this, 3_000)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        window.decorView.removeCallbacks(stallTick)
+    }
+
     override fun onResume() {
         super.onResume()
+        window.decorView.removeCallbacks(stallTick)
+        window.decorView.postDelayed(stallTick, 3_000)
         if (::ui.isInitialized) {
             ui.onActivityResume()
             // Back from Files after installing the bridge.

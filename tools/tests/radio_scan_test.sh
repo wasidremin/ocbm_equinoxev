@@ -157,6 +157,12 @@ n=$(printf '%s\n' "$keep" | grep -A1 '^ *if ap_running; then$' | grep -c 'keeper
 is "under an access point a client that is not joined is stopped" "$n" 1
 n=$(sed -n '/^lock_take() {/,/^}/p' "$F" | grep -c '"${2:-60}"')
 is "lock_take takes a number of tries (the keeper tries once)" "$n" 2
+eval "$(sed -n '/^keeper_wait() {/,/^}/p' "$F")"
+is "the first missed join is retried at once" "$(keeper_wait 1)" 0
+is "the second waits 10 s" "$(keeper_wait 2)" 10
+is "the wait stops at 2 minutes" "$(keeper_wait 20)" 120
+n=$(sed -n '/^do_sta_keep() {/,/^}/p' "$F" | grep -c '_kp_wait=$(keeper_wait "$_kp_fail")')
+is "both of the keeper's failures wait by keeper_wait" "$n" 2
 # Who starts the keeper. An update never writes ocbm_boot.sh, so the car's copy predates the keeper and
 # a start there never ran in the car; the supervisor, which an update does ship, starts it at boot
 # (found at 264's publish, 2026-11-21).

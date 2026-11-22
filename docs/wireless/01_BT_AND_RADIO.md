@@ -591,8 +591,10 @@ publish, 2026-11-21; 265 moves it). The keeper takes the
 `wlan` lock for each join attempt, so an attempt and a Wi-Fi start never overlap; it searches only while
 no access point is up; a Wi-Fi start that finds the client joined starts the access point on its channel
 and makes no join of its own; a session's teardown leaves the client alone. After a failed attempt it
-waits 10 s longer each time (at most 2 minutes) and then looks on every usable channel, not only the
-remembered one. `tools/tests/radio_scan_test.sh` pins these rules.
+looks on every usable channel, not only the remembered one: at once after the first miss, then 10 s
+longer each time, at most 2 minutes (`keeper_wait`, 2026-11-22: after the adapter's restart in the car
+the first scan saw the hotspot only on 2.4 GHz, and the 10 s wait outlasted the app's look on the
+hotspot, so it asked for USB permission; benched the same day, the misses came at the new spacing). `tools/tests/radio_scan_test.sh` pins these rules.
 
 Bench, 2026-11-21 (home 5 GHz Wi-Fi standing in for the car's hotspot): the keeper started at boot, its
 first attempt on the remembered channel (149) found the network on 48 and remembered it, the second

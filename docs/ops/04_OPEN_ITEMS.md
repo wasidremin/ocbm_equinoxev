@@ -75,6 +75,11 @@ high-water mark: versionCode 265 (`4.0+keeper-video`, 2026-11-22; `host/gm_ccpa/
   permission`, or `wifi: the adapter was not reached … trying USB` with whether the hotspot was up. Also
   check the adapter's `uplink: keeper` and `joined on channel` lines at boot, and stalls against USB
   (21.6 Mbps adapter to host on the bench).
+- **Connect speed and the stall sentence (2026-11-22, not yet published).** Check in a drive: no
+  `CONNECT_FAILED … status=0x04` before the owner's phone once it is first in Settings ▸ CarPlay ▸
+  Phones (`acl` within about 2 s of `page_start` in the `[timeline]` line); after an adapter restart
+  the keeper's misses are retried at once; and a stalled connect shows its sentence on the startup
+  screen with `startup: stalled after …` in the log (T25, T27).
 - **Low flash no longer marks the adapter unhealthy (2026-11-21, Play 264): seen working in the car
   2026-11-22.** In the car with 263 the update's kept copies left 1.8 MB free, under ocbmd's 2 MB floor;
   the app ran its recovery ladder on a working adapter and the update rolled back unconfirmed. With 264

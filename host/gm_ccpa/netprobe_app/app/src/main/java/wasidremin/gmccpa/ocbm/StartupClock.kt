@@ -99,6 +99,12 @@ object StartupClock {
         log.i("startup: $line")
     }
 
+    /** The overdue connect step now ([ConnectStall]), or null with no attempt open. */
+    fun stall(): ConnectStall.Stall? = synchronized(lock) {
+        if (!open || origin == 0L) null
+        else ConnectStall.of(HashMap(at), SystemClock.elapsedRealtime() - origin)
+    }
+
     /** The attempt ended without a frame. The next [begin] starts a new clock. */
     fun close() {
         synchronized(lock) { open = false }
