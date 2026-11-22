@@ -62,18 +62,24 @@ high-water mark: versionCode 264 (`4.0+wifi-link`, 2026-11-21; `host/gm_ccpa/doc
   hotspot's password, and the new firmware on the adapter. With 264 alone the adapter joins the hotspot
   only with the first session (264 started the keeper from `ocbm_boot.sh`, which an update never
   writes), so a cold start still asks for USB permission, after up to 30 s of looking on the hotspot;
-  265 starts it from the session supervisor. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
+  265 starts it from the session supervisor. In the car with 264 (2026-11-22): the key was given
+  (`taken, used from its next start`) and the keeper joined the hotspot with the session, in 5 s; an app
+  restart later in that drive looked on the hotspot for 21.7 s and fell back to USB, because ocbmd had
+  not restarted since it took the key, so nothing was listening. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
   unit's link key: taken`); the drive after should show `linked over the car's hotspot: no USB claim, no
   permission`, or `wifi: the adapter was not reached … trying USB` with whether the hotspot was up. Also
   check the adapter's `uplink: keeper` and `joined on channel` lines at boot, and stalls against USB
   (21.6 Mbps adapter to host on the bench).
-- **Low flash no longer marks the adapter unhealthy (2026-11-21, Play 264).** In the car with
-  263 the update's kept copies left 1.8 MB free, under ocbmd's 2 MB floor; the app ran its recovery
-  ladder on a working adapter and the update rolled back unconfirmed. Check that a drive after an
-  update shows no `adapter unhealthy` and `firmware … confirmed`.
-- **Route A: what the phone asks with `setVideoPlaybackParameters` (2026-11-21, Play 264).**
-  The adapter now logs its shape (`[video] phone's setVideoPlaybackParameters: {…}`). The 263 try was
-  YouTube in Safari; the next is Apple's example HLS stream in Safari (T34).
+- **Low flash no longer marks the adapter unhealthy (2026-11-21, Play 264): seen working in the car
+  2026-11-22.** In the car with 263 the update's kept copies left 1.8 MB free, under ocbmd's 2 MB floor;
+  the app ran its recovery ladder on a working adapter and the update rolled back unconfirmed. With 264
+  the update to 44d032bbc5a5 (3.8 MB free before it) was confirmed 27 s after it was placed (`firmware
+  update confirmed … (health 0x31)`). Left open only until a second update confirms the same way.
+- **Route A: the phone keeps video on itself (2026-11-22, Play 264).** Apple's example stream in
+  Safari, parked: the phone sent CarPlay the audio only and never opened the Playback DataStream.
+  `setVideoPlaybackParameters` is `{fadeDuration: int}`. The one difference from enigy's working bench
+  is the "may not play" each session's phone hears at RECORD before the app's "may play" (T34, "In the
+  car with 264"). Not yet known whether the phone ignored the later word.
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
   2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
   lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and

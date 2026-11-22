@@ -1621,6 +1621,21 @@ try: Apple's example stream in Safari
 developer.apple.com/streaming/examples), which separates "the phone never hands this player over"
 from "this adapter or app fails".
 
+**In the car with 264 (2026-11-22).** The update to firmware 44d032bbc5a5 was confirmed, so the adapter
+offered video (`"video":true`, `enablesVideoPlayback: true`). The owner played Apple's example stream in
+Safari, parked: the phone moved Safari's audio onto CarPlay (a partial TEARDOWN and a new SETUP of media
+stream 102, 13:57:43 UTC) and kept the picture on the phone; its AirPlay sheet listed CarPlay as the
+current route (owner's screenshot). It never opened the Playback DataStream (no `A6B27562` SETUP in
+either session), so nothing reached the app. `setVideoPlaybackParameters` carries one key,
+`fadeDuration` (an integer). The `/info` offer is enigy's to the key, `features` included
+(`0x6144440B80`, the same `featuresEx` as enigy's `gAtERGE=`), and so is `setVideoPlaybackAllowed`.
+The one difference found: each session's phone heard "may not play" at RECORD, because the app speaks
+only once the session is keyed, and "may play" after it (5.5 minutes later in the first session, which
+began in Drive; 1.1 s later in the second, which began in Park). enigy's adapter says nothing until the
+host has spoken, and LIVI sends "may play" at RECORD when parked. Whether the phone ignores a later
+"may play" is not known: the adapter does not log the phone's reply bodies to its commands, only a
+non-2xx status, and there was none.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.
