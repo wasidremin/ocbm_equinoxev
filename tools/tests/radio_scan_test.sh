@@ -157,6 +157,24 @@ n=$(printf '%s\n' "$keep" | grep -A1 '^ *if ap_running; then$' | grep -c 'keeper
 is "under an access point a client that is not joined is stopped" "$n" 1
 n=$(sed -n '/^lock_take() {/,/^}/p' "$F" | grep -c '"${2:-60}"')
 is "lock_take takes a number of tries (the keeper tries once)" "$n" 2
+# Who starts the keeper. An update never writes ocbm_boot.sh, so the car's copy predates the keeper and
+# a start there never ran in the car; the supervisor, which an update does ship, starts it at boot
+# (found at 264's publish, 2026-11-21).
+S="$HERE/tools/session_supervisor.sh"
+k=$(grep -n '^setsid sh /script/radio_hal.sh sta_keep ' "$S" | head -1 | cut -d: -f1)
+w=$(grep -n '^while :; do' "$S" | head -1 | cut -d: -f1)
+[ -n "$k" ] && [ -n "$w" ] && [ "$k" -lt "$w" ] && r=yes || r=no
+is "the supervisor starts the keeper at boot, before it waits for the app" "$r" yes
+is "the boot path, which no update writes, does not start the keeper" "$(grep -c 'sta_keep' "$HERE/ccpa/rootfs/script/ocbm_boot.sh")" 0
+is "the supervisor ships in the update" "$(grep -c '^ *"$REPO/tools/session_supervisor.sh|/script/session_supervisor.sh|' "$HERE/host/gm_ccpa/tools/stage_adapter_fw.sh")" 1
+T=$(mktemp -d)
+out=$( UPLINK_CONF=$T/conf UPLINK_KEEPER=$T/keeper UPLINK_WPA=/bin/true UPLINK_CLI=/bin/true
+  caps() { return 0; }; uplink_log() { echo "logged: $*"; }
+  eval "$(sed -n '/^uplink_key() {/,/^}/p; /^uplink_wanted() {/,/^}/p; /^do_sta_keep() {/,/^}/p' "$F")"
+  printf 'enabled=0\nssid=x\npsk=y\n' > "$T/conf"
+  do_sta_keep; echo "rc=$? keeper=$([ -e "$T/keeper" ] && echo yes || echo no)" 2>&1 )
+is "with the join off the keeper returns at once, logs nothing and holds nothing" "$out" "rc=0 keeper=no"
+rm -rf "$T"
 # radio_hal.sh runs under set -u, and uplink_stop runs at every Wi-Fi start and stop, the setting on
 # or off: an unset name in it took the access point down on the bench (2026-11-16, `$1` unset).
 T=$(mktemp -d)

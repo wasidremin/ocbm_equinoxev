@@ -583,8 +583,11 @@ is up, a join is made before the access point starts, and the joined channel is 
 and written into `hostapd.conf` before the phone is handed over.
 
 From 2026-11-21 the client is kept joined from boot, not per session: `radio_hal.sh sta_keep`, started
-by `ocbm_boot.sh` (and by any Wi-Fi start that finds it gone), so the app can reach the adapter over the
-hotspot before any session (the Wi-Fi link, `docs/carplay/01_OCBM_PROTOCOL.md`). The keeper takes the
+by the session supervisor at boot (and by any Wi-Fi start that finds it gone), so the app can reach the
+adapter over the hotspot before any session (the Wi-Fi link, `docs/carplay/01_OCBM_PROTOCOL.md`). It was
+first started from `ocbm_boot.sh`, which an update never writes: on the car the keeper would only have
+started with the first session, after the app had already asked for USB permission (found at 264's
+publish, 2026-11-21; 265 moves it). The keeper takes the
 `wlan` lock for each join attempt, so an attempt and a Wi-Fi start never overlap; it searches only while
 no access point is up; a Wi-Fi start that finds the client joined starts the access point on its channel
 and makes no join of its own; a session's teardown leaves the client alone. After a failed attempt it

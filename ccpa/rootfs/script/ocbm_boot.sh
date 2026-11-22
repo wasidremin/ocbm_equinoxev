@@ -444,14 +444,6 @@ CFG
     ) >/dev/null 2>&1 &
   fi
 
-  # The car-hotspot client's keeper (radio_hal.sh, THE KEEPER): with a join configured, the adapter
-  # joins the car's hotspot now and stays on it, so the app can reach ocbmd over Wi-Fi before any
-  # session (ocbmd src/wifi.rs). Backgrounded; without a join configured nothing starts.
-  if grep -q '^enabled=1' /script/sta_uplink.conf 2>/dev/null && grep -q '^psk=.' /script/sta_uplink.conf 2>/dev/null; then
-    echo "[ocbm-boot] car hotspot: the client's keeper starting" >> /tmp/box.log
-    setsid sh /script/radio_hal.sh sta_keep </dev/null >/dev/null 2>&1 &
-  fi
-
   # Session supervisor: idle-waits on host presence; a host-app SUBSCRIBE drives projection + ARM
 
   # (docs/carplay/02_SESSION_LIFECYCLE.md). Backgrounded, so it can never block boot. Box stays IDLE (phone unswitched) until a host.

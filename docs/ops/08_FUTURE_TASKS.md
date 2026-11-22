@@ -1054,7 +1054,8 @@ enigy/carlink PR #2 (aca4733), Unlicense (NOTICE.md); the wire format and the ra
 - *Adapter.* `crates/ocbm-link` (OCBW v1), `ccpa/ocbmd/src/wifi.rs` (the race on one socketpair: this
   ocbmd has no relay threads) and `mdns.rs` (`_ocbm._tcp`), `MGMT_WIFI_LINK 0x0E` (the key alone,
   applied at the next start, no restart), `"wifi_link"` in `MGMT_INFO`; `radio_hal.sh sta_keep` keeps
-  the client joined from boot (`ocbm_boot.sh` starts it). `ocbmd` grows 38 KB (472,528 → 510,496 B).
+  the client joined from boot (the session supervisor starts it: an update never writes `ocbm_boot.sh`,
+  where 854e74a started it, so 264 as published starts it only at the first session; 265 moves it). `ocbmd` grows 38 KB (472,528 → 510,496 B).
   `ocbm-host` takes `OCBM_TCP=<address>` for every mode and `wifi-link set|clear`.
 - *App.* `ocbm/OcbwLink.kt`, `WifiBulkTransport.kt`, `WifiLink.kt`. With Settings ▸ Advanced ▸ Join
   the car's hotspot on (and the Vehicle hotspot's password), a USB connect to such firmware gives the
@@ -1070,7 +1071,9 @@ enigy/carlink PR #2 (aca4733), Unlicense (NOTICE.md); the wire format and the ra
   subnet as well as asking mDNS.
 - *Verified.* `cargo test` (ocbm-link 7, ocbmd's new 7 including a hung-up accessory that must not win
   the race), the app's 609 unit tests with the Rust crate's known answers, `radio_scan_test.sh`. Bench
-  (adapter on the server, home Wi-Fi as the hotspot): the keeper joined at boot; `ocbm-host` over Wi-Fi:
+  (adapter on the server, home Wi-Fi as the hotspot): the keeper joined at boot (started by a
+  hand-installed `ocbm_boot.sh`, which the car's adapter does not have; the supervisor's start is unit-tested
+  only); `ocbm-host` over Wi-Fi:
   handshake 9–15 ms, 21.6 Mbps adapter to host; a session's access point came up beside the client on
   its channel and the client outlived the teardown. The real app on the emulator: the USB connect gave
   the key ("taken, used from its next start"); after the adapter restarted, the app linked over Wi-Fi in

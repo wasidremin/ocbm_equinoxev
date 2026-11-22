@@ -208,8 +208,9 @@ caps() {
 #    access point is down.
 # THE KEEPER (2026-11-21, for the Wi-Fi link: ocbmd's src/wifi.rs). `radio_hal.sh sta_keep` keeps the
 # client joined from boot and across sessions, so the app can reach the adapter over the car's
-# hotspot before any session and needs no USB permission. ocbm_boot.sh starts it, and so does any
-# Wi-Fi start that finds it gone. It obeys every rule here: it searches only while no access point is
+# hotspot before any session and needs no USB permission. The session supervisor starts it at boot
+# (an update ships the supervisor and never writes ocbm_boot.sh), and so does any Wi-Fi start that
+# finds it gone; with no join configured it returns at once. It obeys every rule here: it searches only while no access point is
 # up, each attempt is the join below holding the wlan lock (so an attempt and a Wi-Fi start never
 # overlap), it writes the joined channel into hostapd.conf at once (the next handoff names it), it
 # stops a client that is not joined under an access point, and after a failed attempt it waits 10 s
@@ -603,6 +604,7 @@ keeper_stop_unjoined() {
 
 do_sta_keep() {
   caps || return 3
+  uplink_wanted || return 0
   if ! mkdir "$UPLINK_KEEPER" 2>/dev/null; then
     uplink_keeper_alive && return 2
     rm -rf "$UPLINK_KEEPER"; mkdir "$UPLINK_KEEPER" 2>/dev/null || return 1

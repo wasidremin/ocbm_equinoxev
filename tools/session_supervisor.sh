@@ -968,6 +968,14 @@ if [ "$(cat "$FLAG" 2>/dev/null)" != 1 ]; then
   fi
 fi
 
+# The car-hotspot client's keeper (radio_hal.sh, THE KEEPER): with a join configured, the adapter
+# joins the car's hotspot from boot and stays on it, so the app reaches ocbmd over Wi-Fi before any
+# session (ocbmd src/wifi.rs). A client, not an access point. Started here and not in ocbm_boot.sh:
+# an update never writes the boot path, so the car's ocbm_boot.sh predates the keeper (found at 264's
+# publish, 2026-11-21). Runs once (a respawned supervisor finds it running); with no join configured
+# it returns at once.
+setsid sh /script/radio_hal.sh sta_keep </dev/null >/dev/null 2>&1 &
+
 # Owner-approved boot optimization: attach/initialize BT only. No advertiser,
 # SoftAP or AA bridge until host_present. Single-flight HAL serializes an early
 # subscribe with this work; failure leaves the existing host-present retry path.

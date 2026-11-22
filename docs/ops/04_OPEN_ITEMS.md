@@ -57,18 +57,21 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 264 (`4.0+wifi-link`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
-- **The Wi-Fi link, no Allow prompt: benched, not yet in the car (2026-11-21, T15, not yet
-  published).** Needs Join the car's hotspot on with the hotspot's password, and the new firmware on
-  the adapter. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
+- **The Wi-Fi link, no Allow prompt: benched, not yet in the car (2026-11-21, T15, Play 264; the
+  keeper's start at boot is in 265, not yet published).** Needs Join the car's hotspot on with the
+  hotspot's password, and the new firmware on the adapter. With 264 alone the adapter joins the hotspot
+  only with the first session (264 started the keeper from `ocbm_boot.sh`, which an update never
+  writes), so a cold start still asks for USB permission, after up to 30 s of looking on the hotspot;
+  265 starts it from the session supervisor. The first drive connects over USB and gives the key (`wifi: gave the adapter this head
   unit's link key: taken`); the drive after should show `linked over the car's hotspot: no USB claim, no
   permission`, or `wifi: the adapter was not reached … trying USB` with whether the hotspot was up. Also
   check the adapter's `uplink: keeper` and `joined on channel` lines at boot, and stalls against USB
   (21.6 Mbps adapter to host on the bench).
-- **Low flash no longer marks the adapter unhealthy (2026-11-21, not yet published).** In the car with
+- **Low flash no longer marks the adapter unhealthy (2026-11-21, Play 264).** In the car with
   263 the update's kept copies left 1.8 MB free, under ocbmd's 2 MB floor; the app ran its recovery
   ladder on a working adapter and the update rolled back unconfirmed. Check that a drive after an
   update shows no `adapter unhealthy` and `firmware … confirmed`.
-- **Route A: what the phone asks with `setVideoPlaybackParameters` (2026-11-21, not yet published).**
+- **Route A: what the phone asks with `setVideoPlaybackParameters` (2026-11-21, Play 264).**
   The adapter now logs its shape (`[video] phone's setVideoPlaybackParameters: {…}`). The 263 try was
   YouTube in Safari; the next is Apple's example HLS stream in Safari (T34).
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
