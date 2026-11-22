@@ -47,7 +47,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
-| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). The adapter link over the car's hotspot (the Wi-Fi link, from enigy's PR #2s) **works in the car when the adapter is already up**; a cold start missed it by about 4 s (266), fixed in the app, not yet on the car. **Off by the owner's choice for now** (2026-11-22: USB with the tap) |
+| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). The adapter link over the car's hotspot (the Wi-Fi link, from enigy's PR #2s) **works in the car when the adapter is already up**; a cold start missed it by about 4 s (266), fixed in the app (267), not yet on the car. **Off by the owner's choice for now** (2026-11-22: USB with the tap) |
 | T20 Update the adapter from the app | Built and benched 2026-11-14 (update, confirm, manual and automatic rollback). Needs one last bench install for the boot hook; app updates after that |
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
@@ -1105,7 +1105,7 @@ The owner prefers USB with the tap for now and keeps the link ("I prefer the USB
 it is much faster. I am not giving up on the other method yet", 2026-11-22): Join the car's hotspot off is
 its off switch, and keeps the name, password and key.
 
-*Built 2026-11-22, app only, not yet on the car:* the search runs until 30 s after the adapter's USB
+*Built 2026-11-22, app only, Play 267, not yet on the car:* the search runs until 30 s after the adapter's USB
 device came up (`BOOT_FIND_MS`, `WifiLink.keepLooking`, stamped by `UsbDiagnostics`' hotplug watcher on
 the 2d06 announce or the 2d00 device) as well as 15 s after the hotspot; an adapter that has been up longer
 gets the 15 s. The miss line says how long ago the adapter appeared. Unit tests, with the 19:38:40 start.

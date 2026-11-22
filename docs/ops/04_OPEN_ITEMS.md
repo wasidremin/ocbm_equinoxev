@@ -55,13 +55,13 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 266 (`4.0+connect-stall`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 267 (`4.0+hotspot-window`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **The Wi-Fi link, no Allow prompt (T15): off by the owner's choice for now (2026-11-22).** In the car
   it links when the adapter is already on the hotspot (265 and 266, mDNS, 16 to 60 ms) and CarPlay runs
   over it; a cold start with 266 missed by about 4 s (the adapter joins about 22 s after it starts; the
   app looked for 15 s from its own start), and after a USB start the adapter turns Wi-Fi away until it
-  restarts. Built, not yet published: the app looks until 30 s after the adapter's USB device comes up.
+  restarts. Play 267: the app looks until 30 s after the adapter's USB device comes up.
   Proposed, needs the bench: ocbmd restarting when its USB host leaves. The owner prefers USB with the
   tap meanwhile (Join the car's hotspot off). When it is back on, a cold start should show `linked over
   the car's hotspot`, or `wifi: the adapter was not reached … adapter on USB N s ago` with N near 30.
