@@ -90,7 +90,9 @@ high-water mark: versionCode 265 (`4.0+keeper-video`, 2026-11-22; `host/gm_ccpa/
   idle)` at RECORD, `the phone's answer to setVideoPlaybackAllowed: …`, and then whether Safari's
   example stream opens the Playback DataStream (`A6B27562`) and plays on the car. With 265 (2026-11-22) the phone heard
   "may play" first and still only moved Safari's audio, never opening that stream (T34, "In the car with
-  265").
+  265"). The phone's log on the bench says why: `CarPlay Video Overlay NOT
+  supported on Bonjour discovery based accessories`. Route A waits on the simplified connection flow
+  (address over iAP2), not yet planned (T34).
 - **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
   2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
   lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and

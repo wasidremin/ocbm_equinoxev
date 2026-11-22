@@ -1660,6 +1660,19 @@ SenderSettingsData DataStream that expects a `'rply'`, and carplayd logs `NOT IM
 (`05_METADATA_AND_CONTROLS.md` §5 item 1 holds why; enigy's adapter does the same, and its bench video
 played). What the `modesChanged` and the `'sync'` carry is not logged.
 
+**The phone's own reason (bench, 2026-11-22, the owner's iPhone on iOS 27.2.1, `ocbm-host` as the host, the
+iPhone's log over USB searched for named terms only).** With "may play" at RECORD the phone logged `CarPlay
+videoPlayback supported: yes`, opened `CarPlayVideoSettings` (the SenderSettingsData stream, `err = noErr`) and
+`videoPlayback now changed to allowed`, then `carEndpoint_checkAndUpdateVideoOverlayActivation: false
+condition` and **`CarPlay Video Overlay NOT supported on Bonjour discovery based accessories`**. Safari saw
+`Playback Target Supports AirPlay Video = false`. The phone showed "Video will play on iPhone / Show Video in
+Car"; the owner's tap (`showCarPlayVideoActiveBanner: user response: 2`) changed nothing, and no UrlFling
+stream was set up. The phone had found the adapter by Bonjour on its access point (`StartBonjourForWiFi …
+IsCarPlay: Y`). So route A needs the simplified connection flow, the adapter's address sent over iAP2 instead
+of Bonjour (`docs/wireless/00_WIRELESS_CARPLAY.md` §2.3, `02_SESSION_LIFECYCLE.md`, WWDC 2023-10150). How
+enigy's bench (iOS 27.2) played without it is not known. Not started: it touches the wireless handoff, whose
+Bluetooth-time Identify is byte-pinned (CLAUDE.md), so it needs its own plan and the owner's go-ahead.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.
