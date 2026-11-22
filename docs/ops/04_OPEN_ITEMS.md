@@ -55,10 +55,10 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 264 (`4.0+wifi-link`, 2026-11-21; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 265 (`4.0+keeper-video`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **The Wi-Fi link, no Allow prompt: benched, not yet in the car (2026-11-21, T15, Play 264; the
-  keeper's start at boot is in 265, not yet published).** Needs Join the car's hotspot on with the
+  keeper's start at boot in Play 265).** Needs Join the car's hotspot on with the
   hotspot's password, and the new firmware on the adapter. With 264 alone the adapter joins the hotspot
   only with the first session (264 started the keeper from `ocbm_boot.sh`, which an update never
   writes), so a cold start still asks for USB permission, after up to 30 s of looking on the hotspot;
