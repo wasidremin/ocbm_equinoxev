@@ -41,7 +41,6 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | Task | State |
 |---|---|
 | T6 Car GPS into Maps | Built 2026-11-13 on T7's pattern, off by default. Waits for the adapter reflash; not yet tried on a phone |
-| T7 EV status for Apple Maps | Built and accepted by the phone; Maps shows nothing because it wants the two battery models. Their format and a working example on Hyundai head units were found 2026-11-13, and the fix was built that day. It needs the adapter reflashed, an app update, and the iPhone paired again (see T7) |
 | T8 MainBuffered audio, phase B | Probed twice 2026-11-14: buffered audio is stream type 103; with the `103 / media` format the phone builds the stream and Apple Music asks for it (dictionary recorded, own 32-byte key `shk`). Helps Apple's player (Apple Music), not Spotify; parked. Next if resumed: the receiver's type-103 arm |
 | T9 UI context | Open, not started, and **probably cannot do what it was raised for** (see T9) |
 | T10 Focus transfer | Open, not started |
@@ -54,7 +53,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
 | T25 Faster connect | **The owner's first annoyance.** Measured; 2026-11-22: about 6 s of every car connect was the adapter paging the absent second iPhone first; the owner reordered the phones and the Bluetooth step went from 11.1 to 4.7–5.3 s (266, 19:39:34 on). Next: where the adapter's ~22 s from power-on to the hotspot go |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
-| T35 Which iPhone first, by schedule | **Built 2026-11-22**, adapter firmware and app; unit-tested, Play 268 (firmware ee0e29addd5c), not yet on the car |
+| T35 Which iPhone first, by schedule | **Built 2026-11-22**, Play 268 (firmware ee0e29addd5c). The weekday-morning side works on the car (2026-11-23: the owner's phone first, page to ACL 0.6 to 0.8 s; a missed phone costs 3.2 s, not 5.1); the evening switch not yet seen |
 
 *Done*
 
@@ -62,6 +61,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 |---|---|
 | T13 Cluster turn-by-turn | `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16 |
 | T14 Voice button starts Siri | `docs/host/01_ANDROID_AND_AAOS.md` |
+| T7 EV status for Apple Maps | Done 2026-11-23 (charging stops planned on a long drive); the record stays in T7 below |
 
 **CarPlay SDK plan (2026-09-22):** T6–T11 are the Communication Plug-in features this tree will
 implement itself. The measured session of 2026-08-02 already negotiated `hevc`, `altScreen`,
@@ -145,7 +145,7 @@ position. The owner reports everything but the hotspot join working.
 `0xFFFA`, the adapter's log counts `0xFFFB` updates with no coordinates in it, and Maps holds its
 position through a place where the phone alone loses it.
 
-## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28; why Maps shows nothing FOUND 2026-11-13; the fix BUILT the same day; EV routing WORKS on the car, owner 2026-11-18)
+## T7. EV vehicle status — range and charge (raised 2026-09-22; BUILT 2026-10-27; Identify and status ACCEPTED by the phone on the car 2026-10-28; why Maps shows nothing FOUND 2026-11-13; the fix BUILT the same day; EV routing WORKS on the car, owner 2026-11-18; DONE 2026-11-23: a long drive planned charging stops)
 
 **Why.** The Equinox is electric. Maps will not treat it as one until Identify says so and a status
 update follows.
@@ -379,6 +379,10 @@ their facts and ideas only, never their code, and credit both in `NOTICE.md` whe
 firmware the app has delivered since Play 256 (the 2026-11-13 fix included). This is the owner's
 report from driving; no log was read for it, so the `TX 0xA101` ids 26/27 line below is still the
 check to run if it ever regresses.
+
+**Done (owner, 2026-11-23).** On a long drive on 2026-11-22 Apple Maps planned the route with charging
+stops. Reported from driving; that drive's log was not uploaded. The `TX 0xA101` check below stays the test
+if it ever regresses.
 
 **Done means.** Apple Maps ▸ Vehicles lists the car. A route longer than the remaining range shows
 charging stops and the battery on arrival. During a drive the percentage in Maps follows the
@@ -1748,7 +1752,7 @@ Bluetooth-time Identify is byte-pinned (CLAUDE.md), so it needs its own plan and
 **On hold (owner, 2026-11-22: "I guess that is fine. The car has a browser that can be used in park").** No
 work on the simplified connection flow for video. The offer stays as built.
 
-## T35. Which iPhone connects first, by schedule (raised 2026-11-22; BUILT 2026-11-22, Play 268, not yet on the car)
+## T35. Which iPhone connects first, by schedule (raised 2026-11-22; BUILT 2026-11-22, Play 268; morning side WORKS on the car 2026-11-23)
 
 **Why.** Two people drive the car with their own iPhones, both bonded. Owner, 2026-11-22: "I want my phone to
 be first priority all workdays until 6 and then weekends and evenings my wife's phone is first priority."
@@ -1778,15 +1782,23 @@ and `MGMT_INFO` says `"order_at_start":true` (`docs/carplay/01_OCBM_PROTOCOL.md`
   whole 5.12 s before the next phone was called.
 - *Verified.* `cargo test` (ocbmd: the order kept with no btd, `autoConnect` kept, no rewrite of the same
   order; bt-common: the parameter and opcode), `tools/run_tests.sh`; the app's unit tests with the owner's
-  example (his phone Monday 7:30 and Friday 17:59, hers Friday 18:00, Saturday and Sunday), windows past
+  example (the owner's phone Monday 7:30 and Friday 17:59, the wife's Friday 18:00, Saturday and Sunday), windows past
   midnight and across Sunday into Monday, overlaps, the list against changed bonds, the row's words.
-- *Not verified.* Anything on an adapter or in the car: the order taken before Bluetooth starts
-  (`phone order kept for Bluetooth's next start` in the box log, then `[reconnect]` calling the scheduled
-  phone first), the page timeout (`[btd] page timeout 3200 ms`; a missing phone's `CONNECT_FAILED … 0x04`
-  about 3.2 s after `page_start`; a present phone still connecting), and the dialog on the car's screen.
+- *On the car, 2026-11-23 (Play 268, firmware ee0e29addd5c, the log uploaded 13:17 UTC).* The owner updated
+  the adapter from the app at 12:02 UTC (confirmed 12:03, health 0x71) and set both phones' schedules
+  (12:06, 12:09). `[btd] page timeout 3200 ms` at every bring-up. With the absent phone still first (12:03),
+  its `CONNECT_FAILED … 0x04` came 3.2 s after `page_start` and the present phone's ACL 1.0 s later: page to
+  ACL 4.1 s, against 8.8 s on the old firmware at 11:59. After the schedules, a Monday-morning connect said
+  `phones: list phone 1 first, as the adapter has it (1 of 2 schedule(s) cover now)`, nothing was refused,
+  and the present phone answered 0.64 s (12:10, a restart the owner asked for) and 0.76 s (13:10, a cold
+  start) after `page_start`. Attach to first picture: 21.4 s at 11:59 (old firmware), 10.1 s at 12:10, and
+  16.1 s at 13:10, of which 4.4 s was the Allow tap. The owner set both schedules with the dialog on the car.
+- *Not verified.* The evening and weekend side: the app sending a changed order before Bluetooth starts
+  (`phones: list phone N first for this start … the adapter took it` and, in the box log, `phone order kept
+  for Bluetooth's next start`), then `[reconnect]` calling the wife's phone first.
 
 **Done means.** On a weekday morning the owner's phone connects first with both in the car, and on an evening
-or a weekend his wife's does; with only one phone in the car, it connects about 3 s after the other's page
+or a weekend their wife's does; with only one phone in the car, it connects about 3 s after the other's page
 starts instead of 5.
 
 ## Left off this plan

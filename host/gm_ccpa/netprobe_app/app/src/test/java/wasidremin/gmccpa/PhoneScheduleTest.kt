@@ -8,21 +8,21 @@ import org.junit.Test
 import wasidremin.gmccpa.PhoneSchedule.Window
 
 class PhoneScheduleTest {
-    private val mine = "AA:BB:CC:DD:EE:01"
-    private val hers = "AA:BB:CC:DD:EE:02"
+    private val owner = "AA:BB:CC:DD:EE:01"
+    private val wife = "AA:BB:CC:DD:EE:02"
     private val mon = 1; private val fri = 5; private val sat = 6; private val sun = 7
     private fun at(h: Int, m: Int = 0) = h * 60 + m
 
-    /** The owner's example (2026-11-22): her phone tops the list, his is first on workdays until 6 PM. */
-    private val owners = mapOf(mine to Window(PhoneSchedule.WEEKDAYS, 0, at(18)))
-    private val list = listOf(hers, mine)
+    /** The owner's example (2026-11-22): the wife's phone tops the list, the owner's is first on workdays until 6 PM. */
+    private val schedules = mapOf(owner to Window(PhoneSchedule.WEEKDAYS, 0, at(18)))
+    private val list = listOf(wife, owner)
 
-    @Test fun myPhoneOnWorkdaysUntilSixAndHersEveningsAndWeekends() {
-        assertEquals(listOf(mine, hers), PhoneSchedule.orderNow(list, owners, mon, at(7, 30)))
-        assertEquals(listOf(mine, hers), PhoneSchedule.orderNow(list, owners, fri, at(17, 59)))
-        assertEquals("6 PM is hers", listOf(hers, mine), PhoneSchedule.orderNow(list, owners, fri, at(18)))
-        assertEquals(listOf(hers, mine), PhoneSchedule.orderNow(list, owners, sat, at(10)))
-        assertEquals(listOf(hers, mine), PhoneSchedule.orderNow(list, owners, sun, at(23, 59)))
+    @Test fun theOwnersPhoneOnWorkdaysUntilSixAndTheWifesEveningsAndWeekends() {
+        assertEquals(listOf(owner, wife), PhoneSchedule.orderNow(list, schedules, mon, at(7, 30)))
+        assertEquals(listOf(owner, wife), PhoneSchedule.orderNow(list, schedules, fri, at(17, 59)))
+        assertEquals("6 PM is the wife's", listOf(wife, owner), PhoneSchedule.orderNow(list, schedules, fri, at(18)))
+        assertEquals(listOf(wife, owner), PhoneSchedule.orderNow(list, schedules, sat, at(10)))
+        assertEquals(listOf(wife, owner), PhoneSchedule.orderNow(list, schedules, sun, at(23, 59)))
     }
 
     @Test fun withNoScheduleTheListDecides() {
@@ -46,15 +46,15 @@ class PhoneScheduleTest {
     }
 
     @Test fun twoPhonesCoveredAtOnceKeepTheListOrder() {
-        val both = mapOf(mine to Window(PhoneSchedule.EVERY_DAY, 0, 0), hers to Window(PhoneSchedule.EVERY_DAY, 0, 0))
+        val both = mapOf(owner to Window(PhoneSchedule.EVERY_DAY, 0, 0), wife to Window(PhoneSchedule.EVERY_DAY, 0, 0))
         assertEquals(list, PhoneSchedule.orderNow(list, both, mon, at(9)))
     }
 
     @Test fun theListKeepsItsOrderForBondedPhonesAndAddsANewOneLast() {
         val third = "AA:BB:CC:DD:EE:03"
-        assertEquals(listOf(hers, mine, third), PhoneSchedule.base(listOf(hers, mine), listOf(mine, third, hers)))
-        assertEquals("a forgotten phone drops out", listOf(mine), PhoneSchedule.base(listOf(hers, mine), listOf(mine)))
-        assertEquals("nothing kept: the adapter's order", listOf(mine, hers), PhoneSchedule.base(null, listOf(mine, hers)))
+        assertEquals(listOf(wife, owner, third), PhoneSchedule.base(listOf(wife, owner), listOf(owner, third, wife)))
+        assertEquals("a forgotten phone drops out", listOf(owner), PhoneSchedule.base(listOf(wife, owner), listOf(owner)))
+        assertEquals("nothing kept: the adapter's order", listOf(owner, wife), PhoneSchedule.base(null, listOf(owner, wife)))
     }
 
     @Test fun theRowSaysTheWindowInWords() {
@@ -76,7 +76,7 @@ class PhoneScheduleTest {
     }
 
     @Test fun theAdaptersBondsComeFromItsInfoInItsOrder() {
-        assertEquals(listOf(hers, mine), PhoneBook.devicesOf("""{"phone_order":true,"devices":["aa:bb:cc:dd:ee:02","AA:BB:CC:DD:EE:01"]}"""))
+        assertEquals(listOf(wife, owner), PhoneBook.devicesOf("""{"phone_order":true,"devices":["aa:bb:cc:dd:ee:02","AA:BB:CC:DD:EE:01"]}"""))
         assertEquals(emptyList<String>(), PhoneBook.devicesOf("""{"phone_order":true}"""))
         assertEquals(emptyList<String>(), PhoneBook.devicesOf(null))
     }

@@ -65,12 +65,22 @@ high-water mark: versionCode 268 (`4.0+phone-schedule`, 2026-11-22; `host/gm_ccp
   Proposed, needs the bench: ocbmd restarting when its USB host leaves. The owner prefers USB with the
   tap meanwhile (Join the car's hotspot off). When it is back on, a cold start should show `linked over
   the car's hotspot`, or `wifi: the adapter was not reached … adapter on USB N s ago` with N near 30.
-- **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** Needs the adapter update
-  it carries (firmware ee0e29addd5c). Check in a drive: with a window set, `phones: list phone N first for this start` in the
-  app's log and `phone order kept for Bluetooth's next start` in the box log, then `[reconnect]` calling
-  that phone first; `[btd] page timeout 3200 ms` at the bring-up, and a missing phone's `CONNECT_FAILED
-  … status=0x04` about 3.2 s after `page_start` (the `[timeline]` line). Watch that a present phone never
-  times out at 3.2 s (it answered within 2.2 s in 17 connects).
+- **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** The weekday-morning side works on the
+  car (2026-11-23): the adapter updated, `[btd] page timeout 3200 ms`, a missed phone 3.2 s, the owner's
+  phone first and answering 0.6 to 0.8 s after `page_start`, first picture 10.1 s and 16.1 s after attach.
+  Still to see: an evening or weekend start, where the app sends a changed order (`phones: list phone N
+  first for this start … the adapter took it`, `phone order kept for Bluetooth's next start` in the box
+  log) and the wife's phone connects first. Keep watching that a present phone never times out at 3.2 s.
+- **Drive card missing: the EV Insights recorder went quiet (2026-11-23, Play 268).** The owner: the card
+  "keeps on not showing up"; Settings off and on brought it back. The 2026-11-23 log: the recorder started
+  at 11:59:18 UTC, closed one segment at 11:59:20 (`telemetry segments: sending (heartbeat)`) and logged
+  nothing more through a 16-minute drive and a second start at 13:10, where a working drive logs `sending
+  (moving)` within a minute (2026-11-22 13:49). No `drive card: last mi` line all day, and the server has
+  had no EV Insights segment since 2026-11-22 20:38 UTC. The card draws only from the recorder's live
+  state (`DriveLive`), so it had nothing; the toggle showed the 30 s Settings sample, not the drive. The
+  recorder's thread did not crash (no handler swallows it, and the process lived), so it is probably
+  blocked; its faults go to the segment's `errors`, not the log, so the cause is not in hand. No
+  telemetry code changed since 264, whose drive worked.
 - **Connect speed and the stall sentence (2026-11-22, Play 266).** The phone order is seen working:
   after the owner moved their phone first, no `CONNECT_FAILED … status=0x04` and Bluetooth 4.7 to 5.3 s
   after the subscribe, from 11.1 (T25). Still to see: the keeper's at-once retry after a missed scan, and
@@ -230,7 +240,8 @@ high-water mark: versionCode 268 (`4.0+phone-schedule`, 2026-11-22; `host/gm_ccp
   dropped its input connection on any `CH_INPUT` sub-frame over 64 bytes, which a location fix, a
   `CMD_NAV_URL` with a query, or a `CMD_REQUEST_UI_URL` longer than 62 bytes would have triggered,
   taking touch input with it. The app still has to be published.
-- **T7 and T23 work on the car (owner, 2026-11-18).** EV routing in Apple Maps and Apple's turn
+- **T7 and T23 work on the car (owner, 2026-11-18; T7 done 2026-11-23, charging stops planned on a long
+  drive).** EV routing in Apple Maps and Apple's turn
   card on the driver display both work as expected, on the firmware the app delivers. Reported by
   the owner from driving. The 2026-11-18 evening log agrees: `TX 0xA101` (772 B) carries the
   charging (392 B) and consumption (288 B) models, min and max range, with no `0x1D03`; route
