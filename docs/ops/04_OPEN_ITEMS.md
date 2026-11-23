@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 267 (`4.0+hotspot-window`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 268 (`4.0+phone-schedule`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **The Wi-Fi link, no Allow prompt (T15): off by the owner's choice for now (2026-11-22).** In the car
   it links when the adapter is already on the hotspot (265 and 266, mDNS, 16 to 60 ms) and CarPlay runs
@@ -65,8 +65,8 @@ high-water mark: versionCode 267 (`4.0+hotspot-window`, 2026-11-22; `host/gm_ccp
   Proposed, needs the bench: ocbmd restarting when its USB host leaves. The owner prefers USB with the
   tap meanwhile (Join the car's hotspot off). When it is back on, a cold start should show `linked over
   the car's hotspot`, or `wifi: the adapter was not reached … adapter on USB N s ago` with N near 30.
-- **Which iPhone first, by schedule (2026-11-22, T35; not yet published).** Needs the adapter update
-  it carries. Check in a drive: with a window set, `phones: list phone N first for this start` in the
+- **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** Needs the adapter update
+  it carries (firmware ee0e29addd5c). Check in a drive: with a window set, `phones: list phone N first for this start` in the
   app's log and `phone order kept for Bluetooth's next start` in the box log, then `[reconnect]` calling
   that phone first; `[btd] page timeout 3200 ms` at the bring-up, and a missing phone's `CONNECT_FAILED
   … status=0x04` about 3.2 s after `page_start` (the `[timeline]` line). Watch that a present phone never
@@ -208,8 +208,8 @@ high-water mark: versionCode 267 (`4.0+hotspot-window`, 2026-11-22; `host/gm_ccp
     phone tried. `bt-connected` has been 12.5 to 14.9 s after attach on every start since
     2026-11-10, and the first picture about 21 s. Today's fix is Settings ▸ CarPlay ▸ Phones: move
     the phone that drives to the top (T12, on the car since 2026-11-11). The second phone is the owner's
-    wife's (2026-11-22), so the owner chose a schedule over "last connected first": T35, built
-    2026-11-22, with a 3.2 s page timeout that halves what a missing phone costs.
+    wife's (2026-11-22), so the owner chose a schedule over "last connected first": T35, Play 268
+    (2026-11-22), with a 3.2 s page timeout that halves what a missing phone costs.
   - *Fixed, in the next build: a quiet screen rebuilt the video decoder.* The stall watchdog timed
     from the last access unit queued, and the decoder often holds that one until the next arrives.
     The first frame after a pause then looked like a stall of the pause's length (10.9 s and 6.2 s

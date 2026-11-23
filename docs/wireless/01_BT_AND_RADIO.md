@@ -774,7 +774,7 @@ the order but not in the car costs one page timeout (`CONNECT_FAILED … status=
 phone is called. In 17 car connects (2026-11-21 and 22, the `[timeline]` line's `page_start` to `acl`)
 a present iPhone answered 0.4 to 2.2 s after the page began, so 3.2 s leaves 1 s above the slowest seen.
 If a present phone ever times out at 3.2 s, raise it. Built with the phone schedule
-(`docs/ops/08_FUTURE_TASKS.md` T35); not yet on an adapter.
+(`docs/ops/08_FUTURE_TASKS.md` T35); Play 268 (firmware ee0e29addd5c), not yet on an adapter.
 
 ### Retries after a page that was answered and reset (2026-11-07)
 

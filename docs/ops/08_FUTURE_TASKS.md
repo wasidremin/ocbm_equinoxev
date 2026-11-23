@@ -54,7 +54,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
 | T25 Faster connect | **The owner's first annoyance.** Measured; 2026-11-22: about 6 s of every car connect was the adapter paging the absent second iPhone first; the owner reordered the phones and the Bluetooth step went from 11.1 to 4.7–5.3 s (266, 19:39:34 on). Next: where the adapter's ~22 s from power-on to the hotspot go |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
-| T35 Which iPhone first, by schedule | **Built 2026-11-22**, adapter firmware and app; unit-tested, not yet on the car |
+| T35 Which iPhone first, by schedule | **Built 2026-11-22**, adapter firmware and app; unit-tested, Play 268 (firmware ee0e29addd5c), not yet on the car |
 
 *Done*
 
@@ -1748,7 +1748,7 @@ Bluetooth-time Identify is byte-pinned (CLAUDE.md), so it needs its own plan and
 **On hold (owner, 2026-11-22: "I guess that is fine. The car has a browser that can be used in park").** No
 work on the simplified connection flow for video. The offer stays as built.
 
-## T35. Which iPhone connects first, by schedule (raised 2026-11-22; BUILT 2026-11-22, not yet on the car)
+## T35. Which iPhone connects first, by schedule (raised 2026-11-22; BUILT 2026-11-22, Play 268, not yet on the car)
 
 **Why.** Two people drive the car with their own iPhones, both bonded. Owner, 2026-11-22: "I want my phone to
 be first priority all workdays until 6 and then weekends and evenings my wife's phone is first priority."
