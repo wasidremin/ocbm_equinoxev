@@ -55,7 +55,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV) — re-checked 2026-11-02
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 268 (`4.0+phone-schedule`, 2026-11-22; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 269 (`4.0+recorder-watchdog`, 2026-11-24; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
 - **The Wi-Fi link, no Allow prompt (T15): off by the owner's choice for now (2026-11-22).** In the car
   it links when the adapter is already on the hotspot (265 and 266, mDNS, 16 to 60 ms) and CarPlay runs
