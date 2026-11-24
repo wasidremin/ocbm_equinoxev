@@ -48,14 +48,20 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private var bytes = 0L
     private var censusComplete = false
     private var ended: String? = null
-    private var closed = false
+    @Volatile private var closed = false
+    // RecorderHealth's clocks (uptimeMillis, which pauses with the head unit's sleep as this thread does).
+    @Volatile var lastBeatMs = SystemClock.uptimeMillis(); private set
+    @Volatile var lastCarEventMs = 0L; private set
+    @Volatile var offSinceMs = 0L; private set
+    val auto: Boolean get() = autoStreamMode
+    private val loggedFaults = java.util.Collections.synchronizedSet(HashSet<String>())
     private var gps: LocationManager? = null
     private var gpsRegistered = false
     private var rawGps = false
     private var captureStarted = 0L
     private var lastFlushMs = 0L
     private var chunkEvents = 0
-    private var autoStreamMode = false
+    @Volatile private var autoStreamMode = false
     private var sessionBootId: String? = null
     // What the thinning rule needs to know about the running segment (SegmentThinner.kt).
     private val thinner = SegmentThinner()
@@ -78,6 +84,9 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.ROOT).format(Date())
     private fun fail(where: String, t: Throwable) {
+        // Also to the log, once per place and kind: these used to reach only the segment's report,
+        // which stays on the car when the recorder is the thing that broke (2026-11-23).
+        if (loggedFaults.add("$where:${t.javaClass.name}")) segmentLog.w("recorder fault in $where: ${t.javaClass.simpleName}")
         errors.put(ProbeModel.error(t).put("operation", where).put("wallTime", now()))
     }
     private fun attempt(where: String, block: () -> Unit) {
@@ -102,8 +111,33 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
             tripCheckpointMs = SystemClock.elapsedRealtime()
         } catch (e: Exception) { fail("drive log checkpoint", e) }
     }
+    private val beat = object : Runnable {
+        override fun run() {
+            lastBeatMs = SystemClock.uptimeMillis()
+            if (!closed) worker.postDelayed(this, RecorderHealth.BEAT_MS)
+        }
+    }
+
+    /** Where the recorder's thread is now, for the watchdog's one log line. */
+    fun threadFrames(): List<String> = RecorderHealth.frames(thread.stackTrace)
+
+    /**
+     * Give up on a recorder whose thread is stuck ([RecorderHealth.Verdict.STUCK]): stop taking the
+     * car's callbacks here, so they do not pile up behind the stuck thread, without waiting on it.
+     * Blocking calls; the caller runs this off the main thread.
+     */
+    fun abandon() {
+        closed = true
+        capturing = false
+        runCatching { manager?.unregisterCallback(callback) }
+        runCatching { if (gpsRegistered) gps?.removeUpdates(locationListener) }
+        runCatching { car?.disconnect() }
+        thread.quit()
+    }
+
     fun open() = worker.post {
         if (closed) return@post
+        beat.run()
         attempt("restore drive log") { trips.restore(tripStore.loadCheckpoint(), System.currentTimeMillis()) }
         permissions = permissionSnapshot(context)
         if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
@@ -300,6 +334,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
             }
             bytes = 0
             capturing = true
+            offSinceMs = 0L
             report.put("captureStartWallTime", now()).put("captureStartElapsedRealtimeNanos", captureStarted)
                 .put("captureMode", when {
                     auto -> "continuous auto-upload stream"
@@ -407,6 +442,8 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private val stopTimer = Runnable { stopInternal("60-second timer completed") }
     private val callback = object : CarPropertyManager.CarPropertyEventCallback {
         override fun onChangeEvent(value: CarPropertyValue<*>) {
+            if (closed) return
+            lastCarEventMs = SystemClock.uptimeMillis()
             worker.post {
                 if (!capturing || closed) return@post
                 try {
@@ -493,6 +530,7 @@ class VehicleProbe(private val context: Context, private val changed: () -> Unit
     private fun stopInternal(reason: String) {
         val wasCapturing = capturing
         capturing = false
+        if (wasCapturing) offSinceMs = SystemClock.uptimeMillis()
         worker.removeCallbacks(stopTimer)
         worker.removeCallbacks(flushTick)
         // Unregister the shared callback, including partially successful setup, on every stop.

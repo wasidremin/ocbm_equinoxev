@@ -178,8 +178,12 @@ object DriveCard {
         return RollingEfficiency.perKwh(rate, metric)
     }
 
-    /** Pure: the small word over the figure, which says what the figure is. */
-    internal fun figureLabel(f: Face, live: Boolean): String = when {
+    /**
+     * Pure: the small word over the figure, which says what the figure is. The Settings sample says it
+     * is one: on 2026-11-23 it was taken for the card coming back (`04_OPEN_ITEMS.md` "Drive card missing").
+     */
+    internal fun figureLabel(f: Face, live: Boolean, sample: Boolean = false): String = when {
+        sample -> "SAMPLE"
         live -> "NOW"
         f.last != null -> "LAST ${f.unitWord.uppercase(Locale.US)}"
         f.recent != null -> "SO FAR"
@@ -476,7 +480,7 @@ object DriveCard {
         /** The figure and the word over it, for this frame. */
         private fun reading(f: Face, sample: Boolean): Pair<String, String> {
             val live = if (sample) sampleNow(f) else if (powerW == null) null else nowFigure(figureW.toDouble(), figureV.toDouble(), f.metric)
-            return figure(live ?: f.last ?: f.recent) to figureLabel(f, live != null)
+            return figure(live ?: f.last ?: f.recent) to figureLabel(f, live != null, sample)
         }
 
         override fun onDraw(canvas: Canvas) {

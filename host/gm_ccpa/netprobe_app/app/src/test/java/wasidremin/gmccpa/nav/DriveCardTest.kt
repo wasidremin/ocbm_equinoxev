@@ -38,6 +38,7 @@ class DriveCardTest {
         assertEquals("▲ 20% vs usual", DriveCard.vsText(f))
         assertEquals("LAST MI", DriveCard.figureLabel(f, live = false))
         assertEquals("NOW", DriveCard.figureLabel(f, live = true))
+        assertEquals("the Settings sample says so, live or not", "SAMPLE", DriveCard.figureLabel(f, live = true, sample = true))
         // The line: ten miles of it, oldest first, ending near 4.0 and starting near 3.33.
         assertTrue(f.past.isEmpty())
         assertNull(f.startX)

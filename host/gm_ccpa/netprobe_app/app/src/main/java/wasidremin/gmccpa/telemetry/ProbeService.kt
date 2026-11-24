@@ -13,7 +13,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import wasidremin.gmccpa.ProbeLog
+import wasidremin.gmccpa.logging.SessionTrace
 
 /**
  * Bound by the diagnostic Activity, or started automatically to record the car.
@@ -34,13 +36,16 @@ class ProbeService : Service() {
     var unavailable = "Car service initialization pending"
         private set
 
+    private fun newRecorder() = VehicleProbe(applicationContext,
+        { main.post { observer?.invoke() } },
+        { main.post { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); observer?.invoke() } })
+
     override fun onCreate() {
         super.onCreate()
         try {
-            recorder = VehicleProbe(applicationContext,
-                { main.post { observer?.invoke() } },
-                { main.post { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); observer?.invoke() } })
+            recorder = newRecorder()
             recorder!!.open()
+            main.postDelayed(watch, WATCH_MS)
             // Drain any unuploaded reports from prior drives
             ProbeUpload.enqueueAndDrain(applicationContext)
         } catch (t: Exception) { unavailable = "${t.javaClass.name}: ${t.message}" }
@@ -102,7 +107,52 @@ class ProbeService : Service() {
         }
         return START_NOT_STICKY
     }
+    private var lastRebuildMs = 0L
+
+    /**
+     * The recorder's watchdog ([RecorderHealth]), on the main thread, which only reads its clocks.
+     * Says on the status board whether it is recording; restarts a capture that stopped while the
+     * car is connected; and when its thread is stuck, logs where once and starts a fresh recorder
+     * on a new thread, so the Drive card and the drive log carry on (2026-11-23: two days of drives
+     * lost to a recorder that went quiet two seconds after it started).
+     */
+    private val watch = object : Runnable {
+        override fun run() {
+            runCatching { check() }.onFailure { log.w("recorder watchdog: ${it.javaClass.simpleName}") }
+            main.postDelayed(this, WATCH_MS)
+        }
+    }
+
+    private fun check() {
+        val p = recorder ?: return
+        val now = SystemClock.uptimeMillis()
+        val v = RecorderHealth.verdict(now, p.auto, p.connected, p.capturing, p.lastBeatMs, p.offSinceMs)
+        val heard = p.lastCarEventMs.takeIf { it > 0L }?.let { now - it }
+        SessionTrace.Board.note(BOARD, RecorderHealth.boardText(v, p.capturing, heard, DriveLive.state?.drive != null))
+        when (v) {
+            RecorderHealth.Verdict.STUCK -> if (RecorderHealth.mayRebuild(now, lastRebuildMs)) {
+                lastRebuildMs = now
+                log.e("recorder thread stuck ${(now - p.lastBeatMs) / 1000} s at ${p.threadFrames().joinToString(" < ")}; starting a fresh recorder")
+                rebuild(p)
+            }
+            RecorderHealth.Verdict.OFF -> p.startAutoCapture()
+            else -> Unit
+        }
+    }
+
+    private fun rebuild(old: VehicleProbe) {
+        val auto = old.auto
+        Thread({ old.abandon() }, "recorder-abandon").apply { isDaemon = true }.start()
+        val fresh = newRecorder()
+        recorder = fresh
+        fresh.open()
+        if (auto) fresh.startAutoCapture()
+        observer?.invoke()
+    }
+
     override fun onDestroy() {
+        main.removeCallbacks(watch)
+        SessionTrace.Board.down(BOARD, "recorder service stopped")
         observer = null
         recorder?.close()
         recorder = null
@@ -119,6 +169,8 @@ class ProbeService : Service() {
         const val STOP = "vehicle_probe_stop"
         private const val CHANNEL = "vehicle_telemetry_probe"
         private const val NOTIFICATION_ID = 7612
+        private const val BOARD = "ev-recorder"
+        private const val WATCH_MS = 15_000L
 
         /**
          * Start (or refresh) the automatic recording. Safe to call repeatedly, and called again

@@ -71,6 +71,12 @@ high-water mark: versionCode 268 (`4.0+phone-schedule`, 2026-11-22; `host/gm_ccp
   Still to see: an evening or weekend start, where the app sends a changed order (`phones: list phone N
   first for this start … the adapter took it`, `phone order kept for Bluetooth's next start` in the box
   log) and the wife's phone connects first. Keep watching that a present phone never times out at 3.2 s.
+  2026-11-24 00:37 UTC (Monday 7:37 PM): `phones: list phone 1 first, as the adapter has it (0 of 2
+  schedule(s) cover now)`. Neither schedule covered a weekday evening, so the list's top phone went
+  first; that night it was the phone in the car, but on an evening with only the wife's phone it would
+  cost the 3.2 s miss. A phone has one window, so "weekends and evenings" is the list's top place plus
+  the other phone's weekday window, not a window of its own. That start also lost 11 s to the present
+  phone answering and resetting the SDP link twice (`answered and reset the link`), a known intermittent.
 - **Drive card missing: the EV Insights recorder went quiet (2026-11-23, Play 268).** The owner: the card
   "keeps on not showing up"; Settings off and on brought it back. The 2026-11-23 log: the recorder started
   at 11:59:18 UTC, closed one segment at 11:59:20 (`telemetry segments: sending (heartbeat)`) and logged
@@ -81,6 +87,17 @@ high-water mark: versionCode 268 (`4.0+phone-schedule`, 2026-11-22; `host/gm_ccp
   recorder's thread did not crash (no handler swallows it, and the process lived), so it is probably
   blocked; its faults go to the segment's `errors`, not the log, so the cause is not in hand. No
   telemetry code changed since 264, whose drive worked.
+  Still silent on 2026-11-24 in the same process (the 00:37 and 11:58 UTC starts: no `[probe]` line).
+  *Built 2026-11-24, not yet published (269):* a `ev-recorder` entry on the status board (capturing,
+  whether the car was heard in the last 5 min, whether a drive is open); every recorder fault in the
+  log once (`recorder fault in <step>: <exception>`); and a watchdog in `ProbeService`
+  (`telemetry/RecorderHealth.kt`) that, when the recorder's thread misses its beat for 60 s, logs
+  `recorder thread stuck N s at <frames>` and starts a fresh recorder on a new thread, and restarts a
+  capture that is off while the car is connected. The Settings sample now says SAMPLE. On the AAOS
+  emulator the watchdog fired once on a slow start (33 s inside `CarPropertyManager.registerCallback`,
+  which is why the limit went from 30 to 60 s), and the fresh recorder was capturing 31 s later.
+  Check on the car: `ev-recorder` reading `capturing … drive open` during a drive, `drive card: last mi`
+  lines, and if it sticks again the `recorder thread stuck` line, which names the cause.
 - **Connect speed and the stall sentence (2026-11-22, Play 266).** The phone order is seen working:
   after the owner moved their phone first, no `CONNECT_FAILED … status=0x04` and Bluetooth 4.7 to 5.3 s
   after the subscribe, from 11.1 (T25). Still to see: the keeper's at-once retry after a missed scan, and
