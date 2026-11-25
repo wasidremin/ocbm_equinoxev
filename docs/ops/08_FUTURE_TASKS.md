@@ -28,7 +28,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T23 Apple's own turn card on the driver display | Built and tried on the car 2026-11-14: Apple's card replaces the map on the one feed. Map and card together (a second feed) declined by the owner; settings reworked so Apple's card is a Turn card choice and the bottom-right panel can hold another card beside it |
 | T26 "Try this drive" card | New 2026-11-14, not started |
 | T27 "Why didn't CarPlay connect?" | Built 2026-11-22, app only; not yet on the car |
-| T28 After-drive summary | New 2026-11-14, not started |
+| T28 After-drive summary | Built 2026-11-24, app only; emulator-checked, not yet on the car |
 | T29 Charging card | New 2026-11-14, not started |
 | T30 Weather-aware arrival estimate | New 2026-11-14, not started |
 | T31 Mileage log | New 2026-11-14, not started; also needs the server |
@@ -1545,13 +1545,45 @@ car's 15:08 connect on 2026-11-22 says nothing at any step; a phone that never a
 the Phones order; the adapter gets longer than the hotspot look; `bt-converged` is not progress) and the
 app's 618 unit tests. *Not verified:* on the emulator or in the car.
 
-## T28. After-drive summary (raised 2026-11-14)
+## T28. After-drive summary (raised 2026-11-14; BUILT 2026-11-24, app only, not yet on the car)
 
 **What.** On Park, one screen for the drive just finished: distance, energy, mi/kWh against the
 usual, and where the energy went (speed, the cold start, standing) as `DriveOutlook` already splits
 it. Numbers the Drive card cannot show while moving.
 
 **Done means.** The summary shows on Park after a drive of a mile or more and matches the drive log.
+
+**Built 2026-11-24.** The owner chose from four mockups (full card, compact strip, driver display,
+card and month) the **card and month** layout, shown on Park for 30 s ("Park, 30 s").
+
+- *When.* `VehicleStateWatcher`'s gear goes to PARK from a gear known not to be PARK (an app started in
+  Park shows nothing; an unknown gear says nothing), Settings ▸ Screen & Sound ▸ After-drive summary
+  is on (the default), and the recorder's open drive (`DriveLive`) has gone a mile. At that moment the
+  drive is still open: it ends at its last moving sample and closes only 4 min later, so it is not yet
+  in the drive log. One summary per drive (by its start time). It closes after 30 s, on a tap on the
+  card, or on leaving Park (`telemetry/AfterDrive.kt`).
+- *What* (`telemetry/DriveSummary.kt`, pure). The rate and how it compares with the usual
+  (`TripStats.expected`: this route at today's temperature, else this route's median, else drives of
+  the same length; the drive itself excluded); distance, net energy, time, temperature, battery
+  percent at start and end. Where it went is `TripStats.split`, the split the Insights trip view uses:
+  driving, warm-up (how much more the opening 3 km used than the same distance later), stopped, adding
+  up to the net, with regeneration as a line of its own (it is already inside driving). The split
+  has no "speed" part: the energy model's speed term is not separated per drive, and a part that
+  does not add up would not match the drive log. Then bars for the last 10 drives (this one last),
+  the month (rate, miles, kWh, this drive counted once even if the recorder closed it while the log
+  was read) and all time.
+- *Where* (`pane/AfterDriveView.kt`). Over the CarPlay picture, centred on it, under the call pill
+  and the parked video. Only a touch on the card is taken.
+
+*Verified.* `DriveSummaryTest` (7: only a move into Park from a known gear; under a mile or already
+shown is skipped; the route's usual and the month counted once; no history still shows the drive;
+the parts add up; the sample's words; the clock range in the car's offset) and the app's 641 unit
+tests. On the AAOS emulator: the card drawn from the sample (`--es run topbar_preview --ez
+summary_preview true`), placed on the picture under the top bar after two fixes (the card first ran
+under the bar, then under the emulator's own bars); it closed itself after 30 s (`drive summary:
+closed (30 s)`); a VHAL gear injection to Drive closed it (`closed (left Park)`) and back to Park
+logged `not shown (no drive)`. *Not verified:* the tap (the headless emulator's system server
+crashed in `libinput` on every injected tap, twice), and a real drive's summary: not yet on the car.
 
 ## T29. Charging card (raised 2026-11-14)
 

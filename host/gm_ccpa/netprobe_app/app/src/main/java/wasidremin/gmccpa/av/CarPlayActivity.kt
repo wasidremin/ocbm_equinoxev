@@ -686,6 +686,22 @@ class CarPlayActivity : Activity() {
             it.elevation = dp(24).toFloat()
             root.addView(it, android.widget.FrameLayout.LayoutParams(-1, -1))
         }
+        // T28: the after-drive summary, under the video and the call pill.
+        afterDrive = wasidremin.gmccpa.pane.AfterDriveView(this) {
+            wasidremin.gmccpa.telemetry.AfterDrive.dismiss("tapped")
+        }.also {
+            it.visibility = View.GONE
+            it.area = { android.graphics.Rect(surfaceView.left, surfaceView.top, surfaceView.right, surfaceView.bottom) }
+            it.elevation = dp(20).toFloat()
+            root.addView(it, android.widget.FrameLayout.LayoutParams(-1, -1))
+        }
+        wasidremin.gmccpa.telemetry.AfterDrive.listener = { root.post { if (!isDestroyed) bindAfterDrive() } }
+        // Hardware-free look at the card: `summary_preview` shows a drawn drive.
+        if (previewOnly && intent.getBooleanExtra("summary_preview", false)) {
+            wasidremin.gmccpa.telemetry.AfterDrive.preview(wasidremin.gmccpa.telemetry.DriveSummary.sample(System.currentTimeMillis(),
+                java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000))
+        }
+        bindAfterDrive()
         wasidremin.gmccpa.video.RouteA.engine?.onPictureChanged = { root.post { if (!isDestroyed) bindVideo() } }
         wasidremin.gmccpa.video.RouteA.playback?.onShowing = { _ -> root.post { if (!isDestroyed) bindVideo() } }
         bindVideo()
@@ -1031,6 +1047,22 @@ class CarPlayActivity : Activity() {
     private var callPill: CallPillView? = null
     /** Route A's screen (T34): the phone's video over CarPlay while it plays, parked only. */
     private var videoOverlay: wasidremin.gmccpa.video.VideoOverlayView? = null
+
+    /** T28's card over CarPlay. Null until onCreate. */
+    private var afterDrive: wasidremin.gmccpa.pane.AfterDriveView? = null
+    private val afterDriveTimeout = Runnable { wasidremin.gmccpa.telemetry.AfterDrive.dismiss("30 s") }
+
+    /** Show or hide the after-drive summary, and close it when its time is up. Main thread. */
+    private fun bindAfterDrive() {
+        val v = afterDrive ?: return
+        val ad = wasidremin.gmccpa.telemetry.AfterDrive
+        v.removeCallbacks(afterDriveTimeout)
+        val s = ad.showing
+        val left = ad.untilMs - System.currentTimeMillis()
+        if (s != null && left <= 0) { ad.dismiss("30 s"); return }
+        v.bind(s, wasidremin.gmccpa.telemetry.DriveLive.state?.metric ?: false)
+        if (s != null) v.postDelayed(afterDriveTimeout, left)
+    }
 
     /** Show or hide the phone's video, and draw the player into it while it shows. Main thread. */
     private fun bindVideo() {
@@ -2076,6 +2108,7 @@ class CarPlayActivity : Activity() {
         // Reopens the driver display's window if it was closed, never one already open, and never
         // while the driver is on another of GM's pages.
         if (wasidremin.gmccpa.ocbm.AdapterSession.sessionUp) wasidremin.gmccpa.nav.DriverDisplay.showOnResume(this)
+        bindAfterDrive()
     }
 
     override fun onPause() {
@@ -2107,6 +2140,7 @@ class CarPlayActivity : Activity() {
             nowPlaying.onCallChanged = null
             wasidremin.gmccpa.video.RouteA.engine?.onPictureChanged = null
             wasidremin.gmccpa.video.RouteA.playback?.onShowing = null
+            wasidremin.gmccpa.telemetry.AfterDrive.listener = null
             live = null
         }
         videoOverlay?.bind(null, null)

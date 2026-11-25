@@ -368,6 +368,13 @@ stays (serves Capture Current).
   it in that order. Carried over: with none kept, the adapter's stored order is the list, as before; the
   first window saved keeps it. A forgotten phone's window goes with it.
 
+## 2026-11-24 deltas (the after-drive summary; T28)
+
+- **After-drive summary** (Screen & Sound ▸ Screen, on by default; owner, 2026-11-24, asked for the
+  feature and chose its layout): `after_drive/enabled`. On, shifting into Park after a drive of a mile
+  or more shows the drive over CarPlay for 30 s (`telemetry/AfterDrive.kt`). Off closes one that is up.
+  New key, nothing to carry over. Not yet on the car.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

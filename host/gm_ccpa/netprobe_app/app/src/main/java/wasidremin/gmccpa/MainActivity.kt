@@ -815,6 +815,7 @@ class MainActivity : Activity() {
         wasidremin.gmccpa.ev.CarPlayEv.load(applicationContext)
         wasidremin.gmccpa.gps.CarGps.load(applicationContext)
         wasidremin.gmccpa.video.RouteA.load(applicationContext)
+        wasidremin.gmccpa.telemetry.AfterDrive.load(applicationContext)
         wasidremin.gmccpa.nav.ClusterContent.load(applicationContext)
         // One line: can the wheel's voice button be made to start Siri on this car (voice/SiriAssistant.kt).
         runCatching { wasidremin.gmccpa.voice.AssistantRole.probe(applicationContext) }
@@ -1621,6 +1622,7 @@ class MainActivity : Activity() {
                     if (i.getBooleanExtra("pane_preview", false)) preview.putExtra("pane_preview", true)
                     i.getStringExtra("pane_art")?.let { preview.putExtra("pane_art", it) }
                     if (i.getBooleanExtra("pane_hidden", false)) preview.putExtra("pane_hidden", true)
+                    if (i.getBooleanExtra("summary_preview", false)) preview.putExtra("summary_preview", true)
                     if (i.hasExtra("slope_m")) preview.putExtra("slope_test_m",
                         i.getFloatExtra("slope_m", 0f))
                     startActivity(preview)

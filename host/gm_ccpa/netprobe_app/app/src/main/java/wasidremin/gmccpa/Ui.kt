@@ -656,6 +656,16 @@ class LauncherUi(private val act: Activity) {
             trailing = customTopBarControl,
         ))
         card.addRow(mediaPaneRow())
+        val afterDrive = wasidremin.gmccpa.telemetry.AfterDrive
+        lateinit var afterDriveRow: EqRow
+        afterDriveRow = EqRow(
+            act, "After-drive summary", afterDrive.statusText(),
+            trailing = EqToggle(act, afterDrive.enabled) { on ->
+                afterDrive.setEnabled(act, on)
+                afterDriveRow.setSubtitle(afterDrive.statusText())
+            },
+        )
+        card.addRow(afterDriveRow)
         page.addView(card)
         val bt = AudioRoute.bluetooth
         audioRow = EqRow(

@@ -77,6 +77,11 @@ high-water mark: versionCode 269 (`4.0+recorder-watchdog`, 2026-11-24; `host/gm_
   cost the 3.2 s miss. A phone has one window, so "weekends and evenings" is the list's top place plus
   the other phone's weekday window, not a window of its own. That start also lost 11 s to the present
   phone answering and resetting the SDP link twice (`answered and reset the link`), a known intermittent.
+- **After-drive summary (T28, built 2026-11-24, not yet on the car).** After a drive of a mile or more,
+  shift into Park: the card should show over CarPlay for 30 s, close at a tap or on leaving Park, and
+  the log should say `drive summary: <m> m, <Wh> Wh, …` with its numbers matching the drive's record in
+  Insights ▸ Trips once it closes (4 min later). A short hop logs `not shown (<m> m)`. The tap has not
+  been checked anywhere yet.
 - **Drive card missing: the EV Insights recorder went quiet (2026-11-23, Play 268).** The owner: the card
   "keeps on not showing up"; Settings off and on brought it back. The 2026-11-23 log: the recorder started
   at 11:59:18 UTC, closed one segment at 11:59:20 (`telemetry segments: sending (heartbeat)`) and logged

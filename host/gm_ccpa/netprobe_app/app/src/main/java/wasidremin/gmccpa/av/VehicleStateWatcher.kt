@@ -127,6 +127,8 @@ class VehicleStateWatcher(private val ctx: Context) {
         wasidremin.gmccpa.lyrics.BarLyrics.parked = limited?.not()
         // Route A (T34): the phone's video plays only while the gear reads PARK; unknown is not parked.
         wasidremin.gmccpa.video.RouteA.onGear(limited == false)
+        // T28: the after-drive summary shows on a move into Park; an unknown gear says nothing.
+        limited?.let { wasidremin.gmccpa.telemetry.AfterDrive.onGear(parked = !it) }
         if (limited != gearLimited) {
             gearLimited = limited
             log.i("gear=${gearName(g)} -> limitedUI=${limited ?: "no opinion"}")
