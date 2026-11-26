@@ -549,7 +549,9 @@ pauses the queue, a tapped log upload is held by `LogsOnWifi` and goes by itself
 and the history and lyrics downloads wait; the immediate retry is skipped for it. The adapter link (USB
 networking, the A/V seams) never touches the modem and is not gated. *Verified:* unit tests (632), and the
 AAOS emulator with its Wi-Fi off (cellular only): the capture queue held, the log upload held, and both
-released when Wi-Fi came back. *Not yet:* the car.
+released when Wi-Fi came back. *Not yet:* the car. Play itself updates the app only over a connection
+too: openautolink tells GM owners they need no OnStar plan if the car joins home Wi-Fi (saved in the car's
+network settings) or a phone hotspot regularly; the same keeps this app current with Wi-Fi only on.
 
 ### 13.6 2026-11-12: the Drive card, and what a month of replayed drives said about estimating
 

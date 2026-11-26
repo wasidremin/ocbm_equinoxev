@@ -34,7 +34,10 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T31 Mileage log | New 2026-11-14, not started; also needs the server |
 | T32 Context docking | New 2026-11-14, not started |
 | T33 Remove the Silverado hotspot mode | New 2026-11-14, not started; a removal |
-| Log redaction lets a second Bluetooth address through | A defect, so it lives in `04_OPEN_ITEMS.md`; tiny |
+| T36 Loudness by speed | New 2026-11-26 (owner: "start moving forward with the speed volume trick"); first of the sound tasks |
+| T37 Equalizer | New 2026-11-26, after T36 (owner: "after that the full fledged equalizer") |
+| T38 Turn alert on the driver display | New 2026-11-26, not started |
+| T39 Settings per iPhone | New 2026-11-26, not started |
 
 *Needs adapter firmware*
 
@@ -1551,10 +1554,64 @@ and `MGMT_INFO` says `"order_at_start":true` (`docs/carplay/01_OCBM_PROTOCOL.md`
 or a weekend their wife's does; with only one phone in the car, it connects about 3 s after the other's page
 starts instead of 5.
 
+## The 2026-11-26 feature check (T36 to T39)
+
+Owner, 2026-11-26: "lets think of some new features to put in the backlog. 1 that I have seen was an
+equalizer. Use the internet to do a feature check of other CarPlay apps." What the others offer,
+against this app:
+
+| Feature | Seen in | Here |
+|---|---|---|
+| Equalizer, sound settings (graphic EQ, time alignment, loudness) | every aftermarket head unit; a separate EQ app on ZLink-style units | no: T36, T37 |
+| Turn alert (the cluster arrow flashes before the turn) | enigy/carlink | no: T38 |
+| Settings per iPhone | enigy/carlink | the order and schedule only (T12, T35): T39 |
+| "A phone was plugged in: switch, or stay?" | mossyhub/openautolink | no; wireless only here, so little use |
+| Pinch-to-zoom | openautolink | yes: `touchScreenSupportsMultiTouch` is declared |
+| Netflix and YouTube on the screen, 4K | Carlinkit and Ottocast AI boxes | no, on purpose (Left off) |
+| Spatial Audio | Pioneer, CES 2026 | no (Left off) |
+| Dashcam | aftermarket head units | no (Left off) |
+
+Why sound first: Electrek (2026-05) calls the sound system arguably the biggest complaint among Equinox EV
+owners, and Bose is an extra-cost package. This app decodes CarPlay's audio and plays it itself, so it can
+shape the sound before the car gets it; the car's own controls cannot do that per source. Sources:
+electrek.co 2026-05-20 and 2026-05-29, insideevs.com "Equinox EV missing key features", macrumors.com
+2026-01-05 (Pioneer), github.com/enigy/carlink, github.com/mossyhub/openautolink.
+
+## T36. Loudness by speed (raised 2026-11-26)
+
+**Why.** At speed an EV's cabin is tyre and wind noise, which buries the bass and the treble before the
+middle; the driver turns the volume up and down instead. The app reads the car's speed already.
+
+**What.** Lift the low and high ends of CarPlay's media audio as speed rises, a little and smoothly,
+instead of raising the volume. Media only, not calls or Siri or navigation prompts. One setting: off,
+gentle, strong. **Done means.** On a drive the log shows the lift following the speed, and the owner
+hears the music hold up on the highway without reaching for the volume.
+
+## T37. Equalizer (raised 2026-11-26)
+
+**What.** Presets rather than sliders to fiddle with while driving: "this car's speakers", voice
+(podcasts, calls), music; a custom one set while parked. Built on T36's processing. A different preset per
+phone falls out of T39. **Done means.** The owner picks a preset once and the car sounds better to them.
+
+## T38. Turn alert on the driver display (raised 2026-11-26)
+
+**What.** enigy/carlink's idea: the turn card on the driver display pulses or flashes in the last seconds
+before a turn. Builds on `nav/TurnCard`. **Done means.** The owner notices the turn without reading the
+distance.
+
+## T39. Settings per iPhone (raised 2026-11-26)
+
+**What.** The media pane, the layout and the sound preset follow whichever phone connects (the owner's or
+their wife's), from the phone identity the adapter already reports. **Done means.** Each driver's car is
+set up for them without touching Settings.
+
 ## Left off this plan
 
 Kept here so a later session does not promote them into tasks.
 
+- **From the 2026-11-26 feature check.** Video streaming on the screen (the AI boxes' headline feature:
+  parity, parked-only, and blocked here anyway, T34); Spatial Audio (needs speakers the car does not
+  have); a dashcam (no camera access for an ordinary app).
 - **Already served.** HEVC, touch, corner masks, view areas (including `updateViewArea`,
   device-proven 2026-09-07), alt screen on the Mac host, button Siri, route guidance at the
   `proven` metadata tier, `changeModes`, `uiAppearanceUpdate`, `mapAppearanceUpdate`. Hiding the
