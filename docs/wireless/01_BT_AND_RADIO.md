@@ -594,8 +594,27 @@ wireless interface again, and `radio_ap_up.sh` takes no channel from a client. T
 the link's files at start (`/script/sta_uplink.conf`, which held the hotspot's passphrase,
 `/script/sta_uplink.channel` and `/etc/ocbm/wifi_link`). The adapter keeps the `wpa_supplicant` and
 `wpa_cli` it was given on 2026-11-15: other units carry the vendor's own at that path, so no script
-deletes it. While it is there, `radio_detect.sh` resolves the vendor's `supportStaMode` branch to 1, as it
-has since 2026-11-15; `tools/tests/radio_hal_test.sh` pins the removal.
+deletes it. While it is there, `radio_detect.sh` resolves the vendor's `supportStaMode` branch to 1;
+`tools/tests/radio_hal_test.sh` pins the removal. **The car's adapter, 2026-11-26 (bench):** both files
+matched this repository's build byte for byte and were removed by hand (416 KB of flash back). The Wi-Fi
+driver then loads with `wifi_mod_para.conf` again instead of `wifi_mod_para_p2psta.conf`, as before
+2026-11-15; the access point came up on `sta0` as before.
+
+**The driver modules reach `/tmp` whole (2026-11-26, bench).** With a host subscribing 5 s into the boot
+(`ocbm-host`, faster than the car's app and its Allow tap), `bt_on` and `wifi_ap_on` ran side by side:
+`bt_on`'s untar of the unit's module tarball was still writing `/tmp/mlan.ko` when `wifi_ap_on` found it
+there and loaded it (`insmod: can't insert '/tmp/mlan.ko': invalid module format`), so the phone got the
+Wi-Fi details for an access point that never came up. The same file loaded by hand afterwards. In the car
+the boot's prewarm had always unpacked first (the error is in none of the car's logs). `ko_unpack` now
+untars into a directory of its own and renames each file into `/tmp`; the next fast start on the bench
+had the access point up 0.8 s after `btd` and pair-verify done. Pinned in `radio_hal_test.sh`.
+
+**The Bluetooth name follows `wlan0`.** `accessory_name` (`iap2-core/src/message.rs`) takes the last
+four hex digits of `/sys/class/net/wlan0/address`, else the serial's. Whether `wlan0` exists when `btd`
+starts is a race, so the car's adapter has shown `CarLink-13d0`, `CarLink-6754` (serial) and
+`CarLink-fe01` since at least 2026-11-12 (the car's logs), and `CarLink-ff01` on the bench after the
+driver's parameters changed. Pairing goes by address, so connects work either way; the name the iPhone
+shows changes. To settle with the radio start's rework (T25 step 2a).
 
 ### 7. Not yet done / not yet proven
 

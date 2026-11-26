@@ -329,6 +329,22 @@ bt_set_name() {  # $1 = hci dev
   log "BT name=$_bn (asserted after $_n retries, now '${_cur:-unknown}')"
 }
 
+# This unit's driver modules into /tmp, each file whole or not at all. $1 = the module the caller
+# needs. Bench, 2026-11-26: a host that subscribed 5 s into the boot ran bt_on and wifi_ap_on side
+# by side; bt_on's untar was still writing /tmp/mlan.ko when wifi_ap_on saw it there and loaded it
+# ("insmod: can't insert '/tmp/mlan.ko': invalid module format"), and the phone had no access point.
+# So the tarball goes into a directory of this call's own and each file is renamed into /tmp: a
+# rename on one tmpfs is atomic, and a second unpacker's rename puts an identical whole file there.
+ko_unpack() {
+  [ -e "/tmp/$1" ] && return 0
+  _kd=/tmp/.ko_unpack.$$
+  rm -rf "$_kd"; mkdir -p "$_kd" || return 1
+  tar -xzf "$RADIO_KO_TARBALL" -C "$_kd" 2>/dev/null || tar -xf "$RADIO_KO_TARBALL" -C "$_kd" 2>/dev/null
+  for _kf in "$_kd"/*; do [ -f "$_kf" ] && mv -f "$_kf" /tmp/; done
+  rm -rf "$_kd"
+  [ -e "/tmp/$1" ]
+}
+
 # Load THIS unit's WLAN driver and nothing else - no AP, no addressing. Factored out of
 # wifi_ap_on because bt_on needs it too: on the parts whose vendor script makes BT attach wait
 # for the WLAN interface, the BT-only bridge role (wifi_ap:false) never calls wifi_ap_on, so
@@ -336,8 +352,7 @@ bt_set_name() {  # $1 = hci dev
 # Returns 0 if the driver is loaded (or was already), 1 if there is nothing to load.
 wlan_driver_up() {
   [ -n "$RADIO_WLAN_INSMOD" ] || { log "no WLAN insmod mapping for this unit"; return 1; }
-  [ -e "/tmp/${RADIO_WLAN_MODULES%% *}" ] || tar -xzf "$RADIO_KO_TARBALL" -C /tmp 2>/dev/null \
-                                          || tar -xf "$RADIO_KO_TARBALL" -C /tmp 2>/dev/null
+  ko_unpack "${RADIO_WLAN_MODULES%% *}"
   log "wlan driver: $RADIO_WLAN_INSMOD"
   _old=$IFS; IFS=';'
   for _cmd in $RADIO_WLAN_INSMOD; do
@@ -467,8 +482,6 @@ do_wifi_ap_on() {
       # Stage this unit's own modules. The tarball is the unit's, extracted to tmpfs - we never
       # write to flash here (the vendor path untars overlays into / on some variants; that is
       # provisioning, not bring-up, and it does not belong in a per-session call).
-      [ -e "/tmp/${RADIO_WLAN_MODULES%% *}" ] || tar -xzf "$RADIO_KO_TARBALL" -C /tmp 2>/dev/null \
-                                                || tar -xf "$RADIO_KO_TARBALL" -C /tmp 2>/dev/null
       wlan_driver_up || {
         publish "$WLAN_STATE" "result=fail" "backend=mapped" "chipset=$RADIO_SDIO_DEVICE" "detail=driver-load"
         return 1; }
@@ -666,8 +679,7 @@ do_bt_on() {
         log "  WLAN interface $(wlan_iface) up - BT attach may proceed"
       fi
 
-      [ -e "/tmp/$RADIO_BT_LDISC_KO" ] || tar -xzf "$RADIO_KO_TARBALL" -C /tmp 2>/dev/null \
-                                       || tar -xf "$RADIO_KO_TARBALL" -C /tmp 2>/dev/null
+      ko_unpack "$RADIO_BT_LDISC_KO"
 
       # LAST-RESORT LDISC RECOVERY. Everything above depends on the DESCRIPTOR having named the
       # module, and the descriptor lives at /tmp/radio_caps -- on a tmpfs that every power loss

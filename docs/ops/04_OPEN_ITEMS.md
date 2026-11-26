@@ -65,7 +65,9 @@ high-water mark: versionCode 269 (`4.0+recorder-watchdog`, 2026-11-24; `host/gm_
   (unless the owner had already switched it off) and `… link key cleared status=0`, and no start waits
   for the hotspot (`[sup] waited N s for the access point` gone). After the adapter's update: the box log
   shows `[sup] removed /script/sta_uplink.conf (the retired Wi-Fi link)` once, and `MGMT_INFO` carries no
-  `"sta_uplink"`. The adapter keeps its `wpa_supplicant`; remove it by hand at the next bench session.
+  `"sta_uplink"`. *Seen on the bench, 2026-11-26 (emulator, the car's adapter):* both retired-link lines on
+the first connect and none on the next; the app's update (4 files) confirmed in its trial; the three files
+removed at start; the adapter's `wpa_supplicant` and `wpa_cli` (this repository's build) removed by hand.
 - **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** The weekday-morning side works on the
   car (2026-11-23): the adapter updated, `[btd] page timeout 3200 ms`, a missed phone 3.2 s, the owner's
   phone first and answering 0.6 to 0.8 s after `page_start`, first picture 10.1 s and 16.1 s after attach.

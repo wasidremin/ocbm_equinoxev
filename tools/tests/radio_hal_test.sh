@@ -37,4 +37,22 @@ is "nothing else is touched" "$(cat "$T/script/other.conf")" keep
 is "each removal is logged once, by path only" "$(grep -c 'removed .* (the retired Wi-Fi link)' "$T/tmp/box.log")" 2
 is "the log never carries a file's contents" "$(grep -c secret "$T/tmp/box.log")" 0
 rm -rf "$T"
+# The driver modules reach /tmp whole (bench, 2026-11-26: wifi_ap_on loaded an mlan.ko that bt_on's untar
+# was still writing, "invalid module format", and the phone had no access point).
+is "nothing untars straight into /tmp" "$(grep -c -E 'tar -x.* -C /tmp( |$)' "$F")" 0
+T=$(mktemp -d)
+mkdir "$T/src"; head -c 4096 /dev/zero > "$T/src/mlan.ko"; echo ldisc > "$T/src/hci_uart.ko"
+RADIO_KO_TARBALL="$T/ko.tar.gz"; tar -czf "$RADIO_KO_TARBALL" -C "$T/src" mlan.ko hci_uart.ko
+eval "$(sed -n '/^ko_unpack() {/,/^}/p' "$F" | sed "s#/tmp/#$T/#g; s#/tmp\([ \"]\)#$T\1#g")"
+seen=""
+tar() { for _a; do [ "$_prev" = -C ] && seen="$seen $_a $(ls "$T" | grep -c '\.ko$')"; _prev=$_a; done; command tar "$@"; }
+_prev=""; ko_unpack mlan.ko; r=$?
+unset -f tar
+is "ko_unpack says the module is there" "$r" 0
+is "the untar writes into a directory of its own, with no module in /tmp yet" "$(echo "$seen" | awk '{print ($1 != "'"$T"'" ? "own" : "tmp"), $2}')" "own 0"
+is "every module arrives whole" "$(wc -c < "$T/mlan.ko" | tr -d ' ') $(cat "$T/hci_uart.ko")" "4096 ldisc"
+is "its directory is gone" "$(ls -A "$T" | grep -c '^\.ko_unpack')" 0
+rm "$T/hci_uart.ko"; ko_unpack hci_uart.ko
+is "a module still missing is unpacked again" "$(cat "$T/hci_uart.ko")" ldisc
+rm -rf "$T"
 [ "$fails" -eq 0 ] && echo "radio_hal: all passed" || { echo "radio_hal: $fails failed"; exit 1; }

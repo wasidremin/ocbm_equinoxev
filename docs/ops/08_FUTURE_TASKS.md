@@ -753,12 +753,14 @@ join and `radio_ap_up.sh`'s client channel; `wpa_supplicant` from the build and 
 adapters on older firmware: the app turns their join off and clears their key at each connect
 (`ocbm/RetiredWifiLink.kt`), and the next adapter update deletes those files at start
 (`session_supervisor.sh`; the passphrase was in one of them). The adapter keeps the `wpa_supplicant`
-binary, which no script deletes (other units carry the vendor's own there); remove it by hand at the
-next bench session.
+binary, which no script deletes (other units carry the vendor's own there); on the car's adapter it was
+removed by hand on the bench, 2026-11-26.
 
 *Verified:* unit tests (624, among them `RetiredWifiLinkTest`), every adapter suite
-(`tools/run_tests.sh`, `radio_hal_test.sh` pinning the removal), the adapter build. *Not yet:* the
-emulator with the bench adapter, and the car.
+(`tools/run_tests.sh`, `radio_hal_test.sh` pinning the removal), the adapter build. *Bench, 2026-11-26* (the emulator
+with the car's adapter and the owner's iPhone): on the old firmware the first connect turned the join off
+and cleared the key, the next connect undid nothing, CarPlay came up; the app's update (`ocbmd` and three
+scripts) was confirmed in its trial and the supervisor removed the files at start. *Not yet:* the car.
 
 ## App only: T16–T19 (raised 2026-11-12)
 
@@ -1181,6 +1183,14 @@ hidden, the access point and receiver started early. From power-on, 2.7.0's benc
   with the configuration the app sent last, so the page, the handoff and the first signature overlap
   the tap. Up to about 5 s more. It changes the rule that the app's subscribe wakes the radios, and a
   car that wakes with its screen off (twice on 2026-11-25) would connect the phone too.
+
+**The bench's baseline for step 2a (2026-11-26, the car's adapter rebooted, `ocbm-host` as the host
+arriving 9.1 s into the boot, uptime ms from `/tmp/startup_marks`).** The boot's Bluetooth prewarm, started
+by the supervisor after the USB gadget (bound at 5.1 s), finished at 12.3 s; so after the host arrived the
+supervisor took 1.3 s to start the radios, Bluetooth was powered at +3.6 s and paging at +4.4 s, the
+access point up at +5.2 s, the phone answered at +5.8 s and was identified at +8.4 s. In the car the app
+arrives about 8 to 10 s into the boot (the gadget, then the Allow tap), still before that prewarm ends.
+The same run found a race in the module unpack (fixed; `docs/wireless/01_BT_AND_RADIO.md` §6e).
 
 **enigy/ocbm 2.7.0 (2026-11-22, not ported).** Both radios loaded together and earlier in the boot, the
 radio description kept across boots: 13.8 to 16.9 s from power-on to picture on enigy's bench against
