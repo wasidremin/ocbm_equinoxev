@@ -57,7 +57,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV), re-checked 2026-11-26
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 271 (`4.0+wifi-only`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 272 (`4.0+sound`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 Re-checked 2026-11-26 against the car's uploads through 2026-11-26 00:49 UTC (app 269): each item's
 own log line counted; the closed ones are listed at the end of this section with that evidence.
 
@@ -94,13 +94,13 @@ own log line counted; the closed ones are listed at the end of this section with
   adapter's `MGMT_INFO` is now wrapped at commas (`logging/LogWrap.kt`): the next upload's `"devices"`
   lines should carry only `<REDACTED:MAC_ADDRESS:…>`.
 
-- **Loudness by speed (T36, 2026-11-26, not yet published).** On by default (Gentle). In the car: on a
+- **Loudness by speed (T36, 2026-11-26, Play 272).** On by default (Gentle). In the car: on a
   highway stretch the log shows `loudness by speed (gentle): … bass +4.0 dB, treble +2.5 dB`, rising from
   40 km/h and falling as the car slows, and the owner hears the music hold up without the volume knob.
   Listen for distortion on loud tracks at Strong, and watch for `framesDropped`/underrun lines rising (the
   shaping runs on the audio thread).
 
-- **The equalizer (T37, 2026-11-26, not yet published).** Settings ▸ Screen & Sound ▸ Sound: presets any
+- **The equalizer (T37, 2026-11-26, Play 272).** Settings ▸ Screen & Sound ▸ Sound: presets any
   time, the bands dragged in Park. In the car: a preset logs `equalizer: <preset> [+x …]` and changes the
   sound; a drag out of Park leaves the bands and says "set in Park"; a drag in Park moves a band and logs
   the Custom curve when the finger lifts. Listen for distortion at large boosts (the pre-gain and soft
