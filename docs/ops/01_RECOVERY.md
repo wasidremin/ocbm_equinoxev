@@ -95,7 +95,9 @@ deploy). Note the box `/tmp` is tmpfs (lost on reboot); only the FHS-installed f
 
 `busybox init` → `/etc/inittab` → **`::sysinit /script/early_console.sh`** (UART root console, FIRST —
 the Tier-2 recovery path) + `/etc/init.d/rcS` (mounts, dropbear/telnetd, mdev, network) →
-**`/script/start_main_service.sh &`** → (no `ncm_only`/`ncm_wifi` flag ⇒ OCBM appliance default)
+**`/script/start_main_service.sh &`** → first the hardware watchdog and `kernel.panic=10` (below), the
+stock `init_gpio.sh` and, in OCBM mode, `radio_hal.sh boot_preload` in the background
+(`../wireless/01_BT_AND_RADIO.md`, "The boot preload") → (no `ncm_only`/`ncm_wifi` flag ⇒ OCBM appliance default)
 **`/script/ocbm_boot.sh`** → arms the host-facing `accessory` gadget (bDeviceClass=0, PID `0x2d00`) →
 launches **`/usr/sbin/ocbmd`** + `session_supervisor.sh` (idle-waiting on `/tmp/host_present`).
 `ocbm_boot.sh` backgrounds and `exit 0`s so it can never block boot. PID 1 then keeps both alive
@@ -107,6 +109,23 @@ On-demand pieces (iap2d cold-start
 via `projection_up.sh`, carplayd via the supervisor) are **not** started at boot — the box
 boots to IDLE and only projects when a host app SUBSCRIBEs (see [`../carplay/02_SESSION_LIFECYCLE.md`](../carplay/02_SESSION_LIFECYCLE.md)
 and [`../carplay/07_PHONE_SIDE.md`](../carplay/07_PHONE_SIDE.md)).
+
+#### A frozen adapter reboots itself (2026-11-26)
+
+Until 2026-11-26 the SoC's watchdog (`imx2-wdt`, built in, 60 s, `nowayout=0`) was never opened and
+`kernel.panic` was 0, so a kernel that stopped stayed stopped until the power was cut: in the car, a drive
+without CarPlay. The bench froze the car's adapter three times that day (twice in the boot preload's first
+build, once at a `devmem` read of two SoC registers) and each needed a replug. `start_main_service.sh`
+now starts BusyBox's `watchdog -T 60 -t 5 /dev/watchdog` before anything else and sets `kernel.panic=10`;
+the box log says `[start_main_service] hardware watchdog on: …`. It catches a stopped kernel only, never a
+stuck program, which could end a working session. *Bench:* the feeder stopped with SIGSTOP, the adapter
+left USB 55 s later and was booting again 6 s after; a normal reboot and a host session afterwards as
+before, no stray reset in the next 2 minutes. `/script/watchdog_off` turns it off at the next boot.
+Boot path: bench-installed, never written by an app update.
+
+**Do not read SoC registers with `devmem` on the adapter.** Reading the watchdog's and the reset
+controller's status registers (to learn the last reset's cause) froze it on 2026-11-26. The reset cause is
+not known at boot; a watchdog reset looks like any other start.
 
 ### UART console reference
 

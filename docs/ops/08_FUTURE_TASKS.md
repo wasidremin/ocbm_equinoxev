@@ -1206,6 +1206,10 @@ sessions on the bench by reboot, not by power cut. *Not yet:* the car; a power c
 start); item 3. `start_main_service.sh` is the boot path: bench-installed on the car's adapter
 2026-11-26, never by an app update.
 
+**The hardware watchdog (2026-11-26, owner: "start on the next step with the hw watchdog").** Fed from the
+top of the boot, so a preload that hangs the kernel costs about a minute instead of a drive, and two such
+boots switch the preload off (`docs/ops/01_RECOVERY.md`, "A frozen adapter reboots itself"). Benched.
+
 **Item 3, enigy's 2.7.1 page changes, weighed against the car and not ported (2026-11-26).** From the
 car's uploaded logs (31 timelines; page outcomes per start since the 3.2 s page timeout):
 - *the 1.5 s cut of a stalled RFCOMM open:* SDP to the open channel took 0.2 to 1.6 s in all 31 connects,

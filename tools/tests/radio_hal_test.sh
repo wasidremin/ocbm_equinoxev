@@ -83,6 +83,9 @@ is "off stays off, and says how to turn it on" "$r $(tail -1 "$T/log" | grep -c 
 rm -rf "$T"
 M="$HERE/ccpa/rootfs/script/start_main_service.sh"
 is "the boot starts the GPIO set-up and the preload before the gadget" "$(awk '/^#/{next} /init_gpio.sh/ && !g{g=NR} /radio_hal.sh boot_preload/ && !p{p=NR} /ocbm_boot.sh/ && !o{o=NR} END{print (g < p && p < o) ? "in order" : "out of order"}' "$M")" "in order"
+is "the hardware watchdog is fed before anything that could hang the boot" "$(awk '/^#/{next} /watchdog -T 60 -t 5 \/dev\/watchdog/ && !w{w=NR} /init_gpio.sh/ && !g{g=NR} END{print (w && w < g) ? "first" : "not first"}' "$M")" first
+is "a kernel panic reboots" "$(grep -c '^echo 10 > /proc/sys/kernel/panic' "$M")" 1
+is "the watchdog has an off switch" "$(grep -c '\[ -e /script/watchdog_off \]' "$M")" 1
 is "it marks the GPIO set-up's end" "$(grep -c ': > /tmp/.gpio_done' "$M")" 1
 is "no preload in NCM mode" "$(grep 'boot_preload' "$M" | grep -c 'ncm_only.*ncm_wifi')" 1
 is "the supervisor's startup clean-up runs only on a respawn" "$(grep -c 'if \[ -e /tmp/.sup_started \] && ' "$S")" 1

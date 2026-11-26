@@ -76,7 +76,10 @@ removed at start; the adapter's `wpa_supplicant` and `wpa_cli` (this repository'
   preload off); the iPhone sees `CarLink-13d0` every time; the timeline's `page_start` within about 2 s
   of the app's arrival. App 270 carries the same `radio_hal.sh`, supervisor, `btd` and `iap2d` (firmware 9f91fb58dc51), so
   its Settings ▸ Advanced ▸ Adapter firmware leaves them as they are; `start_main_service.sh` is the boot
-  path and stays as the bench left it.
+  path and stays as the bench left it. It also starts the hardware watchdog (2026-11-26,
+  `docs/ops/01_RECOVERY.md`): a frozen adapter now reboots itself about a minute later. In the car: the
+  `[start_main_service] hardware watchdog on` line at every start; a start that follows a freeze shows as
+  a second boot within a drive.
 - **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** The weekday-morning side works on the
   car (2026-11-23): the adapter updated, `[btd] page timeout 3200 ms`, a missed phone 3.2 s, the owner's
   phone first and answering 0.6 to 0.8 s after `page_start`, first picture 10.1 s and 16.1 s after attach.

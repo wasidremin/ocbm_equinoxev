@@ -10,6 +10,20 @@ date -s "2020-01-02 `date +%T`" &
 rm -f /dev/random && ln -s /dev/urandom /dev/random &                 # non-blocking openssl RNG
 echo y > /sys/module/printk/parameters/time && echo 7 > /proc/sys/kernel/printk &
 
+# --- the SoC's hardware watchdog (2026-11-26), first, so nothing below can hang the adapter for good ---
+# imx2-wdt (60 s) was never fed, and panic=0, so an adapter whose kernel stopped stayed stopped until the
+# car cut its power. The bench saw it three times on 2026-11-26 (twice in the boot preload's first build,
+# once at a register read), each needing a replug. BusyBox's watchdog feeds it every 5 s from userspace;
+# a kernel that stops feeding it is reset 60 s later and the adapter boots again. Only a stopped kernel:
+# nothing here watches a stuck program, which could end a working CarPlay session. A reboot's SIGTERM
+# closes it properly. /script/watchdog_off turns it off.
+echo 10 > /proc/sys/kernel/panic   # a kernel panic reboots after 10 s instead of hanging
+if [ -e /script/watchdog_off ]; then
+  echo "[start_main_service] hardware watchdog off (/script/watchdog_off)" >> /tmp/box.log
+elif watchdog -T 60 -t 5 /dev/watchdog; then
+  echo "[start_main_service] hardware watchdog on: fed every 5 s, reset after 60 s unfed" >> /tmp/box.log
+fi
+
 # --- hardware GPIO (BT reset + quick-charge lines + power LED), then the radios (T25, 2026-11-26) ---
 # First, so the boot's radio preload can start beside the USB gadget below: it waits for this
 # script's end mark before it touches the chip, whose reset line init_gpio.sh pulses. Until
