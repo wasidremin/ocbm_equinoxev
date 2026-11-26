@@ -94,6 +94,12 @@ own log line counted; the closed ones are listed at the end of this section with
   adapter's `MGMT_INFO` is now wrapped at commas (`logging/LogWrap.kt`): the next upload's `"devices"`
   lines should carry only `<REDACTED:MAC_ADDRESS:…>`.
 
+- **Loudness by speed (T36, 2026-11-26, not yet published).** On by default (Gentle). In the car: on a
+  highway stretch the log shows `loudness by speed (gentle): … bass +4.0 dB, treble +2.5 dB`, rising from
+  40 km/h and falling as the car slows, and the owner hears the music hold up without the volume knob.
+  Listen for distortion on loud tracks at Strong, and watch for `framesDropped`/underrun lines rising (the
+  shaping runs on the audio thread).
+
 **Still open**
 
 - **Which iPhone first, by schedule (T35, Play 268): a changed order not yet seen.** The weekday-morning

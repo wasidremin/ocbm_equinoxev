@@ -672,8 +672,17 @@ class LauncherUi(private val act: Activity) {
                 audioRow.setSubtitle(audioSubtitle(i == 1))
             },
         )
+        val loud = wasidremin.gmccpa.sound.SpeedLoudness
+        val loudLevels = wasidremin.gmccpa.sound.SpeedLoudness.Level.values().toList()
+        val loudRow = EqRow(
+            act, "Loudness by speed",
+            "Lifts the bass and treble of music as the car goes faster, so road noise does not bury them. Calls, Siri and directions are not changed.",
+            trailing = EqSegmented(act, loudLevels.map { it.label }, loudLevels.indexOf(loud.level)) { i ->
+                loud.setLevel(act, loudLevels[i])
+            },
+        )
         page.addView(eqSectionLabel(act, "Sound"))
-        page.addView(EqCard(act).addRow(audioRow).addRow(EqRow(
+        page.addView(EqCard(act).addRow(audioRow).addRow(loudRow).addRow(EqRow(
             act, "Play Spotify on connect",
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },

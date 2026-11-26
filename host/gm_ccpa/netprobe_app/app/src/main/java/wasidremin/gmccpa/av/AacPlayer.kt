@@ -53,6 +53,9 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
     // Remembered so a dead AudioTrack can be rebuilt in place without waiting for the next configure.
     @Volatile private var cfgRate = 48000
     @Volatile private var cfgChannels = 2
+    /** T36's bass and treble lift with speed, applied to each buffer before the track. Consume-thread only. */
+    private var shaper: wasidremin.gmccpa.sound.ToneShaper? = null
+    private val loudness = wasidremin.gmccpa.sound.SpeedLoudness.Follower()
 
     /** Frames the AudioTrack took IN FULL. Misnamed (it is "played", not "decoded") but exported, so
      *  the name stays. Until 2026-09-10 every non-negative `write()` return incremented this — see
@@ -970,6 +973,8 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
             publishTrack(built)
             cfgRate = sampleRate
             cfgChannels = channels
+            shaper = wasidremin.gmccpa.sound.ToneShaper(sampleRate, channels)
+            loudness.reset()
             configureFailedAt = 0L
             log.i("configured AAC-LC ${sampleRate}Hz ${channels}ch → AudioTrack (USAGE_MEDIA), decoder=${c.name}")
         } catch (e: Throwable) {
@@ -1112,6 +1117,11 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                         ob.get(pcm, 0, pcmLen)
                     }
                     val t = track
+                    shaper?.let { sh ->
+                        val g = loudness.next()
+                        sh.setGains(g.bassDb, g.trebleDb)
+                        sh.process(pcm, pcmLen)
+                    }
                     outcome = if (t == null) WriteOutcome.NO_TRACK else {
                         val w = t.write(pcm, 0, pcmLen)
                         when {

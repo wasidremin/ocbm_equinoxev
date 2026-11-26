@@ -394,6 +394,13 @@ stays (serves Capture Current).
   asking for a bigger plan). On: no request leaves the car unless the connection is Wi-Fi
   (`upload/Net.open`); the Car data line says so. New key; nothing carries over.
 
+## 2026-11-26 deltas (loudness by speed; T36)
+
+- **Loudness by speed** (Screen & Sound ▸ Sound, `Ui.kt loudRow`): `sound/speed_loudness`, `off` /
+  `gentle` / `strong`, default `gentle` (owner, 2026-11-26: "start moving forward with the speed volume
+  trick"; on by default so it is heard without a visit to Settings). Lifts music's bass and treble with
+  speed (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md`, "Media shaping"). New key; nothing carries over.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

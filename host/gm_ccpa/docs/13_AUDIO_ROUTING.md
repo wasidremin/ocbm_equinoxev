@@ -416,6 +416,19 @@ old formula described.** Duck **only** the media track. What actually runs:
 > superseded. Decode one plist of each size before building on this; the bracket is a size
 > correlation, not yet a parse.
 
+### Media shaping: loudness by speed (T36, 2026-11-26)
+
+The media sink shapes its own PCM before the `AudioTrack` (`sound/ToneShaper`, called from
+`AacPlayer.feed`): a bass shelf at 120 Hz and a treble shelf at 5 kHz (RBJ cookbook, slope 1, per
+channel), the input lowered by half the larger boost and the output bent by a soft knee above 0.9 of full
+scale. `sound/SpeedLoudness` sets the two gains from the car's `PERF_VEHICLE_SPEED` (read once a second;
+stale after 5 s counts as stopped): nothing to 40 km/h, rising linearly to the full lift at 110 km/h
+(Gentle +4 / +2.5 dB, Strong +7 / +4 dB), gliding at most 0.5 dB a second. With no lift the bytes pass
+untouched. Only media: the voice sinks (calls, Siri, prompts) are `VoiceRouter`'s and are not shaped.
+Done in the app's own code rather than with `android.media.audiofx`, so it does not depend on GM's audio
+HAL honouring effects on a session, and it is tested on the JVM with sine waves (`ToneShaperTest`). T37's
+equalizer is to be built on the same shaper.
+
 ### Latency classes
 
 The iPhone delivers media in bursts ahead of realtime (~750 ms fast, then ~200 ms pause) and voice at

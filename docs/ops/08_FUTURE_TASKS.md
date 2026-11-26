@@ -34,7 +34,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T31 Mileage log | New 2026-11-14, not started; also needs the server |
 | T32 Context docking | New 2026-11-14, not started |
 | T33 Remove the Silverado hotspot mode | New 2026-11-14, not started; a removal |
-| T36 Loudness by speed | New 2026-11-26 (owner: "start moving forward with the speed volume trick"); first of the sound tasks |
+| T36 Loudness by speed | Built 2026-11-26 (Screen & Sound ▸ Sound, default Gentle); unit tests only, not yet heard in the car |
 | T37 Equalizer | New 2026-11-26, after T36 (owner: "after that the full fledged equalizer") |
 | T38 Turn alert on the driver display | New 2026-11-26, not started |
 | T39 Settings per iPhone | New 2026-11-26, not started |
@@ -1586,6 +1586,15 @@ middle; the driver turns the volume up and down instead. The app reads the car's
 instead of raising the volume. Media only, not calls or Siri or navigation prompts. One setting: off,
 gentle, strong. **Done means.** On a drive the log shows the lift following the speed, and the owner
 hears the music hold up on the highway without reaching for the volume.
+
+**Built 2026-11-26, app only** (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md`, "Media shaping"): the app's own
+shelves on the media PCM, not `android.media.audiofx`, so it does not depend on GM's audio HAL. Nothing
+to 40 km/h, full lift from 110 km/h, Gentle +4 / +2.5 dB, Strong +7 / +4 dB, at most 0.5 dB a second.
+The log says `loudness by speed (<level>): <km/h>, bass +x dB, treble +y dB` at each 1 dB of movement.
+*Verified:* `ToneShaperTest` (sine waves: the shelves' gains within 0.5 dB, untouched bytes with no lift,
+no wrap at full scale), `SpeedLoudnessTest`, the app's 641 tests. *Not yet:* heard anywhere: the bench
+plays no CarPlay audio aloud, so the car is the first listen. The CPU cost (two biquads a sample, 96,000
+samples a second) is unmeasured on the head unit.
 
 ## T37. Equalizer (raised 2026-11-26)
 
