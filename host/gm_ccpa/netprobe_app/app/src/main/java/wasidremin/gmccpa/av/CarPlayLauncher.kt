@@ -13,8 +13,6 @@ import wasidremin.gmccpa.match.IconTemplateStore
 import wasidremin.gmccpa.ocbm.AdapterSession
 import wasidremin.gmccpa.ocbm.Ocbm
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -395,7 +393,7 @@ object CarPlayLauncher {
                 wasidremin.gmccpa.upload.UploadCenter.emitState(
                     it, wasidremin.gmccpa.upload.UploadState.InProgress(0L, total))
             }
-            val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            val conn = wasidremin.gmccpa.upload.Net.open(endpoint).apply {
                 requestMethod = "POST"
                 connectTimeout = wasidremin.gmccpa.upload.UploadCenter.CONNECT_TIMEOUT_MS
                 readTimeout = wasidremin.gmccpa.upload.UploadCenter.WRITE_READ_TIMEOUT_MS

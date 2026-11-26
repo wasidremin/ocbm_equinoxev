@@ -1478,7 +1478,7 @@ class LauncherUi(private val act: Activity) {
     }
 
     private fun dataUsedSubtitle(): String = wasidremin.gmccpa.upload.DataMeter.let {
-        it.describe(it.ledger(act), it.limitMb(act))
+        it.describe(it.ledger(act), it.limitMb(act), it.wifiOnly(act))
     }
 
     private fun queueStatusSubtitle(): String {
@@ -1750,6 +1750,14 @@ class LauncherUi(private val act: Activity) {
                 wasidremin.gmccpa.telemetry.ProbeUpload.enqueueAndDrain(act)
             },
         )
+        val wifiOnlyToggle = EqToggle(act, meter.wifiOnly(act)) { on ->
+            meter.setWifiOnly(act, on)
+            dataUsedRow.setSubtitle(dataUsedSubtitle())
+            setDetail(if (on) "Wi-Fi only: nothing is sent over the car's connection" else "Wi-Fi only off")
+            // Off lets a waiting queue go at once.
+            if (!on) wasidremin.gmccpa.telemetry.ProbeUpload.enqueueAndDrain(act)
+            refreshUploadQueueRow()
+        }
         val autoGpsToggle = EqToggle(act, wasidremin.gmccpa.telemetry.ProbeUpload.isAutoRawLocationEnabled(act)) { on ->
             wasidremin.gmccpa.telemetry.ProbeUpload.setAutoRawLocationEnabled(act, on)
             wasidremin.gmccpa.telemetry.ProbeService.ensureAutoStarted(act)
@@ -1764,6 +1772,12 @@ class LauncherUi(private val act: Activity) {
                 "EV Insights auto-upload",
                 "Sends each driven minute and a heartbeat while parked or charging. Off keeps everything on the car; the drive log still records.",
                 trailing = autoTelemetryToggle,
+            ))
+            .addRow(EqRow(
+                act,
+                "Wi-Fi only",
+                "Uses no car data: telemetry, logs, captures, downloads and lyrics lookups wait until the car is on Wi-Fi or a phone hotspot. CarPlay is not affected.",
+                trailing = wifiOnlyToggle,
             ))
             .addRow(dataUsedRow)
             .addRow(EqRow(

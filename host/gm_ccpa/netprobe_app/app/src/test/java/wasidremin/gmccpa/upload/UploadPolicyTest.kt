@@ -176,4 +176,14 @@ class UploadPolicyTest {
         }
         assertEquals(listOf(1L, 2L), emissions)
     }
+
+    @Test fun wifiOnlysRefusalQueuesTheUploadWithoutTheImmediateRetry() {
+        var calls = 0
+        val thrown = runCatching {
+            UploadPolicy.executeWithOneRetry(sleepMs = {}) { calls++; throw Net.WifiOnly() }
+        }.exceptionOrNull()
+        org.junit.Assert.assertTrue(thrown is Net.WifiOnly)
+        org.junit.Assert.assertEquals(1, calls)
+        org.junit.Assert.assertTrue(UploadPolicy.classifyFailure(Net.WifiOnly(), allowQueue = true) is UploadState.Queued)
+    }
 }

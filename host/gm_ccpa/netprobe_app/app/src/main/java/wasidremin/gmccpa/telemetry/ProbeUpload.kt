@@ -3,8 +3,6 @@ package wasidremin.gmccpa.telemetry
 import android.content.Context
 import java.io.File
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.Executors
 
 /**
@@ -219,7 +217,7 @@ object ProbeUpload {
         onState?.let {
             wasidremin.gmccpa.upload.UploadCenter.emitState(it, wasidremin.gmccpa.upload.UploadState.InProgress(0L, size))
         }
-        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+        val connection = wasidremin.gmccpa.upload.Net.open(endpoint).apply {
             requestMethod = "POST"
             connectTimeout = wasidremin.gmccpa.upload.UploadCenter.CONNECT_TIMEOUT_MS
             readTimeout = wasidremin.gmccpa.upload.UploadCenter.WRITE_READ_TIMEOUT_MS

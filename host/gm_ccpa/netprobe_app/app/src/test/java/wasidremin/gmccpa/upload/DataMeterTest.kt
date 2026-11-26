@@ -72,4 +72,20 @@ class DataMeterTest {
     @Test fun `the default limit is one of the choices`() {
         assertTrue(DataMeter.DEFAULT_LIMIT_MB in DataMeter.LIMIT_CHOICES_MB)
     }
+
+    @Test fun wifiOnlyStopsEverythingOffWifiAndNothingOnIt() {
+        assertTrue(DataMeter.mayUseNetwork(wifiOnly = false, onWifi = false))
+        assertTrue(DataMeter.mayUseNetwork(wifiOnly = true, onWifi = true))
+        assertFalse(DataMeter.mayUseNetwork(wifiOnly = true, onWifi = false))
+        // Background telemetry: Wi-Fi only pauses it off Wi-Fi even under the limit; on Wi-Fi nothing pauses it.
+        assertFalse(DataMeter.mayUploadInBackground(wifiOnly = true, onWifi = false, overLimit = false))
+        assertTrue(DataMeter.mayUploadInBackground(wifiOnly = true, onWifi = true, overLimit = true))
+        assertTrue(DataMeter.mayUploadInBackground(wifiOnly = false, onWifi = false, overLimit = false))
+        assertFalse(DataMeter.mayUploadInBackground(wifiOnly = false, onWifi = false, overLimit = true))
+    }
+
+    @Test fun theSettingsLineSaysWhenWifiOnlyIsOn() {
+        val l = Ledger("2026-11").plus(Stream.TELEMETRY, 3L * 1024 * 1024, false)
+        assertTrue(DataMeter.describe(l, 100, wifiOnly = true).endsWith("Wi-Fi only is on: nothing is sent over the car's connection."))
+    }
 }

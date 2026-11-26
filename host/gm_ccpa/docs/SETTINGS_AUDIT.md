@@ -387,6 +387,13 @@ stays (serves Capture Current).
   Adapter Wi-Fi off. With Adapter Wi-Fi on, which the Equinox always is, its row stays hidden as before;
   the hotspot's name and password the owner entered for the join stay stored there.
 
+## 2026-11-26 deltas (Wi-Fi only)
+
+- **Wi-Fi only** (Advanced ▸ Upload server & EV Insights, above Car data used this month; `Ui.kt
+  wifiOnlyToggle`): `data_meter_prefs/wifi_only`, default false (owner, 2026-11-26, after OnStar kept
+  asking for a bigger plan). On: no request leaves the car unless the connection is Wi-Fi
+  (`upload/Net.open`); the Car data line says so. New key; nothing carries over.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

@@ -72,7 +72,7 @@ object DataMeter {
     fun limitLabel(limitMb: Int): String = if (limitMb > 0) "$limitMb MB" else "No limit"
 
     /** The Settings row's line. Numbers only. */
-    fun describe(ledger: Ledger, limitMb: Int): String = buildString {
+    fun describe(ledger: Ledger, limitMb: Int, wifiOnly: Boolean = false): String = buildString {
         append(formatMb(ledger.carTotal))
         append(if (limitMb > 0) " of $limitMb MB sent over the car's connection" else " sent over the car's connection")
         val parts = Stream.values().mapNotNull { s ->
@@ -83,6 +83,7 @@ object DataMeter {
         if (ledger.wifi >= MB / 10) append(" ${formatMb(ledger.wifi)} more over Wi-Fi, which is not counted.")
         append(
             when {
+                wifiOnly -> " Wi-Fi only is on: nothing is sent over the car's connection."
                 limitMb <= 0 -> " Background telemetry is not limited."
                 overLimit(ledger, limitMb) -> " The limit is reached: telemetry uploads are paused until next month or Wi-Fi."
                 else -> " Telemetry uploads pause at the limit."
@@ -95,6 +96,7 @@ object DataMeter {
     private const val KEY_MONTH = "month"
     private const val KEY_WIFI = "wifi_bytes"
     private const val KEY_LIMIT = "limit_mb"
+    private const val KEY_WIFI_ONLY = "wifi_only"
     private val log by lazy { ProbeLog.sub("data") }
     private val lock = Any()
     @Volatile private var appCtx: Context? = null
@@ -105,6 +107,28 @@ object DataMeter {
     fun attach(ctx: Context) {
         if (appCtx == null) appCtx = ctx.applicationContext
     }
+
+    /**
+     * Wi-Fi only (owner, 2026-11-26): OnStar kept telling the owner to buy a bigger data plan for this
+     * app. While it is on, the app uses no network at all unless Android says the connection is Wi-Fi
+     * (home Wi-Fi or a phone hotspot): no telemetry, logs, captures, downloads or lyrics lookups over
+     * the car's modem. Every request goes through [Net.open], which refuses then. Default off.
+     */
+    fun wifiOnly(ctx: Context): Boolean =
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_WIFI_ONLY, false)
+
+    fun setWifiOnly(ctx: Context, on: Boolean) {
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_WIFI_ONLY, on).apply()
+        log.i(if (on) "Wi-Fi only on: nothing goes out over the car's connection" else "Wi-Fi only off")
+    }
+
+    /** Pure: may the app use the network at all now. */
+    fun mayUseNetwork(wifiOnly: Boolean, onWifi: Boolean): Boolean = onWifi || !wifiOnly
+
+    /** Pure: may a background upload go out now. */
+    fun mayUploadInBackground(wifiOnly: Boolean, onWifi: Boolean, overLimit: Boolean): Boolean =
+        onWifi || (!wifiOnly && !overLimit)
 
     fun limitMb(ctx: Context): Int =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_LIMIT, DEFAULT_LIMIT_MB)
@@ -142,14 +166,22 @@ object DataMeter {
      * Things the driver taps (log upload, a screenshot) are not gated by this - they show their size.
      */
     fun allowBackground(ctx: Context): Boolean {
-        val allowed = onWifi(ctx) || !overLimit(ledger(ctx), limitMb(ctx))
+        val wifiOnly = wifiOnly(ctx)
+        val allowed = mayUploadInBackground(wifiOnly, onWifi(ctx), overLimit(ledger(ctx), limitMb(ctx)))
         // One line per change, so an uploaded log explains a queue that is not moving.
         if (lastAllowed != allowed) {
             lastAllowed = allowed
             if (allowed) log.i("background telemetry uploads allowed (${networkLabel(ctx)})")
+            else if (wifiOnly) log.i("background telemetry uploads paused: Wi-Fi only, and the car is not on Wi-Fi")
             else log.w("background telemetry uploads paused: the month's ${limitMb(ctx)} MB car-data limit is reached")
         }
         return allowed
+    }
+
+    /** For [Net.open]: whether a request may go out now. True before [attach] (nothing to read yet). */
+    internal fun mayUseNetworkNow(): Boolean {
+        val ctx = appCtx ?: return true
+        return mayUseNetwork(wifiOnly(ctx), onWifi(ctx))
     }
 
     /** Count one request's payload. Safe from any thread; a no-op before [attach]. */

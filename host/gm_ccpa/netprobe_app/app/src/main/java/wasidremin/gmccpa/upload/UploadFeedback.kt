@@ -33,9 +33,7 @@ import java.io.File
 import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.OutputStream
-import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
-import java.net.URL
 import java.net.UnknownHostException
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
@@ -594,7 +592,8 @@ object UploadPolicy {
         try {
             return block()
         } catch (first: Throwable) {
-            if (!isTransientNetworkFailure(first)) throw first
+            // Wi-Fi only's refusal is transient (the upload queues for later) but will not clear in 1.2 s.
+            if (!isTransientNetworkFailure(first) || first is Net.WifiOnly) throw first
             onRetry?.invoke(first)
             try {
                 sleepMs(backoffMs)
@@ -744,7 +743,7 @@ object UploadCenter {
                 val total = probePayload.size.toLong()
                 emitState(onState, UploadState.InProgress(0L, total))
                 val ref = executeWithOneRetry {
-                    val conn = (URL("$base/logs").openConnection() as HttpURLConnection).apply {
+                    val conn = wasidremin.gmccpa.upload.Net.open("$base/logs").apply {
                         requestMethod = "POST"
                         connectTimeout = CONNECT_TIMEOUT_MS
                         readTimeout = WRITE_READ_TIMEOUT_MS
@@ -869,7 +868,7 @@ object UploadCenter {
 
         return executeWithOneRetry {
             emitState(onState, UploadState.InProgress(0L, totalBytes))
-            val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            val conn = wasidremin.gmccpa.upload.Net.open(endpoint).apply {
                 requestMethod = "POST"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = WRITE_READ_TIMEOUT_MS

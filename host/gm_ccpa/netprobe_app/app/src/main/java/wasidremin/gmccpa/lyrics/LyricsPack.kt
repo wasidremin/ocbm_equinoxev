@@ -8,7 +8,6 @@ import java.io.File
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
-import java.net.URL
 import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -245,7 +244,7 @@ class LyricsPack(private val dir: File) {
                 try {
                     val pack = get(app)
                     val have = pack.meta()?.id
-                    val c = (URL(endpointFor(base!!, car!!, have)).openConnection() as HttpURLConnection).apply {
+                    val c = wasidremin.gmccpa.upload.Net.open(endpointFor(base!!, car!!, have)).apply {
                         connectTimeout = 10_000
                         readTimeout = 60_000
                         setRequestProperty("X-Device", "gmccpa")

@@ -540,6 +540,17 @@ back on, so the live arrival of Wi-Fi (the network callback) was not exercised. 
 car's modem and a phone hotspot each present to Android (the meter logs
 `uploads now go over <network>` once per change, so the first uploaded log answers it).
 
+**Wi-Fi only (2026-11-26).** OnStar kept telling the owner to buy a bigger plan for this app even with
+the budget above. Settings ▸ Advanced ▸ Wi-Fi only (default off) makes the app use no network unless
+Android says the connection is Wi-Fi. Every internet request now goes through `upload/Net.open`
+(`NetTest` fails on any other `openConnection`), which refuses with `Net.WifiOnly`, an `IOException`, so
+each caller's existing failure path handles it: a capture stays queued, telemetry's `allowBackground`
+pauses the queue, a tapped log upload is held by `LogsOnWifi` and goes by itself on Wi-Fi, lyrics lookups
+and the history and lyrics downloads wait; the immediate retry is skipped for it. The adapter link (USB
+networking, the A/V seams) never touches the modem and is not gated. *Verified:* unit tests (632), and the
+AAOS emulator with its Wi-Fi off (cellular only): the capture queue held, the log upload held, and both
+released when Wi-Fi came back. *Not yet:* the car.
+
 ### 13.6 2026-11-12: the Drive card, and what a month of replayed drives said about estimating
 
 **Why.** The drive log of §13.4 was only read after the drive, on the centre screen. The owner asked

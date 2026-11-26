@@ -6,7 +6,6 @@ import org.json.JSONObject
 import wasidremin.gmccpa.ProbeLog
 import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import kotlin.math.abs
 
@@ -164,7 +163,7 @@ object LrcLib {
     private object Net : Api {
         override fun get(path: String, query: List<Pair<String, String>>): String? {
             val q = query.joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, Charsets.UTF_8.name())}" }
-            val conn = URL("$BASE/$path?$q").openConnection() as HttpURLConnection
+            val conn = wasidremin.gmccpa.upload.Net.open("$BASE/$path?$q")
             try {
                 conn.connectTimeout = TIMEOUT_MS
                 conn.readTimeout = TIMEOUT_MS

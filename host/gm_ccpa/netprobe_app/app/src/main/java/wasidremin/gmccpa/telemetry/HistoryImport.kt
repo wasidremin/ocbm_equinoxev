@@ -3,8 +3,6 @@ package wasidremin.gmccpa.telemetry
 import android.content.Context
 import org.json.JSONObject
 import wasidremin.gmccpa.ProbeLog
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -71,7 +69,7 @@ object HistoryImport {
         if (!baseUrl.trim().startsWith("https://", ignoreCase = true) || !carId.matches(Regex("[0-9a-f]{16}"))) return
         Thread({
             try {
-                val c = (URL(endpointFor(baseUrl, carId)).openConnection() as HttpURLConnection).apply {
+                val c = wasidremin.gmccpa.upload.Net.open(endpointFor(baseUrl, carId)).apply {
                     connectTimeout = 10_000
                     readTimeout = 30_000
                     setRequestProperty("Accept", "application/x-ndjson")

@@ -16,8 +16,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
@@ -317,7 +315,7 @@ object LogExport {
             batch.clear()
             val index = batches + 1
             wasidremin.gmccpa.upload.UploadCenter.executeWithOneRetry {
-                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                val connection = wasidremin.gmccpa.upload.Net.open(endpoint).apply {
                     requestMethod = "POST"
                     connectTimeout = wasidremin.gmccpa.upload.UploadCenter.CONNECT_TIMEOUT_MS
                     readTimeout = wasidremin.gmccpa.upload.UploadCenter.WRITE_READ_TIMEOUT_MS

@@ -2131,6 +2131,8 @@ class MainActivity : Activity() {
     private fun uploadLogs(confirmed: Boolean = false, onWifiOnly: Boolean = false) {
         val window = wasidremin.gmccpa.upload.UploadCenter.logWindow(this)
         if (onWifiOnly) { deferLogs(window); return }
+        val meter = wasidremin.gmccpa.upload.DataMeter
+        if (meter.wifiOnly(this) && !meter.onWifi(this)) { deferLogs(window); return }
         if (confirmed) { sendLogs(window); return }
         // Measure first. The car's data is a monthly allowance and a whole-OS capture is large, so
         // a big upload says what it will cost and waits for a yes; a small one just goes.

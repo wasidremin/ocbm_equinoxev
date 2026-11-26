@@ -59,7 +59,7 @@ high-water mark: versionCode 270 (`4.0+boot-preload`, 2026-11-26; `host/gm_ccpa/
 Re-checked 2026-11-26 against the car's uploads through 2026-11-26 00:49 UTC (app 269): each item's
 own log line counted; the closed ones are listed at the end of this section with that evidence.
 
-**In Play 270 (published 2026-11-26), waiting for a drive**
+**Waiting for a drive** (in Play 270, published 2026-11-26, unless the item says otherwise)
 
 - **The Wi-Fi link to the car's hotspot (T15): removed 2026-11-25, in Play 270.** A day in the car with
   it on: about 30 s to the picture when it linked, against about 13 s over USB with the tap
@@ -85,6 +85,13 @@ own log line counted; the closed ones are listed at the end of this section with
   Insights ▸ Trips once it closes (4 min later). A short hop logs `not shown (<m> m)`. The tap has not
   been checked anywhere yet.
 
+- **Wi-Fi only and the redaction fix (2026-11-26, not yet published).** Settings ▸ Advanced ▸ Wi-Fi only
+  (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.5): with it on, on the car's modem the log shows
+  `request held: Wi-Fi only` and `background telemetry uploads paused: Wi-Fi only`, Car data used this
+  month stops growing, and on home Wi-Fi or the hotspot the queue and any held log upload go out. The
+  adapter's `MGMT_INFO` is now wrapped at commas (`logging/LogWrap.kt`): the next upload's `"devices"`
+  lines should carry only `<REDACTED:MAC_ADDRESS:…>`.
+
 **Still open**
 
 - **Which iPhone first, by schedule (T35, Play 268): a changed order not yet seen.** The weekday-morning
@@ -106,11 +113,11 @@ own log line counted; the closed ones are listed at the end of this section with
   ("CarPlay Video Overlay NOT supported on Bonjour discovery based accessories", its log on the bench);
   route A waits on the simplified connection flow (address over iAP2), not yet planned.
   `08_FUTURE_TASKS.md` T34.
-- **Log redaction lets a second Bluetooth address through (found 2026-11-12), still open 2026-11-26.**
-  Of the uploads' `"devices":[…]` lines from 2026-11-21 to 11-26, 30 of 64 carry part of an address
-  unmasked. Likely cause: the app writes the adapter's `MGMT_INFO` across several log lines, cutting an
-  address in two, and the redactor matches whole addresses only. Fix where the line is written (or
-  redact before wrapping), then check the next upload.
+- **Log redaction lets a second Bluetooth address through (found 2026-11-12): fixed 2026-11-26, not yet
+  published.** 30 of the 64 `"devices"` lines from 2026-11-21 to 11-26 carried part of an address: the
+  app cut the adapter's `MGMT_INFO` every 110 characters, sometimes inside an address, and the redactor
+  masks whole addresses only. Now cut after a comma (`logging/LogWrap.kt`, `LogWrapTest`). Closed by the
+  first upload from the next publish.
 - **EV Insights server (`host/evinsights`): the worker runs, the real car's trips are not usable
   yet.** Fixed 2026-11-12 (`1fc20f3`): the worker loaded a vehicle's whole history into memory, and
   at 3.3 million samples the kernel killed it on every pass (160 restarts in a day, the database at

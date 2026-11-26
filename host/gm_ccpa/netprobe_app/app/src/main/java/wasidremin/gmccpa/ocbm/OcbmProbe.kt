@@ -1190,7 +1190,7 @@ class OcbmProbe(context: Context) {
             val up = Regex("\"uptime_s\"\\s*:\\s*(\\d+)").find(info)?.groupValues?.get(1) ?: "unknown"
             log.i("box: uptime=${up}s at first HELLO")
         }
-        if (info != null) { sink("  MGMT_INFO:"); info.chunked(110).forEach { sink("     $it") } }
+        if (info != null) { sink("  MGMT_INFO:"); wasidremin.gmccpa.logging.LogWrap.lines(info).forEach { sink("     $it") } }
         // Degraded, not fatal: bring-up continues, but the session summary loses its bonded-device
         // diff and the box was slow on CH_MGMT for 5 s — worth a WARN, not a silent INFO.
         else log.w("MGMT_INFO: no response within 5 s — box busy on its dispatch loop? continuing without the bonded-device snapshot")
