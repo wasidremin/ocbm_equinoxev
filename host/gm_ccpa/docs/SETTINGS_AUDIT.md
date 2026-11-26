@@ -401,6 +401,15 @@ stays (serves Capture Current).
   trick"; on by default so it is heard without a visit to Settings). Lifts music's bass and treble with
   speed (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md`, "Media shaping"). New key; nothing carries over.
 
+## 2026-11-26 deltas (the equalizer; T37)
+
+- **Equalizer** (Screen & Sound ▸ Sound, `Ui.kt presetControl` and `sound/EqualizerView`):
+  `sound/eq_preset` (`flat` / `bass` / `vocal` / `treble` / `lively` / `custom`, default `flat`, so the
+  sound is unchanged until a preset is picked) and `sound/eq_custom` (ten gains, `"0.0,…"`, ±12 dB in
+  0.5 dB steps; malformed reads as flat). Owner, 2026-11-26: "after that the full fledged equalizer".
+  Presets any time; dragging a band (in Park only, `CarGear.parked`) makes the curve Custom and saves it
+  when the finger lifts. New keys; nothing carries over.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

@@ -35,7 +35,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T32 Context docking | New 2026-11-14, not started |
 | T33 Remove the Silverado hotspot mode | New 2026-11-14, not started; a removal |
 | T36 Loudness by speed | Built 2026-11-26 (Screen & Sound ▸ Sound, default Gentle); unit tests only, not yet heard in the car |
-| T37 Equalizer | New 2026-11-26, after T36 (owner: "after that the full fledged equalizer") |
+| T37 Equalizer | Built 2026-11-26 (Screen & Sound ▸ Sound, default Flat); unit tests and the emulator's drawing, not yet heard in the car |
 | T38 Turn alert on the driver display | New 2026-11-26, not started |
 | T39 Settings per iPhone | New 2026-11-26, not started |
 
@@ -1601,6 +1601,14 @@ samples a second) is unmeasured on the head unit.
 **What.** Presets rather than sliders to fiddle with while driving: "this car's speakers", voice
 (podcasts, calls), music; a custom one set while parked. Built on T36's processing. A different preset per
 phone falls out of T39. **Done means.** The owner picks a preset once and the car sounds better to them.
+
+**Built 2026-11-26, app only** (`host/gm_ccpa/docs/13_AUDIO_ROUTING.md`, "The equalizer";
+`SETTINGS_AUDIT.md` 2026-11-26): ten octave bands, ±12 dB; Flat (default), Bass, Vocal, Treble, Lively and
+Custom; the bands dragged in Park only. *Verified:* `EqualizerTest` (the bands' response with sine waves,
+the presets, the stored curve, the editor's finger-to-gain mapping), the app's 648 tests, and on the AAOS
+emulator the Sound section drawing a stored Custom curve (+3, −1.5, +2.5, −12, +12, +0.5 in their bands).
+*Not verified:* a drag on the emulator (its input injection aborts there, `04_OPEN_ITEMS.md`), and any
+listening.
 
 ## T38. Turn alert on the driver display (raised 2026-11-26)
 

@@ -1,11 +1,6 @@
 package wasidremin.gmccpa.calltest
 
 import android.app.Activity
-import android.car.Car
-import android.car.VehicleGear
-import android.car.VehiclePropertyIds
-import android.car.hardware.property.CarPropertyManager
-import android.content.Context
 import android.view.View
 import android.widget.LinearLayout
 import wasidremin.gmccpa.EqButtonStyle
@@ -100,20 +95,7 @@ class CallTestsCard(private val act: Activity) {
     /** Why a test must not run now, or null. Called off the main thread. */
     private fun blockedReason(): String? = when {
         wasidremin.gmccpa.av.CarPlayActivity.nowPlaying.phoneAction() != null -> "a CarPlay call is on"
-        !parked(act.applicationContext) -> "the car is out of Park"
+        !wasidremin.gmccpa.CarGear.parked(act.applicationContext) -> "the car is out of Park"
         else -> null
-    }
-
-    private companion object {
-        /** GEAR_SELECTION; an unreadable gear does not block (the emulator, a refused permission). */
-        fun parked(ctx: Context): Boolean = runCatching {
-            val car = Car.createCar(ctx) ?: return@runCatching true
-            try {
-                val pm = car.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager ?: return@runCatching true
-                pm.getIntProperty(VehiclePropertyIds.GEAR_SELECTION, 0) == VehicleGear.GEAR_PARK
-            } finally {
-                car.disconnect()
-            }
-        }.getOrDefault(true)
     }
 }

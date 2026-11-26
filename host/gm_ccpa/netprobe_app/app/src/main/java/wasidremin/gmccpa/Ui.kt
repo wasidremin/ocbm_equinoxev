@@ -681,8 +681,25 @@ class LauncherUi(private val act: Activity) {
                 loud.setLevel(act, loudLevels[i])
             },
         )
+        val eq = wasidremin.gmccpa.sound.Equalizer
+        val presets = wasidremin.gmccpa.sound.Equalizer.Preset.values().toList()
+        lateinit var eqView: wasidremin.gmccpa.sound.EqualizerView
+        val presetControl = EqSegmented(act, presets.map { it.label }, presets.indexOf(eq.preset)) { i ->
+            eq.select(act, presets[i]); eqView.show(eq.bands)
+        }
+        eqView = wasidremin.gmccpa.sound.EqualizerView(
+            act,
+            editable = { wasidremin.gmccpa.CarGear.parked(act) },
+            onBlocked = { setDetail("The equalizer's bands are set in Park; presets work any time") },
+            onEdit = { g, done ->
+                eq.setCustom(act, g, persist = done)
+                presetControl.setSelected(presets.indexOf(wasidremin.gmccpa.sound.Equalizer.Preset.CUSTOM))
+            },
+        ).also { it.show(eq.bands) }
         page.addView(eqSectionLabel(act, "Sound"))
         page.addView(EqCard(act).addRow(audioRow).addRow(loudRow).addRow(EqRow(
+            act, "Equalizer", "Music only. Drag a band in Park to make your own.", trailing = presetControl,
+        )).addRow(eqView).addRow(EqRow(
             act, "Play Spotify on connect",
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
             trailing = EqToggle(act, AudioRoute.autoPlay(act)) { on -> AudioRoute.setAutoPlay(act, on) },

@@ -426,8 +426,14 @@ stale after 5 s counts as stopped): nothing to 40 km/h, rising linearly to the f
 (Gentle +4 / +2.5 dB, Strong +7 / +4 dB), gliding at most 0.5 dB a second. With no lift the bytes pass
 untouched. Only media: the voice sinks (calls, Siri, prompts) are `VoiceRouter`'s and are not shaped.
 Done in the app's own code rather than with `android.media.audiofx`, so it does not depend on GM's audio
-HAL honouring effects on a session, and it is tested on the JVM with sine waves (`ToneShaperTest`). T37's
-equalizer is to be built on the same shaper.
+HAL honouring effects on a session, and it is tested on the JVM with sine waves (`ToneShaperTest`).
+
+**The equalizer (T37, 2026-11-26)** is ten RBJ peaking filters (Q 1.41, octave centres 31 Hz to 16 kHz,
+±12 dB) in the same `ToneShaper`, ahead of T36's shelves; `sound/Equalizer` holds the preset or Custom
+curve and hands the audio thread a new array on each change (the shaper redesigns a band only when its
+gain moved). The pre-gain is half the largest stackable boost (shelf plus the largest band); a band above
+0.45 of the sample rate is left out. Measured on the JVM (`EqualizerTest`): a band lifts its own octave by
+its gain within 0.3 dB and leaves two octaves away unchanged.
 
 ### Latency classes
 

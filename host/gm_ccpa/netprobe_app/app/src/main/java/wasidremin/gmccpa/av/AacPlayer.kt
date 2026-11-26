@@ -1120,6 +1120,7 @@ class AacPlayer(private val am: android.media.AudioManager? = null) {
                     shaper?.let { sh ->
                         val g = loudness.next()
                         sh.setGains(g.bassDb, g.trebleDb)
+                        sh.setBands(wasidremin.gmccpa.sound.Equalizer.bands)
                         sh.process(pcm, pcmLen)
                     }
                     outcome = if (t == null) WriteOutcome.NO_TRACK else {

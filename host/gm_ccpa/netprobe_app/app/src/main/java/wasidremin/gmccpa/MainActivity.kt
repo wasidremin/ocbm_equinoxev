@@ -804,6 +804,7 @@ class MainActivity : Activity() {
         AndroidUser.noteProcess(applicationContext)
         wasidremin.gmccpa.upload.DataMeter.attach(applicationContext)
         wasidremin.gmccpa.sound.SpeedLoudness.load(applicationContext)
+        wasidremin.gmccpa.sound.Equalizer.load(applicationContext)
         wasidremin.gmccpa.sound.SpeedLoudness.SpeedFeed.start(applicationContext)
         wasidremin.gmccpa.upload.LogsOnWifi.attach(applicationContext)
         // Early, so its front-screen tracker sees this Activity resume (cluster turn-by-turn).

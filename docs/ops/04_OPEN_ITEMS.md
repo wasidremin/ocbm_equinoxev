@@ -100,6 +100,12 @@ own log line counted; the closed ones are listed at the end of this section with
   Listen for distortion on loud tracks at Strong, and watch for `framesDropped`/underrun lines rising (the
   shaping runs on the audio thread).
 
+- **The equalizer (T37, 2026-11-26, not yet published).** Settings ▸ Screen & Sound ▸ Sound: presets any
+  time, the bands dragged in Park. In the car: a preset logs `equalizer: <preset> [+x …]` and changes the
+  sound; a drag out of Park leaves the bands and says "set in Park"; a drag in Park moves a band and logs
+  the Custom curve when the finger lifts. Listen for distortion at large boosts (the pre-gain and soft
+  knee should stop clipping).
+
 **Still open**
 
 - **Which iPhone first, by schedule (T35, Play 268): a changed order not yet seen.** The weekday-morning
@@ -689,6 +695,10 @@ app as the only host.
   per boot (the 2026-11-12 Drive card check took nine boots). Switching Wi-Fi on in the emulator
   (`svc wifi enable`) also crashes it, so the live arrival of Wi-Fi has never run on the bench.
   Not investigated: the emulator build, the `swiftshader_indirect` GPU mode, the second display.
+  2026-11-26: `svc wifi enable` worked (the Wi-Fi only check), but every `input tap` on Settings aborted
+  the emulator's `system_server` (`SIGABRT … InputDispatcher`) with the simulated driver display
+  (`overlay_display_devices 2000x810/220`) set, `input -d 0` included; the USB dialog's tap that morning
+  had worked. Settings checks that need a tap are done by writing the stored preference instead.
 
 - **`skip_list_narrows_the_declaration` is still tautological, and `file_setting()` has no test.** The
   skip lever itself now has genuine coverage via `active_with_skip`, but the named test is unchanged
