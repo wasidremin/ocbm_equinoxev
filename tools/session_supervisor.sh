@@ -635,9 +635,6 @@ apply_host_wifi_creds() {
   _s=$(cfg_value wifi_ssid)
   _p=$(cfg_value wifi_pass)
   _c=$(cfg_value wifi_channel)
-  # Joining the car's hotspot (T15) pins the access point to the car's channel: one radio. The file
-  # the phone's handoff reads must name the channel the access point is really on.
-  [ -s /tmp/.radio_uplink_ap_channel ] && _c=$(head -1 /tmp/.radio_uplink_ap_channel)
   _ssid_src=host
   if wifi_ap_enabled; then
     # Box-AP role: the beacon is ccpa-<4hex>, decided once by radio_hal's box_name() and written
@@ -792,7 +789,6 @@ wireless_up() {
       echo "[sup] wifi_ap:false -> box SoftAP SUPPRESSED (BT-only bridge role; the head-unit app owns Wi-Fi)" >/tmp/wlan.log
     else
       sh /script/radio_hal.sh wifi_ap_on >/tmp/wlan.log 2>&1 &
-      _wifi_pid=$!
     fi
     # bt.log stays the small truncated per-attempt status file that docs/wireless/01_BT_AND_RADIO.md
     # tells an operator to cat directly. Capture the real exit status before copying
@@ -804,16 +800,6 @@ wireless_up() {
       0|2) ;;
       *) echo "[sup] BT bring-up failed rc=$_bt_rc — not launching advertiser" >>/tmp/box.log; exit 1 ;;
     esac
-    # Joining the car hotspot (T15, radio_hal.sh) holds the access point back until the join is
-    # done, up to about 12 s. The phone is handed over as soon as btd has it, and an iPhone handed a
-    # network not yet on the air did not wait for it (bench 2026-11-16: one session in four needed a
-    # restart). So with a join configured, btd waits for the access point. radio_hal bounds this.
-    if [ -n "${_wifi_pid:-}" ] && grep -q "^enabled=1" /script/sta_uplink.conf 2>/dev/null \
-       && grep -q "^psk=." /script/sta_uplink.conf 2>/dev/null; then
-      _w0=$(cut -d. -f1 /proc/uptime)
-      wait "$_wifi_pid"
-      echo "[sup] waited $(( $(cut -d. -f1 /proc/uptime) - _w0 )) s for the access point (car hotspot join configured)" >>/tmp/box.log
-    fi
     # BENCH LEVER (2026-09-03): opt-in btmon capture for this wireless session. Armed by either the
     # file flag or the env var -- the outer `env BT_PAIRING_MODE=... setsid sh -c` wrapper
     # above only lists the vars it OVERRIDES, so CARPLAY_BTMON, if exported by the caller, still
@@ -968,13 +954,13 @@ if [ "$(cat "$FLAG" 2>/dev/null)" != 1 ]; then
   fi
 fi
 
-# The car-hotspot client's keeper (radio_hal.sh, THE KEEPER): with a join configured, the adapter
-# joins the car's hotspot from boot and stays on it, so the app reaches ocbmd over Wi-Fi before any
-# session (ocbmd src/wifi.rs). A client, not an access point. Started here and not in ocbm_boot.sh:
-# an update never writes the boot path, so the car's ocbm_boot.sh predates the keeper (found at 264's
-# publish, 2026-11-21). Runs once (a respawned supervisor finds it running); with no join configured
-# it returns at once.
-setsid sh /script/radio_hal.sh sta_keep </dev/null >/dev/null 2>&1 &
+# The Wi-Fi link to the car's hotspot (T15) was removed on 2026-11-25. Its files hold the hotspot's
+# passphrase and the link key, and nothing reads them any more, so they go. Shipped here and not in
+# an update step: fw_apply.sh only adds and replaces. The Wi-Fi client program stays: other units
+# carry the vendor's own at that path.
+for _old in /script/sta_uplink.conf /script/sta_uplink.channel /etc/ocbm/wifi_link; do
+  [ -e "$_old" ] && rm -f "$_old" && echo "[sup] removed $_old (the retired Wi-Fi link)" >>/tmp/box.log
+done
 
 # Owner-approved boot optimization: attach/initialize BT only. No advertiser,
 # SoftAP or AA bridge until host_present. Single-flight HAL serializes an early

@@ -61,18 +61,17 @@ came from in their header comments.
   applies at the adapter's next start, the race runs on one socketpair, the client's keeper is
   `radio_hal.sh`'s (`sta_keep`, after enigy's `wifi_sta.sh`), the app also sweeps the hotspot's subnet,
   and no address reaches a log.
+  **Removed 2026-11-25** (T15): none of it is in the tree now; it is in git history at `1b25f52`.
 
 ## Built from upstream source
 
-- **wpa_supplicant 2.11** (w1.fi, BSD licence) — the adapter's Wi-Fi client for joining the car's
-  hotspot (T15). Not in this repository: `tools/build_wpa_supplicant.sh` downloads the release,
-  checks its pinned SHA-256 and builds it; the binary ships in the adapter firmware.
-- **libnl 3.12.0** (github.com/thom311/libnl, LGPL-2.1) — `libnl-3` and `libnl-genl-3`, linked
-  statically into that `wpa_supplicant` for its nl80211 driver (2026-11-20). Not in this repository:
-  the same script downloads the release, checks its pinned SHA-256 and builds it unmodified. As
-  the LGPL requires of a static link, the script and the public `wpa_supplicant` source are
-  everything needed to relink the binary against a changed libnl. The build follows **enigy/ocbm**
-  PR #2 (github.com/enigy/ocbm/pull/2, Unlicense), which first built this pair for the CCPA.
+- **wpa_supplicant 2.11** (w1.fi, BSD licence) and **libnl 3.12.0** (github.com/thom311/libnl,
+  LGPL-2.1, linked statically into it for its nl80211 driver): the adapter's Wi-Fi client for joining
+  the car's hotspot (T15), shipped in the adapter firmware from 2026-11-15 and **no longer built or
+  shipped since 2026-11-25**. Adapters that took it keep the binary. As the LGPL asks of a static
+  link, the build script, which downloads both releases, checks their pinned SHA-256 and builds them
+  unmodified, stays available to relink it: `git show 1b25f52:tools/build_wpa_supplicant.sh`. The
+  build followed **enigy/ocbm** PR #2 (github.com/enigy/ocbm/pull/2, Unlicense).
 
 ## Ideas, no code
 

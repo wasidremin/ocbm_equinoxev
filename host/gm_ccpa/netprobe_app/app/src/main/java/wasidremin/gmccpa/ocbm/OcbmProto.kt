@@ -323,8 +323,8 @@ object Ocbm {
     const val FW_OP_ROLLBACK: Byte = 4
     const val FW_DIR: String = "/tmp/fwup"
     /**
-     * `[MGMT_WIFI_LINK][1][key 32]`: the Wi-Fi link's key (T15, [WifiLink]); empty clears it. The adapter
-     * uses it from its next start. Only for firmware whose `MGMT_INFO` carries `"wifi_link"`.
+     * `[MGMT_WIFI_LINK]` with no body: clear the retired Wi-Fi link's key on firmware from before
+     * 2026-11-25 ([RetiredWifiLink]). 0x0E is not reused.
      */
     const val MGMT_WIFI_LINK: Byte = 0x0E
     const val MGMT_INFO: Byte = 0x81.toByte()

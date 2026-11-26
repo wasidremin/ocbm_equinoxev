@@ -368,17 +368,8 @@ pub const FW_OP_APPLY: u8 = 2; // verify the staged files, swap them in keeping 
 pub const FW_OP_CONFIRM: u8 = 3; // the adapter came back healthy: keep the update
 pub const FW_OP_ROLLBACK: u8 = 4; // put the previous files back and reboot
 pub const FW_DIR: &str = "/tmp/fwup";
-/// [MGMT_WIFI_LINK][ver 1][link key 32 B] -> turn on the Wi-Fi link (T15, 2026-11-21; ocbmd
-/// `src/wifi.rs`, the handshake and records in the `ocbm-link` crate): the box writes the key to
-/// `/etc/ocbm/wifi_link` (0600) and, from its next start, also listens on TCP 7020 on the car's hotspot
-/// and advertises `_ocbm._tcp` there. [MGMT_WIFI_LINK] with no body removes the key. The change takes
-/// effect at ocbmd's next start (each drive's boot): unlike enigy/ocbm's, the box does not restart to
-/// apply it, so the session that sent it carries on. Status 1 = malformed, or the file could not be
-/// written. The hotspot itself
-/// comes from `/script/sta_uplink.conf`. `MGMT_INFO` says `"wifi_link":{"id","via"}`: `id` is
-/// `ocbm_link::box_id` of the key held (empty: none), `via` the transport this host is on. 0x0E is
-/// enigy/ocbm's number for the same verb, whose body also carries the hotspot's name and key.
-pub const MGMT_WIFI_LINK: u8 = 0x0E;
+// 0x0E was MGMT_WIFI_LINK, the Wi-Fi link to the car's hotspot (T15), removed 2026-11-25. Not reused:
+// an adapter that missed the update would take the old meaning.
 
 /// The network function beside OCBM (2026-11-15, docs/ops/08_FUTURE_TASKS.md T15). When the boot
 /// script presents it (`usb_net` in `/script/ocbm.conf`) it writes [`USB_NET_FILE`]: `style=eth|usb`,

@@ -60,10 +60,6 @@ class OcbmProbe(context: Context) {
     @Volatile private var bootLineSeen = false
     private val bootPullScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
     private var usb: UsbBulkTransport? = null
-    /** The link over the car's hotspot when this start took it instead of USB (T15, [WifiLink]). */
-    private var wifi: WifiBulkTransport? = null
-    /** The Wi-Fi link died under a session: no USB attach will follow, so the owner connects again. */
-    var onLinkLost: (() -> Unit)? = null
 
     /**
      * The CT_HELLO nonce every client this probe builds identifies itself with. Minted ONCE per
@@ -736,7 +732,7 @@ class OcbmProbe(context: Context) {
                 val prior = lastLinkResult
                 val age = android.os.SystemClock.elapsedRealtime() - lastLinkOkAtMs
                 if (subscribe && prior != null && prior.subscribed && client?.subscribed == true &&
-                    (usb != null || wifi != null) && age in 0 until DUPLICATE_LINK_MS) {
+                    usb != null && age in 0 until DUPLICATE_LINK_MS) {
                     log.i("link: duplicate bring-up ${age}ms after a healthy subscribed one — keeping the live session")
                     prior
                 } else {
@@ -1087,29 +1083,11 @@ class OcbmProbe(context: Context) {
         // re-attach firing the intent) leaves the old read thread and heartbeat running: two readers
         // race on bulk IN and two writers interleave frames with independent seq counters on bulk
         // OUT. The box sees a corrupt stream, and on this gadget that can mean a power cycle.
-        if (client != null || usb != null || wifi != null) {
+        if (client != null || usb != null) {
             log.w("a session is already live — stopping it before re-claiming the device")
             stopLocked()
         }
-        // T15: the car's hotspot first, and no USB permission asked unless it is not reached.
-        val viaWifi = if (WifiLink.active(ctx)) {
-            sink("looking for the adapter on the car's hotspot first (Wi-Fi link)")
-            WifiLink.connect(ctx) { claimAbort || Thread.currentThread().isInterrupted }
-        } else null
-        val transport: RawBulkTransport = if (viaWifi != null) {
-            wifi = viaWifi
-            viaWifi.onTransportDead = {
-                log.e("!! the Wi-Fi link died — the adapter left the hotspot or restarted")
-                SessionTrace.Board.failed(OcbmBoard.LINK, "Wi-Fi link died — the adapter left the hotspot or restarted; connecting again")
-                onLinkLost?.invoke()
-            }
-            if (!helloOnly && wasidremin.gmccpa.logging.SessionSummary.current() == null) {
-                wasidremin.gmccpa.logging.SessionSummary.beginLaunch(null)
-            }
-            StartupClock.begin()
-            sink("linked over the car's hotspot: no USB claim, no permission")
-            viaWifi
-        } else usbTransport(helloOnly) ?: return r
+        val transport: RawBulkTransport = usbTransport(helloOnly) ?: return r
         r = r.copy(claimed = true)
 
         val c = OcbmClient(transport, log, hostInstance)
@@ -1150,7 +1128,7 @@ class OcbmProbe(context: Context) {
             return r
         }
         r = r.copy(helloOk = true)
-        sink("STEP 1 OK — linked to the adapter (${if (wifi != null) "Wi-Fi" else "USB"}) and completed the OCBM handshake.")
+        sink("STEP 1 OK — claimed the accessory and completed the OCBM handshake.")
         if (helloOnly) return r
 
         // Bonded-device snapshot at the top of the session. Taken HERE rather than at any of the
@@ -1160,10 +1138,8 @@ class OcbmProbe(context: Context) {
         wasidremin.gmccpa.logging.SessionSummary.current()?.let { sess -> startInfo?.let { sess.onMgmtInfoStart(it) } }
         // T15: when the adapter presents its USB network this start, whether the app reaches it there.
         startInfo?.let { UsbNet.probe(it) }
-        // T15 route B: tell the adapter whether, and to which network, its client link should join.
-        runCatching { StaUplink.sync(ctx, c, startInfo) }
-        // T15: the Wi-Fi link's key, given once over USB; and whether the adapter holds it.
-        runCatching { WifiLink.afterConnect(ctx, c, startInfo) }
+        // The retired Wi-Fi link (T15): firmware from before 2026-11-25 still joins the car's hotspot.
+        runCatching { RetiredWifiLink.atConnect(c, startInfo) }
         // T35: the phone order for this moment, before CT_SUBSCRIBE starts the session's Bluetooth.
         runCatching { wasidremin.gmccpa.PhoneSchedule.atConnect(ctx, c, startInfo) }
 
@@ -1888,8 +1864,6 @@ class OcbmProbe(context: Context) {
         for (e in OcbmExpect.PROBE_OWNED) SessionTrace.cancel(e, "OCBM link stopped")
         client?.stop()
         usb?.stop()
-        wifi?.let { it.onTransportDead = null; it.stop() }
-        wifi = null
         // Read AFTER both stops: client.stop() already stopped the transport once, and the flag is
         // sticky, so the second stop() cannot un-set what the first one learned.
         if (usb?.releaseDeferred == true) usbReleaseDeferred = true

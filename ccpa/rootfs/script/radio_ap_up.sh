@@ -199,8 +199,6 @@ fi
 # ---- channel + band ---------------------------------------------------------------------------
 ch=$(sed -n 's/^channel=//p' /etc/hostapd.conf | head -1)
 [ -e /etc/wifi_use_24G ] && ch=6
-# The client link's channel (radio_hal.sh, T15) wins over both: one radio serves the two networks.
-case "${RADIO_AP_CHANNEL:-}" in ''|*[!0-9]*) ;; *) ch=$RADIO_AP_CHANNEL; echo "$L channel $ch, the client link's" ;; esac
 case "$ch" in ''|*[!0-9]*) ch=36 ;; esac
 # hostapd of this vintage has no ACS and refuses to start with no channel, so it is always pinned.
 if [ "$ch" -ge 1 ] && [ "$ch" -le 14 ]; then

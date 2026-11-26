@@ -139,7 +139,6 @@ object UsbDiagnostics {
                         // nothing ever arrives here.
                         if (isAnnounce(dev)) noteAnnounceAttach()
                         if (isOcbm(dev)) noteAnnounceFollowed()
-                        if (isAnnounce(dev) || isOcbm(dev)) WifiLink.noteAdapterOnUsb()
                         val brief = dev?.let { describeBrief(it, usb) } ?: "(no EXTRA_DEVICE)"
                         log.i("ATTACH ${actionOf(dev)} — $brief")
                         if (dev != null && isOcbmFamily(dev)) {

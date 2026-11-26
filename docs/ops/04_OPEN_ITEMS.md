@@ -57,14 +57,15 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 269 (`4.0+recorder-watchdog`, 2026-11-24; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 
-- **The Wi-Fi link, no Allow prompt (T15): off by the owner's choice for now (2026-11-22).** In the car
-  it links when the adapter is already on the hotspot (265 and 266, mDNS, 16 to 60 ms) and CarPlay runs
-  over it; a cold start with 266 missed by about 4 s (the adapter joins about 22 s after it starts; the
-  app looked for 15 s from its own start), and after a USB start the adapter turns Wi-Fi away until it
-  restarts. Play 267: the app looks until 30 s after the adapter's USB device comes up.
-  Proposed, needs the bench: ocbmd restarting when its USB host leaves. The owner prefers USB with the
-  tap meanwhile (Join the car's hotspot off). When it is back on, a cold start should show `linked over
-  the car's hotspot`, or `wifi: the adapter was not reached … adapter on USB N s ago` with N near 30.
+- **The Wi-Fi link to the car's hotspot (T15): removed 2026-11-25, not yet published.** A day in the
+  car with it on: about 30 s to the picture when it linked, against about 13 s over USB with the tap,
+  and the adapter's join a start behind the hotspot's channel (`08_FUTURE_TASKS.md` T15). The car's
+  adapter still holds the join and the key until it is updated. To check after the next publish: the
+  first connect logs `retired Wi-Fi link: the adapter's join of the car's hotspot turned off written=true`
+  (unless the owner had already switched it off) and `… link key cleared status=0`, and no start waits
+  for the hotspot (`[sup] waited N s for the access point` gone). After the adapter's update: the box log
+  shows `[sup] removed /script/sta_uplink.conf (the retired Wi-Fi link)` once, and `MGMT_INFO` carries no
+  `"sta_uplink"`. The adapter keeps its `wpa_supplicant`; remove it by hand at the next bench session.
 - **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** The weekday-morning side works on the
   car (2026-11-23): the adapter updated, `[btd] page timeout 3200 ms`, a missed phone 3.2 s, the owner's
   phone first and answering 0.6 to 0.8 s after `page_start`, first picture 10.1 s and 16.1 s after attach.
@@ -591,13 +592,8 @@ high-water mark: versionCode 269 (`4.0+recorder-watchdog`, 2026-11-24; `host/gm_
   unknown-sources screen is the same "not supported" stub as the emulator's: every connect since 232
   logs `usb bridge: not installed, unknown-sources screen …Stubs$ManageExternalSourcesActivityStub`,
   so Files cannot install the bridge. It waits on GM shipping a real install screen. A second
-  route that installs nothing on the car, the adapter link over the car's hotspot, is T15 route B.
-  Step 1 (the adapter joins, nothing uses the link) failed every join in the car with Play 259 and
-  260 (2026-11-17/18). The wext client may be the cause (enigy/ocbm PR #2: RSNXE mismatch at
-  message 3/4). An nl80211 client with a reason line from the client's own log was built on
-  2026-11-20 and works on the bench adapter: it joined a home network, and on 2026-11-21 carried
-  two CarPlay sessions beside the access point (T15). In Play 261 (2026-11-21); not yet in the car. To check in the car's next log: the
-  `uplink:` lines' `driver` and `the client's log:` lines. A sideloaded app named
+  route that installed nothing on the car, the adapter link over the car's hotspot (T15 route B),
+  worked in the car and was removed on 2026-11-25 as slower than the tap (the item above). A sideloaded app named
   `android.car.usb.handler` (`host/gm_ccpa/netprobe_app/bridge`) gets the platform's silent grant at
   attach and relays the adapter to the Play app. Two unknowns, both answered only in the car: whether
   the Equinox lets Files install an app (the AAOS 14 emulator does not: its unknown-sources screen is a

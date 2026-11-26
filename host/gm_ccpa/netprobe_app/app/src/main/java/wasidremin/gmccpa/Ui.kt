@@ -322,9 +322,6 @@ class LauncherUi(private val act: Activity) {
     private fun persistCredentials() {
         act.getSharedPreferences(CRED_PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_SSID, ssid).putString(KEY_PASS, pass).putString(KEY_CHAN, chan).apply()
-        if (::joinHotspotRow.isInitialized) joinHotspotRow.setSubtitle(staUplinkText())
-        // A new hotspot name reaches a connected adapter now, not at the next connect.
-        if (wasidremin.gmccpa.ocbm.StaUplink.enabled(act)) wasidremin.gmccpa.ocbm.StaUplink.pushNow(act)
     }
 
     private fun buildRoot(): View {
@@ -1531,37 +1528,6 @@ class LauncherUi(private val act: Activity) {
         }
     }
 
-    /**
-     * Settings ▸ Advanced ▸ Adapter firmware (T20): compare the adapter's files with the firmware this
-     * app carries, update them with the car in Park, or put the previous ones back. All adapter I/O
-     * runs off the main thread.
-     */
-    /**
-     * Settings ▸ Advanced ▸ Join the car's hotspot (T15: the join, and the Wi-Fi link, [wasidremin.gmccpa.ocbm.WifiLink]), off by default. Tapping
-     * the row enters the hotspot's name and password: the Vehicle hotspot row is hidden while
-     * Adapter Wi-Fi is on, which it always is on the Equinox.
-     */
-    private fun staUplinkText(): String =
-        "Experimental. The adapter joins the car's hotspot when it starts and stays on it, and this app then reaches " +
-            "the adapter over the hotspot instead of USB, with no Allow prompt; it uses USB, with the prompt, only " +
-            "when the adapter is not found there within about 30 s of starting. The first connect after turning this on " +
-            "is over USB, and sets it up for the next drive. Off, the app connects over USB with the prompt, as before; " +
-            "the hotspot's name and password are kept, so turning it back on works from the adapter's next start. " +
-            "Without a password it only looks for the hotspot. Turn on the car's hotspot first. Tap here to enter its " +
-            "name and password exactly as the car shows them. " +
-            (if (ssid.isBlank()) "Hotspot: not set." else "Hotspot: $ssid, password ${if (pass.length in 8..63) "set" else "not set"}.")
-
-    private lateinit var joinHotspotRow: EqRow
-
-    private fun staUplinkRow(): EqRow {
-        joinHotspotRow = EqRow(
-            act, "Join the car's hotspot", staUplinkText(),
-            trailing = EqToggle(act, wasidremin.gmccpa.ocbm.StaUplink.enabled(act)) { on -> wasidremin.gmccpa.ocbm.StaUplink.setEnabled(act, on) },
-            onClick = { showCredentialsDialog() },
-        )
-        return joinHotspotRow
-    }
-
     /** Settings ▸ Advanced ▸ USB network trial (T15): one adapter start with the network function beside OCBM. */
     private fun usbNetRow(): EqRow {
         lateinit var row: EqRow
@@ -1579,6 +1545,11 @@ class LauncherUi(private val act: Activity) {
         return row
     }
 
+    /**
+     * Settings ▸ Advanced ▸ Adapter firmware (T20): compare the adapter's files with the firmware this
+     * app carries, update them with the car in Park, or put the previous ones back. All adapter I/O
+     * runs off the main thread.
+     */
     private fun firmwareRow(): EqRow {
         val fw = wasidremin.gmccpa.ocbm.AdapterFirmware
         val bundle = fw.bundled(act)
@@ -1692,7 +1663,6 @@ class LauncherUi(private val act: Activity) {
             .addRow(announceRetriesRow)
             .addRow(firmwareRow())
             .addRow(usbNetRow())
-            .addRow(staUplinkRow())
             .addRow(EqRow(act, "Restart adapter Wi-Fi", titleColor = EqTheme.DANGER, onClick = { confirmRestartWifi() }))
             .addRow(EqRow(act, "Reboot adapter", titleColor = EqTheme.DANGER, onClick = { confirmReboot() })))
 

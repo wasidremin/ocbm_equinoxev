@@ -15,8 +15,8 @@ object ConnectStall {
 
     /** In connect order. A step not listed here (bt-converged) does not count as progress. */
     private val RULES = listOf(
-        // The app looks on the hotspot until 30 s after the adapter's USB device comes up (WifiLink.BOOT_FIND_MS),
-        // which also restarts this clock (2026-11-22), so the adapter gets that long and the Allow tap more.
+        // Attach to permission is the Allow tap, and the dialog waits for the screen: 65 s once in the car
+        // (2026-11-25, the car woke dark).
         Rule("attach", 45, "The adapter isn't answering. Check it's plugged in, or unplug it for ten seconds."),
         Rule("permission", 15, "The adapter isn't answering. Unplug it for ten seconds."),
         Rule("hello", 15, "The adapter answered but CarPlay didn't start. Restart the app."),

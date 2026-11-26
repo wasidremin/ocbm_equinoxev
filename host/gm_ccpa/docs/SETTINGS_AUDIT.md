@@ -375,6 +375,18 @@ stays (serves Capture Current).
   or more shows the drive over CarPlay for 30 s (`telemetry/AfterDrive.kt`). Off closes one that is up.
   New key, nothing to carry over. Not yet on the car.
 
+## 2026-11-25 deltas (the Wi-Fi link removed; T15)
+
+- **Join the car's hotspot** (Advanced) is gone, with the Wi-Fi link it switched (owner, 2026-11-25,
+  after a day in the car with it on). Its stores are deleted at the app's start: `sta_uplink`
+  (`enabled`) and `wifi_link` (`key`, `adapter_id`, `last_peer`). Nothing carries over: the app connects
+  over USB with the Allow prompt, as it did with the switch off. On an adapter whose firmware predates the
+  removal, each connect turns the adapter's join off and clears its key (`ocbm/RetiredWifiLink.kt`); the
+  adapter's next update deletes those files itself.
+- **Vehicle hotspot** (`hotspot_credentials/ssid`, `pass`, `chan`) stays: it predates the link and serves
+  Adapter Wi-Fi off. With Adapter Wi-Fi on, which the Equinox always is, its row stays hidden as before;
+  the hotspot's name and password the owner entered for the join stay stored there.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

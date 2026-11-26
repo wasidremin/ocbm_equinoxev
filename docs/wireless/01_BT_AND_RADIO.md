@@ -572,35 +572,30 @@ including IW416, whose own branch attaches in parallel. Broadcom BT attach is st
 `bd_addr "$bcmBTMac"` is command substitution (`bcmBTMac=\`set_wifi_mac | sed …\``), not a
 literal — which is why that family stays in §7.
 
-### 6e. The car-hotspot client and its keeper (T15, 2026-11-21)
+### 6e. The car-hotspot client and its keeper (T15, 2026-11-15 to 2026-11-25): removed
 
-`radio_hal.sh` joins the car's hotspot when the app's `/script/sta_uplink.conf` says `enabled=1` with
-a passphrase: `wpa_supplicant` (nl80211, else wext) on the client interface the app names (`sta0` on the
-IW416, `drv_mode=3`), the session's access point on the driver's other interface (`wlan0`), on the
-client's channel because one radio serves both. The rules and their evidence are in the script's
-"THE CAR'S HOTSPOT" header; the ones that cost drives: the client never searches while an access point
-is up, a join is made before the access point starts, and the joined channel is remembered on flash
-and written into `hostapd.conf` before the phone is handed over.
+`radio_hal.sh` could join the car's hotspot as a client (`wpa_supplicant` on `sta0`, the access point on
+`wlan0` on the client's channel, one radio for both), from 2026-11-21 kept joined from boot by a keeper
+(`radio_hal.sh sta_keep`) so the app could reach the adapter over the hotspot before any session.
+Removed on 2026-11-25 with the Wi-Fi link it served (`docs/ops/08_FUTURE_TASKS.md` T15), after a day in
+the car with it on. What that day showed about the Equinox's hotspot, worth keeping for anyone who
+tries again:
 
-From 2026-11-21 the client is kept joined from boot, not per session: `radio_hal.sh sta_keep`, started
-by the session supervisor at boot (and by any Wi-Fi start that finds it gone), so the app can reach the
-adapter over the hotspot before any session (the Wi-Fi link, `docs/carplay/01_OCBM_PROTOCOL.md`). It was
-first started from `ocbm_boot.sh`, which an update never writes: on the car the keeper would only have
-started with the first session, after the app had already asked for USB permission (found at 264's
-publish, 2026-11-21; 265 moves it). The keeper takes the
-`wlan` lock for each join attempt, so an attempt and a Wi-Fi start never overlap; it searches only while
-no access point is up; a Wi-Fi start that finds the client joined starts the access point on its channel
-and makes no join of its own; a session's teardown leaves the client alone. After a failed attempt it
-looks on every usable channel, not only the remembered one: at once after the first miss, then 10 s
-longer each time, at most 2 minutes (`keeper_wait`, 2026-11-22: after the adapter's restart in the car
-the first scan saw the hotspot only on 2.4 GHz, and the 10 s wait outlasted the app's look on the
-hotspot, so it asked for USB permission; benched the same day, the misses came at the new spacing). `tools/tests/radio_scan_test.sh` pins these rules.
+- **It moves channel between starts:** 149 in the morning, 153 at 5 PM, 149 again at 6:56 PM, and once
+  it was seen only on 2.4 GHz (2437 MHz) until a second scan. A client that tries the remembered channel
+  first is a start behind each move.
+- **It is not up when the adapter boots.** At the 5 PM start the app found no hotspot interface for
+  32 s after the adapter's USB device appeared.
+- **Waiting for the join delays Bluetooth.** The access point, and so `btd`, was held back until the
+  join was done: `[sup] waited 14 s` and `15 s for the access point` on two USB starts that day.
 
-Bench, 2026-11-21 (home 5 GHz Wi-Fi standing in for the car's hotspot): the keeper started at boot, its
-first attempt on the remembered channel (149) found the network on 48 and remembered it, the second
-joined in 6 s with an address at once; a session's access point then came up on `wlan0` channel 48
-("already joined on channel 48; the access point follows it") and the client outlived the teardown.
-Not yet in the car.
+The removal: `radio_hal.sh` has no client, keeper or `sta_keep` verb, the access point is on the first
+wireless interface again, and `radio_ap_up.sh` takes no channel from a client. The supervisor deletes
+the link's files at start (`/script/sta_uplink.conf`, which held the hotspot's passphrase,
+`/script/sta_uplink.channel` and `/etc/ocbm/wifi_link`). The adapter keeps the `wpa_supplicant` and
+`wpa_cli` it was given on 2026-11-15: other units carry the vendor's own at that path, so no script
+deletes it. While it is there, `radio_detect.sh` resolves the vendor's `supportStaMode` branch to 1, as it
+has since 2026-11-15; `tools/tests/radio_hal_test.sh` pins the removal.
 
 ### 7. Not yet done / not yet proven
 

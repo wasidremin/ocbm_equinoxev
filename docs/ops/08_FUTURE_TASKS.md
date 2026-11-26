@@ -46,12 +46,12 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T10 Focus transfer | Open, not started |
 | T11 Enhanced Siri | Open, not started; needs T8 first |
 | T12 Choose which iPhone connects | Built and on the car since 2026-11-11; not yet used |
-| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). The adapter link over the car's hotspot (the Wi-Fi link, from enigy's PR #2s) **works in the car when the adapter is already up**; a cold start missed it by about 4 s (266), fixed in the app (267), not yet on the car. **Off by the owner's choice for now** (2026-11-22: USB with the tap) |
+| T15 No Allow tap | The USB bridge is built but **blocked** (the Equinox cannot install a sideloaded app). The adapter link over the car's hotspot worked in the car but took about 15 s longer than tapping Allow: **removed 2026-11-25** (owner), not yet published. The USB network trial (route A) stays, off |
 | T20 Update the adapter from the app | Built and benched 2026-11-14 (update, confirm, manual and automatic rollback). Needs one last bench install for the boot hook; app updates after that |
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
-| T25 Faster connect | **The owner's first annoyance.** Measured; 2026-11-22: about 6 s of every car connect was the adapter paging the absent second iPhone first; the owner reordered the phones and the Bluetooth step went from 11.1 to 4.7–5.3 s (266, 19:39:34 on). Next: where the adapter's ~22 s from power-on to the hotspot go |
+| T25 Faster connect | **The owner's first annoyance, and the focus from 2026-11-25.** Measured on the car: a good start is about 18 s from the adapter's power-on to the picture (5 s to its USB device, 2–4 s the Allow tap, 10–11 s the adapter's own part; 12.3 s median). Next, approved 2026-11-25: step 2a, radios started at power-on (enigy/ocbm 2.7.0/2.7.1); then 2b, the phone connected during the tap. Needs the bench adapter |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
 | T35 Which iPhone first, by schedule | **Built 2026-11-22**, Play 268 (firmware ee0e29addd5c). The weekday-morning side works on the car (2026-11-23: the owner's phone first, page to ACL 0.6 to 0.8 s; a missed phone costs 3.2 s, not 5.1); the evening switch not yet seen |
 
@@ -639,7 +639,7 @@ open from it, tracked in `04_OPEN_ITEMS.md`: whether calls echo for the far end 
 the assistant role, and the voice button ending a live call (263). Its answering a ringing call (233)
 was seen on the car on 2026-11-21.
 
-## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; the link over the car's hotspot BUILT 2026-11-21, in the car 2026-11-22, off by the owner's choice for now)
+## T15. GM app: no Allow tap for the adapter (raised 2026-11-06; the sideloaded USB bridge is BUILT and BLOCKED on the stock Equinox; the link over the car's hotspot built 2026-11-21 and REMOVED 2026-11-25)
 
 **Priority (2026-11-14).** One of the two things the owner still finds annoying on every drive (the
 other is the time to connect, T25).
@@ -720,403 +720,45 @@ car start with the trial answers it at no risk: the log line `usb-net: REACHED t
 **Done means (this route).** The car's log shows `REACHED` on a trial start; then the network
 transport is built behind `Transport.kt` with USB kept as the fallback.
 
-### Second route: the adapter link over the car's hotspot, with no USB claim (raised 2026-11-13; recorded, not started)
+### Second route: the adapter link over the car's hotspot (2026-11-13 to 2026-11-25): removed
 
-The owner asked for this to be recorded and not built (2026-11-13). Everything below is what was
-known that day.
+**What it was.** From metheos's idea on the XDA thread and mammut3's enigy/ocbm and enigy/carlink PR #2:
+the adapter joined the car's hotspot as a client beside its own access point (`wpa_supplicant` shipped
+in the firmware from 2026-11-15, a keeper holding the join from boot from 2026-11-21), and the app
+reached `ocbmd` over TCP on the hotspot (OCBW v1, a pre-shared key given once over USB), so it never
+claimed the USB device and the driver never tapped Allow. USB stayed the fallback. Settings ▸ Advanced ▸
+Join the car's hotspot switched it. The code is in git history at `1b25f52`.
 
-**The idea.** From metheos on the XDA thread. The adapter joins the car's hotspot as a client and
-keeps its own access point for the phone, both on one channel. The app reaches the adapter over the
-network and never asks for the USB device, so there is no Allow dialog; USB only powers the
-adapter. His proof of concept for stock firmware is
-[configure_sta_uplink.sh](https://github.com/metheos/CPC200-CCPA-Firmware-Dump/blob/96caaa1359b5499c9334fa82200f244cc9d08a4c/configure_sta_uplink.sh)
-(MIT). It scans for the car's network, moves the adapter's access point to that channel, joins, and
-takes a DHCP lease. He saw both links up together and never measured throughput. The script cannot
-be dropped in (item 1 below).
+**What the car showed.**
+- 2026-11-17/18 (Play 259, 260): every join failed with the wext client; nl80211 (Play 261) joined.
+- 2026-11-22 (265 to 267): it linked when the adapter was already on the hotspot and CarPlay ran over
+  it, but a cold start's link came no sooner than a quick tap: the adapter was on the hotspot about 22 s
+  after its kernel started. The owner went back to USB with the tap.
+- 2026-11-25 (269, on again for a day): the 8:13 AM and 6:18 PM starts linked with no tap, first picture
+  32 s and 29 s after the adapter's USB device, against 13 s over USB with the tap that morning. At
+  5:00 PM the hotspot was not up for the app's 32 s look, and the adapter, configured to join, held its
+  access point and so Bluetooth back 15 s; picture 28 s after the screen came on. At 6:55 PM the adapter
+  looked on the channel it remembered (153) while the hotspot was back on 149; with a restart tap
+  landing on a fresh USB link, the adapter then refused Wi-Fi (USB had won that start) and started no
+  access point until it restarted: 2 min 27 s to the picture. The hotspot's channel and band moves are in
+  `docs/wireless/01_BT_AND_RADIO.md` §6e.
 
-**What this tree's own logs already settle.**
+**Removed 2026-11-25** (owner: "Let's just remove the feature. And let's focus on the startup time").
+Even working, the link only traded the tap for the adapter's boot and join, about 15 s more than tapping
+Allow. Removed: the app's search and transport (`WifiLink`, `OcbwLink`, `WifiBulkTransport`,
+`StaUplink`) and the setting; `ocbmd`'s listener and advert (`wifi.rs`, `mdns.rs`), the `ocbm-link`
+crate and `ocbm-host`'s `OCBM_TCP`; `radio_hal.sh`'s client and keeper, the supervisor's wait for the
+join and `radio_ap_up.sh`'s client channel; `wpa_supplicant` from the build and the firmware.
+`MGMT_WIFI_LINK` (`0x0E`) is retired, not reused (`docs/carplay/01_OCBM_PROTOCOL.md`). Kept for
+adapters on older firmware: the app turns their join off and clears their key at each connect
+(`ocbm/RetiredWifiLink.kt`), and the next adapter update deletes those files at start
+(`session_supervisor.sh`; the passphrase was in one of them). The adapter keeps the `wpa_supplicant`
+binary, which no script deletes (other units carry the vendor's own there); remove it by hand at the
+next bench session.
 
-- The Equinox hosts its hotspot on the head unit (`ap_br_swlan0`, members `swlan0`/`swlan1`), so the
-  app sits on the hotspot's host side. `CarPlayRx.hotspotInterface()` and `hotspotIpv4()` still
-  find it.
-- The app can open TCP connections to a hotspot client. In September 2026 (from 2026-09-21) it made
-  20+ `GET /ctrl-int/1/connect` → `200 OK` calls to the phone, on IPv4 and on IPv6 link-local.
-  Connections from a client *into* the app are dropped by GM's `netfilterd`. That ended the design
-  where the phone joined the car's hotspot (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md`, versionCodes
-  21–32; `host/gm_ccpa/docs/01_FINDINGS.md` §2). On this route the app dials out, so that wall is
-  not in the way. Not shown: a sustained stream at video rates on such a connection.
-- The adapter in the car has the radio the script targets: `RADIO_CHIP=nxp_iw416` (SDIO
-  `0x02df:0x9159`), `moal` loaded with `nxp/wifi_mod_para.conf`.
-- The app's link sits behind `ocbm/Transport.kt` `RawBulkTransport` (four methods;
-  `UsbBulkTransport` and the bridge relay implement it), so a network transport slots in beside
-  USB.
-- The app still has the car hotspot's name, passphrase and channel from the hotspot design
-  (Settings ▸ Advanced ▸ Vehicle hotspot, prefs `hotspot_credentials`). They can tell the adapter
-  which network to join.
-
-**What it does not settle.**
-
-1. *Interface roles.* Stock firmware runs the access point through `wpa_supplicant` (as a P2P group
-   owner) on `wlan0` and leaves `sta0` for the client link. This tree runs `hostapd` on `sta0`
-   (`[radio] hostapd starting on sta0` at every boot in the car logs), which leaves `wlan0`.
-   Whether `moal` accepts a client link on `wlan0` beside an access point on `sta0` is the first
-   bench question. Whatever is built goes through the radio seam (`radio_hal.sh`), names no chip,
-   and reports `unsupported` where it is not proven (`docs/wireless/01_BT_AND_RADIO.md`).
-2. *Throughput and delay.* The IW416 is single-stream 802.11n, and every byte crosses the same
-   channel twice (phone → adapter, adapter → car). An estimate, not a measurement: 20–45 Mbps usable
-   for video, against CarPlay's 8–30 Mbps (`docs/carplay/00_ARCHITECTURE.md`) plus the
-   driver-display stream. USB measured 339 Mbps adapter → host. This is the risk that could end the
-   route.
-3. *Channel.* The adapter's access point must sit on the car's channel. It is on 149 today. The
-   car's channel has never been measured (the "36" in the September logs is what the app sent, not a
-   reading), and it may move when the car's own Wi-Fi client joins home Wi-Fi or a phone hotspot.
-   The adapter's `hostapd` has no automatic channel selection (`radio_ap_up.sh`), and a channel
-   move drops the phone for seconds.
-4. *The car's hotspot.* It must be on at every start. How soon after the car wakes it comes up is
-   unknown, and so is whether it stays on without a data plan (asked of the owner 2026-11-13, not
-   yet answered). The logs last show it on 2026-09-27, in the last build that looked.
-5. *The adapter's side of the link.* `ocbmd` owns `/dev/usb_accessory` and nothing else
-   (`ccpa/ocbmd/src/main.rs`, `ACC_DEV`). It needs a TCP listener on the client interface, a way
-   for the app to find it on the hotspot's subnet, and a key shared once over USB, because this
-   link carries the video keys and any hotspot client could otherwise connect.
-6. *Time to CarPlay.* Today the median is 10.7 s from the app starting the adapter to the first
-   picture, and that clock starts after the Allow tap (3.4 s in the one logged case, 2026-11-05).
-   This route trades the tap for the adapter's scan, join and lease.
-
-**Bench, 2026-11-15 (adapter on the server, the owner's home 5 GHz Wi-Fi standing in for the car's hotspot).**
-
-- *Interface roles: settled.* `moal` runs with `drv_mode=3` (station + uAP): `sta0` is the client
-  interface and `wlan0` the driver's own access point. This tree put `hostapd` on `sta0` only because
-  `radio_hal.sh`'s `wlan_iface` takes the first wireless interface alphabetically. `hostapd` on
-  `wlan0` comes up cleanly (`AP-ENABLED`) and the phone sees and joins it; a full wireless CarPlay
-  session ran over it with the owner's iPhone through the emulator.
-- *The adapter has no client software.* The stripped firmware carries `hostapd` and no
-  `wpa_supplicant`. A static one was cross-built for the bench (2.11, wext driver, internal crypto,
-  578 KB; `scratchpad/`, not in the tree) and run from `/tmp`.
-- *Both roles at once: works.* `sta0` joined the home network (WPA2-PSK, 5240 MHz, signal −54) while
-  `wlan0` served the access point, and carried **69 Mbps** adapter → server, through two wireless
-  hops (the server is on Wi-Fi too; the car would be one hop). During a CarPlay session the link
-  answered pings with no loss (12 ms average, one 80 ms spike).
-- *What breaks it today.* At a session the app pushes the access point's channel in its config
-  (149) and the radio layer restarts the access point on it, which took `sta0` down
-  (`INTERFACE_DISABLED`). One radio serves both, so the access point has to follow the client
-  link's channel, not the other way round.
-
-**Step 1 built (2026-11-15), off by default.** `radio_hal.sh` reads `/script/sta_uplink.conf`
-(`enabled=1`, `ap_iface`, `sta_iface`, `ssid`, `psk`; mode 600). Only when it is enabled, names two
-existing wireless interfaces and a `wpa_supplicant` is installed does anything change: the client
-link joins first (12 s at most), the access point goes on `ap_iface` on the client's channel
-(`RADIO_AP_CHANNEL` to `radio_ap_up.sh`, over the app's pushed one), and the client gets a lease.
-Not joined: the access point comes up as before. `radio_ap_up.sh` now sets the 40 MHz direction from
-the channel in use (the file's `HT40+` made hostapd refuse channel 48). Bench: off, unchanged
-(`sta0`, 149) before and after a restart; on, `uplink: joined … 5240 MHz -> channel 48`, access
-point on `wlan0` channel 48 `HT40-`, client still `COMPLETED`, home router reachable.
-
-**Step 2 built (2026-11-15), off by default.** `tools/build_wpa_supplicant.sh` (from `build.sh`)
-builds `wpa_supplicant`/`wpa_cli` from the pinned 2.11 release; they ship in `ocbm_install.sh --full`
-and the app's update bundle, adding 708 KB (the bench adapter went from 3.0 to 2.3 MB free).
-`ocbmd` says `"sta_uplink":true` in `MGMT_INFO` when both are installed. The app (`ocbm/StaUplink.kt`,
-Settings ▸ Advanced ▸ Join the car's hotspot) writes `/script/sta_uplink.conf` (mode 600) at every
-connect where it differs: the Vehicle hotspot name and passphrase when on, `enabled=0` when off;
-a name or passphrase with a quote, backslash or control character is refused, never written.
-End to end on the bench with the owner's iPhone: the app wrote the file, the adapter joined the
-home network at its next Wi-Fi start (5240 MHz), raised its access point on `wlan0` channel 48,
-and a wireless CarPlay session ran with the client link up. Settings is off by default, so a car
-that takes the update behaves as before. Interface names are this adapter's (`wlan0`/`sta0`).
-
-**In the car, 2026-11-15 (254/255): the join failed and broke CarPlay with the setting on.** Two
-attempts logged `uplink: not joined within 12 s`; the log does not say why. On the second the access
-point came up on `wlan0` channel 149, Bluetooth sent the Wi-Fi handoff, and the phone never joined
-(`no CarPlay connect within 45s`). Most likely the failed join left `wpa_supplicant` scanning on the
-one radio after hostapd started, which the bench never exercised because the join always succeeded
-there. With the setting off the next connect was normal. A Restart Wi-Fi also ran with the old file,
-because the app wrote it only at a connect.
-
-**Step back (owner, 2026-11-16).** Three unknowns can each end this route, and none had been
-measured before building: (1) the car hotspot's security (an Android 14 hotspot may be WPA3-only,
-which this client cannot join, and which alone would explain two failed joins); (2) its band and
-channel (2.4 GHz would drop wireless CarPlay to 2.4 GHz; a DFS channel may refuse an access point);
-(3) how soon it is up after the car wakes, since waiting for a join adds to the time to CarPlay (T25).
-The plan's own step 1 (measure the hotspot first) had been skipped.
-
-**Built instead (2026-11-16): a diagnostic, off by default.** The join and the access-point move are
-gone from `radio_hal.sh`. With the setting on (Settings ▸ Advanced ▸ Check the car's hotspot; the
-app sends the name only, no password), the first Wi-Fi start of each adapter boot scans once and
-logs `hotspot scan: … seen: <MHz> channel N (5GHz|DFS|2.4GHz) signal … security [flags]` or `NOT
-seen`, then stops the client and waits for it to exit before hostapd starts as always. The app logs
-`hotspot-check: the car's hotspot is up (…) at +Ns after the head unit started`, and the setting and
-name now reach a connected adapter at once. Pure helpers tested (`tools/tests/radio_scan_test.sh`,
-`StaUplinkTest`). **Bench, 2026-11-16:** off, unchanged (`sta0`, channel 149, no client); on with
-the home network's name, four access points logged (5240 MHz ch 48 −69 dBm and three on 2.4 GHz,
-all `[WPA2-PSK-CCMP]`), client gone, access point as usual; a second Wi-Fi start in the same boot
-does not scan; on with a name not present, `20 networks seen … NOT seen`, client gone. The failure
-case end to end: a fresh adapter boot with a name not present, the app (emulator) with the setting
-on, and a paired iPhone: the scan logged NOT seen, the access point came up as always, and CarPlay
-went live (first video +26 s). The scan takes about 5 s, once per adapter boot, only while the
-setting is on.
-
-**First drive with 256 (2026-11-16).** The app wrote the setting, but the adapter was still on the
-255 firmware (8557ec09254a), which ignores the new file, so no scan ran: the firmware update has to be
-applied from Settings first. The hotspot timing line read `+600892s after the head unit started`:
-the head unit sleeps rather than restarts, so it now counts from the app's start.
-
-**Second drive (2026-11-16, 12:29 UTC).** The adapter had the scan (bench-installed files; its
-`fw` label still read 8557ec09254a, which only an app update changes) and booted with the setting on,
-but no scan line reached the uploads: `radio_hal.sh` wrote it to `/tmp/wlan.log`, which every later
-Wi-Fi start overwrites and the app pulls only when it stops, and a radio restart after the session
-ended rewrote it first. The car's hotspot was up 3 s after the app started. Fix: the scan lines also
-go to `/tmp/box.log` (`scan_log`), which is streamed live; tested in `radio_scan_test.sh`.
-
-**Third drive (2026-11-16, 12:44 UTC, Play 258, adapter firmware 1e4f2f76c137, update confirmed).**
-The scan's answer, through the streamed box log: `3 networks seen (2 on 2.4 GHz, 1 on 5 GHz) in 5 s`;
-the car's hotspot on **5765 MHz, channel 153 (5 GHz, not DFS), −25 dBm, `[WPA2-PSK-CCMP][ESS]`**, and
-the same name on 2437 MHz, channel 6, −22 dBm, also WPA2 (one dual-band hotspot). The app saw the
-car's hotspot interface up 2 s after it started. CarPlay connected as usual. Against the rule
-below: WPA2, a usable 5 GHz channel, up early, so route B is **not** stopped. Not yet known: whether
-the car keeps channel 153 from drive to drive (the scan logs it at every adapter boot while the
-setting is on). Channel 153 is the upper half of the 149/153 pair the adapter's own access point
-already uses (channel 149, HT40+), so moving that access point to 153 (HT40−) keeps the same
-40 MHz block.
-
-**Step 1 of the join (2026-11-16, owner's go-ahead after the third drive): built and benched, not
-yet in the car.** Settings ▸ Advanced ▸ *Join the car's hotspot* (the scan's switch and stored keys,
-renamed) now also sends the hotspot's password when it has a usable one (8–63 printable, no quote
-or backslash; `StaUplink.conf`). Without one the adapter only scans, as in 256–258.
-
-*First design, refuted on the bench.* Access point first on a remembered channel, then a background
-join. This driver's client is the **wext** one, which cannot scan a single channel: the join scanned
-every channel for seconds while the phone was being handed over. One session in three never
-connected, one took 37 s to its first picture, and the join often did not see the 5 GHz network
-at all while the access point ran.
-
-*What is built* (`radio_hal.sh`, "THE CAR'S HOTSPOT"; `session_supervisor.sh`):
-- the join runs **before** the access point starts, for at most 10 s, on the channel it last joined
-  on (`/script/sta_uplink.channel`), or with none remembered on any 5 GHz channel that is not DFS
-  (`freq_list`), so the car's 2.4 GHz side is never taken;
-- the remembered channel is written into `hostapd.conf` before the join starts, because the phone can
-  ask for the handoff details (iAP2 0x5702) at any moment, and the supervisor keeps it there
-  (`/tmp/.radio_uplink_ap_channel`). Without this the handoff named the app's channel 149, the
-  access point came up on 48, and the phone never arrived;
-- with a join configured, the supervisor starts `btd` only once the Wi-Fi start is done. Even with
-  the right channel, a phone handed a network not yet on the air did not wait for it (one session
-  in four needed a restart);
-- the access point runs on the driver's other interface (`wlan0`), joined or not. On `sta0` after a
-  failed join hostapd came up and the phone could not join it;
-- after the join the client never searches: no address in 10 s, the car's network on the access
-  point's own /24, the link lost (one missed 2 s check), or Wi-Fi off, and it is stopped until the
-  next Wi-Fi start;
-- a failed join's reason comes from `uplink_why_not` (pure, tested). The hotspot seen where it was
-  looked for is a password question and changes nothing. Not on the remembered channel but on
-  another usable one means the car moved it, and that channel is remembered. A wrong password once
-  moved the memory to the home network's other access point;
-- the streamed box log carries `uplink: joined on channel N in N s, signal N dBm`,
-  `address: yes`, `[sup] waited N s for the access point`, `client stopped after N s joined`,
-  `link lost`, and the not-joined reasons.
-
-*Bench, 2026-11-16* (home Wi-Fi standing in for the car, the owner's iPhone through the emulator, a
-fresh adapter boot each cycle):
-- with a channel remembered and the wait in place, **five of five** join-on cycles connected first
-  time: joined in 4–6 s, address in 0–1 s, `btd` waited 8–9 s, handoff named the access point's
-  real channel, CarPlay live 5–8 s after the handoff;
-- a wrong password: the "password" reason, memory unchanged, client gone, `btd` waited 16 s, and
-  CarPlay connected;
-- the very first start with nothing remembered names the app's channel and needs one restart, once;
-- setting off: unchanged (CarPlay live 5–13 s after the handoff);
-- the bench's "no picture 5 s after the video connected" check fired with the setting on and off
-  alike, so it is not from this.
-
-*Not checked:* the link lost under a live session (the home network could not be switched off; the
-path is covered by the structural test only), throughput, and anything in the car.
-
-*The cost:* up to about 9 s more before the phone can be handed over when the join succeeds, and
-about 16 s when it fails. The car's hotspot was up 2 s after the app started, and the adapter's Wi-Fi
-start comes later than that, so the join should usually find it.
-
-*In the car with Play 259 (2026-11-17, 22:04–22:44 UTC).* The update installed and was confirmed.
-**No join succeeded**: every attempt logged the hotspot seen on 5765 MHz (channel 153) but not joined
-within 10 s, before and after the owner re-entered the password from the car's own hotspot
-settings; one start saw no hotspot at all, and the app saw the car's hotspot come up 97 s after it
-started that time (2–3 s on 11-16). Nothing was remembered, so the access point stayed on channel
-149 on `wlan0` and the handoff named 149. CarPlay connected on every start but one (22:36: no
-connect within 15 s, the app restarted it, then live), and each start waited 13–17 s for the
-failed join. The owner turned the setting off at 22:44.
-The log could not tell a wrong password from the car refusing the adapter, so the join now also
-logs the furthest `wpa_state` it reached and the order of states (names only):
-`uplink: furthest step 4WAY_HANDSHAKE (the password exchange failed); states SCANNING>…`, or
-`ASSOCIATING (the hotspot did not accept the connection)` (`uplink_state_rank`, `uplink_state_note`,
-tested; the loop run against a fake client for a wrong password, a refusal and a success; not run on
-the adapter, which was in the car). Next: one drive with the setting on.
-
-*In the car with Play 260 (2026-11-18).* Update confirmed. 12:03 UTC: seen on 5765 MHz, states
-`DISCONNECTED>SCANNING>ASSOCIATING>SCANNING>ASSOCIATED>SCANNING`: associated, then dropped.
-12:08: `SCANNING` only, not found within 10 s. CarPlay connected both times. This was first read as
-the car turning the adapter away before any 4-way handshake. **Corrected 2026-11-20: the log
-cannot show that.** The states are sampled every 0.2 s, and a handshake that fails at message 3/4
-is over in milliseconds, so `ASSOCIATED>SCANNING` is also what a failed handshake looks like.
-enigy/ocbm PR #2 (github.com/enigy/ocbm/pull/2, mammut3, open) measured exactly such a failure on
-IW416 against a router: the **wext** driver does not pass a beacon's RSNXE up from the scan, and
-the handshake fails with "RSNXE mismatch … msg 3/4". The car's hotspot reads WPA2-PSK-CCMP, but
-an access point may send an RSNXE regardless. The home network the bench joined evidently does
-not. Both readings fit; the nl80211 build below settles it. The label for the case now says only
-"connected, then dropped".
-
-*The nl80211 client (built 2026-11-20, issue #1 on wasidremin/ocbm_equinoxev, from enigy/ocbm
-PR #2).*
-- `tools/build_wpa_supplicant.sh` now builds `wpa_supplicant` 2.11 with nl80211 and wext.
-  - It links libnl 3.12.0 (`libnl-3` and `libnl-genl-3` only) statically. libnl is LGPL-2.1, used
-    unmodified, and its release hash is pinned (NOTICE.md).
-  - The build is stripped, with gc-sections and `CONFIG_DEBUG_FILE`.
-  - Measured sizes: `wpa_supplicant` 710,096 B and `wpa_cli` 95,176 B, against 577,560 B and
-    130,704 B unstripped with wext alone: 97 KB more in all.
-- `radio_hal.sh` starts the client with nl80211 and falls back to wext (`uplink_wpa_start`). The
-  driver used is named in the scan line, the joined line and the failure line.
-- Each start keeps `wpa_supplicant`'s own info-level log in `/tmp` and deletes it when the client
-  stops.
-- A failed join, or a lost link, logs one more line built from that log (`uplink_log_reason`):
-  - fixed words only: `RSNXE mismatch at message 3/4`, `RSN element mismatch`,
-    `4-way handshake failed`, `disabled WRONG_KEY`;
-  - the 802.11 association status codes and disconnect reason codes (`L` marks one the client
-    sent itself, for example `17L` for an RSN element that differs);
-  - never the network's name or an address.
-- The join design is otherwise unchanged. It still joins before the access point starts, with
-  `freq_list` and no `scan_freq`: keeping the full scan keeps the "moved" detection, which needs to
-  see the other channels.
-- *Verified:*
-  - *Unit tests:* the parser and the driver order (`tools/tests/radio_scan_test.sh`). The suite
-    passes on the adapter itself. The first version did not: the adapter's BusyBox 1.32 `awk`
-    rejects awk functions and a `name (` before a parenthesis ("Call to undefined function"), which
-    the host's BusyBox 1.37 accepts. The suite also passes under the host's BusyBox.
-  - *Bench adapter, 2026-11-20* (IW416, home Wi-Fi standing in for the car, `radio_hal.sh
-    wifi_ap_on` run by hand):
-    - **`moal` accepts nl80211 on `sta0`.**
-    - Joined in 5 s on channel 48, with an address 5 s later. The access point came up on
-      `wlan0`, channel 48, beside the client (`wpa_state=COMPLETED`, WPA2-PSK, CCMP).
-    - A wrong password logged `furthest step 4WAY_HANDSHAKE` and `the client's log: 4-way
-      handshake failed; disabled WRONG_KEY; disconnect reason 2`. Nothing was left running and the
-      access point came up.
-    - Forced to wext, the same binary joined in 5 s.
-  - *CarPlay end to end, bench, 2026-11-21* (the iPhone beside the server, the app on the emulator,
-    a fresh adapter boot each run):
-    - Run 1: joined on channel 48 in 6 s over nl80211, address in 1 s; the access point came up on
-      48 beside it, the handoff named 48, and CarPlay ran for 4 minutes with no `link lost`, until
-      the run was ended.
-    - Run 2: the home router had moved to channel 161. The scan saw it, logged `not on channel 48
-      but on 161; remembered`, and stopped the client; the access point came up on 48 after the
-      16 s wait, and CarPlay went live. On the next Wi-Fi start the client joined on 161 in 6 s,
-      and the access point and the handoff both used 161; the phone joined. The memory works end to
-      end.
-    - Run 2's first session ended after 1.5 minutes with `TEARDOWN reason=link-loss` (the control
-      keepalive): the phone's Bluetooth link had timed out (`DEVICE_DISCONNECTED reason=0x01`) about
-      a minute before. The client was not running then, so it is not the join. The phone also
-      answered pages slowly (6–8 s, and about a minute after the restart, against the car's median
-      of 1.0 s), so the bench's radio path to the phone is the likelier cause. Not explained; the
-      app restarted the session by itself.
-    - On 2026-11-20 the iPhone had never taken a DHCP lease, with the setting on or off: the
-      phone's state that day.
-- *Not yet checked:*
-  - an access point that sends an RSNXE;
-  - the car.
-- *What the car's next log decides:*
-  - `RSNXE mismatch` under wext, or a join under nl80211: PR #2's cause, and the join works;
-  - a refusal with a reason or status code and no handshake words: the car is turning the adapter
-    away;
-  - `WRONG_KEY`: the password.
-
-Kept from the old fallback note: nl80211 can scan one given frequency, so a later design could join
-beside the access point and drop the `btd` wait. Not started: first a join has to work in the car.
-
-**Decide after one drive with it on.** WPA3-only, DFS, 2.4 GHz only, or slow to come up: stop
-route B and leave the tap. WPA2 on a usable 5 GHz channel that comes up early: design the join
-around starting the access point at once on the channel remembered from the last drive, with a
-failed join leaving nothing running. (2) `wpa_supplicant` into the firmware build and the update bundle, with the car
-hotspot's name and passphrase pushed by the app (it already has them, prefs `hotspot_credentials`).
-(3) A throughput test under a full session in the car. (4) The network transport in the app.
-
-**Plan when resumed, with a stop at each step.**
-
-1. *App only.* Log at every start whether the hotspot interface is up, how long after the car woke,
-   and how long the Allow tap took. Stop if the hotspot is not dependably up.
-2. *Bench, adapter out of the car.* Bring up the client link beside the access point, with home
-   Wi-Fi standing in for the car's hotspot, and push 30 Mbps through both hops with a phone
-   connected. Stop if it stalls.
-3. *Car.* A network transport in the app with USB kept as the fallback, one-time setup over USB,
-   then a week compared with today's time to CarPlay and stall count.
-
-**Ruled out.** The reverse arrangement, where the car joins the adapter's network. The car has one
-Wi-Fi client link (`wlan0`), which would be taken from home Wi-Fi and the phone hotspot that
-uploads use, and Android does not dependably stay on a network with no internet.
-
-**Done means (this route).** A drive starts CarPlay with no Allow tap and no USB claim, the time to
-the first picture is no worse than today's including the tap, and video stalls are no more frequent
-than over USB.
-
-**The Wi-Fi link: built 2026-11-21.** Owner, after the 263 drive still showed the dialog: "The
-permission prompt was the entire reason we went with wireless communications", then "all of this was
-already implemented in enigy's pr2 / Continue". Ported from mammut3's enigy/ocbm PR #2 (b76d210) and
-enigy/carlink PR #2 (aca4733), Unlicense (NOTICE.md); the wire format and the race are
-`docs/carplay/01_OCBM_PROTOCOL.md` "The Wi-Fi link", the keeper `docs/wireless/01_BT_AND_RADIO.md` §6e.
-
-- *Adapter.* `crates/ocbm-link` (OCBW v1), `ccpa/ocbmd/src/wifi.rs` (the race on one socketpair: this
-  ocbmd has no relay threads) and `mdns.rs` (`_ocbm._tcp`), `MGMT_WIFI_LINK 0x0E` (the key alone,
-  applied at the next start, no restart), `"wifi_link"` in `MGMT_INFO`; `radio_hal.sh sta_keep` keeps
-  the client joined from boot (the session supervisor starts it: an update never writes `ocbm_boot.sh`,
-  where 854e74a started it, so 264 as published starts it only at the first session; 265 moves it). `ocbmd` grows 38 KB (472,528 → 510,496 B).
-  `ocbm-host` takes `OCBM_TCP=<address>` for every mode and `wifi-link set|clear`.
-- *App.* `ocbm/OcbwLink.kt`, `WifiBulkTransport.kt`, `WifiLink.kt`. With Settings ▸ Advanced ▸ Join
-  the car's hotspot on (and the Vehicle hotspot's password), a USB connect to such firmware gives the
-  adapter this head unit's link key once; from the adapter's next start, every link attempt looks on the
-  hotspot first (the address that answered last, then mDNS, then every address of the hotspot's /24 on
-  port 7020, because GM's firewall may drop the mDNS answers) for up to 15 s after the hotspot is up and
-  never more than 30 s waiting for it, and asks for USB permission only if the adapter was not reached.
-  The early permission request at an attach is skipped while the link is on. A lost Wi-Fi link
-  reconnects 6 s later.
-- *Changed from enigy.* The key alone over `MGMT_WIFI_LINK` (the hotspot was already the app's
-  `sta_uplink.conf`); ocbmd applies it at the next start instead of restarting, so no session is cut to
-  switch links; the keeper is radio_hal's, under its existing rules; the app sweeps the hotspot's
-  subnet as well as asking mDNS.
-- *Verified.* `cargo test` (ocbm-link 7, ocbmd's new 7 including a hung-up accessory that must not win
-  the race), the app's 609 unit tests with the Rust crate's known answers, `radio_scan_test.sh`. Bench
-  (adapter on the server, home Wi-Fi as the hotspot): the keeper joined at boot (started by a
-  hand-installed `ocbm_boot.sh`, which the car's adapter does not have; the supervisor's start is unit-tested
-  only); `ocbm-host` over Wi-Fi:
-  handshake 9–15 ms, 21.6 Mbps adapter to host; a session's access point came up beside the client on
-  its channel and the client outlived the teardown. The real app on the emulator: the USB connect gave
-  the key ("taken, used from its next start"); after the adapter restarted, the app linked over Wi-Fi in
-  about 1 s with "no USB claim, no permission" and subscribed. (The emulator's one HOST_GONE 10 s after
-  SUBSCRIBE was its slow logging delaying the first heartbeat, on USB as well; 0.1 s in the car.)
-- *Not verified.* Anything in the car: whether the app reaches the adapter on the Equinox's hotspot
-  (mDNS, the sweep), how soon the hotspot is up at a cold start, whether 21.6 Mbps carries CarPlay
-  video with the driver-display stream, and the first-picture time against today's with the tap. No
-  phone joined a session over the bench's Wi-Fi link.
-
-**In the car with 266 (2026-11-22, 19:34 to 19:41 UTC, firmware 1b054880896f from 19:37:49).** The link
-works where the adapter is already on the hotspot (15:05 and 15:08 with 265, 60 and 16 ms; 19:37:27
-after the update's restart, 16.7 s), and CarPlay runs over it. Every other start asked for the Allow tap,
-for two reasons, both in the logs:
-
-- *A cold start misses by about 4 s.* The car's hotspot is up as soon as the head unit is, so the app
-  looked for `FIND_MS`, 15 s, from its own start, which at 19:38:40 was 3.6 s before the adapter's USB
-  announce. The adapter was on the hotspot about 22 s after its kernel started (`uptime_s` 21 at the USB
-  claim; `joined on channel 149 in 8 s` and `address: yes` arriving live at 19:39:04 to :05): 18.9 s of
-  looking ended about 5 s before that, at 19:38:59 and again at 19:40:25.
-- *Once USB wins, the adapter turns Wi-Fi away until it restarts.* An app restart on a running adapter
-  (the 266 install at 19:37:04, and 19:41:03) found it by mDNS and read EOF: `wifi: a host connected, but
-  USB holds the link this start; turned away` (12 lines at 19:37). By design in `ccpa/ocbmd/src/wifi.rs`
-  (the race is decided once per ocbmd start), and ocbmd does not restart when a USB host leaves.
-
-Even reached, a cold start's link would come at about the moment a quick tap does now: the adapter's
-~22 s to the hotspot is the wait either way, and the session (Bluetooth, the handoff) waits for the link.
-The owner prefers USB with the tap for now and keeps the link ("I prefer the USB method … it feels like
-it is much faster. I am not giving up on the other method yet", 2026-11-22): Join the car's hotspot off is
-its off switch, and keeps the name, password and key.
-
-*Built 2026-11-22, app only, Play 267, not yet on the car:* the search runs until 30 s after the adapter's USB
-device came up (`BOOT_FIND_MS`, `WifiLink.keepLooking`, stamped by `UsbDiagnostics`' hotplug watcher on
-the 2d06 announce or the 2d00 device) as well as 15 s after the hotspot; an adapter that has been up longer
-gets the 15 s. The miss line says how long ago the adapter appeared. Unit tests, with the 19:38:40 start.
-*Proposed, not built (the adapter is in the car):* ocbmd restarts when its USB host leaves, so the race
-opens again; and the keeper's lines carry the adapter's uptime, to see where its 22 s go before choosing
-what to speed up (enigy 2.7.0's earlier radio load, T25, is one candidate).
+*Verified:* unit tests (624, among them `RetiredWifiLinkTest`), every adapter suite
+(`tools/run_tests.sh`, `radio_hal_test.sh` pinning the removal), the adapter build. *Not yet:* the
+emulator with the bench adapter, and the car.
 
 ## App only: T16–T19 (raised 2026-11-12)
 
@@ -1466,7 +1108,7 @@ in brackets:
     connect under `[box:airplayd-wl]`, every stamped key in order, both chips at 1,644–1,656 ms
     (`docs/carplay/02_SESSION_LIFECYCLE.md` has the line and its reading). The first line read
     `bt_power=-`: two of `bt_on`'s four success paths, Bluetooth already up among them, did not
-    stamp. Fixed, with a test (`radio_scan_test.sh`), and the next run read `bt_power=735`.
+    stamp. Fixed, with a test (`radio_hal_test.sh`, then `radio_scan_test.sh`), and the next run read `bt_power=735`.
 - *Bench numbers, with the hotspot join on:* 24.0 s and 32.6 s from the app's arrival to the first
   frame. The join held back the access point, and so `btd`, which started at 10.0 s and 17.6 s (the
   second run found the router on another channel); the phone took 6.2 s and 8.1 s to answer the page; the two
@@ -1506,10 +1148,44 @@ hotspot search had missed (T15); the adapter joined the car's hotspot about 22 s
 (`joined on channel 149 in 8 s`), which on that path is the longest wait left. The keeper's at-once retry
 was not exercised.
 
+**The car's adapter timeline, 2026-11-22 to 11-25 (the `[timeline] v1` lines, 14 cold starts; ms after
+the app arrives at the adapter).** First frame at 10.1 to 11.5 s on a good start, 12.3 s median, worst
+29.3 s. The good start of 2026-11-25 7:02 AM, by step:
+
+| Step | Time |
+|---|---|
+| radios started by the app's subscribe, Bluetooth up (`sup_radios` → `bt_up`) | 2.3 s |
+| the phone answers the page (`page_start` → `acl`) | 1.3 s |
+| Bluetooth, iAP2 and the first MFi signature (→ `ident`) | 2.5 s, 1.65 s of it the chip |
+| Wi-Fi handoff, `carplayd` started, the phone seen (→ `svc_seen`) | 0.9 s |
+| pair-verify and the second MFi signature (→ `auth_out`) | 2.0 s, 1.65 s of it the chip |
+| screen set up, first frame | 1.0 s |
+
+The slow starts were the phone answering late (`acl` 8.8 s and 17.5 s after the page), `bt_power` late
+(4.2 to 5.6 s), and the phone seen late once (`svc_seen` 6.5 s after `carplayd` started). Before the
+timeline: about 5 s from power-on to the adapter's USB device (`ocbm bound uptime_ms=5000`), and the Allow
+tap. Every start on 2026-11-25 was a cold boot (`ocbm-boot start uptime=2s`): the Equinox cuts the
+adapter's power while parked.
+
+**enigy's "about 6 s" (owner, 2026-11-25) is a wake, not a cold start.** OCBM 2.6.5: "a wake reached
+the picture in 5.2 to 6.4 s" with the adapter already powered between sessions, Bluetooth kept on but
+hidden, the access point and receiver started early. From power-on, 2.7.0's bench figure is 13.8 to
+16.9 s. With the tap and the two signatures, about 10 to 11 s from power-on is the floor here.
+
+**Step 2, approved 2026-11-25** (owner: "Yes please", to this order):
+- *2a, radios at power-on:* port enigy/ocbm 2.7.0 and 2.7.1's start (both radios loaded together and
+  early, Bluetooth armed, the access point and `carplayd` ahead of the app; the longer first page, the
+  1.5 s stall cut, the same phone paged again). Expected: 2 to 3 s off a good start, more off the slow
+  ones. A port, not a copy: `radio_hal.sh` has diverged. Benched by power-cycling the adapter.
+- *2b, after 2a is seen on the car:* the adapter starts connecting the phone before the app arrives,
+  with the configuration the app sent last, so the page, the handoff and the first signature overlap
+  the tap. Up to about 5 s more. It changes the rule that the app's subscribe wakes the radios, and a
+  car that wakes with its screen off (twice on 2026-11-25) would connect the phone too.
+
 **enigy/ocbm 2.7.0 (2026-11-22, not ported).** Both radios loaded together and earlier in the boot, the
 radio description kept across boots: 13.8 to 16.9 s from power-on to picture on enigy's bench against
 16.2 and 17.4 s. About 4,000 changed lines against a `radio_hal.sh` that has diverged from this one, and
-`ocbm_boot.sh`, which only a bench install changes. Held for its own session (owner's call).
+`ocbm_boot.sh`, which only a bench install changes. Held for its own session (owner's call); that session is step 2a above (2026-11-25).
 
 ## T26. "Try this drive" card (raised 2026-11-14)
 
