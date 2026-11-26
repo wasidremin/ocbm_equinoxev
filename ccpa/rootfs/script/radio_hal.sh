@@ -4,7 +4,7 @@
 # the Rust daemons) asks for "wifi up" / "bt up" and never names a chip, a module, a firmware
 # path or an attach helper.
 #
-# VERBS   probe | status | wifi_ap_on | wifi_ap_off | bt_prewarm | bt_on | bt_off | sco_on
+# VERBS   probe | status | wifi_ap_on | wifi_ap_off | bt_prewarm | boot_preload | bt_on | bt_off | sco_on
 # EXIT    0 converged now   1 ran and failed   2 already converged   3 unsupported on this unit
 #
 # ---------------------------------------------------------------------------------------------
@@ -93,9 +93,10 @@ lock_take() {  # $1 = subsystem
       log "lock $1 has no holder and is >20min old - reclaiming"
       rm -rf "$_lk"; continue
     fi
-    _n=$((_n+1)); [ "$_n" -ge 60 ] && {
+    # Every 0.1 s (was 0.5): a host's bt_on waits here for the boot preload, and goes on as it ends.
+    _n=$((_n+1)); [ "$_n" -ge 300 ] && {
       log "lock $1 busy >30s (held by pid ${_holder:-unknown}) - refusing to stack bring-ups"; return 1; }
-    sleep 0.5
+    sleep 0.1
   done
   echo $$ > "$_lk/pid" 2>/dev/null
   # TWO traps, deliberately. In ash a trapped signal runs the handler and then RESUMES the
@@ -779,8 +780,10 @@ do_bt_on() {
       # Clause 1: the attach runs detached so a helper that blocks cannot hang this verb, but we
       # DO NOT return until it converges. That is the whole difference from the vendor path,
       # which forks the attach and returns immediately.
+      # RADIO_BT_MAX_TRIES: the boot preload sets 1, so it never reaches the reclaim+reset below
+      # (the reset line pulled and the line discipline unloaded) with the Wi-Fi driver loaded.
       _try=0; _d=""
-      while [ "$_try" -lt 4 ]; do
+      while [ "$_try" -lt "${RADIO_BT_MAX_TRIES:-4}" ]; do
         _try=$((_try+1))
         if [ "$_try" -gt 1 ] || pgrep -x "$_helper" >/dev/null 2>&1 || ps | grep -v grep | grep -qw "$_helper"; then
           log "reclaim+reset (attempt $_try)"; bt_reclaim_reset
@@ -858,6 +861,115 @@ do_bt_prewarm() {
   return 0
 }
 
+# THE BOOT PRELOAD (T25 step 2a, 2026-11-26; the idea from enigy/ocbm 2.7.0, Unlicense, NOTICE.md).
+# start_main_service.sh starts this at the top of the boot, beside the USB gadget, instead of the
+# supervisor starting bt_prewarm once the gadget is up. On the car's adapter (bench, 2026-11-26) the
+# gadget is bound at 5.1 s and that prewarm ended at 12.3 s, while the app arrives about 8 to 10 s into
+# the boot (the gadget, then the Allow tap) and waited for it. In order:
+#   1. the stock GPIO set-up's end (/tmp/.gpio_done, from start_main_service.sh), at most 3 s: it pulses
+#      the Bluetooth reset line, which must not happen under an attached controller;
+#   2. the radio's SDIO card, at most 3 s: detected before it enumerates, the descriptor names no
+#      device (enigy/ocbm, review D of 21 Nov 2026);
+#   3. Bluetooth, the supervisor's bt_prewarm with ONE attach and no reclaim+reset. A failed attach's
+#      helper is stopped (no reset, no rmmod) and the host's bt_on starts on a free UART;
+#   4. once Bluetooth is up, this unit's Wi-Fi driver, no access point: the host's wifi_ap_on then
+#      only starts hostapd, and wlan0 exists before btd names the controller from its address.
+# THE FIRST BUILD HUNG THE ADAPTER (bench, 2026-11-26): the Wi-Fi driver loaded beside the Bluetooth
+# attach, with bt_on's four tries; two boots in a row stopped answering on USB about 40 s in, inside the
+# preload, and needed a power cut. The reclaim+reset under a loaded Wi-Fi driver is the step this
+# kernel is recorded hanging in (docs/wireless/01_BT_AND_RADIO.md), hence steps 3 and 4 as they are.
+# THE GUARD, as enigy's: a preload is bracketed on flash, and two boots in a row that never finished
+# one switch it off by writing /script/radio_preload_off with "guard" in it, until it is removed. That
+# file, written by hand, turns it off too. Off, or with a radio_hal.sh without this verb, the
+# supervisor's own bt_prewarm runs as before. Each step goes to /script/.radio_preload.log as well,
+# synced, so a boot that hangs leaves where it stopped (the next boot's preload logs it, then starts it
+# afresh). One line per boot, uptime ms: [radio-boot] v1 start= gpio= sdio= caps= bt= wlan= done= rc=.
+PRELOAD_OFF=/script/radio_preload_off
+PRELOAD_MARK=/script/.radio_preload_inflight
+PRELOAD_UNFINISHED=/script/.radio_preload_unfinished
+PRELOAD_LOG=/script/.radio_preload.log
+PRELOAD_GUARD_AFTER=2
+GPIO_DONE=/tmp/.gpio_done
+up_ms() { read -r _um _umi </proc/uptime; _um="${_um%.*}${_um#*.}0"; echo "${_um#0}"; }
+plog() { echo "$(up_ms) $*" >> "$PRELOAD_LOG"; sync; }
+sdio_seen() { for _sd in /sys/bus/sdio/devices/*/device; do [ -e "$_sd" ] && return 0; done; return 1; }
+bt_helper_stop() {
+  _h=${RADIO_BT_ATTACH_CMD%% *}; [ -n "$_h" ] || return 0
+  killall "$_h" 2>/dev/null
+  _k=0; while [ "$_k" -lt 20 ] && pgrep -x "$_h" >/dev/null 2>&1; do _k=$((_k + 1)); sleep 0.1; done
+  pgrep -x "$_h" >/dev/null 2>&1 && killall -9 "$_h" 2>/dev/null
+  return 0
+}
+do_boot_preload() {
+  _b0=$(up_ms)
+  touch /tmp/.radio_bt_prewarm_started   # the supervisor's own prewarm stands down
+  if [ -e "$PRELOAD_OFF" ]; then
+    log "boot preload off ($(head -1 "$PRELOAD_OFF" 2>/dev/null)); rm $PRELOAD_OFF to turn it on"
+    rm -f /tmp/.radio_bt_prewarm_started; return 3
+  fi
+  if [ -e "$PRELOAD_MARK" ]; then
+    _pn=$(cat "$PRELOAD_UNFINISHED" 2>/dev/null); case "$_pn" in ''|*[!0-9]*) _pn=0 ;; esac
+    _pn=$((_pn + 1)); rm -f "$PRELOAD_MARK"
+    log "boot preload: the last boot's stopped after: $(tail -1 "$PRELOAD_LOG" 2>/dev/null)"
+    if [ "$_pn" -ge "$PRELOAD_GUARD_AFTER" ]; then
+      echo "guard: $_pn boots in a row never finished the boot preload" > "$PRELOAD_OFF"; rm -f "$PRELOAD_UNFINISHED"; sync
+      log "boot preload: $_pn boots in a row never finished it - switched OFF (rm $PRELOAD_OFF to turn it on)"
+      rm -f /tmp/.radio_bt_prewarm_started; return 1
+    fi
+    echo "$_pn" > "$PRELOAD_UNFINISHED"; sync
+    log "boot preload: the last boot's never finished ($_pn of $PRELOAD_GUARD_AFTER in a row before it is switched off)"
+  fi
+  : > "$PRELOAD_LOG"; touch "$PRELOAD_MARK"; plog start
+  _bg=-; _n=0
+  while [ ! -e "$GPIO_DONE" ] && [ "$_n" -lt 60 ]; do _n=$((_n + 1)); sleep 0.05; done
+  [ -e "$GPIO_DONE" ] && _bg=$(up_ms) || log "boot preload: no end mark from the GPIO set-up in 3 s - going on"
+  _bs=-; _n=0
+  while ! sdio_seen && [ "$_n" -lt 30 ]; do _n=$((_n + 1)); sleep 0.1; done
+  sdio_seen && _bs=$(up_ms) || log "boot preload: no SDIO card in 3 s - the descriptor may name no device"
+  plog "gpio=$_bg sdio=$_bs"
+  _bc=- _bb=- _bw=- _br=3
+  # The Wi-Fi lock from here until the driver is in: a host that arrives meanwhile (5.9 s into the
+  # boot on the bench, 2026-11-26) waits in its wifi_ap_on instead of loading the driver beside this
+  # Bluetooth attach. Its access point is needed only at the Wi-Fi handoff, seconds after the page.
+  _wl=0; lock_take wlan && _wl=1
+  if caps; then
+    _bc=$(up_ms); plog "caps backend=$RADIO_BACKEND bt_after_wlan=${RADIO_BT_AFTER_WLAN:-0}"
+    if lock_take bt; then
+      RADIO_BT_MAX_TRIES=1; do_bt_prewarm; _br=$?; unset RADIO_BT_MAX_TRIES
+      if [ "$_br" = 0 ]; then
+        _bb=$(up_ms)
+      elif [ "$_br" != 2 ]; then
+        bt_helper_stop; log "boot preload: Bluetooth did not come up in one attach; its helper stopped, the host's bt_on starts afresh"
+      fi
+      lock_drop bt
+    else
+      _br=1
+    fi
+    plog "bt rc=$_br"
+    if [ "$_wl" = 1 ] && { [ "$_br" = 0 ] || [ "$_br" = 2 ]; } && [ "$RADIO_BACKEND" = mapped ] && [ -n "$RADIO_WLAN_INSMOD" ]; then
+      plog "wlan load"
+      if wlan_driver_up; then
+        _n=0; while [ "$_n" -lt 100 ]; do wlan_iface >/dev/null 2>&1 && break; _n=$((_n + 1)); sleep 0.05; done
+        wlan_iface >/dev/null 2>&1 && _bw=$(up_ms)
+        # The name's suffix, read here before any access point: with hostapd up, wlan0 reported another
+        # address (bench, 2026-11-26: CarLink-ff01 for 13d0). iap2-core's KEPT_SUFFIX reads this file.
+        if [ ! -s /etc/ocbm/name_suffix ] && [ -r /sys/class/net/wlan0/address ] && [ -d /etc/ocbm ]; then
+          _ns=$(tr -cd '0-9a-fA-F' </sys/class/net/wlan0/address | tr 'A-F' 'a-f' | sed 's/.*\(....\)$/\1/')
+          case "$_ns" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+            echo "$_ns" > /etc/ocbm/name_suffix.new && mv -f /etc/ocbm/name_suffix.new /etc/ocbm/name_suffix && plog "name suffix kept" ;;
+          esac
+        fi
+      fi
+      plog "wlan=$_bw"
+    fi
+  fi
+  [ "$_wl" = 1 ] && rm -rf /tmp/.radio_lock_wlan
+  trap - EXIT INT TERM HUP
+  rm -f "$PRELOAD_MARK" "$PRELOAD_UNFINISHED"; plog done
+  echo "[radio-boot] v1 start=$_b0 gpio=$_bg sdio=$_bs caps=$_bc bt=$_bb wlan=$_bw done=$(up_ms) rc=$_br" >> /tmp/box.log
+  return "$_br"
+}
+
 do_bt_off() {
   rm -f /tmp/.radio_bt_prewarmed
   # End state: powered down but STILL ATTACHED. Never rmmod the line discipline and never -9 the
@@ -893,10 +1005,12 @@ case "$VERB" in
   wifi_ap_on)  lock_take wlan || exit 1; do_wifi_ap_on;  _r=$?; lock_drop wlan; exit $_r ;;
   wifi_ap_off) lock_take wlan || exit 1; do_wifi_ap_off; _r=$?; lock_drop wlan; exit $_r ;;
   bt_prewarm)  lock_take bt   || exit 1; do_bt_prewarm;  _r=$?; lock_drop bt;   exit $_r ;;
+  # Takes its own locks: the Wi-Fi driver's beside Bluetooth's.
+  boot_preload) do_boot_preload; exit $? ;;
   bt_on)       lock_take bt   || exit 1; do_bt_on;       _r=$?; lock_drop bt;   exit $_r ;;
   bt_off)      lock_take bt   || exit 1; do_bt_off;      _r=$?; lock_drop bt;   exit $_r ;;
   # Best-effort and idempotent: the daemon calls it after every bring-up DOWN->UP, and a unit
   # whose branch carries no SCO mapping must report that (3) rather than fail the caller.
   sco_on)      lock_take bt   || exit 1; do_sco_on;      _r=$?; lock_drop bt;   exit $_r ;;
-  *) echo "$LOGP usage: radio_hal.sh probe|status|wifi_ap_on|wifi_ap_off|bt_prewarm|bt_on|bt_off|sco_on" >&2; exit 64 ;;
+  *) echo "$LOGP usage: radio_hal.sh probe|status|wifi_ap_on|wifi_ap_off|bt_prewarm|boot_preload|bt_on|bt_off|sco_on" >&2; exit 64 ;;
 esac

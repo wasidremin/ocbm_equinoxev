@@ -1,13 +1,22 @@
 #!/bin/sh
 # ccpa_custom: owned -- minimal NCM-appliance boot orchestrator (rewritten from stock;
-# all projection/vendor launches removed). Radios are on-demand (wlan_on/bt_on); NCM is
-# the only always-on link. Primary NCM arm is /script/custom_init.sh (early); the block
+# all projection/vendor launches removed). In OCBM mode the radios are loaded at boot and stay
+# quiet until a host app arrives (radio_hal.sh boot_preload); in NCM mode NCM is the only link.
+# Primary NCM arm is /script/custom_init.sh (early); the block
 # at the end is a fallback that runs only if custom_init did not pre-arm.
 
 # --- early system setup ---
 date -s "2020-01-02 `date +%T`" &
 rm -f /dev/random && ln -s /dev/urandom /dev/random &                 # non-blocking openssl RNG
 echo y > /sys/module/printk/parameters/time && echo 7 > /proc/sys/kernel/printk &
+
+# --- hardware GPIO (BT reset + quick-charge lines + power LED), then the radios (T25, 2026-11-26) ---
+# First, so the boot's radio preload can start beside the USB gadget below: it waits for this
+# script's end mark before it touches the chip, whose reset line init_gpio.sh pulses. Until
+# 2026-11-26 this ran after ocbm_boot.sh (about 5 s in) and the supervisor's prewarm after that, which
+# ended 12.3 s into the boot. A radio_hal.sh without the verb exits; the supervisor's prewarm then runs.
+( test -e /script/init_gpio.sh && /script/init_gpio.sh; : > /tmp/.gpio_done ) &
+{ [ -e /script/ncm_only ] || [ -e /script/ncm_wifi ]; } || { test -e /script/radio_hal.sh && setsid sh /script/radio_hal.sh boot_preload >> /tmp/box.log 2>&1 </dev/null & }
 
 # --- custom early init (arms CDC-NCM before radios; sets /tmp/ncm_early_armed) ---
 test -e /script/custom_init.sh && /script/custom_init.sh
@@ -19,14 +28,11 @@ if [ -e /script/ncm_only ] || [ -e /script/ncm_wifi ]; then :; else
 	test -e /script/ocbm_boot.sh && /script/ocbm_boot.sh
 fi
 
-# --- hardware GPIO (BT reset + quick-charge lines) ---
-test -e /script/init_gpio.sh && /script/init_gpio.sh &
-
 # --- stage gadget kernel modules (g_android_accessory.ko etc.) to /tmp ---
 test -e /script/copy_to_tmp.sh && /script/copy_to_tmp.sh
 
-# --- radios: OFF at boot (on-demand: wlan_on/bt_on to raise, wlan_off/bt_off to release) ---
-echo "[start_main_service] radios on-demand (wlan_on/bt_on); NCM only always-on"
+# --- radios: loaded at boot, quiet (radio_hal.sh boot_preload, above); the access point and the
+#     advertiser start only when a host app arrives ---
 
 # --- NCM network (ncm0 addr/mtu) ---
 test -e /script/start_ncm.sh && /script/start_ncm.sh

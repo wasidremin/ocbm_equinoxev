@@ -945,14 +945,16 @@ last_r=0                # tracks the CT_RADIO inhibit flag across ticks (docs/ca
 
 # Startup reconciliation (docs/carplay/04_CAPABILITIES_AND_CONFIG.md radio gating, gap G3): a respawned supervisor starts with
 # last_p="" and never sees a 1->0 edge, so a crash between GONE and teardown would strand radios
-# ON with no app. If the app is absent but any radio state is up, reconcile once now. No-op on a
-# clean boot (boot chain raises no radios).
-if [ "$(cat "$FLAG" 2>/dev/null)" != 1 ]; then
+# ON with no app. If the app is absent but any radio state is up, reconcile once now. Only on a
+# respawn: since 2026-11-26 the boot itself loads the radios (radio_hal.sh boot_preload, from
+# start_main_service.sh) and leaves Bluetooth up and quiet, which this would have torn down.
+if [ -e /tmp/.sup_started ] && [ "$(cat "$FLAG" 2>/dev/null)" != 1 ]; then
   if wireless_running || pgrep -x hostapd >/dev/null 2>&1 || hciconfig hci0 2>/dev/null | grep -q "UP"; then
     echo "[sup] startup reconciliation: app absent but radio state up -> wireless_down (stranded by a prior crash)"
     wireless_down
   fi
 fi
+: > /tmp/.sup_started
 
 # The Wi-Fi link to the car's hotspot (T15) was removed on 2026-11-25. Its files hold the hotspot's
 # passphrase and the link key, and nothing reads them any more, so they go. Shipped here and not in
@@ -1304,5 +1306,13 @@ while :; do
 
   tick=$((tick + 1))
   [ $((tick % 30)) -eq 0 ] && bound_logs
-  sleep 1
+  # A second between looks, but a change of the host flag ends it at once: the app's arrival waited
+  # up to a whole tick (bench, 2026-11-26: the radios started 1.3 s after the subscribe). The shell's
+  # own read, no fork, ten times a second.
+  _sl=0
+  while [ "$_sl" -lt 10 ]; do
+    sleep 0.1; _sl=$((_sl + 1))
+    _fp=""; read -r _fp 2>/dev/null <"$FLAG"
+    case "$_fp" in 0|1) [ "$_fp" != "$p" ] && break ;; esac
+  done
 done

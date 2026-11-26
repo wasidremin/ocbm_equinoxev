@@ -55,4 +55,36 @@ is "its directory is gone" "$(ls -A "$T" | grep -c '^\.ko_unpack')" 0
 rm "$T/hci_uart.ko"; ko_unpack hci_uart.ko
 is "a module still missing is unpacked again" "$(cat "$T/hci_uart.ko")" ldisc
 rm -rf "$T"
+# THE BOOT PRELOAD (T25 step 2a, 2026-11-26). Its first build loaded the Wi-Fi driver beside the Bluetooth
+# attach with bt_on's four tries, and two boots in a row hung the adapter inside it.
+P=$(sed -n '/^do_boot_preload() {/,/^}/p' "$F")
+is "the preload gives Bluetooth one attach, so no reclaim+reset" "$(echo "$P" | grep -c 'RADIO_BT_MAX_TRIES=1; do_bt_prewarm')" 1
+is "bt_on's tries honour that limit" "$(grep -c 'while \[ "$_try" -lt "${RADIO_BT_MAX_TRIES:-4}" \]' "$F")" 1
+is "the Wi-Fi driver loads only after the Bluetooth attach" "$(echo "$P" | awk '/do_bt_prewarm/{b=NR} /wlan_driver_up/{w=NR} END{print (b && w > b) ? "after" : "not after"}')" after
+is "the preload holds the Wi-Fi lock before it touches Bluetooth" "$(echo "$P" | awk '/lock_take wlan/{w=NR} /lock_take bt/{b=NR} END{print (w && w < b) ? "first" : "not first"}')" first
+T=$(mktemp -d); mkdir -p "$T/script" "$T/tmp"
+pre() { sed -n '/^PRELOAD_OFF=/,/^do_bt_off() {/p' "$F" | sed '$d' | sed "s#/tmp/#$T/tmp/#g; s#/script/#$T/script/#g"; }
+eval "$(pre)"
+log() { echo "$*" >> "$T/log"; }; caps() { return 1; }; sync() { :; }; lock_take() { return 0; }; lock_drop() { :; }
+: > "$T/tmp/.gpio_done"; sdio_seen() { return 0; }
+do_boot_preload; r=$?
+is "a preload that ends leaves no in-flight mark" "$r $([ -e "$T/script/.radio_preload_inflight" ] && echo marked || echo clear)" "3 clear"
+is "it writes its boot line" "$(grep -c '^\[radio-boot\] v1 start=' "$T/tmp/box.log")" 1
+: > "$T/script/.radio_preload_inflight"
+do_boot_preload
+is "one unfinished boot is counted, not yet switched off" "$(grep -c '(1 of 2 in a row' "$T/log") $([ -e "$T/script/radio_preload_off" ] && echo off || echo on)" "1 on"
+is "a preload that then finishes clears the count" "$([ -e "$T/script/.radio_preload_unfinished" ] && echo kept || echo cleared)" cleared
+: > "$T/script/.radio_preload_inflight"; echo 1 > "$T/script/.radio_preload_unfinished"
+do_boot_preload; r=$?
+is "two in a row switch it off, with guard in the file" "$r $(cut -c1-6 "$T/script/radio_preload_off")" "1 guard:"
+is "switched off, the supervisor's prewarm is left to run" "$([ -e "$T/tmp/.radio_bt_prewarm_started" ] && echo blocked || echo free)" free
+do_boot_preload; r=$?
+is "off stays off, and says how to turn it on" "$r $(tail -1 "$T/log" | grep -c 'rm .*radio_preload_off to turn it on')" "3 1"
+rm -rf "$T"
+M="$HERE/ccpa/rootfs/script/start_main_service.sh"
+is "the boot starts the GPIO set-up and the preload before the gadget" "$(awk '/^#/{next} /init_gpio.sh/ && !g{g=NR} /radio_hal.sh boot_preload/ && !p{p=NR} /ocbm_boot.sh/ && !o{o=NR} END{print (g < p && p < o) ? "in order" : "out of order"}' "$M")" "in order"
+is "it marks the GPIO set-up's end" "$(grep -c ': > /tmp/.gpio_done' "$M")" 1
+is "no preload in NCM mode" "$(grep 'boot_preload' "$M" | grep -c 'ncm_only.*ncm_wifi')" 1
+is "the supervisor's startup clean-up runs only on a respawn" "$(grep -c 'if \[ -e /tmp/.sup_started \] && ' "$S")" 1
+is "the supervisor's look for the host is no longer a whole second" "$(grep -c 'case "$_fp" in 0|1) \[ "$_fp" != "$p" \] && break' "$S")" 1
 [ "$fails" -eq 0 ] && echo "radio_hal: all passed" || { echo "radio_hal: $fails failed"; exit 1; }

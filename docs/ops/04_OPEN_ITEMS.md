@@ -68,6 +68,15 @@ high-water mark: versionCode 269 (`4.0+recorder-watchdog`, 2026-11-24; `host/gm_
   `"sta_uplink"`. *Seen on the bench, 2026-11-26 (emulator, the car's adapter):* both retired-link lines on
 the first connect and none on the next; the app's update (4 files) confirmed in its trial; the three files
 removed at start; the adapter's `wpa_supplicant` and `wpa_cli` (this repository's build) removed by hand.
+- **The boot preload on the car's adapter (T25 step 2a, bench-installed 2026-11-26, not published).**
+  The adapter carries `start_main_service.sh`, `radio_hal.sh`, `session_supervisor.sh`, `btd` and
+  `iap2d` from the bench. To check in the car: a `[radio-boot] v1 … rc=0` line on every start, with `bt=`
+  about 9,000; no start that never reaches the app (a hang shows as the adapter missing until the car
+  cuts its power; `/script/.radio_preload.log` keeps the step it stopped in, and two in a row switch the
+  preload off); the iPhone sees `CarLink-13d0` every time; the timeline's `page_start` within about 2 s
+  of the app's arrival. Until a published app carries these files, do not run Settings ▸ Advanced ▸
+  Adapter firmware: app 269's bundle would put back the older `radio_hal.sh`, supervisor, `btd` and
+  `iap2d` (safe, the preload then stands down, but the gain goes).
 - **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** The weekday-morning side works on the
   car (2026-11-23): the adapter updated, `[btd] page timeout 3200 ms`, a missed phone 3.2 s, the owner's
   phone first and answering 0.6 to 0.8 s after `page_start`, first picture 10.1 s and 16.1 s after attach.

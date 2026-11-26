@@ -26,6 +26,11 @@ came from in their header comments.
   - the format and keys of the `[timeline] v1` line.
   `carplayd`'s own stamps (`ccpa/carplayd/src/timeline_own.rs`) and the receiver's hook are written
   here after its design.
+- **enigy/ocbm**, the boot radio preload (2026-11-26, from OCBM 2.7.0 and 2.7.1, `v2.7.1`): the idea of
+  starting the radios beside the USB gadget behind a mark for the stock GPIO set-up's end, the wait for
+  the SDIO card before detection, one Bluetooth attach with no reset in the preload, its helper
+  stopped on failure, and the two-boots-in-a-row guard with its `/script/radio_preload_off` file.
+  `radio_hal.sh`'s `do_boot_preload` is written here after that design; no code was copied.
 - **enigy/ocbm**, the access point and the host link (2026-11-21, from 801074f):
   - the AP's DHCP server as BusyBox's `udhcpd` with a 250 ms ARP probe and `auto_time` (a009f90,
     c4679c0);

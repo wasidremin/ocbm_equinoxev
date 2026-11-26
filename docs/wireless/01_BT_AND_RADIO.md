@@ -24,6 +24,38 @@ sleeps five seconds before its first attempt; later backoff is unchanged.
 `caps()` reuses a nonempty `/tmp/radio_caps` instead of detecting on every verb;
 `RADIO_REDETECT=1` forces fresh detection after a failed mapping/convergence.
 
+**The boot preload (T25 step 2a, 2026-11-26; bench-installed on the car's adapter that day).** The
+prewarm above started from the supervisor once the USB gadget was up (5.1 s) and ended at 12.3 s, after
+the app usually arrives. `start_main_service.sh` (boot path, never written by an update) now starts the
+stock `init_gpio.sh` first, in the background, with an end mark (`/tmp/.gpio_done`), and
+`radio_hal.sh boot_preload` beside it, both ahead of `ocbm_boot.sh`. The preload waits for that mark
+(the GPIO set-up pulses the Bluetooth reset line) and for the SDIO card, detects, runs the same
+`bt_prewarm` with **one** attach (`RADIO_BT_MAX_TRIES=1`: never bt_on's reclaim+reset), stops a failed
+attach's helper without a reset, and only then loads the unit's Wi-Fi driver (no access point), holding
+the Wi-Fi lock throughout so an early host's `wifi_ap_on` waits for it. Each step also goes to
+`/script/.radio_preload.log` (synced), and one `[radio-boot] v1` line per boot to the box log. Two boots
+in a row that never finished it write `/script/radio_preload_off` ("guard: …"); that file by hand turns
+it off too, and the supervisor's own prewarm then runs. The supervisor's startup clean-up runs only on a
+respawn now (it would have torn the preload's Bluetooth down), and it looks for the host every 0.1 s.
+*Bench (8 cold boots by reboot):* Bluetooth ready at 8.9 to 9.4 s, the Wi-Fi driver at 11.4 to 12.3 s,
+the USB device 0.4 to 0.5 s later than before (5.5 s; detection shares the one core with the gadget).
+With the host at 9.1 s, as in the car: radios started +0.6 s, paging +1.6 s (was +4.4 s), access point
+up +3.5 s (was +5.2 s).
+
+**The first build hung the adapter (bench, 2026-11-26).** It loaded the Wi-Fi driver *beside* the
+Bluetooth attach and gave the attach bt_on's four tries. Two boots in a row stopped answering on USB about
+40 s in, inside the preload (the guard said so on the third), and each needed the power cut by hand. The
+cause was not caught (nothing on flash then). Suspected: a first attach that did not converge beside the
+driver load, then the reclaim+reset under a loaded Wi-Fi driver, the step this kernel is recorded hanging
+in. Not the idle driver: loaded with no access point for 3 minutes, nothing. Hence the order and the one
+try above, and the flash log, so a recurrence shows its step.
+
+**The name keeps its suffix (2026-11-26).** `iap2-core`'s `accessory_name` now reads
+`/etc/ocbm/name_suffix` first. The preload writes it from `wlan0` right after loading the driver, before
+any access point (with `hostapd` up `wlan0` reported another address: `CarLink-ff01` for `13d0`), and the
+Rust side keeps its own first read from `wlan0` as a fallback; the serial's suffix is never kept. Bench:
+`CarLink-13d0` on every start after the first.
+
 **Startup stalls found in the car's own logs and fixed by enigy/ocbm's CCPA measurements (2026-11-07).**
 enigy/ocbm (lvalen91's fork, adapter firmware 1.0.1 to 1.0.4) measured four costs on an IW416 CCPA with
 the same 3.14.52 kernel as this unit. This car's logs showed the first, and the 10:16 start the second.

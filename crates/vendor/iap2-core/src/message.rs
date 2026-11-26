@@ -210,19 +210,43 @@ pub fn accessory_name(base: &str) -> String {
 /// gets a per-device name. `/etc/serial_number` is the box's real serial file (the same fallback
 /// `wlan_on.sh`/`bt_on.sh` use); `/sys/devices/soc0/serial_number` is a last resort (empty on this SoC).
 /// `None` only on a dev host with none of them present (reads bare `base`).
+///
+/// KEPT ONCE READ FROM wlan0 (2026-11-26). Whether wlan0 exists when `btd` starts is a race, so the car's
+/// adapter showed the iPhone `CarLink-13d0`, `CarLink-6754` (the serial) and `CarLink-fe01` from one start
+/// to the next (its logs, 2026-11-12 to 11-25), and the boot preload (T25), which brings Bluetooth up
+/// before the Wi-Fi driver, made the serial's the usual one. The first suffix read from wlan0 is written
+/// to [`KEPT_SUFFIX`] and used from then on; the serial's is never kept, so a box that has not yet seen
+/// wlan0 gets its Wi-Fi name as soon as it does. Same length either way: the byte-pinned Bluetooth-time
+/// Identify does not change size.
+pub const KEPT_SUFFIX: &str = "/etc/ocbm/name_suffix";
+
 fn device_suffix() -> Option<String> {
-    for path in [
-        "/sys/class/net/wlan0/address",
-        "/etc/serial_number",
-        "/sys/devices/soc0/serial_number",
-    ] {
-        if let Ok(s) = std::fs::read_to_string(path) {
-            if let Some(sfx) = suffix_from(&s) {
-                return Some(sfx);
-            }
+    let read = |p: &str| std::fs::read_to_string(p).ok();
+    let (sfx, keep) = choose_suffix(
+        read(KEPT_SUFFIX).as_deref(),
+        read("/sys/class/net/wlan0/address").as_deref(),
+        &[read("/etc/serial_number").as_deref(), read("/sys/devices/soc0/serial_number").as_deref()],
+    )?;
+    if keep {
+        // Whole or not at all; a box without /etc/ocbm (a dev host) keeps nothing.
+        let tmp = format!("{KEPT_SUFFIX}.new");
+        if std::fs::write(&tmp, format!("{sfx}\n")).is_ok() {
+            let _ = std::fs::rename(&tmp, KEPT_SUFFIX);
         }
     }
-    None
+    Some(sfx)
+}
+
+/// Pure: the suffix, and whether to keep it. A kept one of four hex digits first, then wlan0's (kept),
+/// then the serials' (never kept).
+fn choose_suffix(kept: Option<&str>, wlan: Option<&str>, serials: &[Option<&str>]) -> Option<(String, bool)> {
+    if let Some(k) = kept.map(str::trim).filter(|k| k.len() == 4 && k.chars().all(|c| c.is_ascii_hexdigit())) {
+        return Some((k.to_ascii_lowercase(), false));
+    }
+    if let Some(w) = wlan.and_then(suffix_from) {
+        return Some((w, true));
+    }
+    serials.iter().flatten().find_map(|s| suffix_from(s)).map(|s| (s, false))
 }
 
 /// Pure suffix extractor (testable): the last 4 hex digits of `raw`, lowercased. A Wi-Fi MAC
@@ -1173,6 +1197,23 @@ mod tests {
         // accessory_name with a real suffix would be "CarLink-b0df"; on a dev host with no /sys sources
         // device_suffix() returns None so it's the bare brand — assert that fallback shape.
         assert!(accessory_name("CarLink").starts_with("CarLink"));
+    }
+
+    #[test]
+    fn the_name_keeps_the_suffix_first_read_from_wlan0_and_never_the_serials() {
+        let mac = Some("00:e0:4c:91:13:d0\n");
+        let serial = [Some("2025.02.25.15216754"), None];
+        // The first start that sees wlan0: its suffix, to be kept.
+        assert_eq!(choose_suffix(None, mac, &serial), Some(("13d0".into(), true)));
+        // A start before wlan0 appears: the serial's, not kept, so a later start can still keep wlan0's.
+        assert_eq!(choose_suffix(None, None, &serial), Some(("6754".into(), false)));
+        // Once kept, the race no longer matters: with or without wlan0, and whatever wlan0 says.
+        assert_eq!(choose_suffix(Some("13d0\n"), None, &serial), Some(("13d0".into(), false)));
+        assert_eq!(choose_suffix(Some("13d0"), Some("00:11:22:33:ff:01"), &serial), Some(("13d0".into(), false)));
+        // A damaged kept file is ignored.
+        assert_eq!(choose_suffix(Some("13d"), mac, &serial), Some(("13d0".into(), true)));
+        assert_eq!(choose_suffix(Some("zzzz"), None, &serial), Some(("6754".into(), false)));
+        assert_eq!(choose_suffix(None, None, &[None, None]), None);
     }
 
     #[test]

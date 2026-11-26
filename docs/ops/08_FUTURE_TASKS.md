@@ -51,7 +51,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
-| T25 Faster connect | **The owner's first annoyance, and the focus from 2026-11-25.** Measured on the car: a good start is about 18 s from the adapter's power-on to the picture (5 s to its USB device, 2–4 s the Allow tap, 10–11 s the adapter's own part; 12.3 s median). Next, approved 2026-11-25: step 2a, radios started at power-on (enigy/ocbm 2.7.0/2.7.1); then 2b, the phone connected during the tap. Needs the bench adapter |
+| T25 Faster connect | **The owner's first annoyance, and the focus from 2026-11-25.** Measured on the car: a good start is about 18 s from the adapter's power-on to the picture (5 s to its USB device, 2–4 s the Allow tap, 10–11 s the adapter's own part; 12.3 s median). Step 2a (approved 2026-11-25): the radios at power-on and the supervisor's quicker look benched 2026-11-26 (paging 1.6 s after the app arrives, was 4.4 s), bench-installed on the car's adapter, not yet in the car; enigy's 2.7.1 page changes next; then 2b, the phone connected during the tap |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
 | T35 Which iPhone first, by schedule | **Built 2026-11-22**, Play 268 (firmware ee0e29addd5c). The weekday-morning side works on the car (2026-11-23: the owner's phone first, page to ACL 0.6 to 0.8 s; a missed phone costs 3.2 s, not 5.1); the evening switch not yet seen |
 
@@ -1191,6 +1191,20 @@ supervisor took 1.3 s to start the radios, Bluetooth was powered at +3.6 s and p
 access point up at +5.2 s, the phone answered at +5.8 s and was identified at +8.4 s. In the car the app
 arrives about 8 to 10 s into the boot (the gadget, then the Allow tap), still before that prewarm ends.
 The same run found a race in the module unpack (fixed; `docs/wireless/01_BT_AND_RADIO.md` §6e).
+
+**Step 2a, items 1 and 2, built and benched 2026-11-26** (owner: "Go ahead with your next steps", to:
+1, the radios at power-on; 2, the supervisor reacting at once; 3, enigy's 2.7.1 page changes). Not a
+copy of enigy's 2.7.x: this adapter already had a boot prewarm, its attach does not wait for Wi-Fi, so
+2.7.0's "together" order does not apply. What was built (`docs/wireless/01_BT_AND_RADIO.md`, "The boot
+preload"): `radio_hal.sh boot_preload`, started by `start_main_service.sh` ahead of the USB gadget after
+the stock GPIO set-up; Bluetooth ready at about 9 s instead of 12.3 s, the Wi-Fi driver loaded after it;
+the supervisor looks for the host every 0.1 s; the radio lock is polled every 0.1 s; the name's suffix
+kept (`/etc/ocbm/name_suffix`). With the host at 9.1 s: paging 1.6 s after it arrives (was 4.4 s).
+The first build hung the adapter twice and was reworked (same document). *Verified:* `radio_hal_test.sh`
+(the preload's order, one try, the guard), `iap2-core`'s tests (the name), 8 cold boots and 5 host
+sessions on the bench by reboot, not by power cut. *Not yet:* the car; a power cut (the car's own
+start); item 3. `start_main_service.sh` is the boot path: bench-installed on the car's adapter
+2026-11-26, never by an app update.
 
 **enigy/ocbm 2.7.0 (2026-11-22, not ported).** Both radios loaded together and earlier in the boot, the
 radio description kept across boots: 13.8 to 16.9 s from power-on to picture on enigy's bench against
