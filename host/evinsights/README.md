@@ -95,7 +95,12 @@ enabled so it starts at boot); its state file and device key live outside the
 repo. Reports from a bench emulator (`sdk_gcar`/`emulator` in the build
 fingerprint) are skipped (2026-11-11); about 1,084 imported before that are still
 in the database (`docs/ops/04_OPEN_ITEMS.md`). The database container is
-`restart: always`.
+`restart: always`. Within one run the sync skips a delivered report whose size and
+modification time are unchanged (2026-11-26: every pass had re-read all 8,306
+reports, 1.2 GB, to find none new); a restart hashes them all once.
+`tools/test_sync_probes.py` tests it (the command is in its header). The database's
+memory is set in `compose.yaml` (1 GB `shared_buffers`), not by the image's
+auto-tune, which took 3.7 GB on this shared server.
 
 To transform one report by hand instead:
 

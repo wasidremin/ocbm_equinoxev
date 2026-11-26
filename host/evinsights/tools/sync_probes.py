@@ -3,7 +3,10 @@
 Each report is converted with app.import_probe.convert and posted as gzip batches.
 Converted events carry deterministic IDs, so re-sending a report is accepted as
 duplicates. A local state file (outside the repo) skips reports already delivered
-with the same content hash.
+with the same content hash. Between passes of one daemon, a report whose size and
+modification time have not changed since it was delivered is not read again: on
+2026-11-26 every 5-minute pass re-read and hashed all 8,306 reports (1.2 GB) to
+find none new, at 77% of a core.
 
 Run once:      python3 tools/sync_probes.py PROBES_DIR --device-id D --vehicle-id V --key-file K --state S
 Run as daemon: add --watch 300
@@ -41,23 +44,39 @@ def post_batch(url, key, batch, retries=3):
             raise
 
 
-def sync_once(a, state):
+def file_sig(st):
+    """Pure: what says a report file is unchanged since it was last read."""
+    return (st.st_size, st.st_mtime_ns)
+
+
+def needs_read(name, sig, state, seen):
+    """Pure: read and hash a report unless it was delivered and its file is unchanged since."""
+    return not (name in state and seen.get(name) == sig)
+
+
+def sync_once(a, state, seen=None):
+    seen = {} if seen is None else seen
     key = Path(a.key_file).read_text().strip()
     url = a.api.rstrip('/') + '/ingest/batch'
     totals = {'accepted': 0, 'duplicate': 0, 'rejected': 0}
     for path in sorted(Path(a.probes_dir).glob('*.json')):
         try:
+            sig = file_sig(path.stat())
+            if not needs_read(path.name, sig, state, seen):
+                continue
             raw = path.read_bytes()
         except OSError:  # removed since the listing was taken; one missing file must not end the pass
             continue
         digest = hashlib.sha256(raw).hexdigest()
         if state.get(path.name) == digest:
+            seen[path.name] = sig
             continue
         try:
             report = json.loads(raw)
             if is_emulator(report):
                 # A bench emulator posts to the same receiver. Its reports are not this vehicle's.
                 state[path.name] = digest
+                seen[path.name] = sig
                 print(f'skipped {path.name}: emulator build')
                 continue
             batches = convert(report, a.device_id, a.vehicle_id, path.stem, tz_minutes(report['startWallTime']))
@@ -69,6 +88,7 @@ def sync_once(a, state):
             print(f'FAILED {path.name}: {type(e).__name__}: {str(e)[:300]}', file=sys.stderr)
             continue
         state[path.name] = digest
+        seen[path.name] = sig
         print(f'synced {path.name}: {len(batches)} batch(es)')
     return totals
 
@@ -84,9 +104,10 @@ def main():
     p.add_argument('--watch', type=int, default=0, help='seconds between passes; 0 runs once')
     a = p.parse_args()
     state_path = Path(a.state)
+    seen = {}  # file signatures of delivered reports, for this process; a restart hashes everything once
     while True:
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
-        totals = sync_once(a, state)
+        totals = sync_once(a, state, seen)
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(state, indent=2))
         print('totals:', totals)

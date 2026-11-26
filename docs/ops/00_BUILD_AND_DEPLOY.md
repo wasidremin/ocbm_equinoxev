@@ -229,7 +229,14 @@ and the GM host application was **not** part of this installation report.
    resident) ocbmd's queues to the app grew to hundreds of KB and everything below video in its drain
    order (route A's tunnel, the box log) stopped arriving; the box log going quiet is the sign. Stop the
    Gradle daemons (`gradle --stop`) before booting the emulator, and test a low-priority path with
-   `ocbm-host` as the host instead, which reads the link without decoding.
+   `ocbm-host` as the host instead, which reads the link without decoding. **Bench mode (2026-11-26):**
+   `tools/bench_mode.sh on` before the emulator, `off` after. With swap full before the bench, the
+   emulator's car service crashed under load 25 and took the app down; the script pauses the media
+   stack and Immich and stops Gradle. The same day EV Insights' database was cut from a 3.7 GB cache
+   to 1 GB (`host/evinsights/compose.yaml`) and its probe sync stopped re-reading 1.2 GB every 5
+   minutes; available memory went from 4.9 to 8.3 GB before bench mode. Headless here: add
+   `-no-window` (with no display the emulator aborts on its Qt plugin), take screenshots with
+   `adb exec-out screencap -d <display id> -p`, and the USB dialog's Allow is `input tap 999 637`.
 
 ### Backup artifact
 

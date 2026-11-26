@@ -259,3 +259,9 @@ update, lyrics, the driver display) were already solved in one of them.
 - **The emulator bench:** an AAOS emulator with the adapter passed through on USB, and
   `ocbm-host` for pushing a single adapter binary. The adapter and the phone are plugged into this
   server when the owner says so; do not assume either.
+- **Bench mode, every time (owner, 2026-11-26).** The server is short of memory: before booting the
+  emulator or a long build, run `tools/bench_mode.sh on` (pauses the owner's media stack and Immich,
+  stops the Gradle daemons); when the bench session ends, or before you stop work, run
+  `tools/bench_mode.sh off`, which resumes only what it paused. Never leave it on at the end of a
+  session. It never touches `cloudbridge-log` or EV Insights. Stop the Gradle daemons after every
+  app build (`gradle --stop`) even outside bench mode.

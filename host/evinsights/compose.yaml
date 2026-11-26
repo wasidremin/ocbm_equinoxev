@@ -8,6 +8,10 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     volumes:
       - database:/var/lib/postgresql/data
+    # The image's timescaledb-tune sized it for a server of its own (3.7 GB shared_buffers, 1.9 GB
+    # maintenance_work_mem): 3.4 GB resident on a 15 GB server that also runs the emulator bench, with
+    # swap full (2026-11-26). One car writes here; these override postgresql.conf in the volume.
+    command: [postgres, -c, shared_buffers=1GB, -c, effective_cache_size=3GB, -c, maintenance_work_mem=256MB]
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U evinsights -d evinsights']
       interval: 5s
