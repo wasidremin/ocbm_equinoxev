@@ -52,23 +52,22 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 
 ---
 
-### GM app and the car (Equinox EV) — re-checked 2026-11-02
+### GM app and the car (Equinox EV), re-checked 2026-11-26
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
 high-water mark: versionCode 270 (`4.0+boot-preload`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+Re-checked 2026-11-26 against the car's uploads through 2026-11-26 00:49 UTC (app 269): each item's
+own log line counted; the closed ones are listed at the end of this section with that evidence.
 
-- **The Wi-Fi link to the car's hotspot (T15): removed 2026-11-25, not yet published.** A day in the
-  car with it on: about 30 s to the picture when it linked, against about 13 s over USB with the tap,
-  and the adapter's join a start behind the hotspot's channel (`08_FUTURE_TASKS.md` T15). The car's
-  adapter still holds the join and the key until it is updated. To check after the next publish: the
-  first connect logs `retired Wi-Fi link: the adapter's join of the car's hotspot turned off written=true`
-  (unless the owner had already switched it off) and `… link key cleared status=0`, and no start waits
-  for the hotspot (`[sup] waited N s for the access point` gone). After the adapter's update: the box log
-  shows `[sup] removed /script/sta_uplink.conf (the retired Wi-Fi link)` once, and `MGMT_INFO` carries no
-  `"sta_uplink"`. *Seen on the bench, 2026-11-26 (emulator, the car's adapter):* both retired-link lines on
-the first connect and none on the next; the app's update (4 files) confirmed in its trial; the three files
-removed at start; the adapter's `wpa_supplicant` and `wpa_cli` (this repository's build) removed by hand.
-- **The boot preload on the car's adapter (T25 step 2a, bench-installed 2026-11-26, not published).**
+**In Play 270 (published 2026-11-26), waiting for a drive**
+
+- **The Wi-Fi link to the car's hotspot (T15): removed 2026-11-25, in Play 270.** A day in the car with
+  it on: about 30 s to the picture when it linked, against about 13 s over USB with the tap
+  (`08_FUTURE_TASKS.md` T15). The car's adapter is already clean: on the bench (2026-11-26) the app turned
+  its join off and cleared its key, its update removed the files, and its `wpa_supplicant` and `wpa_cli`
+  were removed by hand. To see in the car: no start waits for the hotspot (`[sup] waited N s for the
+  access point` gone) and `MGMT_INFO` carries no `"sta_uplink"`.
+- **The boot preload on the car's adapter (T25 step 2a; bench-installed 2026-11-26, its other files in Play 270).**
   The adapter carries `start_main_service.sh`, `radio_hal.sh`, `session_supervisor.sh`, `btd` and
   `iap2d` from the bench. To check in the car: a `[radio-boot] v1 … rc=0` line on every start, with `bt=`
   about 9,000; no start that never reaches the app (a hang shows as the adapter missing until the car
@@ -80,131 +79,38 @@ removed at start; the adapter's `wpa_supplicant` and `wpa_cli` (this repository'
   `docs/ops/01_RECOVERY.md`): a frozen adapter now reboots itself about a minute later. In the car: the
   `[start_main_service] hardware watchdog on` line at every start; a start that follows a freeze shows as
   a second boot within a drive.
-- **Which iPhone first, by schedule (2026-11-22, T35; Play 268).** The weekday-morning side works on the
-  car (2026-11-23): the adapter updated, `[btd] page timeout 3200 ms`, a missed phone 3.2 s, the owner's
-  phone first and answering 0.6 to 0.8 s after `page_start`, first picture 10.1 s and 16.1 s after attach.
-  Still to see: an evening or weekend start, where the app sends a changed order (`phones: list phone N
-  first for this start … the adapter took it`, `phone order kept for Bluetooth's next start` in the box
-  log) and the wife's phone connects first. Keep watching that a present phone never times out at 3.2 s.
-  2026-11-24 00:37 UTC (Monday 7:37 PM): `phones: list phone 1 first, as the adapter has it (0 of 2
-  schedule(s) cover now)`. Neither schedule covered a weekday evening, so the list's top phone went
-  first; that night it was the phone in the car, but on an evening with only the wife's phone it would
-  cost the 3.2 s miss. A phone has one window, so "weekends and evenings" is the list's top place plus
-  the other phone's weekday window, not a window of its own. That start also lost 11 s to the present
-  phone answering and resetting the SDP link twice (`answered and reset the link`), a known intermittent.
-- **After-drive summary (T28, built 2026-11-24, not yet on the car).** After a drive of a mile or more,
+- **After-drive summary (T28, built 2026-11-24, in Play 270).** After a drive of a mile or more,
   shift into Park: the card should show over CarPlay for 30 s, close at a tap or on leaving Park, and
   the log should say `drive summary: <m> m, <Wh> Wh, …` with its numbers matching the drive's record in
   Insights ▸ Trips once it closes (4 min later). A short hop logs `not shown (<m> m)`. The tap has not
   been checked anywhere yet.
-- **Drive card missing: the EV Insights recorder went quiet (2026-11-23, Play 268).** The owner: the card
-  "keeps on not showing up"; Settings off and on brought it back. The 2026-11-23 log: the recorder started
-  at 11:59:18 UTC, closed one segment at 11:59:20 (`telemetry segments: sending (heartbeat)`) and logged
-  nothing more through a 16-minute drive and a second start at 13:10, where a working drive logs `sending
-  (moving)` within a minute (2026-11-22 13:49). No `drive card: last mi` line all day, and the server has
-  had no EV Insights segment since 2026-11-22 20:38 UTC. The card draws only from the recorder's live
-  state (`DriveLive`), so it had nothing; the toggle showed the 30 s Settings sample, not the drive. The
-  recorder's thread did not crash (no handler swallows it, and the process lived), so it is probably
-  blocked; its faults go to the segment's `errors`, not the log, so the cause is not in hand. No
-  telemetry code changed since 264, whose drive worked.
-  Still silent on 2026-11-24 in the same process (the 00:37 and 11:58 UTC starts: no `[probe]` line).
-  *Built 2026-11-24, not yet published (269):* a `ev-recorder` entry on the status board (capturing,
-  whether the car was heard in the last 5 min, whether a drive is open); every recorder fault in the
-  log once (`recorder fault in <step>: <exception>`); and a watchdog in `ProbeService`
-  (`telemetry/RecorderHealth.kt`) that, when the recorder's thread misses its beat for 60 s, logs
-  `recorder thread stuck N s at <frames>` and starts a fresh recorder on a new thread, and restarts a
-  capture that is off while the car is connected. The Settings sample now says SAMPLE. On the AAOS
-  emulator the watchdog fired once on a slow start (33 s inside `CarPropertyManager.registerCallback`,
-  which is why the limit went from 30 to 60 s), and the fresh recorder was capturing 31 s later.
-  Check on the car: `ev-recorder` reading `capturing … drive open` during a drive, `drive card: last mi`
-  lines, and if it sticks again the `recorder thread stuck` line, which names the cause.
-- **Connect speed and the stall sentence (2026-11-22, Play 266).** The phone order is seen working:
-  after the owner moved their phone first, no `CONNECT_FAILED … status=0x04` and Bluetooth 4.7 to 5.3 s
-  after the subscribe, from 11.1 (T25). Still to see: the keeper's at-once retry after a missed scan, and
-  a stalled connect's sentence on the startup screen with `startup: stalled after …` in the log (T27).
-- **Low flash no longer marks the adapter unhealthy (2026-11-21, Play 264): seen working in the car
-  2026-11-22.** In the car with 263 the update's kept copies left 1.8 MB free, under ocbmd's 2 MB floor;
-  the app ran its recovery ladder on a working adapter and the update rolled back unconfirmed. With 264
-  the update to 44d032bbc5a5 (3.8 MB free before it) was confirmed 27 s after it was placed (`firmware
-  update confirmed … (health 0x31)`). Left open only until a second update confirms the same way.
-- **Route A: the phone keeps video on itself (2026-11-22, Play 264).** Apple's example stream in
-  Safari, parked: the phone sent CarPlay the audio only and never opened the Playback DataStream.
-  `setVideoPlaybackParameters` is `{fadeDuration: int}`. The one difference from enigy's working bench
-  is the "may not play" each session's phone hears at RECORD before the app's "may play" (T34, "In the
-  car with 264"). Not yet known whether the phone ignored the later word. 265 sends "may play" at RECORD when the
-  session starts parked and logs the phone's answers. Check in a 265 drive, parked from the start:
-  `[video] the app's subscribe says video may play: kept for RECORD`, `setVideoPlaybackAllowed(true,
-  idle)` at RECORD, `the phone's answer to setVideoPlaybackAllowed: …`, and then whether Safari's
-  example stream opens the Playback DataStream (`A6B27562`) and plays on the car. With 265 (2026-11-22) the phone heard
-  "may play" first and still only moved Safari's audio, never opening that stream (T34, "In the car with
-  265"). The phone's log on the bench says why: `CarPlay Video Overlay NOT
-  supported on Bonjour discovery based accessories`. Route A waits on the simplified connection flow
-  (address over iAP2), not yet planned (T34).
-- **The access point's DHCP server and hostapd's lines: benched, not yet in the car (Play 262,
-  2026-11-21, from enigy/ocbm).** BusyBox's `udhcpd` replaces the vendor's (it NAKs a phone with no
-  lease, and probes 250 ms instead of 2 s), the Wi-Fi teardown waits for the old server to exit, and
-  `hostapd` runs in the foreground so the box log shows each phone joining and leaving, with the
-  reason (`docs/wireless/01_BT_AND_RADIO.md`). Bench: the phone got its address 11 ms after its WPA
-  handshake, and the teardown was clean. To check in the first upload after it is published:
-  `udhcpd: sending ACK` after each `AP-STA-CONNECTED`; no `still there after SIGTERM`; and, the next
-  time a session drops, the `AP-STA-DISCONNECTED` line that says why.
-- **The same host re-attaching re-keys the A/V seams: benched, not yet in the car (Play 262,
-  2026-11-21, from enigy/ocbm 1.0.6).** The adapter half works on the bench (`ocbm_blip`); the app
-  still ends its own session on any link drop and recovers through its ladder in about a minute
-  (`docs/carplay/02_SESSION_LIFECYCLE.md`). In the car it shows as `HELLO … reattached=true`; none has
-  happened yet (every re-attach to 2026-11-18 was a replacement).
-- **Connect timeline: checked on the bench, not yet in the car (Play 261, 2026-11-21).**
-  Each wireless connect logs one `[timeline] v1` line under `[box:airplayd-wl]` at the first
-  picture (`docs/carplay/02_SESSION_LIFECYCLE.md`, "The connect timeline"). On the bench
-  (2026-11-21, the iPhone through the emulator) it printed once per connect, every key in order,
-  chips at about 1,650 ms. To check in the first upload after it is published:
-  - the line is there once per connect;
-  - its `first_frame` is close to the app's `startup: first-video`;
-  - `chip1_ms` and `chip2_ms` are about 1,650.
-  Then T25 picks its first speedup from it.
-- **Data budget: nothing checked on the car (Play 246).** The app
-  used about 1.25 GB a month of the car's allowance on telemetry; it now sends slim, thinned
-  telemetry (about 50 MB a month by replay) under a monthly limit
-  (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.5). To check on the car: Advanced ▸ "Car data
-  used this month" climbs by well under 1 MB on a short drive; the first uploaded log has a
-  `uploads now go over <network>` line that says how the car's modem and a phone hotspot each
-  present; a parked car sends a heartbeat and not a report a minute; a large log upload offered
-  "Send on Wi-Fi" goes out by itself on home Wi-Fi or the phone hotspot.
-- **Settings tabs and Capture driver display: nothing checked on the car (Play 248).** The Settings page
-  is split into CarPlay, Screen & Sound and Cluster tabs (call tests moved to Troubleshooting), and
-  a "Capture driver display" button (Cluster and Troubleshooting ▸ Capture) saves CarPlay's map
-  with the app's cards over it and uploads it like the other captures
-  (`host/gm_ccpa/docs/SETTINGS_AUDIT.md` "2026-11-12 deltas"). Emulator-checked: every tab renders,
-  and a capture saved the cards at their places (cards on black, as the bench has no map frame;
-  the bench's uploads were meant to go to an unreachable address, but that override did not
-  take, and this test capture, cards on black, reached the receiver as `20261112-180926`; the
-  emulator's upload address has been overridden properly since, as root, 2026-11-12 20:01). Open on the car: that a capture holds the
-  map behind the cards, and how the tabs read at the car's scale.
-- **Drive card v2 and the arrival chip: nothing checked on the car (Play 249).** After the
-  first drive with the card (Play 248: the history import worked, 147 records; the driver display
-  ran the whole drive), the owner asked for something that moves: the card now shows the last mile's
-  mi/kWh against the last ten, this month and lifetime, with a bar per mile, and the battery on
-  arrival sits at the foot of the turn card. Also fixed: a reroute ended the route for the card, and
-  the vs-usual verdict flickered at its band's edge (the verdict is gone). `14_LESSONS_LEARNED.md`
-  §13.6 "Redesign". Open on the car: the per-mile log lines (`drive card: last mi …`) against the
-  trip computer, the fold rules while driving, and a `route over` line at a route's real end, which
-  still gives the arrival estimate's error.
-- **Drive card: first design on the car 2026-11-12 (Play 247/248), superseded above.** A third driver-display
-  card (arrival battery during a route, this drive against the usual otherwise) and a one-time
-  import of a month of drive history pass their tests and a replay of 120 past drives, and the
-  card's sample faces were seen on the emulator; nothing has run with live data or on the car.
-  On the car: the log has `drive history: … added`; Insights ▸ Week shows October; the card
-  appears under now playing; with a route the log has `drive card: arrival …` and, at the end,
-  `drive card: route over …`, which gives the estimate's real error. Still open by design: the
-  route's legs by road class (waiting on Play 246's `gap=` lines) and getting the 16 repeated
-  routes of the history onto the car (needs a private channel).
-  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.6.
-- **EV Insights drive log: nothing checked on the car (Play 246).** The
-  recorder, the route and charge analysis and all five tabs are verified by JVM tests, a replay of
-  four weeks of probe data and the emulator only. On the car the log starts empty. To check after
-  the first few drives and one overnight charge: a drive appears on Last drive within minutes of
-  parking, a charge the head unit slept through is logged as one record, and the log survives an
-  app update. `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.4.
+
+**Still open**
+
+- **Which iPhone first, by schedule (T35, Play 268): a changed order not yet seen.** The weekday-morning
+  side works (2026-11-23: the owner's phone first, answering 0.6 to 0.8 s after `page_start`). Every
+  start since logged `phones: list phone 1 first, as the adapter has it` (19 to 2026-11-26), with 0 or 1
+  of the 2 schedules covering it, so the app has never sent a changed order and no start has had only
+  the wife's phone. A phone has one window, so "weekends and evenings" for the wife's phone is the
+  list's top place, not a window of its own; on an evening with only her phone the first page costs the
+  3.2 s miss. To see: `the adapter took it` in the app's log and `phone order kept for Bluetooth's next
+  start` in the box log.
+- **The voice button ends a CarPlay call (263, issue #4): half seen.** A press while a call rang answered
+  it (2026-11-21, `while a call rings -> answer sent=true`). Not yet pressed during a live call (`while a
+  call is up -> end sent=true`), nor during a waiting call. Owner: `docs/host/01_ANDROID_AND_AAOS.md`
+  "The steering-wheel call key".
+- **The same host re-attaching re-keys the A/V seams (Play 262): never happened in the car.** No
+  `HELLO … reattached=true` in any upload; every re-attach has been a replacement. Benched only
+  (`docs/carplay/02_SESSION_LIFECYCLE.md`).
+- **Video from the iPhone while parked (T34) and route A: blocked.** The phone keeps video on itself
+  ("CarPlay Video Overlay NOT supported on Bonjour discovery based accessories", its log on the bench);
+  route A waits on the simplified connection flow (address over iAP2), not yet planned.
+  `08_FUTURE_TASKS.md` T34.
+- **Log redaction lets a second Bluetooth address through (found 2026-11-12), still open 2026-11-26.**
+  Of the uploads' `"devices":[…]` lines from 2026-11-21 to 11-26, 30 of 64 carry part of an address
+  unmasked. Likely cause: the app writes the adapter's `MGMT_INFO` across several log lines, cutting an
+  address in two, and the redactor matches whole addresses only. Fix where the line is written (or
+  redact before wrapping), then check the next upload.
 - **EV Insights server (`host/evinsights`): the worker runs, the real car's trips are not usable
   yet.** Fixed 2026-11-12 (`1fc20f3`): the worker loaded a vehicle's whole history into memory, and
   at 3.3 million samples the kernel killed it on every pass (160 restarts in a day, the database at
@@ -216,392 +122,6 @@ removed at start; the adapter's `wpa_supplicant` and `wpa_cli` (this repository'
   1,084 emulator reports were imported as the car before the importer learned to skip them
   (2026-11-11); removing their rows has not been approved. The emulator's report files themselves
   were deleted from the receiver with the owner's approval.
-- **Log redaction lets a second Bluetooth address through (found 2026-11-12).** In the adapter's
-  `MGMT_INFO` JSON the first entry of `devices` is masked (`<REDACTED:MAC_ADDRESS:…>`), but the
-  second, in the same line, reaches the receiver only partly masked. It goes only to the owner's own
-  server, but the logs' rule is numbers only. Fix in the app's redactor (every MAC in a line, not the
-  first), then check the next upload's `phone_order` line.
-- **Cluster album art sometimes missing.** Seen 2026-10-27, 10-29 and 10-30, all on 225 or
-  earlier. Each title reached the car as two picture-less cards before its art, and an app restart
-  replayed the same sequence. 226 (`4.0+art-hold`, published 2026-10-30) holds a card up to 500 ms
-  for its picture. On its first drive (2026-11-02 morning) every title went out once, with its
-  picture, and the owner confirms the cluster showed the art. A second cause was found that afternoon, still on
-  226. The phone re-titled a playing item `<title> • <artist>` and back, without an art id. The app
-  read each change as a new track and dropped the picture, which iOS never resends. The 10-27 11:06
-  capture has the same shape. Fixed in 228 (2026-11-02, `isBylineVariant`), not yet seen on the car. A
-  third cause on 230 (2026-11-05 evening): the next episode of a Spotify podcast came as a title
-  with no picture at all, because the cover had not changed. The card stayed blank for six minutes.
-  From 231, the previous picture is kept when no new one is named within 250 ms. Next
-  step if it recurs: a granted `content://` art URI for `com.gm.rhmi`. Owner:
-  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16 (T13, moved there 2026-11-12) "A second mechanism"
-  and "A third mechanism".
-- **Vision launcher: misreads, logging-only.** iOS 27's square glyph can read UNKNOWN, so the
-  Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). The VERIFY_FAILED on
-  app taps that worked is explained (2026-11-03): on iOS 27 the glyph shows where the toggle leads,
-  so an app opened from Home reads as the Dashboard. Grid taps stop using the glyph in 229
-  (2026-11-04); a strip tap from such an app can still log VERIFY_FAILED. The moving-map fix from 227 is
-  now exercised: under a route on 2026-11-03 22:47:21, Maps from the strip read "using current
-  frame" and verified SUCCESS. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
-- **CarPlay-screen layout loop — fixed in 227, confirmed on the car 2026-11-02.** `syncChrome`
-  re-assigned the rail's `LayoutParams` on every root layout, which requested the next one. That
-  morning it ran at 60 Hz all session: 180 `requestLayout() improperly called` warnings a second,
-  96% of the upload. On 227 that afternoon there were five in 7.7 minutes of CarPlay, all while the
-  activity and its surface were first laid out (17:13:36–17:13:48). Owner:
-  `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §14.9 (correction).
-- **From the 2026-11-13 morning drive's log (app `4.0+walkaway-map`, 249).**
-  - *Open: five seconds lost at every start since a second iPhone was bonded.* The adapter pages
-    its bonds in stored order. The phone that is not in the car comes first, fails after 5 s
-    (`CONNECT_FAILED … status=0x04`, `SDP query failed: Host is down`), and only then is the owner's
-    phone tried. `bt-connected` has been 12.5 to 14.9 s after attach on every start since
-    2026-11-10, and the first picture about 21 s. Today's fix is Settings ▸ CarPlay ▸ Phones: move
-    the phone that drives to the top (T12, on the car since 2026-11-11). The second phone is the owner's
-    wife's (2026-11-22), so the owner chose a schedule over "last connected first": T35, Play 268
-    (2026-11-22), with a 3.2 s page timeout that halves what a missing phone costs.
-  - *Fixed, in the next build: a quiet screen rebuilt the video decoder.* The stall watchdog timed
-    from the last access unit queued, and the decoder often holds that one until the next arrives.
-    The first frame after a pause then looked like a stall of the pause's length (10.9 s and 6.2 s
-    today; 55 rebuilds since 2026-10-14), costing a keyframe and about a quarter of a second on the
-    first touch. `av/StallWatch` now times a run of unrendered access units and a pause ends the run.
-  - *Fixed, in the next build: track titles in the log.* `mbs card: metadata` and `np: track` wrote
-    the title (27 and 12 lines in this drive). They now write `titleTag`, a hash and a length. The
-    uploads already on the server still hold titles; nothing there has been deleted.
-  - *Seen, no action.* The arrival estimate was exact on its first measured route (`route over 13 m
-    from its end, battery 70% — last estimate 70%, first estimate 70%`). The codec error at
-    13:01:16 is the decoder losing its Surface when the driver went to the car's home screen; the
-    picture was back 189 ms after returning. The adapter's stock `/etc/udhcpd.conf` logs a parse
-    error for its option 43 line at every boot and hands out leases all the same. The adapter's
-    root filesystem has 4.3 MB free (`rootfs_pct` 67).
-- **Adapter updated and benched 2026-11-13 (T6, T7, T23 firmware).** The adapter that lives in the
-  car was updated on this server and tested with the real app on the emulator and the owner's
-  iPhone (`docs/ops/00_BUILD_AND_DEPLOY.md` item 9). Found and fixed on the way: `carplayd`
-  dropped its input connection on any `CH_INPUT` sub-frame over 64 bytes, which a location fix, a
-  `CMD_NAV_URL` with a query, or a `CMD_REQUEST_UI_URL` longer than 62 bytes would have triggered,
-  taking touch input with it. The app still has to be published.
-- **T7 and T23 work on the car (owner, 2026-11-18; T7 done 2026-11-23, charging stops planned on a long
-  drive).** EV routing in Apple Maps and Apple's turn
-  card on the driver display both work as expected, on the firmware the app delivers. Reported by
-  the owner from driving. The 2026-11-18 evening log agrees: `TX 0xA101` (772 B) carries the
-  charging (392 B) and consumption (288 B) models, min and max range, with no `0x1D03`; route
-  guidance and lane data reach the app. **T6** (car GPS) is on too and the phone accepted it: it
-  started location updates, took 7 and stopped them. Whether Maps uses the car's position is not
-  known. Owner: `08_FUTURE_TASKS.md` T6, T7, T23.
-- **HEVC render stalls — mitigated, cause unknown.** `HevcRenderer` releases the codec's output
-  buffers when a queued frame has not rendered for `STALL_RESET_MS` (3 s), and logs
-  `render stall Nms`. It fired on 2026-10-18 (25.0 s), 10-20 (4.2 s), 10-23 (47.8 s, 9.3 s),
-  11-02 (10.3 s, 12:35:14, two seconds before an Apple Maps route loaded) and 11-05 on 229 (4.0 s
-  at 12:14:02 and 3.3 s at 12:16:18, while driving, with no route). It fired again on 230 that
-  evening (14.5 s, reset at 22:20:12, Spotify in front, no route). It did not fire on the 10-27 to
-  10-30 drives. No root cause; the recovery is the watchdog. The 11-02 freeze happened during the
-  layout loop above, which may or may not matter.
-- **MFi first read returns 40113 instead of 945.** The settle-and-reread mitigation is
-  bench-measured (`mfi-i2c-local` `LEN_SETTLE_US`); the cause is unproven
-  (`docs/wireless/01_BT_AND_RADIO.md`). Keep mitigation distinct from diagnosis.
-- **Exported `--es run` verbs are ungated.** `MainActivity` is exported (it is the launcher) and
-  `handleRunExtra` acts on any caller's `run` extra, including `ocbm_forget`, `ocbm_stop`,
-  `export_log`, `upload_log` and `usb_announce`. Verified 2026-11-02:
-  `grep -n 'getStringExtra("run")' host/gm_ccpa/netprobe_app/app/src/main/java/wasidremin/gmccpa/MainActivity.kt`
-  → no caller or debuggable check before `handleRunExtra`.
-- **Re-arm dip (~2.3 s):** deferred until btd survives a host change
-  (`docs/carplay/02_SESSION_LIFECYCLE.md`). CLEAN bring-up is the present correctness path, not
-  evidence that restart latency is closed.
-- **Admission path not yet proven on the car:** the storage-only USB announce
-  (`14_LESSONS_LEARNED.md` §8). The warm-start relink after the 10-minute claim abort (§7 item 2)
-  worked on 2026-11-05.
-- **Calls while the app holds the assistant role:** no echo reported, not confirmed either way
-  (`docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel voice button starts Siri", formerly T14;
-  `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4). The 2026-11-02 call
-  (6 min 50 s, placed through Siri) peaked at -1 dBFS on the mic, against -8 to -17 dBFS before.
-  That is one peak, not a level trace, so it does not tell echo from a loud voice. The same call
-  logged 37 track underruns (about five a minute, as on 10-27), which the owner did not hear
-  ("not choppy"), so they are recorded in doc 13 §4 and not worked.
-- **Music muted for about 3 s after a call: fixed in 228 (2026-11-02), car-verified 2026-11-03.**
-  iOS restarted media 0.2 s after hang-up (2026-11-02 17:20:58.7). The call sink held media's
-  focus until its 3 s idle release (17:21:01.59), so the first 117 frames played at gain 0. CALL is
-  now released about 0.6 s after the telephony stream stops once `phone=0` has arrived. On
-  2026-11-03 all three calls released 0.46–0.57 s after `phone=0`. Owner:
-  `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-- **Music muted for about 4 s after an unanswered ring: fixed in 229 (2026-11-04).**
-  2026-11-03 22:52:03: the ringtone (ALERT) sink waited out its 3 s idle after `phone=0`. It now
-  takes CALL's release. Unverified on the car. Owner: `host/gm_ccpa/docs/13_AUDIO_ROUTING.md` §4.
-- **Album art in the cluster while full-screen Maps is in front: works on the car (230,
-  2026-11-05), misreads fixed in 231.** The app reads the screen every 2.5 s during a
-  route. It ends the cluster's navigation while Maps' turn card is showing and restarts it when Maps
-  leaves. On the first drive both top-bar launches switched the cluster at once. Three times the
-  card was lost for 5–15 s with Maps still in front and nothing touched. A lost card now needs 20 s
-  unless something was sent to the phone. Why the card's side edge failed is still open; the next
-  misread logs it. The adapter also forwards iOS's own RouteGuidanceVisibleInApp flag; it has
-  reached the car since 2026-11-08 but does not track Maps in front, so the screen reading stays
-  (checked 2026-11-12). Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16.
-- **Which iPhone connects (T12): on the car since 2026-11-11, not yet used.** The adapter reports
-  `"phone_order":true` in every upload from 2026-11-11 18:32 UTC, with two iPhones bonded, so the
-  controls below show; no upload has an order change or a Connect yet. Settings ▸ CarPlay ▸ Phones gets ↑/↓
-  for the connect order and Connect to move CarPlay to another paired phone (a wireless restart with
-  that phone first). Both need adapter firmware with `MGMT_SET_ORDER`/`MGMT_CONNECT_DEVICE`
-  (`tools/ocbm_install.sh --full`); until then the app shows a note instead. The app side is in 232
-  (published 2026-11-06). Owner: `08_FUTURE_TASKS.md` T12.
-- **CarPlay stayed dead after a walk-away with the accessories on (2026-11-06 17:53–18:01).** The box
-  ended the session when the phone left, but its `PROJ_MODE NONE` never reached the app. The app kept
-  "CarPlay live", so the walk-away reconnect never ran, and at 17:59 the screen came back black. Only an
-  app restart brought CarPlay back. From 233 (published 2026-11-07) the app asks the box when the phone has been out of
-  Bluetooth range for 20 s or the screen comes back with no picture, and ends a session the box no
-  longer has. Why the frame was lost is open; 233 logs resync bytes once a minute. Unverified on the
-  car. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
-- **Video from the iPhone while parked (T34, both halves built 2026-11-21, not yet on the car).** Needs
-  the app and the adapter firmware of the same build (Settings ▸ Advanced ▸ Adapter firmware); CarPlay ▸
-  Video is on by default. To check, parked: in Safari on the iPhone, play a video and choose the car from
-  AirPlay; it should play full screen over CarPlay, its sound on the car's media volume, with ✕ to
-  close; shifting out of Park should pause it and close the screen. The log shows `[video]` lines: the
-  phone's proxy offer, `the phone is told video may play`, `the phone queued an item`, `a tunnel is open`.
-  Protected video (the TV app's) stays on the phone. Bench limits and what has not run: `08_FUTURE_TASKS.md`
-  T34.
-- **The voice button ends a CarPlay call (263, issue #4).** The 2026-11-21 drive test (262) settled
-  the wheel: the voice button answered a ringing call, and the phone toggle, tried during the calls
-  ("the call buttons did nothing"), reached no app. The voice button during a call went to iOS
-  as Siri, which ignored all five presses. From 263 a press during a live call sends End instead; with
-  no call it is still Siri. To check on the car: a press during a call ends it
-  (`voice button (…) while a call is up -> end sent=true`, then the call's audio stops), and, when it
-  happens, a press during a waiting call answers the second call. Owner:
-  `docs/host/01_ANDROID_AND_AAOS.md` "The steering-wheel call key".
-- **Slow starts on 2026-11-07.** From the adapter attaching to CarPlay live: 20 s, 35 s, 19 s and 81 s,
-  6–9 s of each for the Allow tap. At 10:16 the phone reset the adapter's first Bluetooth connect and
-  the box's reconnect loop waited its fixed 10 s (`BACKOFF_START_SECS`) to try again. At 11:19 the
-  phone took the Wi-Fi handoff and never joined the AP; the app restarted the session itself after
-  55 s. From 233 (published 2026-11-07) that restart runs 15 s after a silent handoff (`04_SYSTEM_MODEL.md` §4b).
-  Adapter firmware, 2026-11-07 (on the adapter and bench-tested on the server; not yet driven): a reset page is retried 2 s later instead of 10 s,
-  and `hciconfig piscan`, which took 10.0 s in 22 of 177 bring-ups in the car's logs, is a raw
-  Write_Scan_Enable (`docs/wireless/01_BT_AND_RADIO.md`, ported from enigy/ocbm). Not done: why the
-  phone skipped the AP, which only its own log would show. The AP lease file is now kept across AP
-  restarts, which may matter there. Owner: `host/gm_ccpa/docs/04_SYSTEM_MODEL.md` §4b.
-- **Album art late enough to miss the card's wait (2026-11-07 11:22, "Believer").** The phone named
-  a cover with an empty image, then sent the real one 0.62 s after the title. The card's 0.5 s wait
-  ran out, so the car got two cards without art and then one with it inside 0.13 s. Four of the 140
-  title changes on record look like this (554–657 ms). From 233 (published 2026-11-07) the card waits up to 1 s. Unverified
-  on the car. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §16.
-- **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), in Play 234 (the pane's tap strip in
-  235).** On the 2026-11-08 drive the lyrics lookup, the top-bar line and Now Playing by URL were used;
-  the rest is not yet tried in the car.
-  - *Top-bar Now Playing, Maps, Spotify and Phone open by command:* `CMD_REQUEST_UI_URL` on an adapter
-    whose `HELLO_ACK` carries `CAP_UI_URL`, instead of finding and tapping the icon. Benched on the
-    owner's iPhone with the recorded picture: `nowplaying:`, `maps:`, `spotify:`, `mobilephone:` (and
-    `music:`, `podcasts:`, `messages:`) open their app; the full list is in `01_OCBM_PROTOCOL.md`.
-  - *Cluster:* the road text leads with the exit ("Exit 273 · …") now that the adapter asks for
-    ExitInfo; the app binds the cluster again by itself (3 times in 10 min at most) if the car ends the
-    session mid-route; and it holds Android's NAVIGATION app focus while a route is up with the cluster
-    setting on (`nav: focus` lines). What GM does with the focus is unknown.
-  - *Settings ▸ Calls ▸ Echo test / Voice test* (parked) for `13_AUDIO_ROUTING.md` §4's echo question.
-  - *Settings ▸ Display ▸ Media pane*: a pane with the song, its controls and timed lyrics, in any gear
-    (it is for the passenger). On the 2026-11-08 morning drive (app 234) it never showed: the setting was
-    Off, its default then (`pane: no split this session`), and the owner saw lyrics only in the top bar.
-    So since 2026-11-08 a tap on the glass right of the picture (x 2630–2914 under the top bar) shows or
-    hides it, the state is kept for the next drive, and the default is *Over CarPlay*: the pane is laid
-    over the right 30% of the picture and nothing is sent to the phone. On the car 2026-11-08 11:13 the
-    strip showed and hid the pane three times (Over CarPlay); the owner then chose Right, 40%, and the
-    next sessions started split (CarPlay 1482x960, pane 988 px wide). On 237 at 12:00:24 a strip tap
-    sent `CMD_VIEW_AREA 0` from the split: the box answered iOS with `updateViewArea` (500 ms), iOS
-    sent its burst of unchanged parameter sets, and the main picture carried on (58 fps 10 s later, no
-    decoder reset), so a host-sent switch is proven on the car.
-    At the owner's request (2026-11-08) the art became a thumbnail beside the title (a sixth of the
-    pane's height) and the lyrics show nine lines, three before the sung one and five after, in
-    larger type (Play 237). Choosing a side instead declares a second view area (`initial: true`
-    only when the pane was last showing), CarPlay on one side and the pane on the other; the strip then
-    sends `CMD_VIEW_AREA`. Benched on the owner's iPhone with the app's exact document
-    (2400x960, pane right 30%): iOS negotiated `viewAreas`, drew CarPlay in 1680x960 with the right 30%
-    black, and put its own area toggle at the top of the dock. The pane's full-screen button
-    (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one bench run that sent them
-    recorded no picture after the switch; the car answered it on 2026-11-08 (above): the video carries on.
-    At the owner's request (2026-11-11, Play 245, not yet seen on the car) the pane has the cover
-    blown up, blurred and dimmed behind it, as CarPlay's own Now Playing does, with the lyrics in
-    translucent white over it; and while the pane is hidden the strip shows the driver display's round
-    now-playing chip (cover in a progress ring) in place of the faint handle. Emulator only so far,
-    with drawn covers (white, saturated, near black). To check on the car: the lyrics against real
-    covers in daylight, and that the chip sits whole on the glass right of the picture.
-  - *Settings ▸ Screen & Sound ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
-    *Lyrics in the top bar* shows the current line there, in Park only.
-  - **Lyrics package (2026-11-14, `docs/ops/08_FUTURE_TASKS.md` T24).** Built and served; the car has
-    not yet downloaded one. To check on the car: that it downloads on home Wi-Fi or the hotspot
-    (`lyrics package: N songs … downloaded … over Wi-Fi` in the log), and that a song from the package
-    shows lyrics with *Look up online* set to Never. The owner's Spotify sign-in on the
-    server is done (2026-11-14).
-  - Connection time on the new adapter firmware (startup fixes 5389084/749f72c), bench only: when the
-    iPhone answered the first page, subscribe → first picture took 8.8 s and 10.4 s, against the car's
-    10.7 s median on the old firmware (44 sessions since 2026-10-15, `[startup]` lines; fastest 8.1 s).
-    Stage by stage the Bluetooth part is unchanged: discoverable 0.8 s after start, phone connected
-    1.6 s later (car 1.0 s), handoff 2.6 s after that (car 3.0 s). The bench's failed sessions are not
-    evidence either way: the phone was carried away from the server during them. Two cases are owed a
-    car check: a page timeout of 5.2 s whenever the first bonded iPhone (the box holds two) does not
-    answer, and the one split-document session that took 28 s from handoff to picture. App 234 logs the
-    same `[startup]` stages, so the car's numbers on the new firmware come straight from its uploads
-    (stage table: `host/gm_ccpa/docs/05_SESSION_FLOW.md` §9). First car session on it, 2026-11-08 07:50
-    (adapter reporting `UI_URL`): subscribe → first picture 13.1 s, against the 10.7 s median. Bluetooth
-    came up 3.0 s after subscribe and was discoverable 1.1 s later (the old median for the two together
-    was 3.1 s), the first-paged iPhone answered 1.5 s after that (no page timeout), the handoff took the
-    usual 3.0 s, and the picture came 4.5 s after the handoff (median 3.7 s). One session; not a trend.
-  - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".
-- **CarPlay map on the driver display: works on the car since Play 237 (2026-11-08); the app's own
-  cards over it (turn, now playing, call, lanes, Drive) are emulator-checked, partly seen on the car.**
-  (Heading corrected 2026-11-12; it read "in Play 236, not yet tried in the car".) The idea is openautolink's
-  ("driver-display maps", validated on a 2024 Blazer EV: GM VCU on AAOS 12L), re-implemented here
-  without their GPL-3.0 code. Settings ▸ Navigation ▸ CarPlay map on the driver display (off by
-  default): at subscribe the config declares Apple's cluster pair (`altDisplayPanels` +
-  `altVideoStreams`, `initialURL: maps:/car/instrumentcluster/map`) at the driver display's own size;
-  once CarPlay's picture is up the app opens `nav/DriverDisplayActivity` on that display, decodes
-  `CH_ALT_VIDEO` into it and sends `CMD_NAV_START`. The box half shipped 2026-07-12
-  (`docs/carplay/06_AV_PIPELINE.md` "VALIDATED 2026-07-12"). Emulator-checked on a simulated public
-  display (window opens there, the main screen keeps focus); the emulator's own cluster displays are
-  private, as the car's may be. Open, in order:
-  1. ~~Whether the Equinox's VCU on AAOS 14 shows the driver display to the app at all.~~ **Yes, 2026-11-08
-     11:11:** display 2, 2000x810, 220 dpi, flags `0x4083`, `window allowed` (also a private, off
-     2103x774 display 11, unused). On the first try the iPhone streamed the cluster map (HEVC 2000x810,
-     first frame 0.35 s after the window opened, 0 frames dropped): 62 frames before the window was
-     hidden 2.4 s later, then, after a head-unit restart, 640 frames over 33 s before it was hidden
-     again. Nothing GM sends the app says why a window is hidden. The first time was 0.6 s after
-     Turn-by-turn in the cluster started navigation, the second 12 s after it ended it, so the
-     owner's account of the driver display is the missing piece. Same day, a bug: that feature's
-     bootstrap took the map window for "the screen in front" and launched the CarAppActivity on the
-     driver display over the map (16:15:50); it now tracks main-display screens only.
-     **The owner's account (same day):** the CarPlay map showed briefly, with the speedometer still
-     visible, then GM's own Google map took the display back; cycling the driver display's pages did
-     not bring it back, and worse, the map page itself could not be reached again (a head-unit restart
-     followed at ~11:15). The window had been left stopped behind GM's map, and in the second session
-     the bootstrap's CarAppActivity too. So from 237: the window closes the moment it is hidden, so the
-     display is left exactly as GM had it; a long-press on the strip right of CarPlay opens it again
-     (`DriverDisplay.reopen`); and Turn-by-turn in the cluster stands down while this is on
-     (`ClusterNav.active`), as GM took the display back 0.6 s after its `navigationStarted`.
-     **First drive on 237, 2026-11-08 11:58–12:01:** the window opened 13 s after the app started and
-     stayed up for the whole upload (2,100 frames over 2 min, none dropped), including when a route
-     started at 12:00:38: Turn-by-turn in the cluster stood down (no `navigationStarted`), and nothing
-     took the display back.
-     **Evening drives on 237 (19:50–21:12):** the window opened in all four sessions, within a second
-     of CarPlay's picture. GM hid it twice: at 19:50:51, 6 s after a steering-wheel track skip, with
-     CarPlay still in front on the main screen, so nothing reopened it; and at 20:04:37, together with
-     the CarPlay screen itself, when GM's media service took the main screen. From 238
-     (`nav/GmClusterPageService`, openautolink's "GM page-return handling" re-implemented): a service in
-     GM's cluster category (`com.gm.intent.category.COREAPP`, `SupportedDisplay=IPC`) receives GM's
-     `APP_SELECTED`/`FULL_MAP_SELECTED` page events, logs each (`GM page event … state= type=`), and a
-     full-map page selected while no map window is open reopens it (at most 3 a minute). GM finds the
-     service at boot: one head-unit restart after install. Emulator-checked with synthetic events;
-     whether the Equinox sends them is the next upload's question.
-     **First drive on 238, 2026-11-08 19:35 local (00:35 UTC 11-09):** the map opened 13 s after the app
-     started and stayed up for the whole 5½-minute upload, none dropped; no page event arrived and none
-     was needed. The 237 process had run until the update replaced it, so whether the head unit was
-     restarted (needed for GM to find the service) is not known from the log.
-     **First drive on 239, 2026-11-09 11:58–12:14 UTC:** the head unit had been restarted (GM sent
-     `SERVICE_READY` at 11:59:02), and the page events arrive. Leaving the map page sends
-     `FULL_MAP_SELECTED state=0` then `ZONE3_SELECTED state=1`, and GM hides the window; selecting it
-     again sends `FULL_MAP_SELECTED state=1 type=NATIVE`, and the map came back within 30 ms
-     (12:12:16). Two faults, fixed in 240: (a) Turn-by-turn in the cluster stood down for the whole
-     drive because it keyed on the setting, so off the map page the cluster had no turns
-     (`bound=false` on every turn); it now stands down only while CarPlay's map holds the display
-     (`DriverDisplay.holdsDisplay`), binds when GM hides the window (sharing the 3-in-10-min rebind
-     budget), and ends navigation before the window is opened again. (b) `ZONE3_SELECTED state=1`
-     (GM's side zone) was taken as the map page and reopened the window, which GM hid 1.2 s later;
-     only `FULL_MAP_SELECTED`/`APP_SELECTED` return the map now (`DriverDisplay.RETURN_ACTIONS`).
-     **First drive on 240, 2026-11-09 13:40–13:41 UTC:** leaving the map page bound the cluster turns
-     (bound, `navigationStarted`, the owner saw them). But the bootstrap returned CarPlay to the front,
-     whose resume reopened the map over the other page; the turns stood down for it and GM hid it
-     1.2 s later (fixed in 241: `DriverDisplay.showOnResume` does not reopen once GM reported the
-     map page left). Then GM took navigation focus 12 ms after `navigationStarted`, and while the
-     turns ran it never sent `FULL_MAP_SELECTED` again: only `ZONE3_SELECTED` 0/1 every ~2 s as the
-     owner looked for the map page, which they could not get back. On 239, with no turns running,
-     the map page came back with `FULL_MAP_SELECTED state=1`. So GM seems to drop or replace the map
-     page while another app navigates. From 241 every page event also logs its extras' values
-     (numbers and enum names), to tell GM's views apart; the long-press on the strip right of
-     CarPlay still reopens the map and ends the turns first.
-     **Evening drive on 240, 2026-11-09 22:33–22:41 UTC, confirms it:** GM's map page came back
-     (`FULL_MAP_SELECTED state=1`, the map then stayed up 8–18 s until the owner left it) three times,
-     each after full-screen Apple Maps had ended the cluster turns, and never while they ran, through
-     a dozen `ZONE3_SELECTED` flips. Three long-presses ended the turns, but GM covered the window
-     ~1 s later (the driver was on another page) and the turns restarted 0.2 s after that, so the
-     map page never appeared. Fixed in 241: for 20 s after the long-press a covered window keeps
-     the turns off, so the map page can be picked; leaving the map page, or 20 s without picking it,
-     brings them back (`DriverDisplay.mapWantedUntil`). The bootstrap's resume reopen recurred at
-     22:35:31 (fixed in 134c297). GM never asked for a cluster session: all 16 Templates Host
-     sessions on record are `displayType=0`, though the service declares `FEATURE_CLUSTER`, so
-     CarPlay's map cannot ride GM's own map page through the Car App Library.
-     **Turn card, Play 241 (owner's ask, 2026-11-09):** CarPlay's cluster map stream carries the map
-     only (the instruction card is a separate Apple content type, `maps:/car/instrumentcluster/
-     instructioncard`, one per stream; a second cluster stream is type 112, never seen on CCPA and
-     box work). So the app draws its own card over the map window (`nav/TurnCard`, default on):
-     the turn's glyph, distance, road and (until 2026-11-10) arrival time from `ClusterNav.route`. It needs no GM
-     navigation, so on the map page the driver gets the map and the turns without losing the page.
-     Emulator-checked with the preview's sample card; open: size and place on the car.
-     **Turn card area (owner, 2026-11-10, after the first 241 drive):** inside the directions area
-     the card covered too much of the map, and the strip left of it, above the gauges (they take
-     the bottom third), was empty. Play 242 gave the card an area of four edge sliders.
-     **Driver display layout (owner interview, 2026-11-10; Play 243):** the sliders are
-     replaced by Settings ▸ Driver display, a miniature on which each card is dragged and sized
-     (`nav/ClusterLayout`, `ClusterLayoutEditor`). The turn card (`nav/TurnCard`) is a pill far from
-     the turn and a full card inside 800 m, with a countdown bar, a green exit sign and the turn
-     after; the arrival line is gone because Apple's map draws one. New: a now-playing card on the
-     right (`nav/MediaCard`; open with no route, folded to the cover during one), which a call takes
-     over, and lane arrows under the turn card (default off). Cards follow the car's day and night.
-     Lane guidance is the first thing in the app to push metadata tier `extended`
-     (`VehicleConfigYaml.renderAdapter(metadataTier)`); it switches itself off after a session with
-     no metadata. Emulator-checked with the preview's samples. Open, all on the car: whether the
-     default places clear the gauges and Apple's speed-limit sign; the drag in the editor (the bench
-     has no touch); whether this phone accepts `extended` on the wired arm; and the sign of a lane
-     angle (drawn positive = right; the `cluster` log line `lanes: … highlight=` settles it).
-     **Play 244 (2026-11-11, from the owner's photo of the car):** Dock the turn card puts
-     it in the bottom-right corner as a panel in the look of GM's gauges (`TurnCard.drawDocked`,
-     `ClusterLayout.dock`), and the folded now-playing pill keeps the title beside the cover. Open
-     on the car: whether the docked default (corner at 70%, 54%, taken from that one photo) lines
-     up with the gauges' top edge and clears Apple's arrival strip.
-     **Play 246 (2026-11-11, from the owner's drive on 245 and its log):** three things.
-     (1) Lanes appeared but none was marked. The log had `status=[0, 0, 2] highlight=[null, null, 45]`,
-     so the phone did mark them; the card looked for the highlight among the lane's other angles,
-     where the phone does not repeat it, and drew every arrow faint. `TurnCard.laneArrows` now
-     draws the highlight itself. The `lanes:` log line also carries `angles=` so the next drive
-     shows what the others hold. (2) The turn after was missing when two turns came close
-     together: in the docked card the lanes row replaced the "Then" row. They now share the row,
-     and the gap falls back to raw metres (`betweenMeters`). The `turn #` log line records
-     `gap=`/`nextGap=`, because which entry carries DistanceBetweenManeuver is still unconfirmed
-     on this car. (3) A road that starts with a route designator is drawn as its sign
-     (`nav/RouteShield`: Interstate, U.S., the default state circle, county), read from the text
-     the phone sends. Open on the car: all three by eye (the bench could not render them, the
-     emulator kept crashing), what the phone's road text really looks like (`marker=` in the
-     `turn #` line says whether one was recognised, never the name), and per-state markers.
-     **Black driver display after a quick walk-away (Play 248, 2026-11-12 23:12–23:15 UTC), fixed in 249, not yet seen on the car:**
-     GM left its map page as the car went off (`FULL_MAP_SELECTED state=0`, the window closed), the
-     phone dropped 17 s later, GM selected the map page again 17 s after that, and CarPlay came back
-     at 23:13:45 — but the map never opened, then or at the next reconnect (23:15:23), and GM's
-     cluster turns took the display instead. Cause: the session's end called `DriverDisplay.close`,
-     which forgets the declared display and size; only a subscribe sets them, and a walk-away
-     reconnects on the same adapter link without one, so every `show` returned at once. Now a
-     session end only closes the window (`endSession`) and the declaration lives as long as the
-     adapter link; the map page picked while CarPlay is down waits for the session's first picture;
-     at that picture the map opens unless GM last reported another page (`showAtSessionStart`);
-     GM's `SERVICE_READY` resets that. To check on the car: after a walk-away the log has
-     `opening the map window … (CarPlay's picture is up …)`.
-     **What the 245 drive already answered (recorded 2026-11-12):** the phone accepts the pushed
-     `extended` tier on this car's session (lane records arrived; the Equinox runs the AirPlay-tunnel
-     arm, not the wired one), so lane guidance needs no box change. The highlight is carried only in
-     `laneAngleHighlight`, never repeated in `laneAngles` (`docs/carplay/05_METADATA_AND_CONTROLS.md`).
-     **Sign confirmed on the 2026-11-12 drive: negative = left** (a left turn's preferred lane at −90),
-     which is how the app draws it.
-  2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
-     speedometer and gauges stay visible over the window (they must), and whether GM's own turn
-     icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
-     it may conflict with Turn-by-turn in the cluster). Their first enable also needed a head-unit
-     restart (End Call held ~30 s while parked).
-  3. ~~The map's safe area is the whole display for now.~~ **Directions area, Play 239 (2026-11-09,
-     not on the car):** Settings ▸ Navigation ▸ Directions area on the driver display sets four edge
-     margins (0–35% each) that become the cluster stream's `safeArea` at the next subscribe
-     (`DriverDisplay.safeArea`, `VehicleConfigSpec.clusterSafe`); the map still fills the display.
-     The box needed nothing: it already carries a real alt inset into `/info` and arms `viewAreas`
-     for it (`vehicle_config.rs::the_gm_apps_driver_display_map_arms_the_alt_screen`). "GM layout"
-     sets 28/9/15/17%, i.e. 560,72–1700,674, openautolink's Blazer default of 558,70–1694,668; Reset
-     returns to the whole display. Each change is outlined on the driver display for 30 s while the
-     map window is open (emulator-checked on a simulated 1600x600 display). Open: whether CarPlay
-     moves its turn card and arrival time inside it on the car, and which margins clear the Equinox's
-     gauges.
-  4. **Held for adapter firmware (owner, 2026-11-08):** two more openautolink ideas need the box, so
-     they wait with car GPS (the NMEA item below). CarPlay's status-bar edge (Auto / Bottom / Driver
-     side): `info.rs::view_areas` hardcodes `viewAreaStatusBarEdge: 0` on both main areas; it needs a
-     parsed `statusBarEdge` on `ViewAreaEntry` and an app setting. The car's make, model and year in
-     Maps' vehicle name: param 20 subs 1/6 (and 8 `MapsDisplayName`) are the box's constant `name`
-     (`message.rs` ~:695), so it needs the C-6 `accessoryName` bound wired into the tunnel Identify,
-     where a rejected change costs the whole session (`0x1D03`). Both are now planned as `08_FUTURE_TASKS.md` T21 (the name)
-     and T22 (the status bar edge).
 - **USB bridge, for no Allow tap: blocked on the stock Equinox (2026-11-12).** The car's
   unknown-sources screen is the same "not supported" stub as the emulator's: every connect since 232
   logs `usb bridge: not installed, unknown-sources screen …Stubs$ManageExternalSourcesActivityStub`,
@@ -617,28 +137,75 @@ removed at start; the adapter's `wpa_supplicant` and `wpa_cli` (this repository'
   side (Settings ▸ Advanced ▸ USB bridge, Open Files, the bridge transport) is in 232 (published
   2026-11-06). Owner:
   `08_FUTURE_TASKS.md` T15; `docs/host/01_ANDROID_AND_AAOS.md` "The USB bridge".
-- **Top-bar Now Playing tile: works on the car (228, 2026-11-03), too slow from an app.** The
-  iOS 26 template matched on iOS 27.2 (0.919), and the tile shows the album art. From full-screen
-  Maps it took two toggles and about 3 s, which the owner flagged. 229 (2026-11-04) ends each
-  toggle's wait once it has landed (expect about 1.5 s to the icon tap); unverified on the car.
-  From 234 (published 2026-11-07), on an adapter whose `HELLO_ACK` carries `CAP_UI_URL`, the tile sends
-  `nowplaying:` instead and needs no toggle or icon; the vision launch remains for older adapters.
-  Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §15 and §9 item 4.
-- **4½ min without CarPlay at the 2026-11-04 start (asked the owner).** The 228 process, alive since
-  the night before, raised the USB permission dialog at 11:58:53, 11:59:24 and 11:59:54 UTC. All
-  three came back `granted=false` (2.4 s, 3 s, and 3 s after parking at 12:02:12). The Play update
-  to 229 restarted the app at 12:03:02. Its dialog was granted in 1.7 s, and CarPlay was live at
-  12:03:33. Whether the owner dismissed the dialogs or the car refused them is not known. The same
-  log showed the EV status pusher retrying every 15 s against the dead link (115 lines in
-  29 min). Since 230 (2026-11-05) it pushes only while subscribed. 229 did it again on the morning
-  of 11-05 (every 15 s from 11:35 to 11:58); 230 had no failed push in its first 16 minutes. The
-  11-05 start was quick: the screen came on at 11:58:22, the dialog was granted 3.4 s after the
-  relink asked, and CarPlay was live at 11:58:40.
-- **Noted on the 2026-10-28 drive, not yet written up anywhere:** about 17 s to the adapter's HELLO
-  after a driver restart; a USB claim that stayed after the adapter was unplugged; Calibration runs
-  `ScreenModel.measureUi` on the UI thread (0.3–1 s of jank).
+- **Vision launcher: misreads, logging-only.** iOS 27's square glyph can read UNKNOWN, so the
+  Home button logs UNVERIFIED (re-cut the template from an iOS 27 capture). The VERIFY_FAILED on
+  app taps that worked is explained (2026-11-03): on iOS 27 the glyph shows where the toggle leads,
+  so an app opened from Home reads as the Dashboard. Grid taps stop using the glyph in 229
+  (2026-11-04); a strip tap from such an app can still log VERIFY_FAILED. The moving-map fix from 227 is
+  now exercised: under a route on 2026-11-03 22:47:21, Maps from the strip read "using current
+  frame" and verified SUCCESS. Owner: `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §9 item 4.
+- **MFi first read returns 40113 instead of 945.** The settle-and-reread mitigation is
+  bench-measured (`mfi-i2c-local` `LEN_SETTLE_US`); the cause is unproven
+  (`docs/wireless/01_BT_AND_RADIO.md`). Keep mitigation distinct from diagnosis.
+- **Exported `--es run` verbs are ungated.** `MainActivity` is exported (it is the launcher) and
+  `handleRunExtra` acts on any caller's `run` extra, including `ocbm_forget`, `ocbm_stop`,
+  `export_log`, `upload_log` and `usb_announce`. Verified 2026-11-02:
+  `grep -n 'getStringExtra("run")' host/gm_ccpa/netprobe_app/app/src/main/java/wasidremin/gmccpa/MainActivity.kt`
+  → no caller or debuggable check before `handleRunExtra`.
+- **Re-arm dip (~2.3 s):** deferred until btd survives a host change
+  (`docs/carplay/02_SESSION_LIFECYCLE.md`). CLEAN bring-up is the present correctness path, not
+  evidence that restart latency is closed.
 - **`tools/ocbm_push.sh` runs only on macOS.** It uses BSD `stat -f%z` and `md5 -q`, and the owner
   has no Mac. Install with `tools/ocbm_install.sh` meanwhile.
+- **Calibration runs `ScreenModel.measureUi` on the UI thread** (0.3 to 1 s of jank, noted on the
+  2026-10-28 drive). Not re-checked.
+
+**Closed 2026-11-26: seen working in the car** (owner, 2026-11-26: the built items have been tested in
+the car; the uploads through 2026-11-26 00:49 UTC agree, counts below). Reopen any that recurs.
+
+- *EV Insights recorder (Play 269):* the `ev-recorder` status line on every start 2026-11-24 to 11-26,
+  `drive card: last mi` on every drive to 2026-11-25, no `recorder thread stuck` and no `recorder fault`.
+- *The EV Insights drive log (246):* `drive card: drive log read, 89 drives usable, 9 repeated routes`
+  (2026-11-26).
+- *Drive card v2, the arrival chip and the first design (247 to 249):* 186 `drive card: last mi` lines
+  (2026-11-13 to 11-25), 29 `drive card: arrival` and 14 `drive card: route over` (2026-11-12 to 11-18),
+  `drive history: … added` (2026-11-12).
+- *The stall sentence (T27, 266):* `startup: stalled after …` on 2026-11-24 and 11-25. (The keeper it was
+  paired with went with T15.)
+- *Low flash no longer marks the adapter unhealthy (264):* 12 `firmware update confirmed` from 2026-11-15
+  to 11-23.
+- *The access point's DHCP server and hostapd's lines (262):* `sending ACK` after each of 43
+  `AP-STA-CONNECTED` and 10 `AP-STA-DISCONNECTED` with their reasons (2026-11-21 to 11-26); no `still
+  there after SIGTERM`.
+- *The connect timeline (261):* 37 `[timeline] v1` lines (2026-11-21 to 11-26), the base of T25's work.
+- *Data budget (246):* 90 `uploads now go over <network>` lines (2026-11-12 to 11-26).
+- *Settings tabs and Capture driver display (248):* 15 `driver display captured 2000x810` (2026-11-12 to
+  11-16).
+- *CarPlay's map on the driver display (237 to 249):* `opening the map window` 135 times (2026-11-08 to
+  11-26), GM's page events, the turn card and lanes (91 `lanes: … highlight=` lines; negative is left).
+  Its history moved to `docs/host/02_GM_AAOS_FIELD_REFERENCE.md` §9. Still to build, not open here:
+  the status-bar edge and the car's name in Maps (`08_FUTURE_TASKS.md` T21, T22).
+- *The enigy ports and the media pane (234, 235, 245) and the lyrics package (T24):* used in the car;
+  `lyrics package: up to date (7811 songs)` on each day's first start since 2026-11-17. History moved to
+  `docs/host/02_GM_AAOS_FIELD_REFERENCE.md` §10.
+- *Which iPhone connects (T12):* the owner reordered the phones from Settings ▸ CarPlay ▸ Phones
+  (2026-11-08, 11-15, 11-16, 11-22), and the order is what the adapter pages.
+- *CarPlay dead after a walk-away (233):* the walk-away reconnect ran on six days from 2026-11-15 to
+  11-25 (`walk-away: driving reconnect — paging confirmed`).
+- *HEVC render stalls:* none since 2026-11-13 (227 `render stall` lines from 2026-09-24 to 11-13), when
+  `av/StallWatch` stopped timing pauses as stalls.
+- *The 2026-11-13 morning drive's findings:* the phone order (T12, T35), the decoder rebuilt after a quiet
+  screen (`StallWatch`, above) and track titles in the log (`titleTag`) are done.
+- *The adapter updated on 2026-11-13, and T6, T7, T23:* in the car since; EV routing and Apple's turn
+  card work (owner, 2026-11-18). Whether Maps uses the car's position is still unknown (T6).
+- *The storage-only USB announce (admission path):* `announce configured` on 111 starts from 2026-09-30
+  to 11-26.
+- *Music muted after a call (228) and after an unanswered ring (229); album art in the cluster with
+  full-screen Maps (230, 231); album art missing or late (226, 228, 231, 233); the top-bar Now Playing
+  tile (now `nowplaying:` by URL, 234); the CarPlay-screen layout loop (227):* no fault reported since.
+- *Calls while the app holds the assistant role:* no echo reported.
+- *Slow starts on 2026-11-07, 4½ minutes without CarPlay on 2026-11-04, the 2026-10-28 drive's notes:*
+  overtaken by T25's work and the connect timeline; the HELLO time is part of T25.
 
 ### Box daemons — `ocbmd` / `carplayd` / `iap2d` / the supervisor
 

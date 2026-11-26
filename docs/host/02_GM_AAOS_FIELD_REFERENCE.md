@@ -280,3 +280,241 @@ speaks OCBM.
    same pattern (radio keeps the old BT bond / hotspot state)?
 3. Whether GM's "USB not supported" handler fires on the composite at all when it is armed *before*
    first enumeration (RWerksman: no; Razorfin: once — but his arms on the second pass).
+
+## 9. CarPlay's map on the driver display, in the car (Play 236 to 249, 2026-11-08 to 11-12)
+
+Moved here from `docs/ops/04_OPEN_ITEMS.md` on 2026-11-26, when the feature was closed there as working in
+the car; it is the record of what GM's driver display does with an ordinary app's window and page events.
+Settings and current behaviour: `host/gm_ccpa/docs/SETTINGS_AUDIT.md` and `host/gm_ccpa/docs/14_LESSONS_LEARNED.md`.
+
+- **CarPlay map on the driver display: works on the car since Play 237 (2026-11-08); the app's own
+  cards over it (turn, now playing, call, lanes, Drive) are emulator-checked, partly seen on the car.**
+  (Heading corrected 2026-11-12; it read "in Play 236, not yet tried in the car".) The idea is openautolink's
+  ("driver-display maps", validated on a 2024 Blazer EV: GM VCU on AAOS 12L), re-implemented here
+  without their GPL-3.0 code. Settings ▸ Navigation ▸ CarPlay map on the driver display (off by
+  default): at subscribe the config declares Apple's cluster pair (`altDisplayPanels` +
+  `altVideoStreams`, `initialURL: maps:/car/instrumentcluster/map`) at the driver display's own size;
+  once CarPlay's picture is up the app opens `nav/DriverDisplayActivity` on that display, decodes
+  `CH_ALT_VIDEO` into it and sends `CMD_NAV_START`. The box half shipped 2026-07-12
+  (`docs/carplay/06_AV_PIPELINE.md` "VALIDATED 2026-07-12"). Emulator-checked on a simulated public
+  display (window opens there, the main screen keeps focus); the emulator's own cluster displays are
+  private, as the car's may be. Open, in order:
+  1. ~~Whether the Equinox's VCU on AAOS 14 shows the driver display to the app at all.~~ **Yes, 2026-11-08
+     11:11:** display 2, 2000x810, 220 dpi, flags `0x4083`, `window allowed` (also a private, off
+     2103x774 display 11, unused). On the first try the iPhone streamed the cluster map (HEVC 2000x810,
+     first frame 0.35 s after the window opened, 0 frames dropped): 62 frames before the window was
+     hidden 2.4 s later, then, after a head-unit restart, 640 frames over 33 s before it was hidden
+     again. Nothing GM sends the app says why a window is hidden. The first time was 0.6 s after
+     Turn-by-turn in the cluster started navigation, the second 12 s after it ended it, so the
+     owner's account of the driver display is the missing piece. Same day, a bug: that feature's
+     bootstrap took the map window for "the screen in front" and launched the CarAppActivity on the
+     driver display over the map (16:15:50); it now tracks main-display screens only.
+     **The owner's account (same day):** the CarPlay map showed briefly, with the speedometer still
+     visible, then GM's own Google map took the display back; cycling the driver display's pages did
+     not bring it back, and worse, the map page itself could not be reached again (a head-unit restart
+     followed at ~11:15). The window had been left stopped behind GM's map, and in the second session
+     the bootstrap's CarAppActivity too. So from 237: the window closes the moment it is hidden, so the
+     display is left exactly as GM had it; a long-press on the strip right of CarPlay opens it again
+     (`DriverDisplay.reopen`); and Turn-by-turn in the cluster stands down while this is on
+     (`ClusterNav.active`), as GM took the display back 0.6 s after its `navigationStarted`.
+     **First drive on 237, 2026-11-08 11:58–12:01:** the window opened 13 s after the app started and
+     stayed up for the whole upload (2,100 frames over 2 min, none dropped), including when a route
+     started at 12:00:38: Turn-by-turn in the cluster stood down (no `navigationStarted`), and nothing
+     took the display back.
+     **Evening drives on 237 (19:50–21:12):** the window opened in all four sessions, within a second
+     of CarPlay's picture. GM hid it twice: at 19:50:51, 6 s after a steering-wheel track skip, with
+     CarPlay still in front on the main screen, so nothing reopened it; and at 20:04:37, together with
+     the CarPlay screen itself, when GM's media service took the main screen. From 238
+     (`nav/GmClusterPageService`, openautolink's "GM page-return handling" re-implemented): a service in
+     GM's cluster category (`com.gm.intent.category.COREAPP`, `SupportedDisplay=IPC`) receives GM's
+     `APP_SELECTED`/`FULL_MAP_SELECTED` page events, logs each (`GM page event … state= type=`), and a
+     full-map page selected while no map window is open reopens it (at most 3 a minute). GM finds the
+     service at boot: one head-unit restart after install. Emulator-checked with synthetic events;
+     whether the Equinox sends them is the next upload's question.
+     **First drive on 238, 2026-11-08 19:35 local (00:35 UTC 11-09):** the map opened 13 s after the app
+     started and stayed up for the whole 5½-minute upload, none dropped; no page event arrived and none
+     was needed. The 237 process had run until the update replaced it, so whether the head unit was
+     restarted (needed for GM to find the service) is not known from the log.
+     **First drive on 239, 2026-11-09 11:58–12:14 UTC:** the head unit had been restarted (GM sent
+     `SERVICE_READY` at 11:59:02), and the page events arrive. Leaving the map page sends
+     `FULL_MAP_SELECTED state=0` then `ZONE3_SELECTED state=1`, and GM hides the window; selecting it
+     again sends `FULL_MAP_SELECTED state=1 type=NATIVE`, and the map came back within 30 ms
+     (12:12:16). Two faults, fixed in 240: (a) Turn-by-turn in the cluster stood down for the whole
+     drive because it keyed on the setting, so off the map page the cluster had no turns
+     (`bound=false` on every turn); it now stands down only while CarPlay's map holds the display
+     (`DriverDisplay.holdsDisplay`), binds when GM hides the window (sharing the 3-in-10-min rebind
+     budget), and ends navigation before the window is opened again. (b) `ZONE3_SELECTED state=1`
+     (GM's side zone) was taken as the map page and reopened the window, which GM hid 1.2 s later;
+     only `FULL_MAP_SELECTED`/`APP_SELECTED` return the map now (`DriverDisplay.RETURN_ACTIONS`).
+     **First drive on 240, 2026-11-09 13:40–13:41 UTC:** leaving the map page bound the cluster turns
+     (bound, `navigationStarted`, the owner saw them). But the bootstrap returned CarPlay to the front,
+     whose resume reopened the map over the other page; the turns stood down for it and GM hid it
+     1.2 s later (fixed in 241: `DriverDisplay.showOnResume` does not reopen once GM reported the
+     map page left). Then GM took navigation focus 12 ms after `navigationStarted`, and while the
+     turns ran it never sent `FULL_MAP_SELECTED` again: only `ZONE3_SELECTED` 0/1 every ~2 s as the
+     owner looked for the map page, which they could not get back. On 239, with no turns running,
+     the map page came back with `FULL_MAP_SELECTED state=1`. So GM seems to drop or replace the map
+     page while another app navigates. From 241 every page event also logs its extras' values
+     (numbers and enum names), to tell GM's views apart; the long-press on the strip right of
+     CarPlay still reopens the map and ends the turns first.
+     **Evening drive on 240, 2026-11-09 22:33–22:41 UTC, confirms it:** GM's map page came back
+     (`FULL_MAP_SELECTED state=1`, the map then stayed up 8–18 s until the owner left it) three times,
+     each after full-screen Apple Maps had ended the cluster turns, and never while they ran, through
+     a dozen `ZONE3_SELECTED` flips. Three long-presses ended the turns, but GM covered the window
+     ~1 s later (the driver was on another page) and the turns restarted 0.2 s after that, so the
+     map page never appeared. Fixed in 241: for 20 s after the long-press a covered window keeps
+     the turns off, so the map page can be picked; leaving the map page, or 20 s without picking it,
+     brings them back (`DriverDisplay.mapWantedUntil`). The bootstrap's resume reopen recurred at
+     22:35:31 (fixed in 134c297). GM never asked for a cluster session: all 16 Templates Host
+     sessions on record are `displayType=0`, though the service declares `FEATURE_CLUSTER`, so
+     CarPlay's map cannot ride GM's own map page through the Car App Library.
+     **Turn card, Play 241 (owner's ask, 2026-11-09):** CarPlay's cluster map stream carries the map
+     only (the instruction card is a separate Apple content type, `maps:/car/instrumentcluster/
+     instructioncard`, one per stream; a second cluster stream is type 112, never seen on CCPA and
+     box work). So the app draws its own card over the map window (`nav/TurnCard`, default on):
+     the turn's glyph, distance, road and (until 2026-11-10) arrival time from `ClusterNav.route`. It needs no GM
+     navigation, so on the map page the driver gets the map and the turns without losing the page.
+     Emulator-checked with the preview's sample card; open: size and place on the car.
+     **Turn card area (owner, 2026-11-10, after the first 241 drive):** inside the directions area
+     the card covered too much of the map, and the strip left of it, above the gauges (they take
+     the bottom third), was empty. Play 242 gave the card an area of four edge sliders.
+     **Driver display layout (owner interview, 2026-11-10; Play 243):** the sliders are
+     replaced by Settings ▸ Driver display, a miniature on which each card is dragged and sized
+     (`nav/ClusterLayout`, `ClusterLayoutEditor`). The turn card (`nav/TurnCard`) is a pill far from
+     the turn and a full card inside 800 m, with a countdown bar, a green exit sign and the turn
+     after; the arrival line is gone because Apple's map draws one. New: a now-playing card on the
+     right (`nav/MediaCard`; open with no route, folded to the cover during one), which a call takes
+     over, and lane arrows under the turn card (default off). Cards follow the car's day and night.
+     Lane guidance is the first thing in the app to push metadata tier `extended`
+     (`VehicleConfigYaml.renderAdapter(metadataTier)`); it switches itself off after a session with
+     no metadata. Emulator-checked with the preview's samples. Open, all on the car: whether the
+     default places clear the gauges and Apple's speed-limit sign; the drag in the editor (the bench
+     has no touch); whether this phone accepts `extended` on the wired arm; and the sign of a lane
+     angle (drawn positive = right; the `cluster` log line `lanes: … highlight=` settles it).
+     **Play 244 (2026-11-11, from the owner's photo of the car):** Dock the turn card puts
+     it in the bottom-right corner as a panel in the look of GM's gauges (`TurnCard.drawDocked`,
+     `ClusterLayout.dock`), and the folded now-playing pill keeps the title beside the cover. Open
+     on the car: whether the docked default (corner at 70%, 54%, taken from that one photo) lines
+     up with the gauges' top edge and clears Apple's arrival strip.
+     **Play 246 (2026-11-11, from the owner's drive on 245 and its log):** three things.
+     (1) Lanes appeared but none was marked. The log had `status=[0, 0, 2] highlight=[null, null, 45]`,
+     so the phone did mark them; the card looked for the highlight among the lane's other angles,
+     where the phone does not repeat it, and drew every arrow faint. `TurnCard.laneArrows` now
+     draws the highlight itself. The `lanes:` log line also carries `angles=` so the next drive
+     shows what the others hold. (2) The turn after was missing when two turns came close
+     together: in the docked card the lanes row replaced the "Then" row. They now share the row,
+     and the gap falls back to raw metres (`betweenMeters`). The `turn #` log line records
+     `gap=`/`nextGap=`, because which entry carries DistanceBetweenManeuver is still unconfirmed
+     on this car. (3) A road that starts with a route designator is drawn as its sign
+     (`nav/RouteShield`: Interstate, U.S., the default state circle, county), read from the text
+     the phone sends. Open on the car: all three by eye (the bench could not render them, the
+     emulator kept crashing), what the phone's road text really looks like (`marker=` in the
+     `turn #` line says whether one was recognised, never the name), and per-state markers.
+     **Black driver display after a quick walk-away (Play 248, 2026-11-12 23:12–23:15 UTC), fixed in 249, not yet seen on the car:**
+     GM left its map page as the car went off (`FULL_MAP_SELECTED state=0`, the window closed), the
+     phone dropped 17 s later, GM selected the map page again 17 s after that, and CarPlay came back
+     at 23:13:45 — but the map never opened, then or at the next reconnect (23:15:23), and GM's
+     cluster turns took the display instead. Cause: the session's end called `DriverDisplay.close`,
+     which forgets the declared display and size; only a subscribe sets them, and a walk-away
+     reconnects on the same adapter link without one, so every `show` returned at once. Now a
+     session end only closes the window (`endSession`) and the declaration lives as long as the
+     adapter link; the map page picked while CarPlay is down waits for the session's first picture;
+     at that picture the map opens unless GM last reported another page (`showAtSessionStart`);
+     GM's `SERVICE_READY` resets that. To check on the car: after a walk-away the log has
+     `opening the map window … (CarPlay's picture is up …)`.
+     **What the 245 drive already answered (recorded 2026-11-12):** the phone accepts the pushed
+     `extended` tier on this car's session (lane records arrived; the Equinox runs the AirPlay-tunnel
+     arm, not the wired one), so lane guidance needs no box change. The highlight is carried only in
+     `laneAngleHighlight`, never repeated in `laneAngles` (`docs/carplay/05_METADATA_AND_CONTROLS.md`).
+     **Sign confirmed on the 2026-11-12 drive: negative = left** (a left turn's preferred lane at −90),
+     which is how the app draws it.
+  2. What the owner sees on 237: the picture, which page of the driver display it needs, whether GM's
+     speedometer and gauges stay visible over the window (they must), and whether GM's own turn
+     icons and head-up directions give way while it shows (openautolink's finding on the Blazer, so
+     it may conflict with Turn-by-turn in the cluster). Their first enable also needed a head-unit
+     restart (End Call held ~30 s while parked).
+  3. ~~The map's safe area is the whole display for now.~~ **Directions area, Play 239 (2026-11-09,
+     not on the car):** Settings ▸ Navigation ▸ Directions area on the driver display sets four edge
+     margins (0–35% each) that become the cluster stream's `safeArea` at the next subscribe
+     (`DriverDisplay.safeArea`, `VehicleConfigSpec.clusterSafe`); the map still fills the display.
+     The box needed nothing: it already carries a real alt inset into `/info` and arms `viewAreas`
+     for it (`vehicle_config.rs::the_gm_apps_driver_display_map_arms_the_alt_screen`). "GM layout"
+     sets 28/9/15/17%, i.e. 560,72–1700,674, openautolink's Blazer default of 558,70–1694,668; Reset
+     returns to the whole display. Each change is outlined on the driver display for 30 s while the
+     map window is open (emulator-checked on a simulated 1600x600 display). Open: whether CarPlay
+     moves its turn card and arrival time inside it on the car, and which margins clear the Equinox's
+     gauges.
+  4. **Held for adapter firmware (owner, 2026-11-08):** two more openautolink ideas need the box, so
+     they wait with car GPS (the NMEA item below). CarPlay's status-bar edge (Auto / Bottom / Driver
+     side): `info.rs::view_areas` hardcodes `viewAreaStatusBarEdge: 0` on both main areas; it needs a
+     parsed `statusBarEdge` on `ViewAreaEntry` and an app setting. The car's make, model and year in
+     Maps' vehicle name: param 20 subs 1/6 (and 8 `MapsDisplayName`) are the box's constant `name`
+     (`message.rs` ~:695), so it needs the C-6 `accessoryName` bound wired into the tunnel Identify,
+     where a rejected change costs the whole session (`0x1D03`). Both are now planned as `08_FUTURE_TASKS.md` T21 (the name)
+     and T22 (the status bar edge).
+
+## 10. The media pane and the enigy ports, in the car (Play 234 to 245, 2026-11-07 to 11-14)
+
+Moved here from `docs/ops/04_OPEN_ITEMS.md` on 2026-11-26 with the item closed there; the first view-area
+switch sent by a host and proven on the car (2026-11-08 12:00:24) is in it.
+
+- **Features ported from enigy/carlink and enigy/ocbm (2026-11-07), in Play 234 (the pane's tap strip in
+  235).** On the 2026-11-08 drive the lyrics lookup, the top-bar line and Now Playing by URL were used;
+  the rest is not yet tried in the car.
+  - *Top-bar Now Playing, Maps, Spotify and Phone open by command:* `CMD_REQUEST_UI_URL` on an adapter
+    whose `HELLO_ACK` carries `CAP_UI_URL`, instead of finding and tapping the icon. Benched on the
+    owner's iPhone with the recorded picture: `nowplaying:`, `maps:`, `spotify:`, `mobilephone:` (and
+    `music:`, `podcasts:`, `messages:`) open their app; the full list is in `01_OCBM_PROTOCOL.md`.
+  - *Cluster:* the road text leads with the exit ("Exit 273 · …") now that the adapter asks for
+    ExitInfo; the app binds the cluster again by itself (3 times in 10 min at most) if the car ends the
+    session mid-route; and it holds Android's NAVIGATION app focus while a route is up with the cluster
+    setting on (`nav: focus` lines). What GM does with the focus is unknown.
+  - *Settings ▸ Calls ▸ Echo test / Voice test* (parked) for `13_AUDIO_ROUTING.md` §4's echo question.
+  - *Settings ▸ Display ▸ Media pane*: a pane with the song, its controls and timed lyrics, in any gear
+    (it is for the passenger). On the 2026-11-08 morning drive (app 234) it never showed: the setting was
+    Off, its default then (`pane: no split this session`), and the owner saw lyrics only in the top bar.
+    So since 2026-11-08 a tap on the glass right of the picture (x 2630–2914 under the top bar) shows or
+    hides it, the state is kept for the next drive, and the default is *Over CarPlay*: the pane is laid
+    over the right 30% of the picture and nothing is sent to the phone. On the car 2026-11-08 11:13 the
+    strip showed and hid the pane three times (Over CarPlay); the owner then chose Right, 40%, and the
+    next sessions started split (CarPlay 1482x960, pane 988 px wide). On 237 at 12:00:24 a strip tap
+    sent `CMD_VIEW_AREA 0` from the split: the box answered iOS with `updateViewArea` (500 ms), iOS
+    sent its burst of unchanged parameter sets, and the main picture carried on (58 fps 10 s later, no
+    decoder reset), so a host-sent switch is proven on the car.
+    At the owner's request (2026-11-08) the art became a thumbnail beside the title (a sixth of the
+    pane's height) and the lyrics show nine lines, three before the sung one and five after, in
+    larger type (Play 237). Choosing a side instead declares a second view area (`initial: true`
+    only when the pane was last showing), CarPlay on one side and the pane on the other; the strip then
+    sends `CMD_VIEW_AREA`. Benched on the owner's iPhone with the app's exact document
+    (2400x960, pane right 30%): iOS negotiated `viewAreas`, drew CarPlay in 1680x960 with the right 30%
+    black, and put its own area toggle at the top of the dock. The pane's full-screen button
+    (`CMD_VIEW_AREA 0`) and back were accepted by the adapter, but the one bench run that sent them
+    recorded no picture after the switch; the car answered it on 2026-11-08 (above): the video carries on.
+    At the owner's request (2026-11-11, Play 245, not yet seen on the car) the pane has the cover
+    blown up, blurred and dimmed behind it, as CarPlay's own Now Playing does, with the lyrics in
+    translucent white over it; and while the pane is hidden the strip shows the driver display's round
+    now-playing chip (cover in a progress ring) in place of the faint handle. Emulator only so far,
+    with drawn covers (white, saturated, near black). To check on the car: the lyrics against real
+    covers in daylight, and that the chip sits whole on the glass right of the picture.
+  - *Settings ▸ Screen & Sound ▸ Look up lyrics* (off by default; song names go to lrclib.net) feeds the pane;
+    *Lyrics in the top bar* shows the current line there, in Park only.
+  - **Lyrics package (2026-11-14, `docs/ops/08_FUTURE_TASKS.md` T24).** Built and served; the car has
+    not yet downloaded one. To check on the car: that it downloads on home Wi-Fi or the hotspot
+    (`lyrics package: N songs … downloaded … over Wi-Fi` in the log), and that a song from the package
+    shows lyrics with *Look up online* set to Never. The owner's Spotify sign-in on the
+    server is done (2026-11-14).
+  - Connection time on the new adapter firmware (startup fixes 5389084/749f72c), bench only: when the
+    iPhone answered the first page, subscribe → first picture took 8.8 s and 10.4 s, against the car's
+    10.7 s median on the old firmware (44 sessions since 2026-10-15, `[startup]` lines; fastest 8.1 s).
+    Stage by stage the Bluetooth part is unchanged: discoverable 0.8 s after start, phone connected
+    1.6 s later (car 1.0 s), handoff 2.6 s after that (car 3.0 s). The bench's failed sessions are not
+    evidence either way: the phone was carried away from the server during them. Two cases are owed a
+    car check: a page timeout of 5.2 s whenever the first bonded iPhone (the box holds two) does not
+    answer, and the one split-document session that took 28 s from handoff to picture. App 234 logs the
+    same `[startup]` stages, so the car's numbers on the new firmware come straight from its uploads
+    (stage table: `host/gm_ccpa/docs/05_SESSION_FLOW.md` §9). First car session on it, 2026-11-08 07:50
+    (adapter reporting `UI_URL`): subscribe → first picture 13.1 s, against the 10.7 s median. Bluetooth
+    came up 3.0 s after subscribe and was discoverable 1.1 s later (the old median for the two together
+    was 3.1 s), the first-paged iPhone answered 1.5 s after that (no page timeout), the handoff took the
+    usual 3.0 s, and the picture came 4.5 s after the handoff (median 3.7 s). One session; not a trend.
+  - Not taken, and why: `08_FUTURE_TASKS.md` "Left off this plan".

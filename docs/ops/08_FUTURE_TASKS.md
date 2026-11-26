@@ -915,7 +915,7 @@ sub 8, `MapsDisplayName`, is not emitted at all. T7's fix needs sub 8 as well (t
 that got EV routing working sends the car's name in subs 6 and 8), so build the two together. The
 app's `accessoryName` bound (C-6) is not wired into the tunnel Identify,
 where a rejected change costs the whole session's metadata (`0x1D03`) until the setting is off, the
-same risk T7 took and passed. `04_OPEN_ITEMS.md` "Held for adapter firmware".
+same risk T7 took and passed. `docs/host/02_GM_AAOS_FIELD_REFERENCE.md` §9, "Held for adapter firmware".
 
 **Built (2026-11-13).** On the bench Apple Maps ▸ Vehicles listed the car as "CarLink" while sub
 8 carried the car's name, so Maps reads sub 6 `DisplayName`. When the app pushes
