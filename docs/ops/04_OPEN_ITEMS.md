@@ -57,7 +57,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV), re-checked 2026-11-26
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 270 (`4.0+boot-preload`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 271 (`4.0+wifi-only`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 Re-checked 2026-11-26 against the car's uploads through 2026-11-26 00:49 UTC (app 269): each item's
 own log line counted; the closed ones are listed at the end of this section with that evidence.
 
@@ -87,7 +87,7 @@ own log line counted; the closed ones are listed at the end of this section with
   Insights ▸ Trips once it closes (4 min later). A short hop logs `not shown (<m> m)`. The tap has not
   been checked anywhere yet.
 
-- **Wi-Fi only and the redaction fix (2026-11-26, not yet published).** Settings ▸ Advanced ▸ Wi-Fi only
+- **Wi-Fi only and the redaction fix (2026-11-26, Play 271).** Settings ▸ Advanced ▸ Wi-Fi only
   (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.5): with it on, on the car's modem the log shows
   `request held: Wi-Fi only` and `background telemetry uploads paused: Wi-Fi only`, Car data used this
   month stops growing, and on home Wi-Fi or the hotspot the queue and any held log upload go out. The
@@ -115,8 +115,8 @@ own log line counted; the closed ones are listed at the end of this section with
   ("CarPlay Video Overlay NOT supported on Bonjour discovery based accessories", its log on the bench);
   route A waits on the simplified connection flow (address over iAP2), not yet planned.
   `08_FUTURE_TASKS.md` T34.
-- **Log redaction lets a second Bluetooth address through (found 2026-11-12): fixed 2026-11-26, not yet
-  published.** 30 of the 64 `"devices"` lines from 2026-11-21 to 11-26 carried part of an address: the
+- **Log redaction lets a second Bluetooth address through (found 2026-11-12): fixed 2026-11-26, Play
+  271.** 30 of the 64 `"devices"` lines from 2026-11-21 to 11-26 carried part of an address: the
   app cut the adapter's `MGMT_INFO` every 110 characters, sometimes inside an address, and the redactor
   masks whole addresses only. Now cut after a comma (`logging/LogWrap.kt`, `LogWrapTest`). Closed by the
   first upload from the next publish.
