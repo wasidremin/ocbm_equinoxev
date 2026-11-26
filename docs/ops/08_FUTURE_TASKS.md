@@ -51,7 +51,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T21 The car's name in Apple Maps | Built and on the adapter 2026-11-13 (the name goes in `DisplayName` too); not yet seen in Maps |
 | T22 CarPlay's status bar on the driver's side | Built and on the adapter; all three choices seen working on the bench 2026-11-14 (Driver is the left edge, as Auto). Ships in the next app build |
 | T24 Lyrics with no connection | Built 2026-11-14: a package of timed lyrics (year-end top 100s since 1980, the owner's listening history, their Spotify library once signed in) built weekly on the home server and downloaded on Wi-Fi only. Not yet on the car |
-| T25 Faster connect | **The owner's first annoyance, and the focus from 2026-11-25.** Measured on the car: a good start is about 18 s from the adapter's power-on to the picture (5 s to its USB device, 2–4 s the Allow tap, 10–11 s the adapter's own part; 12.3 s median). Step 2a (approved 2026-11-25): the radios at power-on and the supervisor's quicker look benched 2026-11-26 (paging 1.6 s after the app arrives, was 4.4 s), bench-installed on the car's adapter, not yet in the car; enigy's 2.7.1 page changes next; then 2b, the phone connected during the tap |
+| T25 Faster connect | **The owner's first annoyance, and the focus from 2026-11-25.** Measured on the car: a good start is about 18 s from the adapter's power-on to the picture (5 s to its USB device, 2–4 s the Allow tap, 10–11 s the adapter's own part; 12.3 s median). Step 2a (approved 2026-11-25): the radios at power-on and the supervisor's quicker look benched 2026-11-26 (paging 1.6 s after the app arrives, was 4.4 s), bench-installed on the car's adapter, not yet in the car; enigy's 2.7.1 page changes weighed against the car's logs and not ported; next 2b, the phone connected during the tap |
 | T34 Video from the iPhone while parked | BUILT 2026-11-21, both halves (ported from enigy); benched in parts, not yet on the car |
 | T35 Which iPhone first, by schedule | **Built 2026-11-22**, Play 268 (firmware ee0e29addd5c). The weekday-morning side works on the car (2026-11-23: the owner's phone first, page to ACL 0.6 to 0.8 s; a missed phone costs 3.2 s, not 5.1); the evening switch not yet seen |
 
@@ -1205,6 +1205,20 @@ The first build hung the adapter twice and was reworked (same document). *Verifi
 sessions on the bench by reboot, not by power cut. *Not yet:* the car; a power cut (the car's own
 start); item 3. `start_main_service.sh` is the boot path: bench-installed on the car's adapter
 2026-11-26, never by an app update.
+
+**Item 3, enigy's 2.7.1 page changes, weighed against the car and not ported (2026-11-26).** From the
+car's uploaded logs (31 timelines; page outcomes per start since the 3.2 s page timeout):
+- *the 1.5 s cut of a stalled RFCOMM open:* SDP to the open channel took 0.2 to 1.6 s in all 31 connects,
+  never near the 8 s wait; the bench once took 2.4 s, which the cut would have broken;
+- *the first call lasting 5.12 s:* no start where the owner's phone missed a 3.2 s page and answered a
+  later one; the misses are the absent phone paged first (T35's order) or a car with no phone in it;
+- *calling the same phone again sooner:* after "answered and reset the link" the car reached the
+  phone's channel 2.5 to 3 s later in 22 of 26 starts, 2 s of it `RESET_RETRY_SECS`. Tried at 0.5 s on
+  the bench: the one reset took 1.9 s to answer the earlier page and reached the channel 3.6 s after the
+  reset, no sooner; the phone is not ready earlier, and the shorter pause ends the page window at 3.7 s
+  instead of 5.2 s after the reset, where four of the car's connects came at 3.6 to 4.2 s. Kept at 2 s.
+- *status `0x07` ("controller still holds a link") paged again:* 13 in the car's logs, one with a
+  connect after it (17 s). Not worth 2.7.1's SDP changes yet; recorded.
 
 **enigy/ocbm 2.7.0 (2026-11-22, not ported).** Both radios loaded together and earlier in the boot, the
 radio description kept across boots: 13.8 to 16.9 s from power-on to picture on enigy's bench against
