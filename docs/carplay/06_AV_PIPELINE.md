@@ -1144,6 +1144,247 @@ static multi-view-area) are documented with their implementation cost + teardown
 
 ---
 
+### 5. The resize work on the bench, 2026-09-05 to 09-07: the rules, the matrix, and what is left
+
+Moved here from `docs/ops/04_OPEN_ITEMS.md` on 2026-11-26 (it was its "HANDOFF" section); that file keeps a
+pointer to the known-open list at the end.
+
+**STATE: the resize matrix is COMPLETE (9 ACCEPTED / 1 LOCKOUT, both orientations, floor to 4K).**
+The loop that ran it unattended (arm the rect through the app's model fields, command the
+transition over the control socket, judge the decoded frame) lived in the macOS app and its
+`tools/va_*` harness, both removed on 2026-10-27; the GM app declares one view area. The rule set
+and the measurements below still hold for any host. Of the Known-open list at the end, 1, 2 and 6
+are done; 4 and 7 went with the macOS app; 3, 5 and 8 remain (re-checked 2026-11-02, not re-run).
+
+Device-proven on a **CPC200-CCPA, iPhone18,4 / iOS 27.0 (24A5430a)**. The 09-05 work was **wireless**
+CarPlay; everything dated 09-07 is **WIRED** (the phone is plugged into the box, so there is no
+phone-side log in that arm at all). Where a claim is arm-specific it says so; the rule set below
+holds in both.
+
+#### The rule set (settled)
+
+1. **ALL FOUR values must be EVEN** — `x`, `y`, `width`, `height`. An odd value is a **TEARDOWN**:
+   `kFigEndpointError_InvalidParameter -16720` originating in **`carEndpoint_copyScreenInfo:7001`**,
+   propagating `setupScreenStreams:8536` -> `setupStreams:8957` -> `activateInternal:9987` ->
+   `Activate_block_invoke_2:10117`. Isolated to one pixel: `356x400@240,760` renders,
+   `357x400@240,760` tears down; `601x400@240,760` (odd w, far above any floor) tears down;
+   `600x400@240,761` (odd origin Y only) tears down. Cause is almost certainly HEVC 4:2:0 chroma
+   subsampling. **This retroactively explains every `-16720` in the project's history** — the old
+   `1416x842@492,59` and `1600x842@800,59` failures both carry an odd origin Y and nothing else was
+   ever wrong with them. Prior explanations (size floor, "must touch a vertical edge",
+   `focusTransfer`, `cornerMasks`) are all REFUTED; see docs/carplay/06_AV_PIPELINE.md.
+   **SCOPE, narrowed 2026-09-07 (wired, 4K panel): parity binds what we DECLARE, not what iOS puts
+   back on the wire.** iOS's own transition animation streams odd rects freely — 275 of 292 geometry
+   records in one round trip carried an odd origin or extent (`3826x2152@7,4`, `3834x2158@3,1`) with
+   no teardown — and a SETTLED rect can be odd too (see "What the wired arm added" below). Do not
+   "fix" a harness or a validator to reject those; the gate is on the declaration.
+2. **Containment** — `x+w <= panelW && y+h <= panelH`. Violation is a TEARDOWN.
+3. **PRODUCT FLOOR (owner, non-negotiable): 800x480 landscape / 480x800 portrait**, CarPlay AND
+   Android Auto, orientation chosen by the area's own aspect. This OVERRIDES what iOS tolerates.
+4. **No origin constraint** beyond parity + containment. No evenness-of-position rule beyond (1), no
+   edge-contact requirement (a floating portrait area touching no edge renders). **Re-proven
+   2026-09-07 on a 3840x2160 panel over WIRED CarPlay, which is where the free origin was previously
+   only assumed**: `1280x720@200,180` (off-centre upper-left), `800x480@3040,1680` (flush into the
+   bottom-right corner, `x+w`/`y+h` exactly equal to the panel) and `2560x1440@640,360` each
+   transitioned and settled at exactly the armed rect, no refusals, no teardowns. Diagonal offsets
+   are not a special case — the rule really is: even, contained, at or above the floor, anywhere.
+5. `cornerMasks` and `viewAreaSupportsFocusTransfer` are both **orthogonal** to acceptance.
+
+**iOS's own tolerance, for protocol understanding only — NOT the shipping rule.** Measured floors on
+a 1080x1920 panel: width **350**, height **304** (`350x400` renders, `348x400` locks out;
+`600x304` renders, `600x302` locks out). The extracted `385 * 0.65 * scale` / `240 * 0.65 * scale`
+formula is REFUTED as the gate — it mispredicted `480x400`, `400x400` and `384x400`, all of which
+render. Do not resurrect it.
+
+**Two failure classes, never conflate:** an odd/oversized/non-positive value is a **TEARDOWN**
+(session dies). Below the floor is a **LOCKOUT** — `[DBLockOut] lockOutMode updating to
+viewAreaTooSmall`, string `LOCKOUT_VIEW_AREA_TOO_SMALL_MESSAGE` -> "CarPlay does not support this
+display resolution." Black area, session SURVIVES.
+
+#### What the WIRED arm added (2026-09-07)
+
+Same box, same iPhone, but the phone is plugged into the BOX — so there is no phone-side log at all
+(docs/ops/02_TESTING.md). Every verdict below came from the app's control socket, the app log and the
+pixels. The matrix now runs unattended end to end, with no human in the actuation path:
+
+- **The resize button is the pill at the TOP of the CarPlay Dock rail** — two arrows pointing inward,
+  above the clock, not among the app icons. Pressing it from the socket works:
+  `tap 133 179` (the app's 0..10000 space, area 0 on a 1200x675 window) -> the phone sends
+  `requestViewArea index=1` -> the box answers `updateViewArea index=1` -> the picture animates into
+  the sub-rect. **The button moves WITH the area**, so the return press is at different coordinates
+  (`tap 4109 4039` for `800x480@1520,840` in a 3840x2160 panel). A harness cannot use one constant.
+- **A settled rect is not always the declared rect, and it can be ODD.** `1920x1080@1900,1060` settled
+  at `1921x1081@1899,1059` and STAYED there — polled every 2 s for 24 s, geometry-record counter
+  frozen at 154, so the animation had finished. The far edges landed exactly (`1899+1921 = 1900+1920
+  = 3820`); iOS converged one pixel out toward the origin. Three other rects the same session landed
+  byte-exact, so this is a per-rect rounding artifact of the transition's final interpolation step,
+  not a correctable offset. **Compare settled rects with a ±2 px tolerance** (`rect_close` in
+  `tools/va_wired_sweep.sh`); exact string equality scores a good case NO-MOVE.
+- **iOS self-transitions at session start.** Unprompted, it shrank into area 1, held ~2.4 s, and grew
+  back to area 0 (answered `updateViewArea -> index=0`). A harness that samples one geometry record
+  instead of the settled rect reads this as a pass.
+- **THE LOCKOUT FLOOR SCALES WITH THE PANEL — the product floor is not panel-independent.**
+  `480x800` inside a **2160x3840** panel LOCKS OUT: iOS renders
+  `LOCKOUT_VIEW_AREA_TOO_SMALL_MESSAGE` ("CarPlay does not support this display resolution") and the
+  session survives, exactly as the two-failure-classes rule predicts. But the wireless measurements
+  above found areas as small as `350x400` RENDERING on a **1080x1920** panel — the same panel at half
+  the linear size. So the same rect can render on one panel and lock out on a bigger one, and
+  `480x800` — our own declared portrait product floor — is NOT safe on a 4K portrait panel. On
+  2160x3840 the floor lies between `480x800` (lockout) and `720x1280` (renders, mean luma 76.6);
+  it has not been bisected. This does NOT resurrect the refuted `385 * 0.65 * scale` formula — that
+  mispredicted specific rects and stays refuted — but it does mean any floor quoted without its
+  panel is meaningless. Bisect before treating 800x480/480x800 as universally shippable.
+- **A LOCKOUT is not a black area — do not detect it by luminance.** The banner card is sized to
+  FILL the view area, so the armed rect reads mean luma 40.0 / darkFrac 0.01 (content!), while the
+  panel *around* it is 95% dark. `tools/va_wired_sweep.sh`'s first thresholds (`BLACK_MEAN=12`,
+  `BLACK_DARK=0.85`) therefore scored a textbook lockout as ACCEPTED, and only an eye check caught
+  it. The usable discriminator is CHROMA, not brightness: a real CarPlay UI is full of coloured app
+  icons, the lockout card is flat achromatic grey with white text.
+- **`animationDurationMillis` is honoured literally.** Against the hardcoded 3000 we send, measured
+  **2.978 s** (shrink) and **2.988 s** (grow) at ~48 geometry records/s. It is a real duration, not a
+  hint. Its LIMITS are unmeasured — see "Known-open" below.
+
+#### Tooling left behind
+
+The view-area harness (`tools/va_limit_probe.sh`, `va_limit_sweep.sh`, `va_wired_sweep.sh`,
+`winshot.sh`) drove the macOS host app and was removed with it on 2026-10-27; git history has it.
+The lessons it encoded still hold for any rebuilt harness:
+
+- **Three harness defects the first runs exposed, all the same shape — a case that LOOKS measured
+  and is not. Do not reintroduce any of them:**
+  1. **Triggering before the geometry settles.** iOS runs its own view-area round trip at session
+     start, so a trigger fired in the same second the session comes up lands inside that animation
+     and is swallowed; the BEFORE frame is a picture of a rect nobody asked for. `settle_geometry`
+     waits for the `changes` counter to hold still.
+  2. **Reading `[backfill]` as this session's evidence.** The app replays box log history on
+     connect, tagged `[backfill]`. A backfilled `host viewArea index=1 REFUSED` from the PREVIOUS
+     case decided `P-720x1280`'s verdict. Verdict-producing scans go through `live_log`.
+  3. **Trusting a panel the app silently clamped** — the `PanelRule` bug below. The sweep now
+     compares `armed.panel` against what the case asked for and fails it REFUSED-LOCALLY with
+     "measures nothing" rather than measuring a rewritten panel.
+- **The `PanelRule` bug this cost, fixed 2026-09-07.** The app's panel envelope was per-axis
+  (`VehicleConfigModel.minHeight/maxHeight` 480–2160), so `set height 3840` was silently clamped to
+  2160 on `save`, every portrait area failed containment against a 2160-tall panel, the emitter
+  dropped `viewAreas[1]`, and the box declared one area — while the landscape half passed 5/5 and
+  the run looked healthy. The envelope is now `PanelRule` (orientation-agnostic, floor by the
+  panel's own aspect) and clamps are reported (`clampNotes` in `save`/`get viewarea`,
+  `pendingClamp` in `set`) instead of being silent.
+
+#### The matrix — COMPLETE as of 2026-09-07 (wired)
+
+Both orientations, floor to 4K, **9 ACCEPTED / 1 LOCKOUT**. Every case armed through the app door
+(`viewarea arm` + `save`, no bench lever) and triggered by `viewarea request` (no tap, no human).
+PNGs per case under `/tmp/valog/wired/<label>/`.
+
+| Panel | Area | Verdict |
+|---|---|---|
+| 3840x2160 | 800x480@1520,840 | ACCEPTED (also OWNER-CONFIRMED by eye, wireless, 09-05) |
+| 3840x2160 | 1280x720@1280,720 | ACCEPTED |
+| 3840x2160 | 1920x1080@960,540 | ACCEPTED |
+| 3840x2160 | 2560x1440@640,360 | ACCEPTED |
+| 3840x2160 | 3840x2160@0,0 | ACCEPTED (area [1] == area [0]) |
+| 2160x3840 | 480x800@840,1520 | **LOCKOUT** — below iOS's floor FOR THIS PANEL |
+| 2160x3840 | 720x1280@720,1280 | ACCEPTED |
+| 2160x3840 | 1080x1920@540,960 | ACCEPTED |
+| 2160x3840 | 1440x2560@360,640 | ACCEPTED |
+| 2160x3840 | 2160x3840@0,0 | ACCEPTED (area [1] == area [0]) |
+
+Plus four off-centre landscape cases proving the free origin at 4K (see rule 4):
+`1280x720@200,180`, `800x480@3040,1680` (flush into the corner), `2560x1440@640,360`, and
+`1920x1080@1900,1060` (the ±1 settled-rect case).
+
+**The largest panel previously driven was 2400x960**, so 4K panel config in BOTH orientations is
+new. The only failure is the portrait floor case, and it is a real device result, not a harness or
+config fault — see the panel-scaling finding above and Known-open 8.
+
+The WIRELESS matrix (`tools/va_limit_sweep.sh`) is still one case deep. Nothing here contradicts it —
+wired and wireless differ only in carrier — but if a wireless-specific view-area difference is ever
+suspected, that is the run to complete.
+
+#### Known-open, in priority order
+
+1. **DONE — `ViewArea2Rule` corrected and verified.** Carries the owner product floor
+   (800x480 landscape / 480x800 portrait, orientation by the area's own aspect) and the parity rule,
+   reported in severity order: containment, parity, positivity, floor. The refuted
+   `385 * 0.65 * scale` derivation is gone. `run_tests.sh` 1300 passed; receiver PASS; docs OK.
+
+   **Parity is enforced in the APP ONLY, and that is deliberate — do not "fix" it box-side.**
+   CLAUDE.md's design doctrine: anything configurable about CarPlay is app-driven, the box presents
+   app-pushed config, and box placement is EARNED (measured app-driven failure + owner approval),
+   never designed-in. A box-side parity gate was written, tested and then REVERTED on owner
+   direction — the app is where the logic and the options live. There has been no measured
+   app-driven failure to earn a box-side copy. The app-less `CARPLAY_VIEWAREA2` bench lever
+   therefore still accepts an odd rect and will tear the session down; that is a BENCH tool used by
+   an operator who now knows the rule, not a product path.
+
+2. **DONE — transition path commandable, VERIFIED ON DEVICE 2026-09-07.** `:initial` proves iOS
+   accepts STARTING in an area; it does not prove iOS animates INTO one on request. Owner-confirmed
+   twice by eye — `600x400` on a 1080x1920 panel, and `800x480` inside 3840x2160. The clean fix
+   landed: `viewarea request <index>` on the ControlServer → `CMD_VIEW_AREA 0x11` →
+   carplayd → `events::switch_view_area`, the same policy function that answers the phone's own
+   `requestViewArea` (the removed docs/host/00_MACOS_HOST_APP.md, "Bench control surface"). Two companions for
+   the WIRED arm, where there is no phone log: `viewarea arm <WxH@X,Y>` writes the rect through the
+   model's own fields (replacing `defaults write` against a stopped app and the `/tmp/carplay_viewarea2`
+   lever), and `shot [path]` dumps the decoded frame as PNG — the only LOCKOUT detector this side owns.
+   **The rebuilt carplayd IS pushed** (2026-09-07, `tools/ocbm_push.sh … /usr/sbin/carplayd 755`,
+   md5 verified against the local cross-build; ocbmd unchanged). Device-proven the same evening:
+   `viewarea request 1` → `[events] host viewArea index=1 accepted` → `updateViewArea -> index=1
+   duration=3000ms` → the rect settles at the armed area; `request 0` returns; `request 5` is
+   REFUSED box-side (`only 2 area(s) declared`) with the session healthy. All ten matrix cases ran
+   on this path.
+   **This also proves the accessory can drive a transition UNILATERALLY** — nothing asked. The
+   earlier finding was that the phone's `requestViewArea` is advisory and the accessory is the
+   authority (events.rs); this extends it: no request need exist at all. An old carplayd logs
+   `unknown INPUT_COMMAND 0x11 — dropped`, so a box that has not been updated needs
+   `TRIGGER_MODE=tap` in the sweep, or the trigger silently looks accepted while nothing moves.
+3. **Supervisor teardown/bring-up is not serialised** and reports success for a stack that is dead
+   6s later — this is the same defect as the "Restart Wireless stack" button being a destructive
+   no-op. Two fixes: serialise on child reap, and verify the bring-up instead of asserting it.
+4. **Gone with the macOS app (2026-10-27).** `viewArea2*` keys were UserDefaults-only, so
+   Import/Export did not round-trip them.
+5. `initial` is parsed box-side and, since 2026-11-07, authored by the GM app's media pane (`initial: true`
+   on the second area; since 2026-11-08 only when the pane was showing at the end of the last drive).
+6. **CLOSED 2026-09-09 — `animationDurationMillis` is fully characterised; there is no iOS floor or cap.** Swept on hardware (CPC200-CCPA, wired, 1920x1080, second view area): **10 ms renders the switch as an instant flicker; 10000 ms runs the full 10 s.** Honoured literally at both extremes. One nuance worth keeping: at 10000 ms the UI reaches the target geometry at roughly 5 s and then idles showing CarPlay's transition blur until the envelope expires — the duration is the ANIMATION window, not the geometry change, so the accessory gets its settled geometry earlier than the declared duration. Untested: whether a larger area delta occupies more of the envelope instead of finishing early. The shipped range is **100–10000** since 2026-11-07 (enigy/ocbm's floor, ported with the GM app's media pane, whose switch takes 500 ms); from 2026-09-09 it was 1000–10000 by owner decision, when sub-second was judged abrupt in a car. Either way a product limit, NOT a protocol one; 10 ms works and is simply not offered. The original text of this item follows for the record.
+
+   ~~**`animationDurationMillis` limits are unmeasured; its FLOOR is the open question.**~~ (Corrected
+   2026-09-09 — it was "hardcoded 3000, not yet a variable"; both halves are now false.) On the bench
+   that night 3000 → 1000 was DEVICE-PROVEN to visibly speed up the Dock resize, the first time anyone
+   varied it on hardware, and it is now a pushed value: top-level `view_area_anim_ms` in the vehicle
+   config (our extension, `wifi_ap`-shaped; absent = 3000, the app emits it only when it differs),
+   parsed by `receiver::vehicle_config`, armed per connection into `levers::view_area_anim_ms`, and
+   consumed by `events::switch_view_area` for BOTH the inbound `requestViewArea` answer and the
+   `viewarea request <index>` door. Out of range CLAMPS to 0..=10000 (logged by carplayd, never a
+   rejection), so the ladder below past 10000 — 30000, 60000, `INT32_MAX`, a negative — is NOT
+   reachable from the app without widening that clamp deliberately; 0, 1, 100, 250, 1000, 3000, 10000
+   are. iOS never acknowledges the field, so the `[events] updateViewArea -> … duration=Nms` line
+   (post-clamp value) plus a stopwatch on the geometry stream is the whole measurement. What the
+   sources give: `CarPlaySDK.framework` carries the key name only;
+   CarKit has an explicit clamp message for the INDEX (`Resetting to first view area … out of range`)
+   but **no duration-validation string anywhere in the iOS 27 CarKit or AirPlaySender extracts**;
+   R14G17 predates view areas entirely; CINEMO logs it as `duration: %ums`, unsigned, so a negative
+   is outside a shipping vendor's own model. Apple's Simulator and WWDC 2019-252 both use 3 s.
+   Since iOS honours the value literally (measured above), the ladder worth running is 0, 1, 100, 250,
+   1000, 3000 (known good), 10000, 30000, 60000, plus `INT32_MAX` and a negative — watching for
+   whether 0 snaps or is refused, whether a long duration blocks a second `requestViewArea` mid-flight,
+   and whether anything tears the session down. The per-value recompile that ladder needed is gone
+   (push a config with `view_area_anim_ms: N` and reconnect); a per-request `[ms]` argument on the
+   `viewarea request` door would only matter for sweeping values within one session.
+7. **Gone with the macOS app's harness (2026-10-27); the lesson stands for any rebuilt one.** The sweep's LOCKOUT detector was WRONG and scored a lockout as ACCEPTED. Device-proven
+   2026-09-07 on `480x800@840,1520` in a 2160x3840 panel: `BLACK_MEAN=12` / `BLACK_DARK=0.85` never
+   fired because **the lockout card is sized to FILL the view area** — the armed rect reads mean luma
+   **40.0**, darkFrac **0.01** (i.e. content), while the panel *around* it is 95% dark. The verdict
+   was caught only by looking at the PNG. No luminance threshold can fix this: a real render and a
+   lockout are both "not black". The discriminator is **CHROMA** — a real CarPlay UI is full of
+   coloured app icons, the lockout card is flat achromatic grey with white text. `tools/winshot.swift`
+   `stats` needs a saturation metric and the classifier needs to use it. Until then, **every ACCEPTED
+   verdict near a floor must be eyeballed** against `$OUT/<label>/after_frame.png`.
+8. **Bisect the lockout floor per panel — the shipping floor may be wrong.** Still open; it needs a rebuilt harness, and the Equinox panel is landscape, so the portrait case does not bite this car. `480x800` locks out on
+   2160x3840 but the wireless data has `350x400` RENDERING on 1080x1920, so the floor scales with the
+   panel and our declared portrait product floor is not safe on a 4K portrait panel. On 2160x3840 it
+   lies between `480x800` (lockout) and `720x1280` (renders). Bisect both orientations at 4K, then
+   decide whether the product floor stays a constant or becomes panel-relative. Do item 7 first — a
+   bisect run on a detector that cannot see a lockout produces a confidently wrong number.
+
 ## Video — loss detection and recovery
 
 <!-- absorbed: ../carplay/06_AV_PIPELINE.md -->
