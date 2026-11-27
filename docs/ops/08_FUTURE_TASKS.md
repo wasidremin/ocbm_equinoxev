@@ -1060,6 +1060,15 @@ package refused. **Not verified:** on the car.
 **Open.** *Look up online* still defaults to Always, so nothing changed unasked; Wi-Fi only is the
 setting for this car. The first download on the car has not been seen.
 
+**2026-11-27: songs with no artist.** The owner: "the lyrics package is supposed to work offline, it
+didn't". On that drive it did for every song that came with its artist (seven, all from the package).
+Four in a row came with none (`docs/carplay/05_METADATA_AND_CONTROLS.md`, prereq 4), and a song was
+looked up only with an artist, so they showed nothing; the pane said "No timed lyrics for this song"
+when it had not even looked. Now a song with no artist is found in the package by title and length
+(`LyricsPack.choose`: the length must be known, and every version within 3 s must be one act's), and the
+pane says why a song shows none (`lyricsNote`: not in the package and waiting for Wi-Fi, no connection,
+no artist named). *Verified:* unit tests (671). *Not yet:* the car.
+
 ## T25. Faster connect (raised 2026-11-14; the owner's first annoyance; step 1, the connect timeline, built 2026-11-20)
 
 **Why.** From starting the adapter to the first CarPlay picture is a median 10.7 s on the car (44

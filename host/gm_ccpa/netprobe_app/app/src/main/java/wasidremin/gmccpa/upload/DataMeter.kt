@@ -141,6 +141,37 @@ object DataMeter {
 
     fun ledger(ctx: Context): Ledger = synchronized(lock) { load(ctx.applicationContext) }
 
+    /**
+     * What the car gives the app right now. In the Equinox, off Wi-Fi it is usually [NONE]: every
+     * upload tried without Wi-Fi from 2026-11-22 to 11-27 failed to resolve the server's name, and
+     * the app saw a cellular network once in all the uploaded logs. The car's own data has not
+     * reached this app (no OnStar data plan), so Settings says "no connection" rather than implying
+     * the car's data is being saved.
+     */
+    enum class Link { WIFI, CAR, NONE }
+
+    fun link(ctx: Context): Link = runCatching {
+        val cm = ctx.applicationContext.getSystemService(ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork) ?: return@runCatching Link.NONE
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) Link.WIFI else Link.CAR
+    }.getOrDefault(Link.NONE)
+
+    /** Pure: Settings' line about the connection now. */
+    fun linkText(link: Link, wifiOnly: Boolean): String = when (link) {
+        Link.WIFI -> "Now on Wi-Fi: uploads and lyrics lookups go out."
+        Link.CAR -> if (wifiOnly) "Now on the car's own connection: Wi-Fi only holds everything until Wi-Fi."
+            else "Now on the car's own connection: uploads count against the monthly limit."
+        Link.NONE -> "No connection now: uploads and lyrics lookups wait for Wi-Fi or a phone hotspot."
+    }
+
+    /** Pure: why an upload the driver tapped waits, or null when it may go now. */
+    fun waitReason(link: Link, wifiOnly: Boolean): String? = when {
+        link == Link.WIFI -> null
+        link == Link.NONE -> "The car has no connection right now. The logs go by themselves when it is on Wi-Fi or a hotspot."
+        wifiOnly -> "Wi-Fi only is on and the car is not on Wi-Fi. The logs go by themselves when it is."
+        else -> null
+    }
+
     /** True when the active network says it is Wi-Fi. Unknown counts as the car's connection. */
     fun onWifi(ctx: Context): Boolean = runCatching {
         val cm = ctx.applicationContext.getSystemService(ConnectivityManager::class.java)
@@ -184,7 +215,12 @@ object DataMeter {
         return mayUseNetwork(wifiOnly(ctx), onWifi(ctx))
     }
 
-    /** Count one request's payload. Safe from any thread; a no-op before [attach]. */
+    /**
+     * Count one request's payload, once the server has answered: a request that never reached one
+     * used no data. Until 2026-11-27 it was counted before sending, so the failed retries of a drive
+     * with no connection (every 5 minutes for three hours on 2026-11-23) went on the car's allowance.
+     * `NetTest` checks every call follows the response. Safe from any thread; a no-op before [attach].
+     */
     fun record(stream: Stream, payloadBytes: Long) {
         val ctx = appCtx ?: return
         if (payloadBytes < 0L) return

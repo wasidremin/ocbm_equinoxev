@@ -37,6 +37,14 @@ object LogsOnWifi {
         return Request(wider, minOf(waiting.atMs, tapped.atMs))
     }
 
+    /**
+     * Pure: what still waits after the driver's own send of [sent]. Sent, the waiting request goes too,
+     * unless it reaches further back; failed, [sent] waits for Wi-Fi with it. 2026-11-27: a waiting
+     * "Today" went out 10 s after the driver had sent "Today" by hand, and the server got it twice.
+     */
+    fun afterManual(waiting: Request?, sent: Request, ok: Boolean): Request? =
+        if (ok) waiting?.takeIf { it.window.ordinal > sent.window.ordinal } else merge(waiting, sent)
+
     /** The line shown while a request waits. Numbers only. */
     fun describe(request: Request): String = "Logs from ${request.window.phrase} are waiting for Wi-Fi"
 
@@ -71,6 +79,20 @@ object LogsOnWifi {
         UploadCenter.notifyQueueChanged(ctx.applicationContext)
     }
 
+    /** The driver sends logs by hand. False while the waiting upload is itself going out. */
+    fun beginManual(): Boolean = sending.compareAndSet(false, true)
+
+    /** The hand send of [sent] ended; see [afterManual]. */
+    fun endManual(ctx: Context, sent: Request, ok: Boolean) {
+        val appCtx = ctx.applicationContext
+        val next = afterManual(pending(appCtx), sent, ok)
+        sending.set(false)
+        if (next == null) { clear(appCtx); return }
+        save(appCtx, next)
+        if (!ok) log.i("log upload (range=${next.window.label}) will wait for Wi-Fi")
+        UploadCenter.notifyQueueChanged(appCtx)
+    }
+
     private fun save(ctx: Context, request: Request) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_WINDOW, request.window.name).putLong(KEY_AT, request.atMs).apply()
@@ -85,14 +107,27 @@ object LogsOnWifi {
             appCtx.getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(
                 object : ConnectivityManager.NetworkCallback() {
                     override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                        noteLink(appCtx)
                         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
                             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                         ) flushIfOnWifi(appCtx)
                     }
+
+                    override fun onLost(network: Network) = noteLink(appCtx)
                 }
             )
         }.onFailure { attached = false; log.w("cannot watch the network: ${it.javaClass.simpleName}") }
         flushIfOnWifi(appCtx)
+    }
+
+    @Volatile private var lastLink: DataMeter.Link? = null
+
+    /** Settings' connection line follows the network; capability callbacks come often, so only on a change. */
+    private fun noteLink(ctx: Context) {
+        val now = DataMeter.link(ctx)
+        if (now == lastLink) return
+        lastLink = now
+        UploadCenter.notifyQueueChanged(ctx)
     }
 
     private fun flushIfOnWifi(ctx: Context) {

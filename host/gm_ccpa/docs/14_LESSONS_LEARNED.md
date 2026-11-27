@@ -553,6 +553,18 @@ released when Wi-Fi came back. *Not yet:* the car. Play itself updates the app o
 too: openautolink tells GM owners they need no OnStar plan if the car joins home Wi-Fi (saved in the car's
 network settings) or a phone hotspot regularly; the same keeps this app current with Wi-Fi only on.
 
+**What the car's logs then showed (2026-11-27).** Off Wi-Fi the Equinox gives this app no connection at
+all: Android reports no active network, and every upload tried without Wi-Fi from 2026-11-22 to 11-27 failed
+with `UnknownHostException` (every 5 minutes for three hours on 11-23); "cellular" appears once in all the
+uploaded logs. So Wi-Fi only saved no car data; the OnStar prompts are the car offering a plan to an app
+that has none. Three things the logs exposed, fixed that day: the data meter counted a request before
+sending it, so failed attempts went on the allowance (now counted once the server answers, which
+`NetTest` checks); a log upload sent by hand while one waited for Wi-Fi went twice (the hand send now
+takes the waiting one, `LogsOnWifi.afterManual`); and seven taps with no connection each said only
+"will wait for Wi-Fi". Settings now says what the car has (`DataMeter.linkText`: on Wi-Fi, no
+connection, or the car's own connection) and redraws when it changes, and a tapped upload says why it
+waits (`DataMeter.waitReason`). Lyrics are not asked of lrclib.net with no connection at all.
+
 ### 13.6 2026-11-12: the Drive card, and what a month of replayed drives said about estimating
 
 **Why.** The drive log of §13.4 was only read after the drive, on the centre screen. The owner asked

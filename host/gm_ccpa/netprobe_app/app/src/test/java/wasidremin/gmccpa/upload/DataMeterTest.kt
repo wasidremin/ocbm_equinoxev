@@ -88,4 +88,21 @@ class DataMeterTest {
         val l = Ledger("2026-11").plus(Stream.TELEMETRY, 3L * 1024 * 1024, false)
         assertTrue(DataMeter.describe(l, 100, wifiOnly = true).endsWith("Wi-Fi only is on: nothing is sent over the car's connection."))
     }
+
+    @Test fun settingsSaysWhatTheCarHasNow() {
+        assertTrue(DataMeter.linkText(DataMeter.Link.NONE, wifiOnly = true).startsWith("No connection now"))
+        assertTrue(DataMeter.linkText(DataMeter.Link.NONE, wifiOnly = false).startsWith("No connection now"))
+        assertTrue(DataMeter.linkText(DataMeter.Link.WIFI, wifiOnly = true).startsWith("Now on Wi-Fi"))
+        assertTrue(DataMeter.linkText(DataMeter.Link.CAR, wifiOnly = true).contains("Wi-Fi only holds everything"))
+        assertTrue(DataMeter.linkText(DataMeter.Link.CAR, wifiOnly = false).contains("count against the monthly limit"))
+    }
+
+    @Test fun aTappedUploadSaysWhyItWaits() {
+        assertEquals(null, DataMeter.waitReason(DataMeter.Link.WIFI, wifiOnly = true))
+        assertEquals(null, DataMeter.waitReason(DataMeter.Link.CAR, wifiOnly = false))
+        // 2026-11-27: seven taps with no connection, each answered only "will wait for Wi-Fi".
+        assertTrue(DataMeter.waitReason(DataMeter.Link.NONE, wifiOnly = false)!!.startsWith("The car has no connection right now"))
+        assertTrue(DataMeter.waitReason(DataMeter.Link.NONE, wifiOnly = true)!!.startsWith("The car has no connection right now"))
+        assertTrue(DataMeter.waitReason(DataMeter.Link.CAR, wifiOnly = true)!!.startsWith("Wi-Fi only is on"))
+    }
 }

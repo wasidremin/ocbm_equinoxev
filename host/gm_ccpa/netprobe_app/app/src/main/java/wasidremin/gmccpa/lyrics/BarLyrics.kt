@@ -63,8 +63,12 @@ object BarLyrics {
     @Volatile var parked: Boolean? = null
         set(v) { field = v; main.post { push() } }
 
-    /** Where a song's lyrics stand, for the pane's note. */
-    enum class Status { OFF, NO_SONG, LOOKING, FOUND, NONE, UNREACHABLE }
+    /**
+     * Where a song's lyrics stand, for the pane's note ([lyricsNote]). [WAITING]: not on the head unit and
+     * lrclib.net not to be asked now; [NO_ARTIST]: not on the head unit and the phone named no artist.
+     */
+    enum class Status { OFF, NO_SONG, LOOKING, FOUND, NONE, UNREACHABLE, WAITING, NO_ARTIST }
+
 
     @Volatile private var key: LyricsKey? = null
     @Volatile private var lyrics: SyncedLyrics? = null
@@ -162,10 +166,14 @@ object BarLyrics {
         key = k
         worker.execute {
             if (key != k || !lookup) return@execute
-            val ask = online.mayAsk(app?.let { wasidremin.gmccpa.upload.DataMeter.onWifi(it) } == true)
+            // With no connection at all lrclib.net is not tried: it could only fail (2026-11-27).
+            val link = app?.let { wasidremin.gmccpa.upload.DataMeter.link(it) } ?: wasidremin.gmccpa.upload.DataMeter.Link.NONE
+            val ask = link != wasidremin.gmccpa.upload.DataMeter.Link.NONE && online.mayAsk(link == wasidremin.gmccpa.upload.DataMeter.Link.WIFI)
             val answer = LrcLib.find(k, disk, pack = pack, online = ask)
-            // A song that went without, for either reason, is looked up the next time the car is on Wi-Fi.
-            if (answer == null || answer.offline) wanted?.add(k)
+            // A song that went without, for either reason, is looked up the next time the car is on Wi-Fi
+            // (one with no artist cannot be: lrclib.net is asked by it).
+            if ((answer == null || answer.offline) && k.artist.isNotEmpty()) wanted?.add(k)
+            if (answer?.noArtist == true) log.i("lyrics: none on the head unit for a ${k.durationSec}s song the phone named no artist for")
             if (key != k) return@execute
             if (answer == null) {
                 status = Status.UNREACHABLE
@@ -173,7 +181,12 @@ object BarLyrics {
             }
             answer.lyrics?.let { disk?.noteUse(k) }
             lyrics = answer.lyrics
-            status = if (answer.lyrics != null) Status.FOUND else Status.NONE
+            status = when {
+                answer.lyrics != null -> Status.FOUND
+                answer.noArtist -> Status.NO_ARTIST
+                answer.offline -> Status.WAITING
+                else -> Status.NONE
+            }
             main.post { push(); if (lyrics != null) { main.removeCallbacks(tick); main.post(tick) } }
         }
     }
@@ -213,4 +226,23 @@ object BarLyrics {
         if (line == null) shownIndex = -2
         bars.forEach { it.lyricLine = line }
     }
+}
+
+/**
+ * Pure: the pane's line when no lyrics show. Top level, so a JVM test reaches it without starting
+ * BarLyrics' main-thread Handler. Until 2026-11-27 a song not in the package and not asked about read
+ * "No timed lyrics for this song", which the owner took for the package failing.
+ */
+fun lyricsNote(status: BarLyrics.Status, online: LyricsOnline, link: wasidremin.gmccpa.upload.DataMeter.Link): String = when (status) {
+    BarLyrics.Status.OFF -> "Lyrics are off. Settings ▸ Playback ▸ Look up lyrics."
+    BarLyrics.Status.LOOKING -> "Looking up lyrics…"
+    BarLyrics.Status.NONE -> "No timed lyrics for this song."
+    BarLyrics.Status.UNREACHABLE -> "Lyrics unavailable: lrclib.net could not be reached. Asked again the next time the car is on Wi-Fi."
+    BarLyrics.Status.WAITING -> when {
+        online == LyricsOnline.NEVER -> "Not in the lyrics package. Looked up the next time the package is refreshed on Wi-Fi."
+        link == wasidremin.gmccpa.upload.DataMeter.Link.NONE -> "Not in the lyrics package, and the car has no connection. Looked up the next time it is on Wi-Fi."
+        else -> "Not in the lyrics package. Looked up the next time the car is on Wi-Fi."
+    }
+    BarLyrics.Status.NO_ARTIST -> "Not in the lyrics package, and the phone did not name the artist to look it up by."
+    BarLyrics.Status.NO_SONG, BarLyrics.Status.FOUND -> ""
 }

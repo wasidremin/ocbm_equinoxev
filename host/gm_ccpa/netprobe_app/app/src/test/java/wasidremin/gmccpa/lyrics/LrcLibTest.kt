@@ -111,6 +111,18 @@ class LrcLibTest {
             LyricsKey("Dirty Paws", "Of Monsters and Men", "LIVE FROM VATNAGARÐAR", 301L),
             LyricsKey.of(" Dirty Paws ", "Of Monsters and Men", "LIVE FROM VATNAGARÐAR", 300_506L),
         )
-        assertNull("no artist yet", LyricsKey.of(" Dirty Paws ", null, "LIVE FROM VATNAGARÐAR", 300_506L))
+        // The phone leaves the artist out of some song changes: still a song to find by title and length.
+        assertEquals(LyricsKey("Dirty Paws", "", "", 301L), LyricsKey.of(" Dirty Paws ", null, null, 300_506L))
+        assertNull("no title, no song", LyricsKey.of(" ", "Of Monsters and Men", null, 300_506L))
+    }
+
+    @Test fun aSongWithNoArtistIsNotAskedOfLrclibAndSaysWhy() {
+        val api = FakeLrcLib(emptyMap())
+        val a = LrcLib.find(LyricsKey("Untitled No Artist Song", "", "", 200L), api = api, online = true)!!
+        assertNull(a.lyrics)
+        assertTrue(a.noArtist)
+        assertEquals(emptyList<String>(), api.asked)
+        // Not kept: the artist may come in the phone's next record.
+        assertNull(LrcLib.cached(LyricsKey("Untitled No Artist Song", "", "", 200L)))
     }
 }

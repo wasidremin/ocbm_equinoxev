@@ -753,7 +753,6 @@ object UploadCenter {
                         setRequestProperty("Accept", "application/json")
                     }
                     try {
-                        DataMeter.record(DataMeter.Stream.OTHER, total)
                         CountingRequestOutputStream(
                             delegate = conn.outputStream,
                             bytesTotal = total,
@@ -765,6 +764,7 @@ object UploadCenter {
                         }
                         emitState(onState, UploadState.Finalizing)
                         val code = conn.responseCode
+                        DataMeter.record(DataMeter.Stream.OTHER, total)
                         if (code !in 200..299) {
                             throw UploadPolicy.HttpStatusException(code, "HTTP $code")
                         }
@@ -878,7 +878,6 @@ object UploadCenter {
                 setRequestProperty("Accept", "application/json")
             }
             try {
-                DataMeter.record(DataMeter.Stream.SCREENSHOTS, totalBytes)
                 CountingRequestOutputStream(
                     delegate = conn.outputStream,
                     bytesTotal = totalBytes,
@@ -899,6 +898,7 @@ object UploadCenter {
                 }
                 emitState(onState, UploadState.Finalizing)
                 val code = conn.responseCode
+                DataMeter.record(DataMeter.Stream.SCREENSHOTS, totalBytes)
                 val respBody = runCatching {
                     (if (code in 200..299) conn.inputStream else conn.errorStream)
                         ?.bufferedReader()?.readText()

@@ -1481,7 +1481,7 @@ class LauncherUi(private val act: Activity) {
     }
 
     private fun dataUsedSubtitle(): String = wasidremin.gmccpa.upload.DataMeter.let {
-        it.describe(it.ledger(act), it.limitMb(act), it.wifiOnly(act))
+        it.linkText(it.link(act), it.wifiOnly(act)) + " " + it.describe(it.ledger(act), it.limitMb(act), it.wifiOnly(act))
     }
 
     private fun queueStatusSubtitle(): String {

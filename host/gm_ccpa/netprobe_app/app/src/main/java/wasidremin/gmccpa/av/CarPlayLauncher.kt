@@ -403,7 +403,6 @@ object CarPlayLauncher {
                 setRequestProperty("Accept", "application/json")
             }
             try {
-                wasidremin.gmccpa.upload.DataMeter.record(wasidremin.gmccpa.upload.DataMeter.Stream.OTHER, total)
                 wasidremin.gmccpa.upload.CountingRequestOutputStream(
                     delegate = conn.outputStream,
                     bytesTotal = total,
@@ -421,6 +420,7 @@ object CarPlayLauncher {
                         it, wasidremin.gmccpa.upload.UploadState.Finalizing)
                 }
                 val code = conn.responseCode
+                wasidremin.gmccpa.upload.DataMeter.record(wasidremin.gmccpa.upload.DataMeter.Stream.OTHER, total)
                 if (code !in 200..299) {
                     throw wasidremin.gmccpa.upload.UploadPolicy.HttpStatusException(code, "HTTP $code")
                 }

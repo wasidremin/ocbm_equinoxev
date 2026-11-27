@@ -383,13 +383,7 @@ class MediaPaneView(ctx: Context, private val actions: Actions) : LinearLayout(c
         shownLyricStatus = status
         if (cur == null) {
             lyricViews.forEach { it.text = "" }
-            lyricNote.text = when (status) {
-                BarLyrics.Status.OFF -> "Lyrics are off. Settings ▸ Playback ▸ Look up lyrics."
-                BarLyrics.Status.LOOKING -> "Looking up lyrics…"
-                BarLyrics.Status.NONE -> "No timed lyrics for this song."
-                BarLyrics.Status.UNREACHABLE -> "Lyrics unavailable: lrclib.net could not be reached."
-                BarLyrics.Status.NO_SONG, BarLyrics.Status.FOUND -> ""
-            }
+            lyricNote.text = wasidremin.gmccpa.lyrics.lyricsNote(status, BarLyrics.online, wasidremin.gmccpa.upload.DataMeter.link(context))
             return
         }
         lyricNote.text = ""

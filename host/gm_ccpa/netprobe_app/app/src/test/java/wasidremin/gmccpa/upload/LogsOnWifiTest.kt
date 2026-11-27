@@ -40,4 +40,22 @@ class LogsOnWifiTest {
             LogsOnWifi.describe(LogsOnWifi.Request(UploadWindow.LAST_HOUR, tap)),
         )
     }
+
+    @Test fun logsSentByHandTakeTheWaitingUploadWithThem() {
+        // 2026-11-27: "Today" sent by hand, and the "Today" waiting since earlier taps went 10 s later.
+        val waiting = LogsOnWifi.Request(UploadWindow.TODAY, 1_000L)
+        val sent = LogsOnWifi.Request(UploadWindow.TODAY, 5_000L)
+        assertEquals(null, LogsOnWifi.afterManual(waiting, sent, ok = true))
+        assertEquals(null, LogsOnWifi.afterManual(null, sent, ok = true))
+        // A waiting request that reaches further back than what was sent still goes.
+        val wide = LogsOnWifi.Request(UploadWindow.TODAY, 1_000L)
+        assertEquals(wide, LogsOnWifi.afterManual(wide, LogsOnWifi.Request(UploadWindow.LAST_HOUR, 5_000L), ok = true))
+    }
+
+    @Test fun logsThatFailedToGoByHandWaitForWiFi() {
+        val sent = LogsOnWifi.Request(UploadWindow.LAST_HOUR, 5_000L)
+        assertEquals(sent, LogsOnWifi.afterManual(null, sent, ok = false))
+        assertEquals(LogsOnWifi.Request(UploadWindow.TODAY, 1_000L),
+            LogsOnWifi.afterManual(LogsOnWifi.Request(UploadWindow.TODAY, 1_000L), sent, ok = false))
+    }
 }

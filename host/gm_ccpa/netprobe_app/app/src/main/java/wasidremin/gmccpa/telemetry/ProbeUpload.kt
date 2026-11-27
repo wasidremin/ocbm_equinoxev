@@ -230,7 +230,6 @@ object ProbeUpload {
             setRequestProperty("X-Report-Name", name)
         }
         try {
-            wasidremin.gmccpa.upload.DataMeter.record(wasidremin.gmccpa.upload.DataMeter.Stream.TELEMETRY, size)
             wasidremin.gmccpa.upload.CountingRequestOutputStream(
                 delegate = connection.outputStream,
                 bytesTotal = size,
@@ -249,6 +248,7 @@ object ProbeUpload {
                 wasidremin.gmccpa.upload.UploadCenter.emitState(it, wasidremin.gmccpa.upload.UploadState.Finalizing)
             }
             val code = connection.responseCode
+            wasidremin.gmccpa.upload.DataMeter.record(wasidremin.gmccpa.upload.DataMeter.Stream.TELEMETRY, size)
             val text = try {
                 (if (code in 200..299) connection.inputStream else connection.errorStream)
                     ?.bufferedReader()?.readText()

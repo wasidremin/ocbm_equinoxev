@@ -326,14 +326,14 @@ object LogExport {
                     setRequestProperty("Accept", "application/json")
                 }
                 try {
-                    wasidremin.gmccpa.upload.DataMeter.record(
-                        wasidremin.gmccpa.upload.DataMeter.Stream.LOGS, payload.size.toLong())
                     wireBytes += payload.size.toLong()
                     connection.outputStream.use { out ->
                         out.write(payload)
                         out.flush()
                     }
                     val code = connection.responseCode
+                    wasidremin.gmccpa.upload.DataMeter.record(
+                        wasidremin.gmccpa.upload.DataMeter.Stream.LOGS, payload.size.toLong())
                     if (code !in 200..299) {
                         throw wasidremin.gmccpa.upload.UploadCenter.HttpStatusException(
                             code,

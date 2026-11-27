@@ -1875,10 +1875,10 @@ class MainActivity : Activity() {
      * shortest useful range rather than everything on disk. The chosen range is logged with the
      * result so an upload artifact can be told apart from a later one.
      */
-    private fun deferLogs(window: wasidremin.gmccpa.logging.UploadWindow) {
+    private fun deferLogs(window: wasidremin.gmccpa.logging.UploadWindow, why: String = "The logs go by themselves the next time the car is on Wi-Fi.") {
         wasidremin.gmccpa.upload.LogsOnWifi.defer(this, window)
         ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Idle)
-        ui.setDetail("logs will be sent the next time the car is on Wi-Fi")
+        ui.setDetail(why)
         ui.refreshUploadQueueRow()
     }
 
@@ -1886,7 +1886,7 @@ class MainActivity : Activity() {
         val window = wasidremin.gmccpa.upload.UploadCenter.logWindow(this)
         if (onWifiOnly) { deferLogs(window); return }
         val meter = wasidremin.gmccpa.upload.DataMeter
-        if (meter.wifiOnly(this) && !meter.onWifi(this)) { deferLogs(window); return }
+        meter.waitReason(meter.link(this), meter.wifiOnly(this))?.let { deferLogs(window, it); return }
         if (confirmed) { sendLogs(window); return }
         // Measure first. The car's data is a monthly allowance and a whole-OS capture is large, so
         // a big upload says what it will cost and waits for a yes; a small one just goes.
@@ -1922,6 +1922,13 @@ class MainActivity : Activity() {
     }
 
     private fun sendLogs(window: wasidremin.gmccpa.logging.UploadWindow) {
+        val waiting = wasidremin.gmccpa.upload.LogsOnWifi
+        if (!waiting.beginManual()) {
+            ui.setDetail("The logs that were waiting for Wi-Fi are being sent now.")
+            ui.setUploadLogsState(wasidremin.gmccpa.upload.UploadState.Idle)
+            return
+        }
+        val sentRequest = wasidremin.gmccpa.upload.LogsOnWifi.Request(window, System.currentTimeMillis())
         val base = wasidremin.gmccpa.upload.UploadCenter.baseUrl(this)
         emit(">>> uploading logs (always redacted, range=${window.label}) to $base/logs")
         ui.setDetail("uploading ${window.phrase} of redacted logs…")
@@ -1931,6 +1938,7 @@ class MainActivity : Activity() {
             window = window,
             onState = { st -> if (uiAlive()) ui.setUploadLogsState(st) },
         ) { result ->
+            waiting.endManual(this, sentRequest, result.isSuccess)
             result.onSuccess {
                 val older = if (it.skippedLines > 0) ", ${it.skippedLines} older lines not sent" else ""
                 val sent = wasidremin.gmccpa.upload.DataMeter.formatMb(it.wireBytes)
@@ -1941,7 +1949,10 @@ class MainActivity : Activity() {
                 }
             }.onFailure {
                 emit("upload FAILED: ${it.message}")
-                if (uiAlive()) ui.setDetail("log upload failed: ${it.message}")
+                if (uiAlive()) {
+                    ui.setDetail("Log upload failed (${it.javaClass.simpleName}). It goes again by itself the next time the car is on Wi-Fi.")
+                    ui.refreshUploadQueueRow()
+                }
             }
         }
     }

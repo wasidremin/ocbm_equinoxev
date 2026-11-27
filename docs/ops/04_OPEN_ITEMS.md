@@ -87,6 +87,12 @@ own log line counted; the closed ones are listed at the end of this section with
   Insights ▸ Trips once it closes (4 min later). A short hop logs `not shown (<m> m)`. The tap has not
   been checked anywhere yet.
 
+- **Connection state, log hand-off and lyrics with no artist (2026-11-27, not yet published).** In
+  the car, off Wi-Fi: Settings ▸ Advanced's data row starts "No connection now", and Upload logs says
+  the car has no connection and the logs go by themselves; on arriving home the row turns to "Now on
+  Wi-Fi" and the logs arrive once (not twice). Car data used this month stops growing while nothing
+  can be sent. Play an album: each song shows lyrics if it is in the package, and a song that is not
+  says why in the media pane (`14_LESSONS_LEARNED.md` §13.5; T24).
 - **Wi-Fi only and the redaction fix (2026-11-26, Play 271).** Settings ▸ Advanced ▸ Wi-Fi only
   (`host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §13.5): with it on, on the car's modem the log shows
   `request held: Wi-Fi only` and `background telemetry uploads paused: Wi-Fi only`, Car data used this

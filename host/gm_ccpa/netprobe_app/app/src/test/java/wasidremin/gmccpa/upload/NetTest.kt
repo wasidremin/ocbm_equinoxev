@@ -16,6 +16,20 @@ class NetTest {
         assertEquals(emptyList<String>(), others)
     }
 
+    @Test fun bytesAreCountedOnlyOnceTheServerHasAnswered() {
+        // 2026-11-23: three hours of retries with no connection went on the car's allowance.
+        val early = src.walk().filter { it.isFile && it.extension == "kt" && it.name != "DataMeter.kt" }
+            .flatMap { f ->
+                val t = f.readText()
+                Regex("""DataMeter\.record\(""").findAll(t).mapNotNull { m ->
+                    val opened = t.lastIndexOf("Net.open(", m.range.first)
+                    if (opened >= 0 && !t.substring(opened, m.range.first).contains("responseCode"))
+                        "${f.relativeTo(src).path}:${t.substring(0, m.range.first).count { it == '\n' } + 1}" else null
+                }
+            }.toList()
+        assertEquals(emptyList<String>(), early)
+    }
+
     @Test fun theRefusalIsAnIoExceptionSoEveryCallerAlreadyHandlesIt() {
         assertTrue(Net.WifiOnly() is java.io.IOException)
     }

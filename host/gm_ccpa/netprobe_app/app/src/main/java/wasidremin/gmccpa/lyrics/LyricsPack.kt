@@ -115,8 +115,8 @@ class LyricsPack(private val dir: File) {
 
     /** The LRC text for [key], or null when the package has no version of it near its length. */
     fun find(key: LyricsKey): String? = synchronized(lock) {
-        val hits = loadIndex()[baseTitle(key.title)]?.filter { sameArtist(it.artist, key.artist) } ?: return null
-        val e = pick(hits.map { it.durationSec }, key.durationSec)?.let { hits[it] } ?: return null
+        val versions = loadIndex()[baseTitle(key.title)] ?: return null
+        val e = choose(versions.map { it.artist to it.durationSec }, key.artist, key.durationSec)?.let { versions[it] } ?: return null
         runCatching {
             RandomAccessFile(dat, "r").use { f ->
                 if (e.offset + e.length > f.length()) return null
@@ -195,6 +195,23 @@ class LyricsPack(private val dir: File) {
             if (durationSec <= 0) return 0
             return durations.withIndex().filter { it.value > 0 && abs(it.value - durationSec) <= MATCH_SECONDS }
                 .minByOrNull { abs(it.value - durationSec) }?.index
+        }
+
+        /**
+         * Pure: which of a title's [versions] (artist, length in seconds) is the song. With [artist]
+         * named, the closest length of that act's ([sameArtist], [pick]). With none, which the phone
+         * does on some song changes ([LyricsKey.of]), the length must be known and every version within
+         * [MATCH_SECONDS] of it must be one act's: a title alone can name several songs.
+         */
+        fun choose(versions: List<Pair<String, Long>>, artist: String, durationSec: Long): Int? {
+            if (artist.isNotBlank()) {
+                val mine = versions.indices.filter { sameArtist(versions[it].first, artist) }
+                return pick(mine.map { versions[it].second }, durationSec)?.let { mine[it] }
+            }
+            if (durationSec <= 0) return null
+            val near = versions.indices.filter { versions[it].second > 0 && abs(versions[it].second - durationSec) <= MATCH_SECONDS }
+            if (near.isEmpty() || near.map { plain(versions[it].first) }.distinct().size != 1) return null
+            return near.minByOrNull { abs(versions[it].second - durationSec) }
         }
 
         fun endpointFor(baseUrl: String, carId: String, have: String?): String =

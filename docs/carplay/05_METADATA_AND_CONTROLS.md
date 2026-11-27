@@ -1136,8 +1136,15 @@ is iAP2, NOT AirPlay"]
 3. **Subscribe** `StartNowPlayingUpdates 0x5000` naming the attribute groups/ids wanted. Stock subscribe
    body (`WIRED_METADATA_PLANE.md` L100-104): group id0 MediaItem = {0x01,0x04,0x06,0x0c,0x1a}, group id1
    Playback = {0x00,0x01,0x07}.
-4. Merge deltas (it's a DELTA stream: full title/artist on track change, then elapsed-only frames — merge
-   non-empty fields per feed or elapsed frames blank the title). [E]
+4. Merge deltas (it's a DELTA stream: title on track change, then elapsed-only frames — merge
+   non-empty fields per feed or elapsed frames blank the title). [E] **Corrected 2026-11-27:** a track
+   change does not always carry the artist. The car's logs (`np: track … artist=no`) show 26 of 160 song
+   changes from 2026-11-16 to 11-27 with no artist, four in a row on 2026-11-27, and the same song came
+   with its artist once the app restarted and subscribed again. `iap2-core::metadata::now_playing`
+   forwards only what a frame carried, so the phone left it out. Unverified: whether iOS omits an artist
+   unchanged from the previous song (the four look like an album playing). The app's merge starts a new
+   song from a blank record, so such a song has no artist; lyrics are then found by title and length
+   (`LyricsPack.choose`).
 
 **Artwork** is NOT inline — attr 0x1a is a **fileTransferIdentifier**; the JPEG (600×600 JFIF, ~100 KB)
 arrives over a separate **iAP2 File Transfer session** (link session 2, type 1 = FileTransfer) [E —

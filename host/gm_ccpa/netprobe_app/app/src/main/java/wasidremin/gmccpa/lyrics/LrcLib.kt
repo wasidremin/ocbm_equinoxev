@@ -17,11 +17,16 @@ data class LyricsKey(
     val durationSec: Long,
 ) {
     companion object {
-        /** The key for a song, or null when the iPhone has not named it and its artist. */
+        /**
+         * The key for a song, or null when the iPhone has not named it. The artist may be empty: the
+         * phone leaves it out of some song changes (26 of 160 in the logs from 2026-11-16 to 11-27; four
+         * in a row on 2026-11-27, all four in the package), and such a song is still found in the
+         * package by its title and length ([LyricsPack.choose]).
+         */
         fun of(title: String?, artist: String?, album: String?, durationMs: Long): LyricsKey? {
             val t = title?.trim().orEmpty()
             val a = artist?.trim().orEmpty()
-            if (t.isEmpty() || a.isEmpty()) return null
+            if (t.isEmpty()) return null
             return LyricsKey(t, a, album?.trim().orEmpty(), (durationMs + 500L) / 1_000L)
         }
     }
@@ -47,10 +52,11 @@ object LrcLib {
     private val log = ProbeLog.sub("lyrics")
 
     /**
-     * A finished lookup: [lyrics] null when LRCLIB has none for the song, or, with [offline], when the
-     * head unit has none and LRCLIB was not to be asked.
+     * A finished lookup: [lyrics] null when LRCLIB has none for the song; or, with [offline], when the
+     * head unit has none and LRCLIB was not to be asked; or, with [noArtist], when the head unit has
+     * none and the phone did not name the artist LRCLIB is asked by.
      */
-    class Answer(val lyrics: SyncedLyrics?, val offline: Boolean = false)
+    class Answer(val lyrics: SyncedLyrics?, val offline: Boolean = false, val noArtist: Boolean = false)
 
     /** LRCLIB reached, answering an HTTP error rather than a body or a 404. */
     internal class HttpError(val code: Int, path: String) : IOException("HTTP $code from /api/$path")
@@ -94,6 +100,11 @@ object LrcLib {
                 log.i("lyrics: ${lyrics.lines.size} timed lines, from the package")
                 return Answer(lyrics).also { synchronized(cache) { cache[key] = it } }
             }
+        }
+        if (key.artist.isEmpty()) {
+            // Not kept either: the phone may name the artist in its next record, which is a new key.
+            // Logged by the caller ([BarLyrics]).
+            return Answer(null, noArtist = true)
         }
         if (!online) {
             // Not an answer to keep: the song is asked about again once the car may ask.

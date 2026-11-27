@@ -126,4 +126,25 @@ class LyricsPackTest {
         assertEquals("https://h/x/lyrics?car=0123456789abcdef", LyricsPack.endpointFor("https://h/x/", "0123456789abcdef", null))
         assertEquals("https://h/x/lyrics?car=0123456789abcdef&have=abc", LyricsPack.endpointFor("https://h/x", "0123456789abcdef", "abc"))
     }
+
+    @Test fun aSongTheArtistIsMissingForIsFoundByItsTitleAndLength() {
+        // 2026-11-27: four songs in a row came with no artist, all in the package, and none showed lyrics.
+        val pack = LyricsPack(tmp.newFolder("pack"))
+        pack.importFrom(gz(head, song("Call Me", "Blondie", 212, lrcA), song("Call Me", "Blondie", 487, lrcB),
+            song("Call Me", "Someone Else", 300, "[00:01.00]not this one\n")))
+        assertEquals(lrcA, pack.find(LyricsKey("Call Me", "", "", 213)))
+        assertEquals(lrcB, pack.find(LyricsKey("Call Me - Remastered", "", "", 486)))
+        // No length to tell versions apart, or a length no version has: nothing.
+        assertNull(pack.find(LyricsKey("Call Me", "", "", 0)))
+        assertNull(pack.find(LyricsKey("Call Me", "", "", 250)))
+    }
+
+    @Test fun withNoArtistTwoActsAtTheSameLengthAreNeitherTaken() {
+        val versions = listOf("blondie" to 212L, "someone else" to 213L, "blondie" to 487L)
+        assertNull(LyricsPack.choose(versions, "", 212))
+        assertEquals(2, LyricsPack.choose(versions, "", 488))
+        // Named, the artist decides as before.
+        assertEquals(1, LyricsPack.choose(versions, "Someone Else", 212))
+        assertEquals(0, LyricsPack.choose(versions, "Blondie", 212))
+    }
 }
