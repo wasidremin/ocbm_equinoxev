@@ -57,7 +57,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV), re-checked 2026-11-26
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 272 (`4.0+sound`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 273 (`4.0+phones`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 Re-checked 2026-11-26 against the car's uploads through 2026-11-26 00:49 UTC (app 269): each item's
 own log line counted; the closed ones are listed at the end of this section with that evidence.
 
@@ -106,17 +106,17 @@ own log line counted; the closed ones are listed at the end of this section with
   the Custom curve when the finger lifts. Listen for distortion at large boosts (the pre-gain and soft
   knee should stop clipping).
 
-- **The Silverado hotspot mode removed (T33, 2026-11-26, not yet published).** The first drive on the
+- **The Silverado hotspot mode removed (T33, 2026-11-26, Play 273).** The first drive on the
   build that carries it: CarPlay connects as before (picture, sound, touch, calls, the driver display),
   Settings ▸ Advanced has no Adapter Wi-Fi or Vehicle hotspot rows, and no `wifi_ap: false` subscribe.
   Not benched: the adapter and phone had left the server.
 
-- **Settings per iPhone (T39, 2026-11-26, not yet published).** In the car: with the wife's phone on a
+- **Settings per iPhone (T39, 2026-11-26, Play 273).** In the car: with the wife's phone on a
   drive, change the equalizer (and the pane or layout if wanted); on the owner's next drive the log says
   `phone settings (…): phone N of 2 drives — its sound, pane and layout put in place` and their own
   settings are back; the wife's come back on hers. Her first drive after the update logs "first time here".
 
-- **Pinch-to-zoom (2026-11-26, not yet published).** The app now sends two fingers
+- **Pinch-to-zoom (2026-11-26, Play 273).** The app now sends two fingers
   (`av/TouchFingers`; `docs/carplay/06_AV_PIPELINE.md`, touch Phase 2). In the car: pinch to zoom and
   two-finger rotate in Apple Maps; taps and drags as before. The log shows `touch down finger 1` for the
   second finger. Not tried anywhere but the unit tests: the emulator cannot inject two-finger touches.
