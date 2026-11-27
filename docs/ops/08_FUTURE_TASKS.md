@@ -1586,7 +1586,7 @@ against this app:
 | Turn alert (the cluster arrow flashes before the turn) | enigy/carlink | no: T38 |
 | Settings per iPhone | enigy/carlink | the order and schedule only (T12, T35): T39 |
 | "A phone was plugged in: switch, or stay?" | mossyhub/openautolink | no; wireless only here, so little use |
-| Pinch-to-zoom | openautolink | yes: `touchScreenSupportsMultiTouch` is declared |
+| Pinch-to-zoom | openautolink | **corrected 2026-11-26:** declared, but the app sent one finger; built that day (`av/TouchFingers`) |
 | Netflix and YouTube on the screen, 4K | Carlinkit and Ottocast AI boxes | no, on purpose (Left off) |
 | Spatial Audio | Pioneer, CES 2026 | no (Left off) |
 | Dashcam | aftermarket head units | no (Left off) |

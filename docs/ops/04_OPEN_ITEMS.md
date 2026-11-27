@@ -116,6 +116,11 @@ own log line counted; the closed ones are listed at the end of this section with
   `phone settings (…): phone N of 2 drives — its sound, pane and layout put in place` and their own
   settings are back; the wife's come back on hers. Her first drive after the update logs "first time here".
 
+- **Pinch-to-zoom (2026-11-26, not yet published).** The app now sends two fingers
+  (`av/TouchFingers`; `docs/carplay/06_AV_PIPELINE.md`, touch Phase 2). In the car: pinch to zoom and
+  two-finger rotate in Apple Maps; taps and drags as before. The log shows `touch down finger 1` for the
+  second finger. Not tried anywhere but the unit tests: the emulator cannot inject two-finger touches.
+
 **Still open**
 
 - **Which iPhone first, by schedule (T35, Play 268): a changed order not yet seen.** The weekday-morning

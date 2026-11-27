@@ -418,8 +418,6 @@ class CarPlayActivity : Activity() {
         const val DISPLAY_H = 960
         /** Settle time between the picture coming back and a settings-originated CarPlay tile acting. */
         private const val BAR_TARGET_DELAY_MS = 900L
-        /** Internal phase for ACTION_CANCEL. The wire only knows 0/1/2 — see [onTouch]. */
-        private const val PHASE_CANCEL = 3
         /** Displacement sent before a cancelled gesture's UP, as a fraction of the view width. ~2% is
          *  comfortably past iOS's tap allowable-movement and still an imperceptible drag. */
         private const val CANCEL_SLOP_N = 0.02f
@@ -461,8 +459,9 @@ class CarPlayActivity : Activity() {
     // AtomicReference, not a plain @Volatile: the check-set-post sequence on a plain field has a
     // lost-wakeup race (reader nulls it between the UI thread's read and post) that freezes the rest
     // of a drag. getAndSet makes the drain atomic and self-coalescing.
-    private val pendingMove = AtomicReference<Triple<Int, Float, Float>?>(null)
-    private var primaryPointerId = -1
+    /** Per finger, the latest MOVE not yet sent (latest wins). */
+    private val pendingMove = Array(TouchFingers.MAX_FINGERS) { AtomicReference<Pair<Float, Float>?>(null) }
+    private val fingers = TouchFingers()
     /** Hand-off overlay. Absent when this open is a Surface re-attach of a session that already played. */
     private var intro: StartupAnimationView? = null
     private var introGear: View? = null
@@ -1500,11 +1499,12 @@ class CarPlayActivity : Activity() {
      * Touch → HID report to the iPhone, dispatched off the UI thread.
      *
      * A send takes the event-channel lock and can block on a stalled socket write for seconds; doing
-     * that inline from `onTouch` risks an ANR. MOVEs are coalesced latest-wins (a stale MOVE has no
-     * value once a newer one exists) while DOWN and UP are never dropped and keep their order.
+     * that inline from `onTouch` risks an ANR. MOVEs are coalesced latest-wins per finger (a stale MOVE
+     * has no value once a newer one exists) while DOWN and UP are never dropped and keep their order.
      *
-     * Single-touch: only the primary pointer is tracked. Without that, a second finger lifting sends
-     * UP while the first is still down, and iOS sees the gesture end mid-drag.
+     * Two fingers since 2026-11-26 ([TouchFingers]): each is sent with its own number, so a pinch or a
+     * two-finger rotate reaches the phone as two contacts. Until then only the first pointer was sent,
+     * and the phone, told it had a two-finger screen, saw every pinch as a one-finger drag.
      */
     private fun onTouch(v: View, ev: MotionEvent): Boolean {
         if (previewOnly) {
@@ -1515,71 +1515,57 @@ class CarPlayActivity : Activity() {
             return true
         }
         if (v.width <= 0 || v.height <= 0) return false
-        val action = ev.actionMasked
-        val pid = ev.getPointerId(ev.actionIndex)
-
-        val phase = when (action) {
-            MotionEvent.ACTION_DOWN -> { primaryPointerId = pid; 0 }
-            MotionEvent.ACTION_MOVE -> 1
-            MotionEvent.ACTION_UP -> { primaryPointerId = -1; 2 }
-            MotionEvent.ACTION_CANCEL -> { primaryPointerId = -1; PHASE_CANCEL }
-            MotionEvent.ACTION_POINTER_DOWN -> return true               // a non-primary finger arrived
-            // If the PRIMARY finger lifts first, send UP (don't let MOVEs teleport to the survivor);
-            // a non-primary finger lifting is ignored.
-            MotionEvent.ACTION_POINTER_UP -> if (pid == primaryPointerId) { primaryPointerId = -1; 2 } else return true
-            else -> return false
-        }
-        // For a POINTER_UP the lifting pointer's own position is at actionIndex; otherwise track the
-        // primary pointer (falling back to index 0 once it has been cleared).
-        val idx = if (action == MotionEvent.ACTION_POINTER_UP) ev.actionIndex
-                  else if (primaryPointerId >= 0) ev.findPointerIndex(primaryPointerId).takeIf { it >= 0 } ?: 0
-                  else 0
+        val pointers = (0 until ev.pointerCount).map { TouchFingers.Pointer(ev.getPointerId(it), ev.getX(it), ev.getY(it)) }
+        val touches = fingers.on(ev.actionMasked, ev.getPointerId(ev.actionIndex), pointers)
         // Two coordinate spaces, and they must not be mixed.
         //
         // Sidebar resize: the phone was told the display IS the video rectangle (origin at the
         // surface's left edge). A tap at the surface's left edge is x=0.
         //
         // View area / full panel: the phone was told the display is the whole 2400x960 panel, and a
-        // view area is a sub-rect inside it. `nativeTouch` scales by DISPLAY_W/H. Using the view's
-        // own width there would report the video's left edge as x=0 instead of the view area's origin.
+        // view area is a sub-rect inside it, so touch is normalised against DISPLAY_W/H. Using the
+        // view's own width there would report the video's left edge as x=0 instead of the view
+        // area's origin.
         val framed = viewAreaIndex == 0
-        val nx = (if (framed) ev.getX(idx) / v.width.toFloat()
-            else (v.left + ev.getX(idx)) / DISPLAY_W.toFloat()).coerceIn(0f, 1f)
-        val ny = (if (framed) ev.getY(idx) / v.height.toFloat()
-            else (v.top + ev.getY(idx)) / DISPLAY_H.toFloat()).coerceIn(0f, 1f)
-
-        if (phase == 1) {
-            // Latest-wins, lost-wakeup-free: set the pending MOVE and post a drain that atomically
-            // takes it. Extra posts are cheap and self-coalesce (a later drain finds null).
-            pendingMove.set(Triple(1, nx, ny))
-            touchHandler?.post { pendingMove.getAndSet(null)?.let { (p, x, y) -> send(p, x, y) } }
-        } else if (phase == PHASE_CANCEL) {
-            // The HID report is [buttons][x][y] and the JNI maps phase 2 to a tip-up: there is no cancel
-            // semantic on the wire, so folding CANCEL into the UP arm delivered an ABORTED gesture to
-            // iOS as a completed lift — a phantom tap at the last coordinates. iOS's tap recogniser
-            // instead FAILS once the touch moves past its allowable movement, so displace beyond tap
-            // slop and lift there. Worst case is a few pixels of scroll, which is strictly better.
-            // Both go through touchHandler so they keep their order behind any in-flight MOVE.
-            pendingMove.set(null)
-            val cx = (if (nx + CANCEL_SLOP_N <= 1f) nx + CANCEL_SLOP_N else nx - CANCEL_SLOP_N)
-                .coerceIn(0f, 1f)
-            touchHandler?.post {
-                log.i("touch CANCEL→displaced UP")
-                send(1, cx, ny)
-                send(2, cx, ny)
+        for (t in touches) {
+            val nx = (if (framed) t.x / v.width.toFloat() else (v.left + t.x) / DISPLAY_W.toFloat()).coerceIn(0f, 1f)
+            val ny = (if (framed) t.y / v.height.toFloat() else (v.top + t.y) / DISPLAY_H.toFloat()).coerceIn(0f, 1f)
+            val f = t.finger
+            when (t.phase) {
+                TouchFingers.MOVE -> {
+                    // Latest-wins, lost-wakeup-free: set this finger's pending MOVE and post a drain
+                    // that atomically takes it. Extra posts are cheap and self-coalesce.
+                    pendingMove[f].set(nx to ny)
+                    touchHandler?.post { pendingMove[f].getAndSet(null)?.let { (x, y) -> send(TouchFingers.MOVE, x, y, f) } }
+                }
+                TouchFingers.CANCEL -> {
+                    // There is no cancel semantic on the wire: an UP delivers an ABORTED gesture to iOS
+                    // as a completed lift — a phantom tap at the last coordinates. iOS's tap recogniser
+                    // instead FAILS once the touch moves past its allowable movement, so displace beyond
+                    // tap slop and lift there. Worst case is a few pixels of scroll, which is strictly
+                    // better. Through touchHandler so they keep their order behind any in-flight MOVE.
+                    pendingMove[f].set(null)
+                    val cx = (if (nx + CANCEL_SLOP_N <= 1f) nx + CANCEL_SLOP_N else nx - CANCEL_SLOP_N).coerceIn(0f, 1f)
+                    touchHandler?.post {
+                        log.i("touch CANCEL→displaced UP (finger $f)")
+                        send(TouchFingers.MOVE, cx, ny, f)
+                        send(TouchFingers.UP, cx, ny, f)
+                    }
+                }
+                else -> {
+                    pendingMove[f].set(null)
+                    touchHandler?.post { send(t.phase, nx, ny, f) }
+                }
             }
-        } else {
-            pendingMove.set(null)
-            touchHandler?.post { send(phase, nx, ny) }
+            if (t.phase == TouchFingers.DOWN && f == 0) v.performClick()
         }
-        if (phase == 0) v.performClick()
         return true
     }
 
-    private fun send(phase: Int, nx: Float, ny: Float) {
-        val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendTouch(phase.toByte(), nx, ny)
+    private fun send(phase: Int, nx: Float, ny: Float, finger: Int) {
+        val sent = wasidremin.gmccpa.ocbm.AdapterSession.sendTouch(phase.toByte(), nx, ny, finger)
         if (!sent) log.w("touch ${phaseName(phase)} sent=false — adapter has no subscription")
-        else if (phase != 1) log.i("touch ${phaseName(phase)} n=(%.3f, %.3f) sent=true".format(nx, ny))
+        else if (phase != TouchFingers.MOVE) log.i("touch ${phaseName(phase)} finger $finger n=(%.3f, %.3f) sent=true".format(nx, ny))
     }
 
     private fun phaseName(p: Int) = when (p) { 0 -> "down"; 1 -> "move"; else -> "up" }

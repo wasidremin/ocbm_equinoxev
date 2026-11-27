@@ -1776,10 +1776,12 @@ transport between them.**
   (`hid.rs::touch_report_multi` / `touch_report_multi_normalized`, unit-tested against Apple's fill
   order) and reassembles the one-finger-per-`INPUT_TOUCH` wire framing into a single two-contact report
   (carplayd's `CONTACTS` slots + `contact_slot`; a third finger is dropped, as Apple's descriptor holds
-  two). The **Android** host already drives it end-to-end (`CarlinkAndroid`'s `CarlinkManager` sends one
-  `INPUT_TOUCH` per pointer with the finger id). **The remaining gap is the macOS host:**
-  `AppDelegate.carPlayView(_:didMultiTouchTwo:)` is an empty stub, so pinch / two-finger scroll are still
-  captured and dropped there.
+  two). Upstream's `CarlinkAndroid` sent one `INPUT_TOUCH` per pointer with the finger id. **Corrected
+  2026-11-26:** this fork's GM app did not: `CarPlayActivity.onTouch` sent only its first pointer, as
+  finger 0, so with the two-finger descriptor declared a pinch reached the phone as a one-finger drag.
+  From 2026-11-26 it sends each of up to two pointers under its own finger number
+  (`av/TouchFingers`, pure, `TouchFingersTest`); a third finger is not sent. Not yet tried in the car.
+  (The macOS host, whose two-finger handler was an empty stub, was removed on 2026-10-27.)
 - **Phase 3 — buttons/commands: DONE** (task #35). `INPUT_MEDIA_BTN` (media buttons, HID uid 2),
   `INPUT_NAV` (D-Pad, uid 3, flag-gated), `INPUT_KNOB` (uid 4), `INPUT_TELEPHONY` and `INPUT_COMMAND` all
   ride `CH_INPUT`; Siri is dispatched box-side as the `/command` `requestSiri`. See

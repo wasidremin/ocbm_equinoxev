@@ -110,9 +110,9 @@ object AdapterSession {
 
     // Touches, telephony, commands (Siri) and nav keys can change the app iOS shows, so each tells
     // MapsWatch, which otherwise treats a lost Maps card as a misread. Media keys and night mode cannot.
-    fun sendTouch(phase: Byte, nx: Float, ny: Float): Boolean {
+    fun sendTouch(phase: Byte, nx: Float, ny: Float, finger: Int = 0): Boolean {
         if (phase == Ocbm.TOUCH_DOWN) MapsWatch.noteInput()
-        return client?.sendTouch(phase, nx, ny) == true
+        return client?.sendTouch(phase, nx, ny, finger) == true
     }
 
     fun sendTelephony(index: Byte): Boolean {
