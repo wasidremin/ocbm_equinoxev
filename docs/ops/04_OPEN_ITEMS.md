@@ -57,7 +57,7 @@ canonical control, box-autonomous page-on-boot) are **not** open items and are n
 ### GM app and the car (Equinox EV), re-checked 2026-11-26
 
 Car-side items. The owning document holds the detail; this list only says what is open. Play
-high-water mark: versionCode 273 (`4.0+phones`, 2026-11-26; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
+high-water mark: versionCode 274 (`4.0+offline-clear`, 2026-11-27; `host/gm_ccpa/docs/14_LESSONS_LEARNED.md` §6).
 Re-checked 2026-11-26 against the car's uploads through 2026-11-26 00:49 UTC (app 269): each item's
 own log line counted; the closed ones are listed at the end of this section with that evidence.
 
@@ -87,7 +87,7 @@ own log line counted; the closed ones are listed at the end of this section with
   Insights ▸ Trips once it closes (4 min later). A short hop logs `not shown (<m> m)`. The tap has not
   been checked anywhere yet.
 
-- **Connection state, log hand-off and lyrics with no artist (2026-11-27, not yet published).** In
+- **Connection state, log hand-off and lyrics with no artist (2026-11-27, Play 274).** In
   the car, off Wi-Fi: Settings ▸ Advanced's data row starts "No connection now", and Upload logs says
   the car has no connection and the logs go by themselves; on arriving home the row turns to "Now on
   Wi-Fi" and the logs arrive once (not twice). Car data used this month stops growing while nothing
