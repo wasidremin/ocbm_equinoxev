@@ -29,7 +29,6 @@ android {
     sourceSets {
         // ../bridgeapi is the binder contract with the sideloaded USB bridge, which :bridge compiles too.
         main.java.srcDirs = ["src/main/java", "../bridgeapi"]
-        main.jniLibs.srcDirs = [System.getenv('GM_JNI_DIR') ?: "${rootProject.buildDir}/jniLibs"]
         main.assets.srcDirs = [System.getenv('GM_ASSETS_DIR') ?: 'src/main/assets']
         // Cluster turn-by-turn (Car App Library -> Templates Host -> GM cluster). Kept out of src/main
         // because tools/build_apk.sh compiles src/main alone, with aapt2 and no AndroidX: an APK built
@@ -74,7 +73,6 @@ android {
     }
     kotlinOptions { jvmTarget = '1.8' }
     packagingOptions {
-        jniLibs { useLegacyPackaging = false }
         // Each Bouncy Castle jar carries the same OSGi manifest for Java 9+; Android reads none of them.
         resources { excludes += '/META-INF/versions/9/OSGI-INF/MANIFEST.MF' }
     }

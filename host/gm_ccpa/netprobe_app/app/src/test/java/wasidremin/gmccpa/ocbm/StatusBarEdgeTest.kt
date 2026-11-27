@@ -25,7 +25,7 @@ class StatusBarEdgeTest {
             val d = doc(edge)
             assertTrue(d, d.contains("      drawUIOutsideSafeArea: false\n      statusBarEdge: $edge\n"))
             assertEquals(1, Regex("statusBarEdge").findAll(d).count())
-            assertNull(VehicleConfigYaml.structuralError(d + "wifi_ap: true\nwifi_ssid: ccpa\nwifi_pass: adapterpass1\nwifi_channel: 149\n", true))
+            assertNull(VehicleConfigYaml.structuralError(d + "wifi_ap: true\nwifi_ssid: ccpa\nwifi_pass: adapterpass1\nwifi_channel: 149\n"))
         }
         assertEquals(listOf("auto", "bottom", "driver"), VehicleConfigYaml.STATUS_BAR_EDGES)
     }

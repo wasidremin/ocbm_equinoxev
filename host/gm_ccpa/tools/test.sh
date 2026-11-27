@@ -2,8 +2,8 @@
 # Tier-0 verification gate (docs/11_HARDENING_PLAN.md): host-side cargo tests for the vendored
 # protocol crates. No hardware needed. Run before packaging any APK.
 #
-# The vendored crates are path deps, not members of the carplay-jni workspace, so they must be tested
-# from their own directories. receiver must be built with --no-default-features --features mic-uplink
+# The vendored crates are path deps, not workspace members, so they must be tested from their own
+# directories. receiver must be built with --no-default-features --features mic-uplink
 # to dodge the eld-codec / fdk-aac feature-unification trap (docs/06 §5d).
 # Repo-relative roots. This project lives at ccpa_custom/host/gm_ccpa, so the tools resolve both
 # roots from their own location rather than hard-coding an absolute path — moving the checkout, or
@@ -33,25 +33,6 @@ echo "=== Tier-0: receiver ==="
 
 echo "=== Tier-0: pairing ==="
 ( cd "$CCPA/pairing" && cargo test )
-
-echo "=== Tier-0: carplay-jni builds for the head unit ABI ==="
-# Prefer the host's standard Android SDK location, while retaining the documented macOS default.
-SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
-NDK_VERSION="${ANDROID_NDK_VERSION:-30.0.15729638}"
-NDK_ROOT="${ANDROID_NDK_HOME:-$SDK/ndk/$NDK_VERSION}"
-NDK_PREBUILT="$(find "$NDK_ROOT/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null || true)"
-[ -n "$NDK_PREBUILT" ] || { echo "FATAL: no NDK toolchain found under $NDK_ROOT" >&2; exit 1; }
-NDK_BIN="$NDK_PREBUILT/bin"
-# eld-codec compiles a C shim against libfdk-aac, so this gate needs the SAME cross-toolchain env as
-# build_apk.sh. Without it the gate fails on `cc failed compiling csrc/eld_shim.c` even though the
-# real build succeeds — a false red that would train people to ignore the gate.
-( cd "$(dirname "${BASH_SOURCE[0]}")/../native/carplay-jni" \
-  && FDK_AAC_PREFIX="${FDK_AAC_PREFIX:-$CCPA_ROOT/scratchpad/fdk/install-android-x86_64}" \
-  && CC_x86_64_linux_android="$NDK_BIN/x86_64-linux-android32-clang" \
-  && AR_x86_64_linux_android="$NDK_BIN/llvm-ar" \
-  && export FDK_AAC_PREFIX CC_x86_64_linux_android AR_x86_64_linux_android \
-  && CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$NDK_BIN/x86_64-linux-android32-clang" \
-     cargo build --release --target x86_64-linux-android )
 
 # ---- documentation budget -----------------------------------------------------------------------
 # A hard cap, enforced rather than merely stated. Doc directories rot by accretion: each session adds

@@ -32,7 +32,7 @@ class CarGpsTest {
         val tail = "wifi_ap: true\nwifi_ssid: ccpa\nwifi_pass: adapterpass1\nwifi_channel: 149\n"
         val ev = EvForCarPlay.iapConfigYaml(EvForCarPlay.FALLBACK_CONNECTORS, routing = true, mapsName = "Chevrolet Equinox EV")
         for (iap in listOf(block, EvForCarPlay.withLocation(ev, CarGps.blockLines()))) {
-            assertNull(VehicleConfigYaml.structuralError(VehicleConfigYaml.render(VehicleConfigSpec()) + iap + tail, true))
+            assertNull(VehicleConfigYaml.structuralError(VehicleConfigYaml.render(VehicleConfigSpec()) + iap + tail))
         }
     }
 

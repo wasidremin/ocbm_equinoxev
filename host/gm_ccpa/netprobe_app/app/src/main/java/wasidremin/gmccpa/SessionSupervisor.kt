@@ -27,8 +27,9 @@ internal fun missingForBridge(flags: Int): Int = BH_REQUIRED_BRIDGE and flags.in
  * Where a wireless CarPlay session actually is, as an explicit value.
  *
  * Before this existed, state was implicit in which objects happened to be non-null and which threads
- * happened to be running — `OcbmProbe.client`, `CarPlayRx.running`, `liveConnections`,
- * `MainActivity.sessionUp`, `CarPlayActivity.generation`. `LinkState` looked like a state machine but
+ * happened to be running — `OcbmProbe.client`, the app's own receiver's flags (that receiver, for
+ * the phone on the vehicle hotspot, went with T33 on 2026-11-26), `MainActivity.sessionUp`,
+ * `CarPlayActivity.generation`. `LinkState` looked like a state machine but
  * is a display label: written from thirteen sites, read by none. The cost of that was not tidiness.
  * It was that the app could not tell apart three situations that need opposite responses:
  *
@@ -37,17 +38,13 @@ internal fun missingForBridge(flags: Int): Int = BH_REQUIRED_BRIDGE and flags.in
  *  - the phone can see us, answers our nudge, and will not connect (waiting is useless — escalate,
  *    and eventually tell the driver, because the only fix is on their phone).
  *
- * All three looked identical from inside `rediscoverLoop`, which is why the app's response to every
+ * All three looked identical from inside that receiver's rediscover loop, which is why the app's response to every
  * one of them was to redial silently forever.
  */
 enum class RxPhase(val label: String) {
     IDLE("idle"),
-    /** The readiness probe failed: the receiver cannot accept a session even if a phone arrives. */
-    RX_UNHEALTHY("receiver unhealthy"),
     /** The box reported it is missing something it needs. Our side may be perfectly fine. */
     BOX_UNHEALTHY("adapter unhealthy"),
-    /** Receiver proven: listening, advertised, native core loadable. Box not up yet. */
-    RX_READY("receiver ready"),
     /** OCBM claimed, HELLO + MFi proven. Radios not woken yet. */
     BOX_LINKED("box linked"),
     /** Both sides green and the box told to bring its radios up. Also the recovery hub: inbound/grace expiry and adapter-recovered paths re-enter here and re-arm the ladder. */
@@ -56,8 +53,6 @@ enum class RxPhase(val label: String) {
     BT_PAIRED("paired"),
     /** `BTP_WIFI_HANDOFF` — the box handed the phone our SSID. A CarPlay connect is now expected. */
     HANDOFF_SENT("handoff sent"),
-    /** The phone accepted `GET /ctrl-int/1/connect`. It should now dial us back. */
-    INBOUND_EXPECTED("awaiting dial-back"),
     SESSION_UP("CarPlay live"),
     /** The session ended and we are holding still to let the phone come back on its own. */
     GRACE("session ended — waiting"),
@@ -78,7 +73,7 @@ enum class RxPhase(val label: String) {
      * finds it; every other phase is narration. [STALLED] is the terminal "the driver must act"
      * state and used to read like any other line.
      */
-    val isFailure: Boolean get() = this == RX_UNHEALTHY || this == BOX_UNHEALTHY || this == STALLED
+    val isFailure: Boolean get() = this == BOX_UNHEALTHY || this == STALLED
 }
 
 /**
@@ -101,20 +96,10 @@ class SessionSupervisor(
     interface Actions {
         /** Is the OCBM link to the box actually usable right now? See [runRung]. */
         fun boxLinkAlive(): Boolean
-        /**
-         * Rung 0: re-assert our mDNS records. Cheap, no box involvement, no session disturbance.
-         *
-         * Returns false when the responder was not actually up, so nothing was announced. A rung that
-         * did nothing must not be reported as an action taken — see [runRung].
-         */
-        fun reannounce(): Boolean
         /** Rung 1: `CT_RADIO`. Cycles the box's radios WITHOUT a host_present edge. */
         fun setBoxRadios(on: Boolean): Boolean
         /** Rung 2: `MGMT_RESTART_WIRELESS`. Drops the BT link, keeps the bond. ~4 s. */
         fun restartBoxWireless(): Boolean
-        /** Stop the 12 s rediscover churn so it cannot preempt a deliberate wait. */
-        fun pauseDiscovery()
-        fun resumeDiscovery()
         /** Surface phase + a human sentence. */
         fun report(phase: RxPhase, detail: String)
         /** True once this process has keyed a CarPlay session (video key, not the box's record). */
@@ -125,8 +110,6 @@ class SessionSupervisor(
         fun lanesArmed(): Boolean
         /** Same path as Restart Session. Must not block this scheduler. */
         fun restartSession()
-        /** Adapter Wi-Fi has no mDNS responder, so rung 0 cannot announce anything. */
-        fun adapterWifi(): Boolean
         /**
          * Ask the box whether its projection session is up, off this scheduler, and answer through
          * [onBoxSessionChecked].
@@ -141,20 +124,9 @@ class SessionSupervisor(
          * How long to hold still after a session ends before treating it as a failure.
          *
          * The phone very often comes straight back (an app switch, a brief radio glitch). Reacting
-         * instantly would tear down a session that was about to resume. `rediscoverLoop` fires every
-         * 12 s, so this window is deliberately shorter than that AND discovery is paused across it —
-         * otherwise the churn preempts the wait and redials into the gap.
+         * instantly would tear down a session that was about to resume.
          */
         const val GRACE_MS = 10_000L
-        /**
-         * From the phone accepting our nudge to giving up on the dial-back.
-         *
-         * Distinct from [GRACE_MS] on purpose. "Never dialled back" and "dialled back then left" are
-         * different faults with different fixes, and collapsing them into one timer is what made the
-         * app blind to the stall.
-         */
-        const val INBOUND_TIMEOUT_MS = 15_000L
-
         /**
          * From the box saying it handed the phone our SSID to giving up on hearing from the phone.
          *
@@ -302,7 +274,6 @@ class SessionSupervisor(
      * nothing left to turn them back on, which is a worse state than the one being recovered from.
      */
     private var graceTimer: ScheduledFuture<*>? = null
-    private var inboundTimer: ScheduledFuture<*>? = null
     private var ladderTimer: ScheduledFuture<*>? = null
     /** Drives the ladder forward on its own; see [LADDER_RECHECK_MS]. */
     private var retryTimer: ScheduledFuture<*>? = null
@@ -361,31 +332,6 @@ class SessionSupervisor(
     // All of these are safe to call from any thread; they only queue work onto the scheduler.
 
     /**
-     * The receiver's readiness probe reported.
-     *
-     * `ok=true` may only move the machine FORWARD into [RxPhase.RX_READY]. That phase means "receiver
-     * proven, box not up yet", and every later phase already has the receiver proven — so from any of
-     * them a good report is confirmation, not a transition. Re-entering RX_READY from a later phase
-     * asserted that the box was down when it was not, and `to()` acts on that assertion: it RESUMES
-     * discovery, so the 12 s rediscover loop redialled a live control connection (the hijack
-     * [onBtPhase] documents), and [escalate]'s SESSION_UP guard no longer saw SESSION_UP, so rung 0
-     * ran and rung 1 cycled the box's radios 20 s later under streaming CarPlay. In GRACE the same
-     * drop threw away the hold the grace window exists to provide. The one caller that reaches here
-     * with a live receiver is the Recover button ([userRecover] via `MainActivity.userRecover`), which
-     * re-runs the probe first — so pressing Recover during a live session knocked the session over.
-     *
-     * `ok=false` is deliberately NOT guarded: a listener that retired under a live session is a real
-     * fault the phase must reflect, whatever it was.
-     */
-    fun onReceiverReady(ok: Boolean, detail: String) = post {
-        if (!ok) { to(RxPhase.RX_UNHEALTHY, "receiver NOT ready: $detail"); return@post }
-        when (phase) {
-            RxPhase.IDLE, RxPhase.RX_UNHEALTHY, RxPhase.RX_READY -> to(RxPhase.RX_READY, detail)
-            else -> log.i("receiver re-checked OK while ${phase.label} — the phase stands ($detail)")
-        }
-    }
-
-    /**
      * The box is linked. [mfiProven] must be the OBSERVED outcome of a real cert+signature exchange,
      * never an assumption: this label used to read "MFi proven" unconditionally, on a path the caller
      * reached even when no adapter was ever claimed.
@@ -399,11 +345,11 @@ class SessionSupervisor(
         // BOX_LINKED — so [onRestartSubscribed]'s deadline read "the adapter never confirmed the
         // host present" against a box whose radios were up and discoverable. A phase the box has
         // already advanced past is never regressed by our own late bookkeeping. (STALLED, the
-        // unhealthy phases and IDLE/RX_READY are NOT in this set on purpose: a fresh link out of any
+        // unhealthy phase and IDLE are NOT in this set on purpose: a fresh link out of any
         // of those is a new bring-up and BOX_LINKED is its correct first phase.)
         when (phase) {
             RxPhase.ARMED, RxPhase.BT_PAIRING, RxPhase.BT_PAIRED, RxPhase.HANDOFF_SENT,
-            RxPhase.INBOUND_EXPECTED, RxPhase.SESSION_UP, RxPhase.BOX_LOST_SESSION_UP, RxPhase.GRACE,
+            RxPhase.SESSION_UP, RxPhase.BOX_LOST_SESSION_UP, RxPhase.GRACE,
             RxPhase.AWAY -> {
                 log.i("box linked ($detail) — phase already ${phase.label}, not regressing to ${RxPhase.BOX_LINKED.label}")
                 return@post
@@ -536,7 +482,7 @@ class SessionSupervisor(
         // synthesises one directly and deliberately bypasses handleCtrl (OcbmClient). An ocbmd
         // restart while USB stays enumerated fires both: the first correctly parks us in
         // BOX_LOST_SESSION_UP, and the second used to fall through to the else branch and drop a
-        // LIVE session to IDLE. That resumes discovery mid-session AND re-qualifies the box-health
+        // LIVE session to IDLE. That re-qualified the box-health
         // handler, whose guard list names only these same phases -- so the next health regression
         // climbed the ladder into CT_RADIO off/on against streaming CarPlay. Idempotent instead.
         if (phase == RxPhase.SESSION_UP || phase == RxPhase.BOX_LOST_SESSION_UP) {
@@ -582,9 +528,7 @@ class SessionSupervisor(
         // repeated BT mirror says nothing about session health.
         //
         // Without this guard the machine walks backwards out of SESSION_UP under a working session,
-        // and the damage is not cosmetic: leaving SESSION_UP RESUMES mDNS discovery (see `to()`),
-        // which lets the 12 s rediscover loop redial and hijack the live control connection, and
-        // BTP_LINK_UP / BTP_WIFI_HANDOFF each arm the 45 s handoff watchdog, whose expiry drops to
+        // and the damage is not cosmetic: BTP_LINK_UP / BTP_WIFI_HANDOFF each arm the 45 s handoff watchdog, whose expiry drops to
         // ARMED and escalates the recovery ladder — rung 1 cycles the box's radios and rung 2 fires
         // MGMT_RESTART_WIRELESS, underneath a session that was streaming fine.
         //
@@ -638,43 +582,16 @@ class SessionSupervisor(
         if (btdUp) armHandoffWatchdog()
     }
 
-    /** The phone answered `GET /ctrl-int/1/connect`. Start the dial-back clock. */
-    fun onDialAccepted() = post {
-        if (phase == RxPhase.SESSION_UP || phase == RxPhase.BOX_LOST_SESSION_UP) return@post
-        // The box-side clock's job is done the moment the phone answers: from here the dial-back
-        // deadline is the only one that applies. Leaving the handoff watchdog armed let it survive
-        // inbound-expiry — which moves the phase back to ARMED and re-qualifies it — and the two
-        // deadlines then burned two rungs in four seconds, promoting the ladder to the destructive
-        // rung 2 (observed 17:31:17.732 and 17:31:21.243).
-        handoffTimer?.cancel(false); handoffTimer = null
-        handoffSilenceTimer?.cancel(false); handoffSilenceTimer = null
-        // Same reasoning, applied to the ladder's blind 20 s retry: the dial-back clock armed just
-        // below is now the only deadline that applies. Observed firing rung 2 into a healthy session
-        // 1.4 s after this transition on 2026-09-08. See [deferLadder].
-        deferLadder("phone accepted the nudge")
-        to(RxPhase.INBOUND_EXPECTED, "phone accepted the nudge — waiting for it to dial back")
-        inboundTimer = arm(inboundTimer, INBOUND_TIMEOUT_MS) {
-            if (phase == RxPhase.INBOUND_EXPECTED) {
-                log.w("no dial-back within ${INBOUND_TIMEOUT_MS / 1000}s of an accepted nudge")
-                // Same reason as the grace timer: escalate() alone leaves the phase where it was, and
-                // a stale INBOUND_EXPECTED would never re-arm its own deadline.
-                to(RxPhase.ARMED, "no dial-back — recovering")
-                escalate("the phone accepted the connect and did not dial back")
-            }
-        }
-    }
-
     fun onSessionUp() = post {
         cancelAllTimers()   // includes the ladder's own retry chain: a real session ends recovery
         rung = 0                       // a real session is the only proof the ladder can stop
         boxLostMidSession = false
-        to(RxPhase.SESSION_UP, "CarPlay session is up")   // to() suspends discovery for this state
+        to(RxPhase.SESSION_UP, "CarPlay session is up")
     }
 
     /**
-     * The control connection went away. Hold still for [GRACE_MS] with discovery PAUSED — the phone
-     * usually comes back by itself, and the 12 s rediscover churn would otherwise redial into the gap
-     * and provoke a hijack of the session that was about to resume.
+     * The control connection went away. Hold still for [GRACE_MS]: the phone usually comes back by
+     * itself.
      */
     fun onSessionDown() = post {
         releaseSessionRadioHold("the session it was protecting has ended")
@@ -690,10 +607,8 @@ class SessionSupervisor(
             }
             log.w("phone did not return within ${GRACE_MS / 1000}s")
             // Leave GRACE FIRST. escalate() does not move the phase unless the ladder runs out, so
-            // staying here would strand the machine in a state that suspends discovery with no timer
-            // left to fire — the receiver would go quiet permanently and look idle while doing
-            // nothing. to() restores discovery on the way out.
-            to(RxPhase.ARMED, "grace expired — resuming discovery and recovering")
+            // staying here would strand the machine in GRACE with no timer left to fire.
+            to(RxPhase.ARMED, "grace expired — recovering")
             escalate("the session ended and the phone did not come back")
         }
     }
@@ -880,23 +795,9 @@ class SessionSupervisor(
     }
 
     /**
-     * [CarPlayRx] has counted enough accepted-but-unanswered dials to call it. This is the terminal
-     * rung: three reproductions on 2026-08-27 showed nothing on this side clears it — not restarting
-     * the app, not power-cycling the adapter. iOS reads our mDNS TXT and never resolves SRV, so it
-     * holds no address for us. Reconnecting Bluetooth from the phone did clear it, every time.
-     */
-    fun onStalled(dials: Int) = post {
-        cancelAllTimers()
-        val detail = if (act.adapterWifi()) "Can't find your iPhone — tap Restart"
-        else "iPhone sees this receiver but will not connect ($dials tries) — " +
-            "reconnect Bluetooth to the car from the iPhone"
-        to(RxPhase.STALLED, detail)
-    }
-
-    /**
      * Everything was torn down deliberately (the Stop button, or `stopEverything`). Reset to IDLE and
-     * drop the ladder: without this the supervisor kept a stale phase — potentially SESSION_UP, whose
-     * invariant suspends discovery — across a teardown, and the next start-up inherited it.
+     * drop the ladder: without this the supervisor kept a stale phase — potentially SESSION_UP —
+     * across a teardown, and the next start-up inherited it.
      */
     fun onStopped() = post {
         releaseSessionRadioHold("everything was stopped")
@@ -909,53 +810,13 @@ class SessionSupervisor(
     }
 
     /**
-     * Driver pressed Recover.
-     *
-     * Runs the same ladder the supervisor runs on its own, but from the bottom and ignoring cooldowns:
-     * the cooldowns exist to stop the machine hammering the box unattended, and an explicit human
-     * request is not that. The rungs themselves stay in cheapest-first order — a person pressing a
-     * button still should not get their box rebooted when re-announcing mDNS would have done it.
-     *
-     * The one thing it will NOT do is pretend to fix what it cannot. If the ladder runs out, the
-     * result is the same terminal report as the automatic path: the remaining action is on the phone.
-     */
-    fun userRecover() = post {
-        log.w("=== driver-requested recovery ===")
-        // Nothing to recover FROM. The ladder is guarded against these phases (see [escalate]), but
-        // `cancelAllTimers` and the rung reset below are not, and the driver deserves an answer
-        // rather than silence. Restart Session is the button for a session that is up but stuck.
-        if (phase == RxPhase.SESSION_UP || phase == RxPhase.BOX_LOST_SESSION_UP) {
-            log.i("recovery requested with a live session — nothing to recover")
-            act.report(phase, "CarPlay is live — nothing to recover (use Restart Session if it is stuck)")
-            return@post
-        }
-        // Hold the grace window. Recovering here would cancel the grace timer and then run the ladder
-        // with the phase still GRACE, which suspends discovery — the exact stranding [onSessionDown]'s
-        // timer callback exists to avoid — and the phone usually comes back inside these 10 s anyway.
-        // The automatic path escalates on expiry, so the driver loses nothing by waiting for it.
-        if (phase == RxPhase.GRACE) {
-            log.i("recovery requested inside the grace window — holding it; the ladder runs on expiry")
-            act.report(phase, "session ended moments ago — holding for the iPhone to return; recovery starts on its own if it does not")
-            return@post
-        }
-        cancelAllTimers()
-        rung = 0
-        java.util.Arrays.fill(lastRungAt, 0L)   // an explicit request is not rate-limited
-        // Acknowledge on screen. The phase stands (nothing about the world changed), and escalate()
-        // only logs, so without this the press had no visible effect — previously it was "seen" only
-        // because onReceiverReady dropped the label to RECEIVER READY, which was the defect.
-        act.report(phase, "recovering — re-announcing first, then the adapter's radios if the phone stays silent")
-        escalate("the driver asked for a recovery")
-    }
-
-    /**
      * Restart Session has just re-SUBSCRIBEd the box. Give ARMED the deadline it otherwise lacks.
      *
      * ARMED carries no clock of its own on purpose: on an ordinary bring-up the receiver waits for a
      * phone for the whole drive, and a phone that is simply not there is not a fault. After a driver
      * restart the phone IS there — it was in or near a session moments ago — and its silence means it
      * never re-initiated Bluetooth. Left alone the machine would sit in ARMED forever saying "waiting
-     * for the phone". This is a REPORT, not the ladder: the ladder's rungs (re-announce, CT_RADIO,
+     * for the phone". This is a REPORT, not the ladder: the ladder's rungs (CT_RADIO,
      * MGMT_RESTART_WIRELESS) cannot make a phone dial Bluetooth, and a second restart on top of a
      * fresh bring-up is the 2026-09-08 collapse. Rides the `handoffTimer` slot so genuine BT progress
      * ([onBtPhase] -> [armHandoffWatchdog]) replaces it and any teardown cancels it.
@@ -1030,9 +891,6 @@ class SessionSupervisor(
         post {
             releaseSessionRadioHold("the supervisor is going away")
             cancelAllTimers()
-            // Leave discovery RUNNING. The supervisor going away (Activity destroyed) must not leave
-            // the receiver permanently unable to dial: the receiver outlives the UI by design.
-            runCatching { act.resumeDiscovery() }
             sched.shutdown()
         }
     }
@@ -1103,17 +961,10 @@ class SessionSupervisor(
      * in the phase; it just was not used.
      */
     private fun runRung(n: Int, why: String): Boolean = when (n) {
-        0 -> {
-            if (act.adapterWifi()) {
-                log.i("rung 0 skipped — adapter Wi-Fi has no mDNS responder")
-                false
-            } else {
-                log.w("recovery rung 0 (re-announce mDNS): $why")
-                val ok = act.reannounce()
-                if (!ok) log.w("rung 0 refused — responder down")
-                ok
-            }
-        }
+        // Rung 0 was the app's own receiver re-announcing itself over mDNS, for the phone on the
+        // vehicle hotspot; that receiver went with T33 (2026-11-26). The slot stays so the rung
+        // numbers and [RUNG_COOLDOWN_MS]'s spacing, which the logs and the timing rely on, are unchanged.
+        0 -> false
         1, 2 -> if (!runCatching { act.boxLinkAlive() }.getOrDefault(false)) {
             log.w("recovery rung $n skipped — no OCBM link to the adapter, so a box-side action cannot help")
             false
@@ -1138,8 +989,7 @@ class SessionSupervisor(
     private fun terminalDetail(): String = when {
         !runCatching { act.boxLinkAlive() }.getOrDefault(false) ->
             "no link to the CarPlay adapter — check it is plugged in"
-        act.adapterWifi() -> "Can't find your iPhone — tap Restart"
-        else -> "cannot recover automatically — reconnect Bluetooth to the car from the iPhone"
+        else -> "Can't find your iPhone — tap Restart"
     }
 
     // ---- plumbing -------------------------------------------------------------------------------
@@ -1150,14 +1000,7 @@ class SessionSupervisor(
     }
 
     /**
-     * The single place phase changes, so the discovery invariant is stated once instead of being
-     * maintained by hand at every call site — which is how a paused-and-never-resumed leak gets in.
-     *
-     * Discovery is suspended in exactly the states where a dial would be actively harmful: while a
-     * session is up (a redial provokes a hijack of the session we already have) and across the grace
-     * window (a redial preempts the wait it exists to protect). Everywhere else it must be running,
-     * including STALLED — the phone may come back on its own at any moment and the receiver has to be
-     * able to answer when it does.
+     * The single place phase changes: the log line, the Board entry and the launcher's report.
      */
     private fun to(next: RxPhase, detail: String) {
         if (phase == RxPhase.AWAY && next != RxPhase.AWAY) {
@@ -1177,9 +1020,6 @@ class SessionSupervisor(
             if (next.isFailure || next == RxPhase.SESSION_UP) SessionTrace.Board.dump("phase ${next.label}")
         }
         phase = next
-        val quiet = next == RxPhase.SESSION_UP || next == RxPhase.BOX_LOST_SESSION_UP || next == RxPhase.GRACE
-        runCatching { if (quiet) act.pauseDiscovery() else act.resumeDiscovery() }
-            .onFailure { log.w("discovery toggle failed: ${it.message}") }
         act.report(next, detail)
     }
 
@@ -1320,11 +1160,11 @@ class SessionSupervisor(
      * This deliberately does NOT reset [rung]. The ladder's position and cooldowns are earned state
      * and a phone that stalls again must resume where it left off — see [escalate]'s contract that
      * only a real session ([onSessionUp]) resets it. All this does is yield the CLOCK to the
-     * narrower deadline the new phase just armed ([armHandoffWatchdog] at 45 s, or
-     * [INBOUND_TIMEOUT_MS] at 15 s), each of which re-enters [escalate] on expiry. So a genuinely
+     * narrower deadline the new phase just armed ([armHandoffWatchdog] at 45 s), which re-enters
+     * [escalate] on expiry. So a genuinely
      * stuck phone still escalates, only never on top of live progress.
      *
-     * Exactly the rule [onDialAccepted] already applies to `handoffTimer`: once a narrower clock
+     * The same rule the handoff watchdog applies: once a narrower clock
      * owns the deadline, the broader one must let go.
      */
     private fun deferLadder(progress: String) {
@@ -1336,7 +1176,6 @@ class SessionSupervisor(
     private fun cancelAllTimers() {
         graceTimer?.cancel(false); graceTimer = null
         sessionCheckTimer?.cancel(false); sessionCheckTimer = null
-        inboundTimer?.cancel(false); inboundTimer = null
         ladderTimer?.cancel(false); ladderTimer = null
         // Never drop a pending radios-ON. Losing it strands the box with its radios inhibited.
         if (radioOnPending) {

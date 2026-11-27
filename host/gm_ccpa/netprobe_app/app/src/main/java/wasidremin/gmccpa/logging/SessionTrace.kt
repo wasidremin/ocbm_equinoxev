@@ -33,7 +33,7 @@ import wasidremin.gmccpa.ProbeLog
  *
  * ## Why one shared primitive rather than a timer per subsystem
  *
- * There are already nineteen `*_MS` constants across `av/`, `ocbm/` and `CarPlayRx`, and almost all
+ * There are already nineteen `*_MS` constants across `av/` and `ocbm/`, and almost all
  * of them are retry or backoff intervals — the app is full of code that waits, and nearly empty of
  * code that reports having waited in vain. Left to grow organically each subsystem would spell its
  * own absence differently and none would be greppable as a class. One vocabulary, one severity

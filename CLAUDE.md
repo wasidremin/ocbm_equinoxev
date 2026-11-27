@@ -17,7 +17,7 @@ owns the session's configuration. The car has no adb: the app reaches it only th
 |---|---|
 | `ccpa/` | Adapter daemons (`ocbmd`, `iap2d`, `carplayd`) and its root filesystem scripts (`rootfs/script/`) |
 | `crates/` | `ocbm-proto` (the wire contract, shared with the app), `box-common`, `bt-common`, and `vendor/` (receiver, iap2-core, metadata, mfi, pairing, rtsp, wireless, eld-codec) |
-| `host/gm_ccpa/` | The app: `netprobe_app/` (Kotlin), `native/carplay-jni` (the Rust receiver core through JNI), `tools/` (build, publish, the lyrics package builder), `docs/` (app lessons and the settings audit) |
+| `host/gm_ccpa/` | The app: `netprobe_app/` (Kotlin, no native code), `tools/` (build, publish, the lyrics package builder), `docs/` (app lessons and the settings audit) |
 | `host/ocbm-host/` | Bench client: talks OCBM to the adapter from this server |
 | `host/evinsights/` | Self-hosted EV telemetry workbench (FastAPI, TimescaleDB, React). Separate from the app's on-car EV Insights |
 | `tools/` | Adapter install, deploy and recovery scripts; `run_tests.sh`; `docs_check.py`; `tests/` |
@@ -143,10 +143,10 @@ enforced by `python3 tools/docs_check.py`. One topic has one owner.
 sh tools/run_tests.sh              # every adapter-side suite; plain `cargo test --workspace` skips most of them
 python3 tools/docs_check.py        # the documentation rules
 # The app's unit tests. Gradle is not on PATH: use the binary host/gm_ccpa/tools/build_aab.sh names
-# (GRADLE_BIN, else the wrapper's copy under ~/.gradle), with the three directories it exports:
+# (GRADLE_BIN, else the wrapper's copy under ~/.gradle), with the two directories it exports:
 cd host/gm_ccpa/netprobe_app
 export GM_BUILD_DIR=~/.cache/carlink-artifacts/gm_ccpa/gradle
-export GM_JNI_DIR=$GM_BUILD_DIR/root/jniLibs GM_ASSETS_DIR=$GM_BUILD_DIR/root/assets
+export GM_ASSETS_DIR=$GM_BUILD_DIR/root/assets
 "$GRADLE" --offline -q :app:testSideloadDebugUnitTest      # then :app:assembleSideloadDebug for the emulator
 ```
 

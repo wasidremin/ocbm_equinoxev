@@ -727,15 +727,14 @@ object VehicleConfigYaml {
     /**
      * Structural check before `CT_SUBSCRIBE`. serde rejects the whole document — including
      * `wifi_ap` — and the box says nothing. Returns `line N: …`, or null when the document is safe
-     * to send. [adapterWifiOn] requires the four AP keys at indent 0; the Silverado document
-     * (`wifi_ap: false`) does not.
+     * to send. The four AP keys are required at indent 0 (the adapter raises its own access point).
      *
      * A list item is legal under a bare `key:` (same indent, as `viewAreas:` / `- viewArea:`, or
      * two spaces deeper, as `images:` / `- width:`) and as a further item of a sequence already
      * open at that dash indent. A dash after a scalar (`primaryInput: Touchpad` then `- viewArea`)
      * is the 4.0+scale failure. A deeper line under `key: value` is rejected too.
      */
-    fun structuralError(yaml: String, adapterWifiOn: Boolean): String? {
+    fun structuralError(yaml: String): String? {
         var prevIndent = -1
         var prevBare = false
         var prevItem = false
@@ -781,10 +780,8 @@ object VehicleConfigYaml {
             prevBare = bare
             prevItem = isItem
         }
-        if (adapterWifiOn) {
-            for (k in listOf("wifi_ap", "wifi_ssid", "wifi_pass", "wifi_channel")) {
-                if (k !in root) return "line 1: missing $k"
-            }
+        for (k in listOf("wifi_ap", "wifi_ssid", "wifi_pass", "wifi_channel")) {
+            if (k !in root) return "line 1: missing $k"
         }
         if (sawMain && viewAreas != 1) {
             return "line 1: expected one viewAreas list under mainVideoStream, found $viewAreas"

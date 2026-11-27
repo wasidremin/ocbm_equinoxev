@@ -23,7 +23,6 @@ import android.service.media.MediaBrowserService
 import android.view.KeyEvent
 import wasidremin.gmccpa.ProbeLog
 import wasidremin.gmccpa.logging.SessionTrace
-import wasidremin.gmccpa.pair.NativeCore
 import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
 
@@ -123,9 +122,16 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private var frozenPosition = 0L
     // Not exported: instrumentation can substitute only the HID sink, leaving policy/framework real.
     private var hidSender: (Int) -> Boolean = { index ->
-        if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(this))
-            wasidremin.gmccpa.ocbm.AdapterSession.sendMediaButton(index.toByte())
-        else NativeCore.mediaButton(index)
+        wasidremin.gmccpa.ocbm.AdapterSession.sendMediaButton(index.toByte())
+    }
+
+    /** The uid-2 media HID's indices ([wasidremin.gmccpa.ocbm.Ocbm]'s `MEDIA_BTN_*`), as this service's Ints. */
+    private object MediaBtn {
+        val PLAY = wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY.toInt()
+        val PAUSE = wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PAUSE.toInt()
+        val PLAY_PAUSE = wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PLAY_PAUSE.toInt()
+        val NEXT = wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_NEXT.toInt()
+        val PREV = wasidremin.gmccpa.ocbm.Ocbm.MEDIA_BTN_PREV.toInt()
     }
 
     companion object {
@@ -754,17 +760,17 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private val callback = object : MediaSession.Callback() {
         override fun onPlay() {
             val caller = callerLabel()
-            tx.execute { forward(NativeCore.MediaBtn.PLAY, caller) }
+            tx.execute { forward(MediaBtn.PLAY, caller) }
         }
         override fun onPause() { transport("pause", callerLabel()) }
         override fun onStop() { transport("stop", callerLabel()) }
         override fun onSkipToNext() {
             val caller = callerLabel()
-            tx.execute { forward(NativeCore.MediaBtn.NEXT, caller) }
+            tx.execute { forward(MediaBtn.NEXT, caller) }
         }
         override fun onSkipToPrevious() {
             val caller = callerLabel()
-            tx.execute { forward(NativeCore.MediaBtn.PREV, caller) }
+            tx.execute { forward(MediaBtn.PREV, caller) }
         }
 
         /**
@@ -782,12 +788,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             if (ev.action != KeyEvent.ACTION_DOWN) return true
             val caller = callerLabel()
             val idx = when (ev.keyCode) {
-                KeyEvent.KEYCODE_MEDIA_PLAY -> NativeCore.MediaBtn.PLAY
-                KeyEvent.KEYCODE_MEDIA_PAUSE -> NativeCore.MediaBtn.PAUSE
-                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> NativeCore.MediaBtn.PLAY_PAUSE
-                KeyEvent.KEYCODE_MEDIA_NEXT -> NativeCore.MediaBtn.NEXT
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> NativeCore.MediaBtn.PREV
-                KeyEvent.KEYCODE_MEDIA_STOP -> NativeCore.MediaBtn.PAUSE
+                KeyEvent.KEYCODE_MEDIA_PLAY -> MediaBtn.PLAY
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> MediaBtn.PAUSE
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> MediaBtn.PLAY_PAUSE
+                KeyEvent.KEYCODE_MEDIA_NEXT -> MediaBtn.NEXT
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> MediaBtn.PREV
+                KeyEvent.KEYCODE_MEDIA_STOP -> MediaBtn.PAUSE
                 else -> return super.onMediaButtonEvent(intent)
             }
             tx.execute { forward(idx, caller) }
@@ -822,30 +828,30 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 return@execute
             }
             pendingTransport?.cancel(false)
-            pendingCommand?.let { forward(NativeCore.MediaBtn.PAUSE, pendingCaller ?: "caller=package=?", it) }
+            pendingCommand?.let { forward(MediaBtn.PAUSE, pendingCaller ?: "caller=package=?", it) }
             pendingCommand = cmd; pendingCaller = caller; pendingAt = arrived
             pendingTransport = tx.schedule({
                 pendingCommand = null
-                forward(NativeCore.MediaBtn.PAUSE, caller, cmd)
+                forward(MediaBtn.PAUSE, caller, cmd)
             }, 100L, java.util.concurrent.TimeUnit.MILLISECONDS)
         }
     }
 
     private fun forward(index: Int, caller: String, name: String = when (index) {
-        NativeCore.MediaBtn.PLAY -> "play"
-        NativeCore.MediaBtn.PAUSE -> "pause"
-        NativeCore.MediaBtn.NEXT -> "next"
-        NativeCore.MediaBtn.PREV -> "previous"
+        MediaBtn.PLAY -> "play"
+        MediaBtn.PAUSE -> "pause"
+        MediaBtn.NEXT -> "next"
+        MediaBtn.PREV -> "previous"
         else -> "play-pause"
     }): Boolean {
         log.i("transport: $name $caller forwarded")
-        val changesPlayback = index == NativeCore.MediaBtn.PLAY || index == NativeCore.MediaBtn.PAUSE ||
-            index == NativeCore.MediaBtn.PLAY_PAUSE
+        val changesPlayback = index == MediaBtn.PLAY || index == MediaBtn.PAUSE ||
+            index == MediaBtn.PLAY_PAUSE
         if (changesPlayback) { commandGeneration++; focusGeneration++ }
-        val pause = index == NativeCore.MediaBtn.PAUSE ||
-            (index == NativeCore.MediaBtn.PLAY_PAUSE && last?.playbackStatus == NowPlayingState.PLAY)
-        val play = index == NativeCore.MediaBtn.PLAY ||
-            (index == NativeCore.MediaBtn.PLAY_PAUSE && last?.playbackStatus != NowPlayingState.PLAY)
+        val pause = index == MediaBtn.PAUSE ||
+            (index == MediaBtn.PLAY_PAUSE && last?.playbackStatus == NowPlayingState.PLAY)
+        val play = index == MediaBtn.PLAY ||
+            (index == MediaBtn.PLAY_PAUSE && last?.playbackStatus != NowPlayingState.PLAY)
         if (pause) { userPaused = true; pausedByTransientLoss = false }
         if (play) {
             userPaused = false
@@ -857,8 +863,8 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             }
         }
         val status = last?.playbackStatus
-        val duplicate = (index == NativeCore.MediaBtn.PLAY && status == NowPlayingState.PLAY) ||
-            (index == NativeCore.MediaBtn.PAUSE && status in listOf(NowPlayingState.PAUSE, NowPlayingState.STOP))
+        val duplicate = (index == MediaBtn.PLAY && status == NowPlayingState.PLAY) ||
+            (index == MediaBtn.PAUSE && status in listOf(NowPlayingState.PAUSE, NowPlayingState.STOP))
         if (play) synchronized(this) { focusPaused = false }
         val ok = !duplicate && hid(index)
         if (ok && play) last?.let { publishState(it.copy(playbackStatus = NowPlayingState.PLAY), "status") }
@@ -921,7 +927,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 log.i("autoplay: launcher busy — PLAY without opening $AUTO_PLAY_APP")
             } else log.i("autoplay: no $AUTO_PLAY_APP template — PLAY resumes the last app")
         }
-        val sent = forward(NativeCore.MediaBtn.PLAY, "caller=autoplay")
+        val sent = forward(MediaBtn.PLAY, "caller=autoplay")
         if (sent) {
             autoPlayPending = false
             log.i("autoplay: PLAY sent ${elapsed}ms after session up (status was $status)")
@@ -961,12 +967,12 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 last?.playbackStatus != NowPlayingState.PAUSE && last?.playbackStatus != NowPlayingState.STOP)
                 pausedByTransientLoss = true
             focusLossAt = SystemClock.elapsedRealtime()
-            focusCommand(NativeCore.MediaBtn.PAUSE, focusGeneration,
+            focusCommand(MediaBtn.PAUSE, focusGeneration,
                 "focus: LOSS(${if (permanent) "permanent" else "transient"}) → phone PAUSE")
         } else if (change == android.media.AudioManager.AUDIOFOCUS_GAIN &&
             pausedByTransientLoss && !userPaused && !pausedByFocusLoss) {
             focusGeneration++ // Cancel a rate-limited PAUSE if focus returned before it ran.
-            focusCommand(NativeCore.MediaBtn.PLAY, focusGeneration,
+            focusCommand(MediaBtn.PLAY, focusGeneration,
                 "focus: GAIN → phone PLAY", "transient-resume")
         }
     }
@@ -974,7 +980,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
     private fun focusCommand(index: Int, generation: Int, prefix: String, reason: String? = null) {
         if (!sessionUp || generation != focusGeneration) return
         val status = last?.playbackStatus
-        val duplicate = if (index == NativeCore.MediaBtn.PAUSE)
+        val duplicate = if (index == MediaBtn.PAUSE)
             status == NowPlayingState.PAUSE || status == NowPlayingState.STOP
         else status == NowPlayingState.PLAY
         val now = SystemClock.elapsedRealtime()
@@ -984,14 +990,14 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
             return
         }
         val ok = !duplicate && hid(index)
-        if (index == NativeCore.MediaBtn.PLAY && duplicate) {
+        if (index == MediaBtn.PLAY && duplicate) {
             pausedByTransientLoss = false
             synchronized(this) { focusPaused = false; last?.let { publishState(it, "focus") } }
         }
         if (ok) {
             lastFocusCommandAt = now
             synchronized(this) {
-                if (index == NativeCore.MediaBtn.PAUSE) {
+                if (index == MediaBtn.PAUSE) {
                     frozenPosition = session?.controller?.playbackState?.let { ps ->
                         ps.position + ((now - ps.lastPositionUpdateTime) * ps.playbackSpeed).toLong()
                     } ?: last?.elapsedMs ?: 0L
@@ -999,7 +1005,7 @@ class CarPlayMediaBrowserService : MediaBrowserService() {
                 } else {
                     focusPaused = false; pausedByTransientLoss = false
                 }
-                last?.let { publishState(if (index == NativeCore.MediaBtn.PLAY)
+                last?.let { publishState(if (index == MediaBtn.PLAY)
                     it.copy(playbackStatus = NowPlayingState.PLAY) else it, "focus") }
             }
         }

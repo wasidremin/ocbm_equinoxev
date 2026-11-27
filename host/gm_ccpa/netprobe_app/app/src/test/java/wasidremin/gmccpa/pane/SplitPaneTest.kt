@@ -53,7 +53,7 @@ class SplitPaneTest {
         assertTrue(doc.contains("        width: 1680\n"))
         assertTrue(doc.contains("      initial: true\n"))
         val adapter = doc + "wifi_ap: true\nwifi_ssid: ccpa-fe01\nwifi_pass: adapterpass1\nwifi_channel: 36\n"
-        assertNull(VehicleConfigYaml.structuralError(adapter, true))
+        assertNull(VehicleConfigYaml.structuralError(adapter))
     }
 
     /** The pane was hidden at the end of the last drive: the area is still declared, the session starts full screen. */
@@ -64,7 +64,7 @@ class SplitPaneTest {
         assertTrue(doc.contains("        width: 1680\n"))
         assertTrue(doc, "initial: true" !in doc)
         val adapter = doc + "wifi_ap: true\nwifi_ssid: ccpa-fe01\nwifi_pass: adapterpass1\nwifi_channel: 36\n"
-        assertNull(VehicleConfigYaml.structuralError(adapter, true))
+        assertNull(VehicleConfigYaml.structuralError(adapter))
     }
 
     @Test fun overCarPlayIsTheDefaultAndOffIsLast() {

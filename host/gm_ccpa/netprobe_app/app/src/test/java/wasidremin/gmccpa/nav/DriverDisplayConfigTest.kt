@@ -36,7 +36,7 @@ class DriverDisplayConfigTest {
         // The line the box's glued-initialURL guard is about: its own, ending in a newline, before accessoryConfig.
         assertTrue(doc, doc.contains("    initialURL: maps:/car/instrumentcluster/map\naccessoryConfig:\n"))
         // The main stream still has exactly one viewAreas list; the cluster's is not counted under it.
-        assertNull(VehicleConfigYaml.structuralError(doc + wifi, true))
+        assertNull(VehicleConfigYaml.structuralError(doc + wifi))
     }
 
     @Test fun noClusterKeepsBothListsEmptyAndThePinStands() {
@@ -106,7 +106,7 @@ class DriverDisplayConfigTest {
                 "        height: 730\n" +
                 "      drawUIOutsideSafeArea: false\n" +
                 "    initialURL: maps:/car/instrumentcluster/map\n"))
-        assertNull(VehicleConfigYaml.structuralError(doc + wifi, true))
+        assertNull(VehicleConfigYaml.structuralError(doc + wifi))
         // Outside the screen, or without one, is refused before the wire.
         assertNotNull(runCatching { VehicleConfigSpec(cluster = PixelSize(2000, 810), clusterSafe = PixelRect(800, 0, 1300, 810)) }.exceptionOrNull())
         assertNotNull(runCatching { VehicleConfigSpec(clusterSafe = PixelRect(0, 0, 100, 100)) }.exceptionOrNull())

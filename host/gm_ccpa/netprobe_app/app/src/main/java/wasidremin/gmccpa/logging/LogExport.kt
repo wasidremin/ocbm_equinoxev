@@ -696,7 +696,7 @@ object LogExport {
  *    `127.0.0.1` helps nobody debugging this project's own seams:
  *    - `127.0.0.0/8` — loopback; the receiver's A/V seams (:9001-9004) live here.
  *    - `169.254.0.0/16` — IPv4 link-local (RFC 3927), identical on every device.
- *    - `192.168.43.0/24` — Android's own tethering default AP subnet (`MdnsInspect.kt:15`).
+ *    - `192.168.43.0/24` — Android's own tethering default AP subnet.
  *    - `192.168.5.0/24` — this project's fixed CarPlay/AirPlay accessory subnet
  *      (`CarPlayRx.kt:138`, `:457`), not the vehicle's actual telematics or hotspot LAN.
  *    Every other IPv4 — including a `192.168.50.x`/`192.168.49.x`-style vehicle hotspot LAN or any

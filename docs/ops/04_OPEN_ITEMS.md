@@ -106,6 +106,11 @@ own log line counted; the closed ones are listed at the end of this section with
   the Custom curve when the finger lifts. Listen for distortion at large boosts (the pre-gain and soft
   knee should stop clipping).
 
+- **The Silverado hotspot mode removed (T33, 2026-11-26, not yet published).** The first drive on the
+  build that carries it: CarPlay connects as before (picture, sound, touch, calls, the driver display),
+  Settings ▸ Advanced has no Adapter Wi-Fi or Vehicle hotspot rows, and no `wifi_ap: false` subscribe.
+  Not benched: the adapter and phone had left the server.
+
 **Still open**
 
 - **Which iPhone first, by schedule (T35, Play 268): a changed order not yet seen.** The weekday-morning
@@ -178,6 +183,12 @@ own log line counted; the closed ones are listed at the end of this section with
   evidence that restart latency is closed.
 - **`tools/ocbm_push.sh` runs only on macOS.** It uses BSD `stat -f%z` and `md5 -q`, and the owner
   has no Mac. Install with `tools/ocbm_install.sh` meanwhile.
+- **The app's documents still describe the Silverado hotspot mode** removed by T33 on 2026-11-26
+  (`host/gm_ccpa/docs/00_HANDOFF.md`, `01_FINDINGS.md`, `06_BRINGUP_RUNBOOK.md`, `11_HARDENING_PLAN.md`,
+  `12_OBSERVED_FLOW.md`, parts of others): the app's own receiver, mDNS, the JNI core, the truck
+  bring-up. To prune, keeping what still holds for the adapter path. Until then `host/gm_ccpa/tools/test.sh`
+  stops red at its documentation budget (11 files in `host/gm_ccpa/docs/`, limit 10; already so before
+  T33), ahead of its protocol check, which passes on its own (`tools/proto_check.py`).
 - **Calibration runs `ScreenModel.measureUi` on the UI thread** (0.3 to 1 s of jank, noted on the
   2026-10-28 drive). Not re-checked.
 

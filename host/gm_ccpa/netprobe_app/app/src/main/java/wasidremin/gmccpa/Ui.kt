@@ -185,10 +185,6 @@ class LauncherUi(private val act: Activity) {
     var onStop: () -> Unit = {}
     var onRecover: () -> Unit = {}
     var onRestart: () -> Unit = {}
-    var onCredentials: (ssid: String, pass: String, chan: String) -> Unit = { _, _, _ -> }
-    var onAdapterWifi: (Boolean) -> Unit = {}
-    var adapterWifi: Boolean = false
-        private set
     var onBoxAction: (BoxAction) -> Unit = {}
     /** The Settings page opened: re-read the adapter's paired phones. */
     var onPhonesWanted: () -> Unit = {}
@@ -217,15 +213,7 @@ class LauncherUi(private val act: Activity) {
     var sessionIsLive: () -> Boolean = { false }
     var onClose: () -> Unit = {}
 
-    var ssid: String = ""; private set
-    var pass: String = ""; private set
-    var chan: String = "36"; private set
-
     init {
-        val p = act.getSharedPreferences(CRED_PREFS, Context.MODE_PRIVATE)
-        ssid = p.getString(KEY_SSID, ssid) ?: ssid
-        pass = p.getString(KEY_PASS, pass) ?: pass
-        chan = p.getString(KEY_CHAN, chan) ?: chan
         AudioRoute.load(act)
     }
 
@@ -253,8 +241,6 @@ class LauncherUi(private val act: Activity) {
     private lateinit var startRow: EqRow
     private lateinit var restartButton: TextView
     private lateinit var applyRow: EqRow
-    private lateinit var hotspotRow: EqRow
-    private lateinit var hotspotValue: TextView
     private lateinit var infoRow: EqRow
     private lateinit var bridgeRow: EqRow
     private lateinit var announceRow: EqRow
@@ -282,7 +268,6 @@ class LauncherUi(private val act: Activity) {
     private lateinit var dataUsedRow: EqRow
     private lateinit var drainQueueButton: wasidremin.gmccpa.upload.UploadActionButton
     private val calib by lazy { CalibrationUi(act, { safeDialogWidth(it) }) { setDetail(it) } }
-    private lateinit var wifiToggle: EqToggle
     private val queueListener: (Int) -> Unit = { _ -> refreshUploadQueueRow() }
     private var scopeControl: EqSegmented? = null
     private lateinit var audioRow: EqRow
@@ -318,11 +303,6 @@ class LauncherUi(private val act: Activity) {
     private val auditedTabs = mutableSetOf<Int>()
 
     val root: View = buildRoot()
-
-    private fun persistCredentials() {
-        act.getSharedPreferences(CRED_PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_SSID, ssid).putString(KEY_PASS, pass).putString(KEY_CHAN, chan).apply()
-    }
 
     private fun buildRoot(): View {
         EqTheme.init(act, 0)
@@ -1271,12 +1251,9 @@ class LauncherUi(private val act: Activity) {
                     pending = DisplayPrefs.controls(act)
                     refreshScribbleRow()
                 })))
-        if (wasidremin.gmccpa.ocbm.AdapterWifi.enabled(act)) {
-            slider("CarPlay UI · Smaller ↔ Larger (50–150%)", pending.uiPercent - 50, 100, 50) {
-                update(pending.copy(uiPercent = it + 50))
-            }
-        } else page.addView(EqRow(act, "CarPlay UI calibration",
-            "Available with adapter Wi-Fi and an updated receiver. The legacy host uses static display capabilities."))
+        slider("CarPlay UI · Smaller ↔ Larger (50–150%)", pending.uiPercent - 50, 100, 50) {
+            update(pending.copy(uiPercent = it + 50))
+        }
         page.addView(EqRow(act, "Video sizing", "Preserves decoded aspect ratio inside the safe rectangle.",
             trailing = EqSegmented(act, listOf("Stretch", "Fit to window"), if (pending.fit) 1 else 0) {
                 update(pending.copy(fit = it == 1))
@@ -1643,20 +1620,6 @@ class LauncherUi(private val act: Activity) {
     }
 
     private fun buildAdvanced(page: LinearLayout) {
-        wifiToggle = EqToggle(act, adapterWifi) { want ->
-            wifiToggle.setChecked(!want)
-            EqDialog.confirm(
-                act, "Adapter Wi-Fi", "Changing this restarts the connection",
-                if (want) "Turn on" else "Turn off", false,
-            ) {
-                wifiToggle.setChecked(want)
-                setAdapterWifi(want)
-                onAdapterWifi(want)
-            }
-        }
-        val chevron = eqValueChevron(act, hotspotLabel())
-        hotspotValue = chevron.getChildAt(0) as TextView
-        hotspotRow = EqRow(act, "Vehicle hotspot", trailing = chevron, onClick = { showCredentialsDialog() })
         infoRow = EqRow(
             act, "Adapter info",
             adapterInfoText.ifEmpty { null },
@@ -1681,8 +1644,6 @@ class LauncherUi(private val act: Activity) {
         announceRetriesRow = EqRow(act, "Announce retries", "Adapter not connected", trailing = announceRetriesControl)
         page.addView(eqSectionLabel(act, "Adapter"))
         page.addView(EqCard(act)
-            .addRow(EqRow(act, "Adapter Wi-Fi", "The iPhone joins the adapter.", trailing = wifiToggle))
-            .addRow(hotspotRow)
             .addRow(infoRow)
             .addRow(bridgeRow)
             .addRow(announceRow)
@@ -1957,76 +1918,6 @@ class LauncherUi(private val act: Activity) {
             if (intro.visibility == View.VISIBLE && lastState == LinkState.FAILED) View.VISIBLE else View.GONE
     }
 
-    fun setAdapterWifi(on: Boolean) {
-        adapterWifi = on
-        if (::wifiToggle.isInitialized && wifiToggle.checked != on) wifiToggle.setChecked(on)
-        if (::hotspotValue.isInitialized) hotspotValue.text = hotspotLabel()
-        if (::hotspotRow.isInitialized) setRowShown(hotspotRow, !on)
-    }
-
-    private fun hotspotLabel(): String =
-        if (ssid.isBlank() || pass.isBlank()) "Not set" else "$ssid · ch $chan"
-
-    fun showCredentialsDialog() {
-        val dialog = Dialog(act)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setDimAmount(0.6f)
-        val body = LinearLayout(act).apply {
-            orientation = LinearLayout.VERTICAL
-            background = EqTheme.rounded(0xFF111826.toInt(), 28f, EqTheme.CARD_LINE)
-            setPadding(EqTheme.px(40f), EqTheme.px(36f), EqTheme.px(40f), EqTheme.px(28f))
-            addView(EqTheme.text(act, 28f, EqTheme.TEXT, EqTheme.Weight.LIGHT).apply { text = "Vehicle hotspot" })
-        }
-        fun field(labelText: String, value: String, numeric: Boolean): EditText {
-            body.addView(EqTheme.text(act, 14f, EqTheme.ACCENT, EqTheme.Weight.MEDIUM).apply {
-                text = labelText.uppercase()
-                letterSpacing = 0.12f
-            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(18f) })
-            val e = EditText(act).apply {
-                setText(value)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, EqTheme.sp(22f))
-                setTextColor(EqTheme.TEXT)
-                setHintTextColor(EqTheme.TEXT_FAINT)
-                inputType = if (numeric) InputType.TYPE_CLASS_NUMBER
-                    else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-                setSingleLine()
-                background = null
-            }
-            body.addView(e, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(6f) })
-            return e
-        }
-        val eSsid = field("Hotspot SSID", ssid, false)
-        val ePass = field("Passphrase", pass, false)
-        val eChan = field("Channel", chan, true)
-        val buttons = LinearLayout(act).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-        }
-        buttons.addView(eqButton(act, "Cancel", EqButtonStyle.SECONDARY) { dialog.dismiss() })
-        buttons.addView(eqButton(act, "Save", EqButtonStyle.PRIMARY) {
-            ssid = eSsid.text.toString().trim()
-            pass = ePass.text.toString().trim()
-            chan = eChan.text.toString().trim()
-            persistCredentials()
-            if (::hotspotValue.isInitialized) hotspotValue.text = hotspotLabel()
-            onCredentials(ssid, pass, chan)
-            dialog.dismiss()
-        }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = EqTheme.px(16f) })
-        body.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = EqTheme.px(32f) })
-        dialog.setContentView(body, ViewGroup.LayoutParams(safeDialogWidth(EqTheme.px(720f)), ViewGroup.LayoutParams.WRAP_CONTENT))
-        dialog.show()
-    }
-
-    fun setCredentials(newSsid: String?, newPass: String?, newChan: String?) = act.runOnUiThread {
-        if (newSsid == null && newPass == null && newChan == null) return@runOnUiThread
-        newSsid?.let { ssid = it }
-        newPass?.let { pass = it }
-        newChan?.let { chan = it }
-        persistCredentials()
-        if (::hotspotValue.isInitialized) hotspotValue.text = hotspotLabel()
-    }
-
     /** The walk-away sentence is the status line. The generic waiting label has no page age. */
     private fun introStatus(state: LinkState, detail: String): String? =
         if (detail == "Waiting for your iPhone" || detail.startsWith("Looking for your iPhone")) detail
@@ -2192,9 +2083,6 @@ class LauncherUi(private val act: Activity) {
         if (::applyRow.isInitialized) {
             applyRow.visibility = if (sizePending()) View.VISIBLE else View.GONE
         }
-        if (::hotspotRow.isInitialized) {
-            setRowShown(hotspotRow, !adapterWifi)
-        }
         // Bound/unbound changes with no Settings interaction, so re-read it with the rest.
         if (::navRow.isInitialized) navRow.setSubtitle(wasidremin.gmccpa.nav.ClusterNav.statusText(act))
         // Changes when the driver comes back from the car's assistant picker.
@@ -2293,8 +2181,7 @@ class LauncherUi(private val act: Activity) {
         EqDialog.confirm(
             act, "Restart Wi-Fi",
             "Restart the adapter's wireless stack?\n\nThe radios go down for about five " +
-                "seconds, Bluetooth takes ~12 s to come back, and a live session drops. This is " +
-                "also the only way to re-apply changed hotspot credentials without unplugging.",
+                "seconds, Bluetooth takes ~12 s to come back, and a live session drops.",
             "Restart Wi-Fi", true,
         ) { onBoxAction(BoxAction.RESTART_WIFI) }
     }
@@ -2318,12 +2205,6 @@ class LauncherUi(private val act: Activity) {
         ) { onLogAction(LogAction.CLEAR) }
     }
 
-    private companion object {
-        const val CRED_PREFS = "hotspot_credentials"
-        const val KEY_SSID = "ssid"
-        const val KEY_PASS = "pass"
-        const val KEY_CHAN = "chan"
-    }
 }
 
 /**

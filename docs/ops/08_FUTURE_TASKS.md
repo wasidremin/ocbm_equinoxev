@@ -33,7 +33,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T30 Weather-aware arrival estimate | New 2026-11-14, not started |
 | T31 Mileage log | New 2026-11-14, not started; also needs the server |
 | T32 Context docking | New 2026-11-14, not started |
-| T33 Remove the Silverado hotspot mode | New 2026-11-14, not started; a removal |
+| T33 Remove the Silverado hotspot mode | Done in code 2026-11-26 (about 7,000 lines, the app's native library with them); unit tests; not yet driven. The app's older documents still describe the mode |
 | T36 Loudness by speed | Built 2026-11-26 (Screen & Sound ▸ Sound, default Gentle); unit tests only, not yet heard in the car |
 | T37 Equalizer | Built 2026-11-26 (Screen & Sound ▸ Sound, default Flat); unit tests and the emulator's drawing, not yet heard in the car |
 | T38 Turn alert on the driver display | New 2026-11-26, not started |
@@ -1355,6 +1355,26 @@ describe the truck bring-up. A removal with no new behaviour; T15's hotspot rout
 thing (the adapter's link to the app, not the phone's) and is not affected.
 
 **Done means.** The app builds and connects as before with the mode gone, and its tests pass.
+
+**Done in code 2026-11-26** (owner: "Do T39 and t33 now"). Removed: the app's own CarPlay receiver
+(`CarPlayRx`, its mDNS responder and inspector, pairing in `pair/`), the Adapter Wi-Fi switch and every
+branch on it (`CarPlayActivity`'s in-process seams on 9001 to 9004 and their players, `OcbmProbe`'s
+`wifi_ap: false` document and its credential check, `MainActivity`'s receiver start, health check,
+callbacks and bench verbs `carplay_rx`, `carplay_stop`, `mdns_self`), the Vehicle hotspot setting and
+its dialog, `SessionSupervisor`'s receiver hooks (discovery pause, re-announce, dial-back) and the three
+phases only the receiver reached (receiver unhealthy, receiver ready, awaiting dial-back; rung 0 keeps its
+slot as a no-op so the ladder's spacing is unchanged). With it the app's only native code: the Rust
+receiver core (`native/carplay-jni`), whose JNI names had not matched the Kotlin class since the package
+rename, so the mode could not have run anyway; `assets/info.bplist` and the four `tools/info_plist_*.py`
+that edited it; the NDK and FDK AAC steps in `build_aab.sh`, `build_apk.sh` and `tools/test.sh`.
+`build_aab.sh` now empties its asset staging copy first, or the deleted plist would have kept shipping.
+`structuralError` lost its always-true flag. The stored hotspot name, password and channel and the app's
+pairing store are deleted at start (`SETTINGS_AUDIT.md` 2026-11-26). The FDK AAC codec stays in
+`carplayd` on the adapter. *Verified:* the app's 648 unit tests; the debug APK carries no `.so` and no
+`info.bplist`. *Not verified:* a connect: the adapter and phone had left the bench before the run, so
+the first drive on the next build is the check. *Left:* the app's older documents
+(`host/gm_ccpa/docs/00_HANDOFF`, `01_FINDINGS`, `06_BRINGUP_RUNBOOK`, `11_HARDENING_PLAN`,
+`12_OBSERVED_FLOW` and parts of others) still describe the truck bring-up; pruning them is its own pass.
 
 ## T34. Video from the iPhone while parked (raised 2026-11-21; BUILT 2026-11-21, both halves; not yet on the car)
 

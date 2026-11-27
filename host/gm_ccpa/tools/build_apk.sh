@@ -8,18 +8,6 @@ CCPA_ROOT="$(cd "$GM_ROOT/../.." && pwd)"
 
 set -euo pipefail
 
-# Rust build scripts and procedural macros compile for the Linux host before the Android target is
-# linked. Minimal server images may omit host `cc`; use the same user-local Zig fallback as test.sh.
-if ! command -v cc >/dev/null 2>&1; then
-    ZIG="${ZIG:-$HOME/.local/opt/zig/zig}"
-    [ -x "$ZIG" ] || { echo "FATAL: host cc is missing and Zig was not found at $ZIG" >&2; exit 1; }
-    HOST_LINKER="$(mktemp -t gmccpa-zig-cc.XXXXXX)"
-    printf '#!/bin/sh\nexec "%s" cc "$@"\n' "$ZIG" > "$HOST_LINKER"
-    chmod 700 "$HOST_LINKER"
-    export CC="$HOST_LINKER"
-    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$HOST_LINKER"
-fi
-
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 BT="$SDK/build-tools/${ANDROID_BUILD_TOOLS_VERSION:-37.0.0}"
 # Compile against the head unit's ACTUAL platform (API 32). Compiling against android-35 lets the
@@ -117,71 +105,9 @@ echo "    versionCode=$VCODE versionName=$VNAME"
     "${ASSET_ARG[@]+${ASSET_ARG[@]}}" \
     --auto-add-overlay ${LINK_RES[@]+"${LINK_RES[@]}"}
 
-echo "[3.5/6] build + add native lib (lib/x86_64)"
-# The .so used to be COPIED-IF-PRESENT: edit Kotlin, forget `cargo build`, and this silently
-# repackaged a stale native lib; if it was missing entirely it printed a WARNING and produced a
-# signed, installable, PAIRING-INCAPABLE apk. `set -e` does not catch an if/else. Build it here and
-# hard-fail, so the artifact can never disagree with the sources it was built from.
-# libfdk-aac for the mic-uplink AAC-ELD encoder (feature `mic-uplink-eld`). Cross-built for
-# x86_64-linux-android with the NDK; see docs/13 §4. Without this the encoder is silently omitted
-# and the mic advertises three ELD formats it cannot serve.
-export FDK_AAC_PREFIX="${FDK_AAC_PREFIX:-$CCPA_ROOT/scratchpad/fdk/install-android-x86_64}"
-if [ ! -f "$FDK_AAC_PREFIX/lib/libfdk-aac.a" ]; then
-    echo "FATAL: libfdk-aac not found at $FDK_AAC_PREFIX — the ELD mic encoder cannot build." >&2
-    echo "       Rebuild it (docs/13 §4) or unset the mic-uplink-eld feature in Cargo.toml." >&2
-    exit 1
-fi
-NATIVE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/native/carplay-jni"
-# Cargo output goes OUTSIDE ~/Documents, which is iCloud "Desktop & Documents" synced on this Mac.
-# iCloud resolves its own write races by dropping conflict copies beside the original — `classes 2.jar`,
-# `Foo$Bar 2.dex` — and a toolchain then consumes them as real inputs, giving nondeterministic
-# duplicate-class and wrong-filename failures that a `clean` only fixes until sync catches up. A build
-# tree is exactly the wrong thing to sync: hundreds of megabytes, rewritten constantly, worthless off
-# this machine. Same convention as the repo root, whose `target` is symlinked to the same cache root.
-# Override with CARGO_TARGET_DIR=... for a one-off build elsewhere.
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-targets/gm_ccpa-carplay-jni}"
-JNILIB="$CARGO_TARGET_DIR/x86_64-linux-android/release/libcarplayjni.so"
-NDK_VERSION="${ANDROID_NDK_VERSION:-30.0.15729638}"
-NDK_ROOT="${ANDROID_NDK_HOME:-$SDK/ndk/$NDK_VERSION}"
-NDK_PREBUILT="$(find "$NDK_ROOT/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null || true)"
-[ -n "$NDK_PREBUILT" ] || { echo "FATAL: no NDK toolchain found under $NDK_ROOT" >&2; exit 1; }
-NDK_BIN="$NDK_PREBUILT/bin"
-# CC/AR must be set, not just the LINKER. eld-codec's build.rs compiles csrc/eld_shim.c with the cc
-# crate, which honours CC_<target> and otherwise falls back to the HOST compiler. Setting only the
-# linker let it build the shim as a Mach-O arm64 object, which LLD then linked into the ELF without
-# complaint — producing a .so with eld_enc_* left UNDEFINED. Those are GLOBAL symbols with GLOB_DAT
-# relocations in .rela.dyn and the lib is BIND_NOW, so dlopen fails outright:
-#   UnsatisfiedLinkError: dlopen failed: cannot locate symbol "eld_enc_encode"
-# NativeCore.available then goes false and every /pair-verify is answered 501 by the Kotlin stub —
-# a total CarPlay failure whose only symptom is one ambiguous log line. tools/test.sh already sets
-# these for the same reason; the two must stay in lockstep.
-( cd "$NATIVE_DIR" \
-  && PATH="$HOME/.cargo/bin:$PATH" \
-     CC_x86_64_linux_android="$NDK_BIN/x86_64-linux-android32-clang" \
-     AR_x86_64_linux_android="$NDK_BIN/llvm-ar" \
-     CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$NDK_BIN/x86_64-linux-android32-clang" \
-     cargo build --release --target x86_64-linux-android ) \
-  || { echo "    FATAL: cargo build failed — refusing to package a stale native lib"; exit 1; }
-[ -f "$JNILIB" ] || { echo "    FATAL: $JNILIB missing after a successful cargo build"; exit 1; }
-# Verify the link actually resolved. A .so that cannot be dlopen'ed is worse than a missing one: it
-# installs cleanly and fails only at the first control connection, in the truck.
-if UND=$("$NDK_BIN/llvm-readelf" --dyn-syms "$JNILIB" 2>/dev/null | grep -c " UND eld_enc_"); then
-    [ "$UND" -eq 0 ] || {
-        echo "    FATAL: $UND unresolved eld_enc_* symbols in $JNILIB — the ELD shim was built for"
-        echo "           the wrong architecture. Remove target/*/release/build/eld-codec-*/ and rerun;"
-        echo "           the cc crate caches the bad object and will happily reuse it."
-        exit 1
-    }
-fi
-mkdir -p "$WORK/lib/x86_64"
-cp "$JNILIB" "$WORK/lib/x86_64/"
-echo "    packaging $(basename "$JNILIB") ($(stat -c%s "$JNILIB") bytes, sha $(sha256sum "$JNILIB" | cut -c1-12)) for x86_64"
-
 echo "[4/6] add classes.dex into apk"
 cp "$WORK/base.apk" "$WORK/app-unsigned.apk"
 ( cd "$WORK/dex" && zip -q -X "$WORK/app-unsigned.apk" classes.dex )
-# Native libs must be STORED, not deflated, so the loader can mmap them straight from the APK.
-[ -d "$WORK/lib" ] && ( cd "$WORK" && zip -q -X -0 "$WORK/app-unsigned.apk" lib/x86_64/*.so )
 
 echo "[5/6] zipalign"
 "$BT/zipalign" -f -p 4 "$WORK/app-unsigned.apk" "$WORK/app-aligned.apk"

@@ -139,42 +139,6 @@ class OcbmProbe(context: Context) {
     /** Wi-Fi still did not come up after one re-subscribe with the default document. */
     var onSubscribeFault: ((String) -> Unit)? = null
 
-    /**
-     * The vehicle hotspot the iPhone should be sent to by the 0x5703 handoff. The passphrase cannot
-     * be read programmatically on the head unit (SecurityException on getSoftApConfiguration,
-     * EACCES on hostapd.conf), so the user types it in once from the OS Hotspot GUI.
-     */
-    var wifiSsid: String? = null
-    var wifiPass: String? = null
-    var wifiChannel: String? = null
-
-    /**
-     * Equinox role. The adapter raises its own AP and this process renders USB media.
-     * Off leaves the Silverado subscribe (`wifi_ap: false`) unchanged.
-     */
-    var adapterWifi: Boolean = false
-
-    /**
-     * The CT_SUBSCRIBE config blob.
-     *
-     * `wireless`/`pairing`/`wifi_ap`/`wifi_*` are read by the box supervisor's raw greps;
-     * `accessoryConfig` would be read by carplayd's serde. Unknown keys are silently ignored by
-     * both, so sending a key the deployed box doesn't understand yet is always safe.
-     */
-    fun btOnlyConfig(): ByteArray {
-        val sb = StringBuilder()
-        sb.append("name: gm_ccpa netprobe\n")
-        sb.append("version: 1\n")
-        sb.append("wireless: true\n")
-        sb.append("pairing: just_works\n")
-        // The box is the Bluetooth radio and the MFi coprocessor only — it raises no AP of its own.
-        sb.append("wifi_ap: false\n")
-        wifiSsid?.takeIf { it.isNotBlank() }?.let { sb.append("wifi_ssid: ").append(it).append('\n') }
-        wifiPass?.takeIf { it.isNotBlank() }?.let { sb.append("wifi_pass: ").append(it).append('\n') }
-        wifiChannel?.takeIf { it.isNotBlank() }?.let { sb.append("wifi_channel: ").append(it).append('\n') }
-        return sb.toString().toByteArray(Charsets.UTF_8)
-    }
-
     // ---- headless self-test ---------------------------------------------------------------------
 
     /**
@@ -283,7 +247,7 @@ class OcbmProbe(context: Context) {
         check("CAP_MFI detected", c.hasMfi)
 
         // HOST_GONE must clear subscribed, or the client heartbeats into the void forever.
-        c.subscribe(btOnlyConfig())
+        c.subscribe("name: self-test\n".toByteArray(Charsets.UTF_8))
         check("subscribe sets the latch", c.subscribed)
         fake.feed(Framing.frame(Ocbm.CH_CTRL, Ocbm.F_BOTH, 0,
             byteArrayOf(Ocbm.CT_SESSION_EVENT, Ocbm.SEV_HOST_GONE)))
@@ -330,17 +294,13 @@ class OcbmProbe(context: Context) {
         lateinit var sup: wasidremin.gmccpa.SessionSupervisor
         sup = wasidremin.gmccpa.SessionSupervisor(object : wasidremin.gmccpa.SessionSupervisor.Actions {
             override fun boxLinkAlive() = true
-            override fun reannounce() = false
             override fun setBoxRadios(on: Boolean) = true
             override fun restartBoxWireless() = true
-            override fun pauseDiscovery() {}
-            override fun resumeDiscovery() {}
             override fun report(phase: wasidremin.gmccpa.RxPhase, detail: String) {}
             override fun sessionKeyed() = true
             override fun ensureLanes() = true
             override fun lanesArmed() = true
             override fun restartSession() {}
-            override fun adapterWifi() = true
             override fun checkBoxSession(why: String) { asked.incrementAndGet(); sup.onBoxSessionChecked(boxAnswer, why) }
             override fun endUnannouncedSession(why: String) { ended.countDown() }
         })
@@ -367,17 +327,13 @@ class OcbmProbe(context: Context) {
         var armedLanes = false
         val sup2 = wasidremin.gmccpa.SessionSupervisor(object : wasidremin.gmccpa.SessionSupervisor.Actions {
             override fun boxLinkAlive() = true
-            override fun reannounce() = false
             override fun setBoxRadios(on: Boolean) = true
             override fun restartBoxWireless() = true
-            override fun pauseDiscovery() {}
-            override fun resumeDiscovery() {}
             override fun report(phase: wasidremin.gmccpa.RxPhase, detail: String) {}
             override fun sessionKeyed() = keyed
             override fun ensureLanes() = true
             override fun lanesArmed() = armedLanes
             override fun restartSession() { restarts.incrementAndGet() }
-            override fun adapterWifi() = true
             override fun checkBoxSession(why: String) {}
             override fun endUnannouncedSession(why: String) {}
         }, handoffSilenceMs = 200L)
@@ -484,7 +440,7 @@ class OcbmProbe(context: Context) {
                             VideoFrame.viewHeight == 880 &&
                                 VideoFrame.height == wasidremin.gmccpa.DisplayScale.even(880, scale) &&
                                 VideoFrame.width % 2 == 0 && VideoFrame.height % 2 == 0 &&
-                                VehicleConfigYaml.structuralError(doc, true) == null)
+                                VehicleConfigYaml.structuralError(doc) == null)
                     }
                 }
             }
@@ -582,7 +538,7 @@ class OcbmProbe(context: Context) {
                             "adapterpass1", width = advW, height = advH, safeRight = insetPx,
                         )
                     }.getOrNull()?.toString(Charsets.UTF_8)
-                    val err = doc?.let { VehicleConfigYaml.structuralError(it, true) }
+                    val err = doc?.let { VehicleConfigYaml.structuralError(it) }
                     check(
                         "subscribe document scale=$scale safe=$safe sidebar=$sidebar",
                         doc != null && err == null,
@@ -595,7 +551,7 @@ class OcbmProbe(context: Context) {
             "adapterpass1", width = 1996, height = 768, safeRight = 38,
         ).toString(Charsets.UTF_8)
         val broken = good.replace("    primaryInput: Touchpad\n", "    primaryInput: Touchpad\n    - viewArea:\n")
-        val brokenErr = VehicleConfigYaml.structuralError(broken, true)
+        val brokenErr = VehicleConfigYaml.structuralError(broken)
         check(
             "a second viewAreas item after primaryInput is refused",
             brokenErr != null && brokenErr.startsWith("line "),
@@ -606,12 +562,12 @@ class OcbmProbe(context: Context) {
         ).toString(Charsets.UTF_8)
         check(
             "the 100% no-inset fallback passes",
-            VehicleConfigYaml.structuralError(fallback, true) == null,
+            VehicleConfigYaml.structuralError(fallback) == null,
         )
         check(
             "a broken document is replaced by the fallback",
             subscribeOrFallback(broken, fallback) == fallback &&
-                VehicleConfigYaml.structuralError(subscribeOrFallback(broken, fallback), true) == null,
+                VehicleConfigYaml.structuralError(subscribeOrFallback(broken, fallback)) == null,
         )
         val watch = WifiApWatch()
         check("wifi watch first timeout retries", watch.onTimeout() == "retry")
@@ -1106,7 +1062,7 @@ class OcbmProbe(context: Context) {
         c.onSubscribeEdge = { onSubscribeEdge?.invoke() }
         c.onBoxLog = { _, text, backfill, _, _ ->
             if (text.contains("[ocbm-boot]")) bootLineSeen = true
-            if (adapterWifi) AdapterWifi.observeBoxLine(ctx, text)
+            AdapterWifi.observeBoxLine(ctx, text)
             if (!backfill) {
                 StartupClock.noteBoxLine(text)
                 noteBoxSignals(text)
@@ -1118,7 +1074,7 @@ class OcbmProbe(context: Context) {
         // separates the box's narration from ours exactly as it did under the CH_FILE poller.
         c.boxLogger = boxLog
         c.onBoxLogDropped = { src, n -> log.w("box dropped $n log lines from ${logSourceName(src)}") }
-        if (adapterWifi && !helloOnly) AdapterSession.bind(c, ctx)
+        if (!helloOnly) AdapterSession.bind(c, ctx)
         client = c
         c.start()
 
@@ -1221,23 +1177,9 @@ class OcbmProbe(context: Context) {
             sink("   No heartbeat either: we are not subscribed, so the box has nothing to time out.")
             return r
         }
-        if (!adapterWifi && (wifiSsid.isNullOrBlank() || wifiPass.isNullOrBlank())) {
-            val missing = if (wifiSsid.isNullOrBlank()) "SSID" else "passphrase"
-            // The headline at ERROR (the bring-up ends here and the phone will never be handed a
-            // network); the explanation stays narration.
-            log.e("REFUSING to subscribe: no hotspot $missing supplied — bring-up stops before the radio-wake edge")
-            SessionTrace.Board.failed(OcbmBoard.LINK, "CT_SUBSCRIBE refused: no hotspot $missing — supply --es ssid/--es pass or fill the hotspot fields")
-            sink("     CT_SUBSCRIBE is the radio-wake edge, and the box applies 0x5703 credentials")
-            sink("     ONLY at that edge. Subscribing now would lock this session to the box's stock")
-            sink("     SSID — which is never raised — and no later subscribe can undo it without a")
-            sink("     full host_present cycle (app stop/start, minding the 20s flap detector).")
-            sink("     Supply --es ssid/--es pass, or fill the hotspot fields, and run again.")
-            throw IllegalStateException("refusing credential-less CT_SUBSCRIBE ($missing missing) " +
-                "— would pin 0x5703 to the box's stock credentials for the whole session")
-        }
         // Reserve custom chrome before negotiation, using the launcher's laid-out window.
         // The live surface, decoder advertisement and touch mapping share this snapshot.
-        VideoFrame.capture(ctx, advertise = adapterWifi)
+        VideoFrame.capture(ctx, advertise = true)
         log.i("display: ui scale ${VideoFrame.uiScalePercent}% → advertise ${VideoFrame.width}x${VideoFrame.height} into view ${VideoFrame.viewWidth}x${VideoFrame.viewHeight}")
         log.i("display: UI calibration=${VideoFrame.controls.uiPercent}% physical=${VideoFrame.physicalWidthMm}x${VideoFrame.physicalHeightMm}mm coded=${VideoFrame.width}x${VideoFrame.height} " +
             "→ CarPlay UI at %.2fx its default".format(java.util.Locale.US,
@@ -1247,15 +1189,14 @@ class OcbmProbe(context: Context) {
         }
         // The media pane (Settings ▸ Display ▸ Media pane): a split's CarPlay side is declared now or not at all.
         val pane = wasidremin.gmccpa.pane.SplitPane.choice(ctx)
-        val splitArea = if (!adapterWifi) null else wasidremin.gmccpa.pane.SplitPane.carPlayArea(
+        val splitArea = wasidremin.gmccpa.pane.SplitPane.carPlayArea(
             VideoFrame.width, VideoFrame.height, pane.side, pane.percent)
-        if (adapterWifi && (pane.side == wasidremin.gmccpa.pane.SplitPane.Side.RIGHT || pane.side == wasidremin.gmccpa.pane.SplitPane.Side.LEFT) && splitArea == null) {
+        if ((pane.side == wasidremin.gmccpa.pane.SplitPane.Side.RIGHT || pane.side == wasidremin.gmccpa.pane.SplitPane.Side.LEFT) && splitArea == null) {
             log.w("pane: ${pane.label} has no legal CarPlay area on ${VideoFrame.width}x${VideoFrame.height} — over CarPlay this session")
         }
         // The driver display's map (Settings ▸ Navigation): logs the car's displays on every connect.
-        val cluster = wasidremin.gmccpa.nav.DriverDisplay.declare(ctx).takeIf { adapterWifi }
-        val rendered = if (adapterWifi) {
-            VehicleConfigYaml.renderAdapter(
+        val cluster = wasidremin.gmccpa.nav.DriverDisplay.declare(ctx)
+        val rendered = VehicleConfigYaml.renderAdapter(
                 AdapterWifi.passphrase(ctx),
                 adapterSsid(c),
                 VideoFrame.width,
@@ -1281,7 +1222,6 @@ class OcbmProbe(context: Context) {
                 videoPlayback = videoOfferFor(c),
                 videoAllowed = wasidremin.gmccpa.video.RouteA.parked,
             )
-        } else btOnlyConfig()
         val doc = acceptSubscribeDocument(c, rendered)
         // The fallback document never declares a split; tell the pane what was really sent.
         val sent = doc.toString(Charsets.UTF_8)
@@ -1469,16 +1409,15 @@ class OcbmProbe(context: Context) {
         }
     }
 
-    /** Null structural error keeps [doc]. A failure is logged and, on adapter Wi-Fi, replaced. */
+    /** Null structural error keeps [doc]. A failure is logged and replaced by the proven document. */
     private fun acceptSubscribeDocument(c: OcbmClient, doc: ByteArray): ByteArray {
         val text = doc.toString(Charsets.UTF_8)
-        val err = VehicleConfigYaml.structuralError(text, adapterWifi)
+        val err = VehicleConfigYaml.structuralError(text)
         if (err == null) return doc
         log.e("subscribe document rejected: $err")
         onDisplayReset?.invoke()
-        if (!adapterWifi) return doc
         val fallback = defaultAdapterDocument(c)
-        val again = VehicleConfigYaml.structuralError(fallback.toString(Charsets.UTF_8), true)
+        val again = VehicleConfigYaml.structuralError(fallback.toString(Charsets.UTF_8))
         if (again != null) log.e("subscribe document rejected: $again")
         return fallback
     }
@@ -1494,7 +1433,7 @@ class OcbmProbe(context: Context) {
         )
 
     private fun subscribeOrFallback(doc: String, fallback: String): String =
-        if (VehicleConfigYaml.structuralError(doc, true) == null) doc else fallback
+        if (VehicleConfigYaml.structuralError(doc) == null) doc else fallback
 
     private fun armWifiWatch() {
         val gen = ++wifiGen
@@ -1660,78 +1599,6 @@ class OcbmProbe(context: Context) {
         else bonded.forEach { log.i("bonded phone: $it") }
     }
 
-    /**
-     * The MFi bridge handed to the native receiver core. Blocking and synchronous by contract —
-     * `createSignature` is called inside MFi-SAP on the control path, with the phone waiting on an
-     * HTTP reply, so no coroutine boundary may be introduced here.
-     *
-     * Every failure here — timeout or status — is also pushed to the session summary, prefixed
-     * `relay` so it reads apart from the bring-up probe's own cert/sign. A relay timeout is the one
-     * that drops the PHONE (auth-setup fails, session gone), so a summary that omitted it would say
-     * `mfi=none` about exactly the session it exists to explain.
-     */
-    fun mfiRelay(): wasidremin.gmccpa.pair.MfiRelay = object : wasidremin.gmccpa.pair.MfiRelay {
-        // Each failure is ALSO an ERROR line here, under the mfi tag. Until 2026-09-10 a relay
-        // timeout reached the summary and the native caller's exception and nothing else — the one
-        // MFi failure that drops the phone was the one with no line of its own in the capture.
-        private fun relayFail(what: String): Nothing {
-            mfiLog.e("relay $what — the phone's auth-setup / iAP2 auth will fail on this")
-            throw java.io.IOException("CH_MFI $what")
-        }
-        override fun copyCertificate(): ByteArray {
-            val c = client ?: run { mfiLog.e("relay cert requested with no OCBM link"); throw java.io.IOException("no OCBM link") }
-            val r = c.mfiCertificate() ?: run {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("relay cert: timeout")
-                relayFail("cert timeout (${OcbmClient.MFI_CERT_TIMEOUT_MS}ms)")
-            }
-            if (!r.ok) {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("cert: ${r.statusName()}")
-                relayFail("cert: ${r.statusName()}")
-            }
-            return r.payload
-        }
-        override fun createSignature(digest: ByteArray): ByteArray {
-            val c = client ?: run { mfiLog.e("relay sign requested with no OCBM link"); throw java.io.IOException("no OCBM link") }
-            val r = c.mfiSign(digest) ?: run {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("relay sign: timeout")
-                relayFail("sign timeout (${OcbmClient.MFI_SIGN_TIMEOUT_MS}ms)")
-            }
-            if (!r.ok) {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("sign: ${r.statusName()}")
-                relayFail("sign: ${r.statusName()}")
-            }
-            return r.payload
-        }
-        // Short-budget variants for the iAP2 tunnel — see MfiRelay's KDoc. 4 s is empirical, not
-        // derived: cert measures ~1.1 s and sign ~1.7 s, so it clears both even when one op is queued
-        // behind another. The phone-side request timeout it has to fit inside is unmeasured (nearest
-        // sourced figure is CarKit's disassembly-confirmed 30 s — see audit 4.8 verdict).
-        override fun copyCertificateFast(): ByteArray {
-            val c = client ?: run { mfiLog.e("relay cert (fast) requested with no OCBM link"); throw java.io.IOException("no OCBM link") }
-            val r = c.mfiCertificate(4_000) ?: run {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("relay cert (fast): timeout")
-                relayFail("cert timeout (fast, 4000ms)")
-            }
-            if (!r.ok) {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("relay cert (fast): ${r.statusName()}")
-                relayFail("cert (fast): ${r.statusName()}")
-            }
-            return r.payload
-        }
-        override fun createSignatureFast(digest: ByteArray): ByteArray {
-            val c = client ?: run { mfiLog.e("relay sign (fast) requested with no OCBM link"); throw java.io.IOException("no OCBM link") }
-            val r = c.mfiSign(digest, 4_000) ?: run {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("relay sign (fast): timeout")
-                relayFail("sign timeout (fast, 4000ms)")
-            }
-            if (!r.ok) {
-                wasidremin.gmccpa.logging.SessionSummary.current()?.onMfiFailure("relay sign (fast): ${r.statusName()}")
-                relayFail("sign (fast): ${r.statusName()}")
-            }
-            return r.payload
-        }
-    }
-
     fun stats(): String = client?.statsLine() ?: "no client"
 
     /**
@@ -1746,7 +1613,7 @@ class OcbmProbe(context: Context) {
         wifiGen++
         if (!wifiSched.isShutdown) wifiSched.shutdownNow()
         if (ops.isShutdown) return
-        if (adapterWifi) AdapterSession.release()
+        AdapterSession.release()
         // Set the abort FIRST, from this thread. See [claimAbort]: the submit below queues behind
         // whatever `ops` is running, so if that is a ten-minute `awaitClaimable` this call has to be
         // what ends it -- it cannot wait its turn to ask.

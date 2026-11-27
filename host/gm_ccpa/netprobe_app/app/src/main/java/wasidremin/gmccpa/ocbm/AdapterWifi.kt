@@ -4,11 +4,9 @@ import android.content.Context
 import java.security.SecureRandom
 
 /**
- * Equinox switch. Off by default, so this build still leaves the Silverado on the vehicle hotspot.
- *
- * There is no model detector. The VCU drops the phone's inbound connection to the head unit; the
- * Silverado does not. The driver turns this on only on the car where the head unit cannot be the
- * receiver.
+ * The adapter's own access point, which the iPhone joins for CarPlay. Until 2026-11-26 this was a
+ * switch ("Adapter Wi-Fi") whose off side sent the phone to the vehicle hotspot and the app's own
+ * receiver, the Silverado's arrangement; the Equinox's VCU drops that connection, and T33 removed it.
  *
  * The passphrase is generated once and kept. The phone learns it from the adapter's `0x5703`, not
  * from this screen. The channel stays 149 so the adapter is not on channel 36 beside the vehicle
@@ -23,7 +21,6 @@ import java.security.SecureRandom
  */
 object AdapterWifi {
     private const val FILE = "adapter_wifi"
-    private const val KEY_ON = "on"
     private const val KEY_PASS = "pass"
     private const val KEY_SSID = "ssid"
 
@@ -34,12 +31,6 @@ object AdapterWifi {
     /** The beacon name: `ccpa-` plus the four hex digits `radio_hal.sh` persists. */
     private val BOX_SSID = Regex("ccpa-[0-9a-f]{4}")
     private val BOX_SSID_IN_LOG = Regex("""(?:BT name=|ssid=["'])(ccpa-[0-9a-f]{4})""")
-
-    fun enabled(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_ON, false)
-
-    fun setEnabled(ctx: Context, on: Boolean) {
-        prefs(ctx).edit().putBoolean(KEY_ON, on).apply()
-    }
 
     /**
      * SSID to put in the next subscribe. The learned box name once we have one, otherwise the
@@ -77,4 +68,16 @@ object AdapterWifi {
 
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+    /**
+     * What the removed Silverado mode stored (T33, 2026-11-26), cleared once per start: the switch's
+     * key, the vehicle hotspot's name, passphrase and channel (`hotspot_credentials`), and the app's
+     * own CarPlay pairing store, which only that mode's receiver used.
+     */
+    fun forgetRetired(ctx: Context) {
+        val app = ctx.applicationContext
+        prefs(app).edit().remove("on").apply()
+        app.deleteSharedPreferences("hotspot_credentials")
+        java.io.File(app.filesDir, "carplay_peers.bin").delete()
+    }
 }

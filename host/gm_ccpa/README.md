@@ -87,37 +87,9 @@ adb shell am start --user 10 -n wasidremin.gmccpa/.MainActivity --es run driver_
 driver-display window opens; see `docs/ops/04_OPEN_ITEMS.md` "Tests, tooling & install".
 `tools/test.sh` is the Tier-0 gate (host cargo tests + OCBM proto conformance).
 `tools/build_apk.sh` is the older Gradle-free path (`kotlinc → d8 → aapt2`); it has no AndroidX, so
-it cannot build the Car App Library service.
-
-### On upstream's Silverado (vehicle-hotspot mode, adb available)
-
-Gradle-free: `kotlinc → d8 → aapt2 → zipalign → apksigner`, plus a cargo cross-build for the JNI core.
-Needs the Android SDK + NDK. Build output goes to `~/.cache`, never into this tree.
-
-```bash
-bash tools/test.sh                 # Tier-0 gate: host cargo tests + OCBM proto conformance
-bash tools/build_apk.sh            # -> apk/gmccpa-debug-<sha>.apk, and prints the install command
-
-# Install the sha-stamped path the build just printed — there is deliberately no "latest" symlink,
-# because versionCode is pinned and `-r` would happily install a stale one after a failed build.
-# Play-attributed install keeps the in-motion path eligible; -g grants runtime perms; user 10 is foreground
-adb install -i com.android.vending -r -g --user 10 apk/gmccpa-debug-<sha>.apk
-adb shell appops set wasidremin.gmccpa SYSTEM_ALERT_WINDOW allow
-
-# Logging boots effectively dead on this unit, and silence looks like a dead app
-adb shell "setprop persist.log.tag V" && adb logcat -G 16M
-
-adb shell "am start -n wasidremin.gmccpa/.MainActivity --es run full \
-           --es ssid '<ssid>' --es pass '<passphrase>'"
-```
-
-Expect the standard USB permission dialog once per device ("always open" retires it). The hotspot
-passphrase cannot be read programmatically here — take it from Settings ▸ Hotspot and pass it in. If iOS
-reports `No matching endpoint found`, forget the vehicle on the iPhone and re-pair; that, not GM's
-`:7000`, is the usual cause.
-
-Full procedure, expected log lines and the troubleshooting table:
-[`docs/06_BRINGUP_RUNBOOK.md`](docs/06_BRINGUP_RUNBOOK.md) §5g.
+it cannot build the Car App Library service. The app carries no native code since 2026-11-26: the Rust
+receiver core it loaded through JNI served only upstream's Silverado mode (the phone on the vehicle
+hotspot, the app as the receiver), which the Equinox cannot use and T33 removed.
 
 ## Logs — where uploads land and how to read them
 
@@ -184,8 +156,7 @@ netprobe_app/     the Kotlin app — ocbm/ (adapter link) · pair/ · av/ (decod
                   nav/ (route guidance, cluster turns, driver display and its cards) · pane/ (media pane) ·
                   telemetry/ (EV Insights recording, drive log, Drive card estimate) · upload/ (uploads,
                   data meter) · match/ (vision launcher) · Ui.kt (settings) · MainActivity
-native/           the Rust core: JNI over ccpa_custom's receiver/pairing/mfi crates
-tools/            build_apk.sh · test.sh · info_plist_*.py · ADB recon · capture
+tools/            build_aab.sh · build_apk.sh · test.sh · stage_adapter_fw.sh · lyrics_pack.py · ADB recon · capture
 docs/             see above
 audit/            adversarial review, cited as the authority for doc 11's R6 section
 ```

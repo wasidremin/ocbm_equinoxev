@@ -175,9 +175,8 @@ object CarPlayFrameGrabber {
         }
     }
 
-    /** True when either the adapter-Wi-Fi session or the legacy receiver session is active. */
-    fun isSessionActive(): Boolean =
-        AdapterSession.sessionUp || SessionHolder.cpRx?.sessionLive == true
+    /** True when the adapter's CarPlay session is active. */
+    fun isSessionActive(): Boolean = AdapterSession.sessionUp
 
     private fun obtainReusableBitmap(width: Int, height: Int): Bitmap {
         synchronized(bitmapLock) {

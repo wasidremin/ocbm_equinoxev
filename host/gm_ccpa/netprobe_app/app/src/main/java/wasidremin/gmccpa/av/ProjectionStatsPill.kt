@@ -42,7 +42,7 @@ class ProjectionStatsPill(ctx: Context, private val preview: Boolean) : TextView
             val client = SessionHolder.ocbmProbe?.client
             val health = client?.lastBoxHealth ?: -1
             val wifi = if (health < 0) "unknown" else if (health and Ocbm.BH_WLAN_AP != 0) "AP up" else "AP down"
-            val state = if (preview) "Preview" else if (AdapterSession.sessionUp || SessionHolder.cpRx?.sessionLive == true) "Connected" else "Waiting"
+            val state = if (preview) "Preview" else if (AdapterSession.sessionUp) "Connected" else "Waiting"
             val bt = client?.let { Ocbm.btpName(it.lastBtPhase) } ?: "unknown"
             text = "$state · ${VideoPresentation.width.takeIf { it > 0 } ?: VideoFrame.width}×${VideoPresentation.height.takeIf { it > 0 } ?: VideoFrame.height} · %.1f fps\nBT: %s · Wi-Fi: %s".format(fps, bt, wifi)
             postDelayed(this, 1000)

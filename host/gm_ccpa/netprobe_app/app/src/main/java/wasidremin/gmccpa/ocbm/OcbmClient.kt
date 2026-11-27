@@ -274,7 +274,7 @@ class OcbmClient(
     fun start() {
         if (!running.compareAndSet(false, true)) return
         transport.setReadHandler { data, len ->
-            // A stopped client speaks to nobody — the same fence CarPlayRx.stopped provides. The
+            // A stopped client speaks to nobody — a fence. The
             // transport's read loop checks its own flag only BEFORE bulkTransfer, so a transfer that
             // was parked when stop() ran still delivers one buffer when it finally returns. On a
             // stalled gadget that return can come seconds later, after Restart Session has built a

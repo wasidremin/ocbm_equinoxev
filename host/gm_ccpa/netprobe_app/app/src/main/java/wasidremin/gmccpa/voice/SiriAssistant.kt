@@ -105,10 +105,8 @@ object SiriTrigger {
     private const val HOLD_MS = 120L
 
     fun tap(ctx: Context, source: String): Boolean {
-        val adapter = wasidremin.gmccpa.ocbm.AdapterWifi.enabled(ctx)
-        val up = wasidremin.gmccpa.ocbm.AdapterSession.sessionUp
-        if (!adapter || !up) {
-            log.w("voice: $source — no live CarPlay session (adapterWifi=$adapter sessionUp=$up), nothing sent")
+        if (!wasidremin.gmccpa.ocbm.AdapterSession.sessionUp) {
+            log.w("voice: $source — no live CarPlay session, nothing sent")
             return false
         }
         exec.execute {

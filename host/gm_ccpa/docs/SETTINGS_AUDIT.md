@@ -10,8 +10,8 @@ Insights). The section headings below keep the v101 page names as a record;
 each row's Source column names where the control is today.
 
 Conventions: "action only" = no persisted key. Preference files:
-`carplay_screen` (DisplayPrefs), `hotspot_credentials` (Ui.kt CRED_PREFS),
-`adapter_wifi` (AdapterWifi.FILE), `audio_route` (AudioRoute.PREFS),
+`carplay_screen` (DisplayPrefs), `adapter_wifi` (AdapterWifi.FILE: the adapter's access-point
+passphrase and name), `audio_route` (AudioRoute.PREFS),
 `capture` (CapturePrefs.FILE), `upload_center_prefs` (UploadCenter.PREFS),
 `display_geometry` (VideoFrame.GEOMETRY_PREFS), `vehicle_probe_permissions`,
 `usb_identity` (UsbIdentity.PREFS). Added since: `driver_display` (DriverDisplay,
@@ -116,8 +116,6 @@ and older adapters (`14_LESSONS_LEARNED.md` §15).
 
 | Current label | Source | Persisted key | Actual behavior | Proposed location | Verdict | Reason |
 |---|---|---|---|---|---|---|
-| Adapter Wi-Fi | `buildAdvanced` toggle | `adapter_wifi/on` (restarts connection) | iPhone joins adapter vs car hotspot | Advanced | keep | Radio topology; reconnect-required, keep confirm |
-| Vehicle hotspot | `hotspotRow` + dialog | `hotspot_credentials/ssid,pass,chan` | Pushed at SUBSCRIBE; blank-by-design forces entry | Advanced | keep | Needed for vehicle hotspot; keep dialog |
 | Adapter info | `infoRow` | action only | `BoxAction.INFO` | Advanced | keep | Probe |
 | USB bridge (2026-11-06) | `bridgeRow`, `MainActivity.refreshBridge()`, `FilesApp` | action only | Whether the sideloaded USB bridge is installed and whether the last link went through it; when absent, whether this car can let Files install an app. Open Files starts the hidden Files app | Advanced | keep | `docs/ops/08_FUTURE_TASKS.md` T15; unverified on the car |
 | USB announce / Announce retries | `announceRow(s)` | box-side `/script/ocbm.conf` (display only) | Shown on `onAdvancedOpened`; disabled until linked | Advanced | keep | Probe display |
@@ -409,6 +407,16 @@ stays (serves Capture Current).
   0.5 dB steps; malformed reads as flat). Owner, 2026-11-26: "after that the full fledged equalizer".
   Presets any time; dragging a band (in Park only, `CarGear.parked`) makes the curve Custom and saves it
   when the finger lifts. New keys; nothing carries over.
+
+## 2026-11-26 deltas (the Silverado hotspot mode removed; T33)
+
+- **Adapter Wi-Fi** (Advanced) is gone: the adapter's own access point is the only way the iPhone
+  connects, as it always was on the Equinox. Its key `adapter_wifi/on` is removed at the app's start;
+  `adapter_wifi/pass` and `ssid` (the access point's) stay.
+- **Vehicle hotspot** (Advanced) is gone with it: the hotspot's name, password and channel
+  (`hotspot_credentials`) are deleted at start (`AdapterWifi.forgetRetired`), as is the app's own
+  pairing store `carplay_peers.bin`. Nothing carries over: nothing reads them.
+- **CarPlay UI calibration** (Screen) always shows its slider now; its "needs adapter Wi-Fi" note went.
 
 ## Version high-water
 

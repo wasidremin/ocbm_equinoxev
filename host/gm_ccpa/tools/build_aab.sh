@@ -24,61 +24,19 @@ esac
 export PLAY_SERVICE_ACCOUNT="${PLAY_SERVICE_ACCOUNT:-$CCPA_ROOT/play-service-account.json}"
 APP_ROOT="$GM_ROOT/netprobe_app"
 GRADLE="${GRADLE_BIN:-$HOME/.gradle/wrapper/dists/gradle-8.9-bin/90cnw93cvbtalezasaz0blq0a/gradle-8.9/bin/gradle}"
-SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 
 set -euo pipefail
-export PATH="$HOME/.cargo/bin:$PATH"
+export PATH="$HOME/.cargo/bin:$PATH"   # stage_adapter_fw.sh runs ./build.sh
 [ -x "$GRADLE" ] || { echo "FATAL: Gradle not found at $GRADLE" >&2; exit 1; }
 
-# Rust build scripts/procedural macros need a Linux host linker on this minimal server.
-if ! command -v cc >/dev/null 2>&1; then
-    ZIG="${ZIG:-$HOME/.local/opt/zig/zig}"
-    [ -x "$ZIG" ] || { echo "FATAL: host cc is missing and Zig was not found at $ZIG" >&2; exit 1; }
-    HOST_LINKER="$(mktemp -t gmccpa-zig-cc.XXXXXX)"
-    trap 'rm -f "$HOST_LINKER"' EXIT
-    printf '#!/bin/sh\nexec "%s" cc "$@"\n' "$ZIG" > "$HOST_LINKER"
-    chmod 700 "$HOST_LINKER"
-    export CC="$HOST_LINKER"
-    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$HOST_LINKER"
-fi
-
-export FDK_AAC_PREFIX="${FDK_AAC_PREFIX:-$CCPA_ROOT/scratchpad/fdk/install-android-x86_64}"
-[ -f "$FDK_AAC_PREFIX/lib/libfdk-aac.a" ] || { echo "FATAL: missing libfdk-aac at $FDK_AAC_PREFIX" >&2; exit 1; }
-NDK_VERSION="${ANDROID_NDK_VERSION:-30.0.15729638}"
-NDK_ROOT="${ANDROID_NDK_HOME:-$SDK/ndk/$NDK_VERSION}"
-NDK_PREBUILT="$(find "$NDK_ROOT/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null || true)"
-[ -n "$NDK_PREBUILT" ] || { echo "FATAL: no NDK toolchain found under $NDK_ROOT" >&2; exit 1; }
-NDK_BIN="$NDK_PREBUILT/bin"
-NATIVE_DIR="$GM_ROOT/native/carplay-jni"
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-targets/gm_ccpa-carplay-jni}"
-export CARGO_TARGET_DIR
-
-printf '[1/5] cargo JNI release builds (x86_64 + arm64)\n'
-(
-  cd "$NATIVE_DIR"
-  CC_x86_64_linux_android="$NDK_BIN/x86_64-linux-android32-clang" \
-  AR_x86_64_linux_android="$NDK_BIN/llvm-ar" \
-  CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$NDK_BIN/x86_64-linux-android32-clang" \
-  cargo build --release --target x86_64-linux-android
-  # The ARM64 build omits mic-uplink-eld because the only local libfdk-aac prefix is x86_64.
-  CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android32-clang" \
-  AR_aarch64_linux_android="$NDK_BIN/llvm-ar" \
-  CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android32-clang" \
-  cargo build --release --target aarch64-linux-android --no-default-features
-)
-X86_JNILIB="$CARGO_TARGET_DIR/x86_64-linux-android/release/libcarplayjni.so"
-ARM64_JNILIB="$CARGO_TARGET_DIR/aarch64-linux-android/release/libcarplayjni.so"
-[ -f "$X86_JNILIB" ] || { echo "FATAL: x86_64 JNI library missing: $X86_JNILIB" >&2; exit 1; }
-[ -f "$ARM64_JNILIB" ] || { echo "FATAL: arm64 JNI library missing: $ARM64_JNILIB" >&2; exit 1; }
 export GM_BUILD_DIR="${GM_BUILD_DIR:-$HOME/.cache/carlink-artifacts/gm_ccpa/gradle}"
-export GM_JNI_DIR="$GM_BUILD_DIR/root/jniLibs"
-mkdir -p "$GM_JNI_DIR/x86_64" "$GM_JNI_DIR/arm64-v8a"
-cp "$X86_JNILIB" "$GM_JNI_DIR/x86_64/libcarplayjni.so"
-cp "$ARM64_JNILIB" "$GM_JNI_DIR/arm64-v8a/libcarplayjni.so"
 
 STAMP_SHA="$(cd "$GM_ROOT" && git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 (cd "$GM_ROOT" && git diff --quiet HEAD 2>/dev/null) || STAMP_SHA="$STAMP_SHA-dirty"
 export GM_ASSETS_DIR="$GM_BUILD_DIR/root/assets"
+# Emptied first: `cp -R` only adds, so an asset deleted from the tree (info.bplist, 2026-11-26) would
+# otherwise ship in every later bundle from this staging copy.
+rm -rf "$GM_ASSETS_DIR"
 mkdir -p "$GM_ASSETS_DIR"
 cp -R "$APP_ROOT/app/src/main/assets/." "$GM_ASSETS_DIR/"
 printf '%s\n' "$STAMP_SHA" > "$GM_ASSETS_DIR/build_sha"
@@ -90,7 +48,7 @@ case "$AAB_VERSION_CODE" in ''|*[!0-9]*) echo "FATAL: AAB_VERSION_CODE must be n
 # with this versionCode so an adapter never takes firmware older than it has.
 "$GM_ROOT/tools/stage_adapter_fw.sh"
 
-printf '[2/5] Gradle bundlePlayRelease\n'
+printf '[1/4] Gradle bundlePlayRelease\n'
 (
   cd "$APP_ROOT"
   "$GRADLE" --offline --no-daemon --stacktrace :app:bundlePlayRelease
@@ -104,15 +62,15 @@ OUT="$ARTIFACTS/gmccpa-play-$STAMP_SHA.aab"
 mkdir -p "$ARTIFACTS"
 cp "$AAB" "$OUT"
 
-printf '[3/5] verify AAB signature\n'
+printf '[2/4] verify AAB signature\n'
 jarsigner -verify -verbose -certs "$OUT" >/tmp/gmccpa-aab-verify.txt
  grep -q 'jar verified' /tmp/gmccpa-aab-verify.txt
 
-printf '[4/5] inspect bundle contents\n'
-  unzip -l "$OUT" | grep -E 'base/manifest/AndroidManifest.xml|base/dex/classes.dex|base/lib/(x86_64|arm64-v8a)/libcarplayjni.so' >/tmp/gmccpa-aab-contents.txt
+printf '[3/4] inspect bundle contents\n'
+  unzip -l "$OUT" | grep -E 'base/manifest/AndroidManifest.xml|base/dex/classes.dex' >/tmp/gmccpa-aab-contents.txt
 cat /tmp/gmccpa-aab-contents.txt
 
-printf '[5/5] release summary\n'
+printf '[4/4] release summary\n'
 printf 'AAB=%s\n' "$OUT"
 printf 'package=wasidremin.gmccpa\nversionCode=%s\nversionName=%s\n' "$AAB_VERSION_CODE" "$AAB_VERSION_NAME"
 printf 'uploadCertificateSha256='

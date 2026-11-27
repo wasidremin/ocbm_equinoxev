@@ -31,7 +31,7 @@ class EvForCarPlayTest {
     @Test fun theBlockKeepsTheSubscribeDocumentValid() {
         val doc = VehicleConfigYaml.render(VehicleConfigSpec()) + equinoxBlock +
             "wifi_ap: true\nwifi_ssid: ccpa\nwifi_pass: adapterpass1\nwifi_channel: 149\n"
-        assertNull(VehicleConfigYaml.structuralError(doc, true))
+        assertNull(VehicleConfigYaml.structuralError(doc))
     }
 
     @Test fun connectorTypesMapToApplesNames() {
@@ -61,7 +61,7 @@ class EvForCarPlayTest {
         assertEquals(true, block.contains("    - type: nacsac\n      powerWatts: 11500\n"))
         val doc = VehicleConfigYaml.render(VehicleConfigSpec()) + block +
             "wifi_ap: true\nwifi_ssid: ccpa\nwifi_pass: adapterpass1\nwifi_channel: 149\n"
-        assertNull(VehicleConfigYaml.structuralError(doc, true))
+        assertNull(VehicleConfigYaml.structuralError(doc))
     }
 
     @Test fun theStatusFileUsesTheBoxUnits() {
@@ -109,7 +109,7 @@ class EvForCarPlayTest {
     @Test fun theRoutingBlockKeepsTheSubscribeDocumentValid() {
         val doc = VehicleConfigYaml.render(VehicleConfigSpec()) + routingBlock +
             "wifi_ap: true\nwifi_ssid: ccpa\nwifi_pass: adapterpass1\nwifi_channel: 149\n"
-        assertNull(VehicleConfigYaml.structuralError(doc, true))
+        assertNull(VehicleConfigYaml.structuralError(doc))
     }
 
     private val sample = EvForCarPlay.Sample(
