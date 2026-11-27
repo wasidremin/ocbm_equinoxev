@@ -8,8 +8,8 @@ import org.json.JSONObject
  * whichever phone drives, the owner's or their wife's.
  *
  * No setting is hooked. The settings stay where they always lived; when a different phone takes over,
- * the values in place are kept as the previous phone's ([save]) and the new phone's are put in place
- * ([load]). A phone seen for the first time keeps the values as they are, which then become its own.
+ * the values in place are kept as the previous phone's and the new phone's are put in place ([step]).
+ * A phone seen for the first time keeps the values as they are, which then become its own.
  *
  * It runs twice per connect. Before `CT_SUBSCRIBE`, for the phone the adapter will page first
  * ([PhoneSchedule.expectedFirst]), so the layout and the pane's side, which the subscribe declares,
