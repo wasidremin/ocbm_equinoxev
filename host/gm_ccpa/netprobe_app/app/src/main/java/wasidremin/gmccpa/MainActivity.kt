@@ -309,6 +309,7 @@ class MainActivity : Activity() {
         if (name.isNotEmpty()) ui.setPhoneName(name)
         PhoneBook.remember(applicationContext, json)
         connectedPhoneMac = jsonStringField(json, "deviceID").ifEmpty { null }
+        connectedPhoneMac?.let { runCatching { PhoneProfiles.atIdentity(applicationContext, it) } }
         // Off this thread: CT_* dispatch runs on ocbm-read, and MGMT_GET_INFO waits on that thread.
         runAsync { refreshPhones() }
     }
@@ -440,6 +441,7 @@ class MainActivity : Activity() {
         if (ok) {
             PhoneBook.forget(applicationContext, p.mac)
             PhoneSchedule.forget(applicationContext, p.mac)
+            PhoneProfiles.forget(applicationContext, p.mac)
             if (p.connected) connectedPhoneMac = null
         }
         ui.setDetail(

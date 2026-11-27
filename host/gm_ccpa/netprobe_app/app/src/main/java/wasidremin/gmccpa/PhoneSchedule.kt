@@ -161,6 +161,18 @@ object PhoneSchedule {
     private fun ownsList(ctx: Context): Boolean = prefs(ctx).contains(P_BASE)
 
     /**
+     * The phone the adapter will page first this connect: the order for now where this app sends it
+     * ([atConnect]'s rule), else the adapter's own first. Null with no phone bonded. Settings per iPhone
+     * (T39) are put in place for it before the subscribe.
+     */
+    fun expectedFirst(ctx: Context, mgmtInfo: String?): String? {
+        val bonded = PhoneBook.devicesOf(mgmtInfo)
+        if (bonded.size < 2 || !ownsList(ctx) || mgmtInfo?.contains("\"order_at_start\":true") != true) return bonded.firstOrNull()
+        val now = java.time.LocalDateTime.now()
+        return orderNow(baseOrder(ctx, bonded), windows(ctx).filterKeys { it in bonded }, now.dayOfWeek.value, now.hour * 60 + now.minute).first()
+    }
+
+    /**
      * At a connect, before `CT_SUBSCRIBE` starts the session's Bluetooth: send the order for now when it
      * differs from the adapter's, and the firmware keeps an order sent then. Blocking; on the link thread.
      * Logs positions in the driver's list, never a name or an address.

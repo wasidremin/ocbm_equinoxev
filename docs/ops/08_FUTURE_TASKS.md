@@ -37,7 +37,7 @@ Adapter firmware installs it (T20); before that, or for the boot path, a bench i
 | T36 Loudness by speed | Built 2026-11-26 (Screen & Sound ▸ Sound, default Gentle); unit tests only, not yet heard in the car |
 | T37 Equalizer | Built 2026-11-26 (Screen & Sound ▸ Sound, default Flat); unit tests and the emulator's drawing, not yet heard in the car |
 | T38 Turn alert on the driver display | New 2026-11-26, not started |
-| T39 Settings per iPhone | New 2026-11-26, not started |
+| T39 Settings per iPhone | Built 2026-11-26 (the sound, the media pane, the screen layout); unit tests; not yet in the car |
 
 *Needs adapter firmware*
 
@@ -1641,6 +1641,19 @@ distance.
 **What.** The media pane, the layout and the sound preset follow whichever phone connects (the owner's or
 their wife's), from the phone identity the adapter already reports. **Done means.** Each driver's car is
 set up for them without touching Settings.
+
+**Built 2026-11-26, app only** (`PhoneProfiles.kt`; owner: "Do T39 and t33 now"). Follows the phone: the
+equalizer's preset and curve, loudness by speed, the media pane (side, size, shown) and the screen layout.
+No setting is hooked: each stays where it lives, and when a different phone takes over the values in place
+are kept as the previous phone's and the new phone's are put in place; a phone's first visit keeps the
+values as they are. It runs before `CT_SUBSCRIBE` for the phone the adapter will page first
+(`PhoneSchedule.expectedFirst`: T35's order where the app sends one, else the adapter's own), so the
+layout and the pane's side the subscribe declares are that phone's; and at `CT_PHONE_IDENT` for the phone
+that came, where the other phone's sound follows at once and its layout and pane's side from its next
+connect, not a restart of a working session. Forget a phone and its settings go. The log says `phone
+settings (expected first|connected): phone N of M drives — …`, no name or address. *Verified:*
+`PhoneProfilesTest` (the rule, a week of two drivers, the stored form), the app's 653 tests. *Not yet:*
+the car, and the emulator (the adapter and phone had left the bench).
 
 ## Left off this plan
 

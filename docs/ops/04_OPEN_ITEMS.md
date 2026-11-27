@@ -111,6 +111,11 @@ own log line counted; the closed ones are listed at the end of this section with
   Settings ▸ Advanced has no Adapter Wi-Fi or Vehicle hotspot rows, and no `wifi_ap: false` subscribe.
   Not benched: the adapter and phone had left the server.
 
+- **Settings per iPhone (T39, 2026-11-26, not yet published).** In the car: with the wife's phone on a
+  drive, change the equalizer (and the pane or layout if wanted); on the owner's next drive the log says
+  `phone settings (…): phone N of 2 drives — its sound, pane and layout put in place` and their own
+  settings are back; the wife's come back on hers. Her first drive after the update logs "first time here".
+
 **Still open**
 
 - **Which iPhone first, by schedule (T35, Play 268): a changed order not yet seen.** The weekday-morning

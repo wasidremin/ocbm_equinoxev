@@ -418,6 +418,15 @@ stays (serves Capture Current).
   pairing store `carplay_peers.bin`. Nothing carries over: nothing reads them.
 - **CarPlay UI calibration** (Screen) always shows its slider now; its "needs adapter Wi-Fi" note went.
 
+## 2026-11-26 deltas (settings per iPhone; T39)
+
+- **Kept for each iPhone** (no row of its own; the Equalizer, Loudness by speed, Media pane and Screen
+  layout rows say so): `phone_profiles/current` (the phone whose values are in place, its BR/EDR address)
+  and `phone_profiles/p.<address>` (each phone's `sound/eq_preset`, `sound/eq_custom`,
+  `sound/speed_loudness`, `media_pane/side`, `percent`, `shown`, `carplay_screen/mode`, as JSON). The
+  settings themselves keep their keys; the profiles are copies taken and restored at a change of phone
+  (`PhoneProfiles.kt`). Nothing to carry over: the first phone seen takes the values as they are.
+
 ## Version high-water
 
 - `app/build.gradle`: `versionCode = AAB_VERSION_CODE env ?: 8`,

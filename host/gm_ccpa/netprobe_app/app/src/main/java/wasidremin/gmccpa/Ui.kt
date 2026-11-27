@@ -601,7 +601,7 @@ class LauncherUi(private val act: Activity) {
         val modeIndex = modes.indexOf(DisplayPrefs.mode(act)).let { if (it < 0) 3 else it }
         card.addRow(EqRow(
             act, "Screen layout",
-            "Which car bars stay visible around CarPlay.",
+            "Which car bars stay visible around CarPlay. Kept for each iPhone.",
             trailing = EqSegmented(act, listOf("Car bars", "No top", "No bottom", "Full"), modeIndex) { i ->
                 DisplayPrefs.setMode(act, modes[i])
                 onScreenChanged()
@@ -656,7 +656,7 @@ class LauncherUi(private val act: Activity) {
         val loudLevels = wasidremin.gmccpa.sound.SpeedLoudness.Level.values().toList()
         val loudRow = EqRow(
             act, "Loudness by speed",
-            "Lifts the bass and treble of music as the car goes faster, so road noise does not bury them. Calls, Siri and directions are not changed.",
+            "Lifts the bass and treble of music as the car goes faster, so road noise does not bury them. Calls, Siri and directions are not changed. Kept for each iPhone.",
             trailing = EqSegmented(act, loudLevels.map { it.label }, loudLevels.indexOf(loud.level)) { i ->
                 loud.setLevel(act, loudLevels[i])
             },
@@ -678,7 +678,7 @@ class LauncherUi(private val act: Activity) {
         ).also { it.show(eq.bands) }
         page.addView(eqSectionLabel(act, "Sound"))
         page.addView(EqCard(act).addRow(audioRow).addRow(loudRow).addRow(EqRow(
-            act, "Equalizer", "Music only. Drag a band in Park to make your own.", trailing = presetControl,
+            act, "Equalizer", "Music only. Drag a band in Park to make your own. Kept for each iPhone.", trailing = presetControl,
         )).addRow(eqView).addRow(EqRow(
             act, "Play Spotify on connect",
             "Opens Spotify in CarPlay and presses play once CarPlay is up. Skipped if music is already playing.",
@@ -795,9 +795,9 @@ class LauncherUi(private val act: Activity) {
             val next = pane.CHOICES[(pane.CHOICES.indexOf(cur) + 1) % pane.CHOICES.size]
             pane.setChoice(act, next)
             value.text = next.label
-            row.setSubtitle(subtitle(next))
+            row.setSubtitle(subtitle(next) + " Kept for each iPhone.")
         }
-        row = EqRow(act, "Media pane", subtitle(choice), trailing = value)
+        row = EqRow(act, "Media pane", subtitle(choice) + " Kept for each iPhone.", trailing = value)
         return row
     }
 

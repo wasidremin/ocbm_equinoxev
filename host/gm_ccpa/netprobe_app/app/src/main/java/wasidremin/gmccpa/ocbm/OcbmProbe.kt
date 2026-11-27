@@ -1098,6 +1098,8 @@ class OcbmProbe(context: Context) {
         runCatching { RetiredWifiLink.atConnect(c, startInfo) }
         // T35: the phone order for this moment, before CT_SUBSCRIBE starts the session's Bluetooth.
         runCatching { wasidremin.gmccpa.PhoneSchedule.atConnect(ctx, c, startInfo) }
+        // T39: that phone's sound, pane and layout, before the subscribe declares them.
+        runCatching { wasidremin.gmccpa.PhoneProfiles.atConnect(ctx, startInfo) }
 
         c.setTime()
 
